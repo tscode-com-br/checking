@@ -1,14 +1,14 @@
 # CheckCheck
 
-Projeto para controle de presença em escritório com ESP32 + RFID + Raspberry Pi 4.
+Projeto para controle de presença em escritório com ESP32 + RFID + servidor em computador local (sempre ligado).
 
 ## Arquitetura recomendada
 
-- **ESP32 + RFID(s) -> Raspberry Pi por Wi-Fi (HTTP local)**
-- Motivo: implementação simples, baixa latência local, manutenção fácil e sem broker adicional.
-- Endereço sugerido da API na Raspberry: `http://<ip-da-raspberry>:3000/api/scan`.
+- **ESP32 + RFID(s) -> servidor no PC do escritório (LAN/Wi-Fi local)**
+- Motivo: elimina custo mensal de nuvem e mantém baixa latência local.
+- Endereço sugerido da API: `http://<ip-do-pc>:3000/api/scan`.
 
-> Alternativa robusta: MQTT local. Para começar rápido e com menos pontos de falha operacionais, HTTP direto atende muito bem.
+> A internet pode continuar ativa para acesso externo opcional, mas o registro principal funciona na rede local.
 
 ## Estrutura
 
@@ -20,15 +20,15 @@ Projeto para controle de presença em escritório com ESP32 + RFID + Raspberry P
 
 ## Requisitos
 
-- Raspberry Pi 4 com Node.js 20+
-- ESP32
-- Leitor RFID MFRC522 (1 ou 2 unidades)
+- PC Windows/Linux sempre ligado com Node.js 20+
+- ESP32-S3 N16R8
+- Leitor RFID/NFC PN532 V3 (2 unidades)
 - LEDs: amarelo, verde, vermelho
 - Buzzer ativo/passivo
 
 ---
 
-## 1) Servidor na Raspberry
+## 1) Servidor no PC local
 
 ### Instalação
 
@@ -41,53 +41,104 @@ npm run start
 
 Servidor disponível em:
 
-- Dashboard: `http://<ip-da-raspberry>:3000`
-- API de leitura RFID: `POST /api/scan`
+- Dashboard: `http://<ip-do-pc>:3000`
+- API de consulta de cartão: `POST /api/cards/check`
+- API de registro de leitura: `POST /api/scan`
 
 ### Banco de dados
 
 O SQLite é criado em `apps/raspberry-server/data/checkcheck.db` com:
 
-- Tabela `checkcheck` (registros de entrada/saída)
-- Tabela `users` (cadastro e vínculo RFID -> usuário)
+- Tabela `checkcheck` (eventos de leitura)
+- Tabela `users` (vínculo RFID -> matrícula + dados opcionais)
 
-Campos exigidos em `checkcheck`:
+Campos obrigatórios por leitura:
+
+- `rfid_uid` (alfanumérico)
+- `entrada` (`true`/`false`)
+
+Quando cartão ainda não está cadastrado:
+
+- `matricula` (numérico, de 7 a 10 dígitos)
+
+Campos opcionais para preencher depois:
 
 - `nome_completo`
-- `matricula` (7 dígitos)
-- `chave_usuario` (4 caracteres alfanuméricos)
-- `data_hora_entrada_singapura`
-- `entrada` (0/1)
+- `matricula` (até 10 dígitos)
+- `projeto` (`P80`, `P82`, `P83`)
 
-## 2) Cadastrar usuários
+## 2) Cadastrar/atualizar usuários (opcional)
 
-Use a API para cadastrar cada funcionário e o UID do cartão RFID:
+Use a API admin para enriquecer cadastro depois (nome, matrícula e projeto):
 
 ```bash
-curl -X POST http://<ip-da-raspberry>:3000/api/users \
+curl -X POST http://<ip-do-pc>:3000/api/users \
   -H "Content-Type: application/json" \
   -H "x-admin-key: troque-esta-chave-admin" \
   -d '{
     "nomeCompleto":"Ana Paula Lima",
-    "matricula":"1234567",
-    "chaveUsuario":"A1B2",
+    "matricula":"1234567890",
+    "projeto":"P80",
     "rfidUid":"DE AD BE EF"
   }'
 ```
 
-## 3) Fluxo do equipamento (ESP32)
+## 3) Consulta de cartão (ESP32)
+
+```bash
+curl -X POST http://<ip-do-pc>:3000/api/cards/check \
+  -H "Content-Type: application/json" \
+  -H "x-device-key: troque-esta-chave-dispositivo" \
+  -d '{
+    "rfidUid":"A1B2C3D4"
+  }'
+```
+
+## 4) Registro de leitura (ESP32)
+
+```bash
+curl -X POST http://<ip-do-pc>:3000/api/scan \
+  -H "Content-Type: application/json" \
+  -H "x-device-key: troque-esta-chave-dispositivo" \
+  -d '{
+    "rfidUid":"A1B2C3D4",
+    "entrada":true,
+    "readerId":"ENTRY",
+    "deviceId":"ESP32-01",
+    "matricula":"1234567"
+  }'
+```
+
+- `matricula` só precisa ser enviada quando o cartão ainda não estiver cadastrado.
+
+## 5) Fluxo do equipamento (ESP32)
 
 Implementado no firmware:
 
 1. LED amarelo aceso = pronto para leitura.
 2. Ao encostar o cartão, LED amarelo apaga.
 3. ESP32 lê UID RFID.
-4. Envia para Raspberry (`/api/scan`) com `x-device-key`.
-5. Se sucesso: LED verde 1s + buzzer com 2 beeps.
-6. Se falha: LED vermelho 1s + beep grave único.
-7. Volta para estado pronto (LED amarelo aceso).
+4. ESP32 consulta `/api/cards/check` para saber se o cartão já existe.
+5. Se o cartão não existir, solicita matrícula numérica (7 a 10 dígitos).
+6. Usuário confirma matrícula no keypad 4x3 digitando `#` ou `*`.
+7. ESP32 envia leitura para `/api/scan` com:
+  - `rfidUid`
+  - `entrada` (`true` para leitor ENTRY, `false` para leitor EXIT)
+  - `matricula` (somente quando cartão ainda não cadastrado)
+8. Os caracteres `#` e `*` são somente confirmação local e não são enviados ao servidor.
+9. Se sucesso: LED verde 1s + buzzer com 2 beeps.
+10. Se falha: LED vermelho 1s + beep grave único.
+11. Volta para estado pronto (LED amarelo aceso).
 
-## 4) Entrada e saída com 2 leitores
+Configuração do equipamento:
+
+- Arquivo local: `firmware/esp32-rfid/secrets.h`
+- Template versionado: `firmware/esp32-rfid/secrets.example.h`
+- Firmware principal: `firmware/esp32-rfid/esp32s3_n16r8_checkcheck.ino`
+- Defina `SECRET_API_SCAN_URL` e `SECRET_API_CHECK_URL` com o IP/domínio do servidor.
+- Entrada de matrícula no firmware atual: via teclado numérico 4x3 (confirmação com `#` ou `*`).
+
+## 6) Entrada e saída com 2 leitores
 
 No firmware há suporte para dois leitores:
 
@@ -96,7 +147,7 @@ No firmware há suporte para dois leitores:
 
 Se usar apenas 1 leitor, o backend alterna entrada/saída com base no último estado do usuário.
 
-## 5) Visualização em tempo real
+## 7) Visualização em tempo real
 
 O dashboard mostra:
 
@@ -108,13 +159,14 @@ O dashboard mostra:
 
 ## Próximos passos recomendados
 
-- Fixar IP da Raspberry no roteador local
-- Proteger rede Wi-Fi local
-- Colocar serviço da Raspberry em `systemd` para iniciar automaticamente
-- (Opcional) usar Nginx reverse proxy para expor em porta 80
+- Fixar IP do PC no roteador (DHCP reservation)
+- Configurar inicialização automática do servidor no boot do PC
+- Ajustar `ALLOWED_ORIGIN` no `.env` e manter backup do SQLite
 
 ## Documentação complementar
 
 - BOM completo para Singapura: `docs/materials-singapore.md`
+- Esquema de montagem elétrica: `docs/wiring-esp32-rfid.md`
 - Setup de desenvolvimento/testes: `docs/development-setup-windows.md`
 - Publicação no GitHub: `docs/github-publish.md`
+- Migração para nuvem barata em SG (opcional): `docs/cloud-singapore-deploy.md`

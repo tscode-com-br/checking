@@ -48,11 +48,18 @@ Resposta esperada inicial:
 No Arduino IDE, instalar:
 
 - Board package: **esp32 by Espressif Systems**
-- Library: **MFRC522** (Miguel Balboa)
+- Library: **Adafruit PN532**
+- Library: **Keypad** (Mark Stanley / Alexander Brevig)
+- Selecionar placa: **ESP32S3 Dev Module** (compatível com ESP32-S3 N16R8)
 
 Arquivo do firmware:
 
-- `firmware/esp32-rfid/esp32_checkcheck.ino`
+- `firmware/esp32-rfid/esp32s3_n16r8_checkcheck.ino`
+
+Cadastro de matrícula no primeiro uso:
+
+- No firmware atual, quando o cartão não está cadastrado, a ESP32 pede a matrícula no **teclado numérico 4x3**.
+- Digitar matrícula numérica de 7 a 10 dígitos (ex.: `1234567`) e confirmar com `#` ou `*`.
 
 ## 6) Variáveis de ambiente importantes
 

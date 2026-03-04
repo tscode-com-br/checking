@@ -2,7 +2,7 @@ import 'dotenv/config';
 import http from 'node:http';
 import express from 'express';
 import { Server } from 'socket.io';
-import { createUser, listEvents, listPresentUsers, registerScan } from './db.js';
+import { checkCard, createOrUpdateUserByCard, listEvents, listPresentUsers, registerScan } from './db.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -15,8 +15,23 @@ const io = new Server(server, {
 const PORT = Number(process.env.PORT || 3000);
 const DEVICE_API_KEY = process.env.DEVICE_API_KEY || '';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+const TRUST_PROXY = String(process.env.TRUST_PROXY || 'false').toLowerCase() === 'true';
+
+if (TRUST_PROXY) {
+  app.set('trust proxy', 1);
+}
 
 app.use(express.json());
+app.use((_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-device-key, x-admin-key');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  if (_req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+});
 app.use(express.static('public'));
 
 function requireDeviceKey(req, res, next) {
@@ -53,17 +68,15 @@ app.get('/api/status', (_req, res) => {
 
 app.post('/api/users', requireAdminKey, (req, res) => {
   try {
-    const { nomeCompleto, matricula, chaveUsuario, rfidUid } = req.body || {};
-    if (!nomeCompleto || !matricula || !chaveUsuario || !rfidUid) {
-      return res.status(400).json({ error: 'Campos obrigatórios: nomeCompleto, matricula, chaveUsuario, rfidUid.' });
+    const { rfidUid, chaveUsuario, nomeCompleto, matricula, projeto } = req.body || {};
+    if (!rfidUid) {
+      return res.status(400).json({ error: 'Campo obrigatório: rfidUid.' });
+    }
+    if (!chaveUsuario && !matricula) {
+      return res.status(400).json({ error: 'Informe chaveUsuario ou matrícula (7-10 dígitos).' });
     }
 
-    const user = createUser({
-      nomeCompleto,
-      matricula,
-      chaveUsuario,
-      rfidUid
-    });
+    const user = createOrUpdateUserByCard({ rfidUid, chaveUsuario, nomeCompleto, matricula, projeto });
 
     return res.status(201).json({ ok: true, user });
   } catch (error) {
@@ -71,14 +84,45 @@ app.post('/api/users', requireAdminKey, (req, res) => {
   }
 });
 
-app.post('/api/scan', requireDeviceKey, (req, res) => {
+app.post('/api/cards/check', requireDeviceKey, (req, res) => {
   try {
-    const { rfidUid, readerId, deviceId } = req.body || {};
+    const { rfidUid } = req.body || {};
     if (!rfidUid) {
       return res.status(400).json({ ok: false, error: 'rfidUid é obrigatório.' });
     }
 
-    const evento = registerScan({ rfidUid, readerId });
+    const result = checkCard(rfidUid);
+    return res.json({
+      ok: true,
+      exists: result.exists,
+      needsMatricula: !result.exists,
+      rfidUid: result.uid
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message || 'Falha ao consultar cartão.' });
+  }
+});
+
+app.post('/api/scan', requireDeviceKey, (req, res) => {
+  try {
+    const { rfidUid, entrada, matricula, chaveUsuario, readerId, deviceId } = req.body || {};
+    if (!rfidUid) {
+      return res.status(400).json({ ok: false, error: 'rfidUid é obrigatório.' });
+    }
+
+    const entradaFinal = entrada ?? (readerId === 'ENTRY' ? true : readerId === 'EXIT' ? false : null);
+    if (entradaFinal == null) {
+      return res.status(400).json({ ok: false, error: 'entrada é obrigatória (true/false) ou readerId válido.' });
+    }
+
+    const evento = registerScan({
+      rfidUid,
+      entrada: entradaFinal,
+      matricula,
+      chaveUsuario,
+      readerId,
+      deviceId
+    });
     const present = listPresentUsers();
 
     io.emit('scan:created', {

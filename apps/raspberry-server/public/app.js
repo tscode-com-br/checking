@@ -13,7 +13,10 @@ function renderPresentes(presentes) {
 
   presentes.forEach((pessoa) => {
     const li = document.createElement('li');
-    li.textContent = `${pessoa.nome_completo} (${pessoa.matricula})`;
+    const nome = pessoa.nome_completo || 'Sem nome';
+    const matricula = pessoa.matricula || '-';
+    const projeto = pessoa.projeto || '-';
+    li.textContent = `${nome} | Matrícula: ${matricula} | Projeto: ${projeto} | UID: ${pessoa.rfid_uid}`;
     presentesListEl.appendChild(li);
   });
 }
@@ -23,12 +26,13 @@ function renderRegistros(registros) {
   registros.forEach((registro) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${registro.nome_completo}</td>
-      <td>${registro.matricula}</td>
-      <td>${registro.chave_usuario}</td>
-      <td>${registro.data_hora_entrada_singapura}</td>
-      <td>${registro.entrada ? 'true' : 'false'}</td>
       <td>${registro.rfid_uid}</td>
+      <td>${registro.chave_usuario}</td>
+      <td>${registro.entrada ? 'true' : 'false'}</td>
+      <td>${registro.data_hora_evento_singapura}</td>
+      <td>${registro.nome_completo || '-'}</td>
+      <td>${registro.matricula || '-'}</td>
+      <td>${registro.projeto || '-'}</td>
       <td>${registro.reader_id || '-'}</td>
     `;
     registrosTableBodyEl.appendChild(tr);
