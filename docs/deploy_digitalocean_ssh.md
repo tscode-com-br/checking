@@ -62,3 +62,22 @@ Resposta esperada:
 
 ## 5) Expor API publicamente (opcional)
 Recomendado usar Nginx + HTTPS (Let's Encrypt) na frente da API em `:8000`.
+
+## 6) Deploy automatico a cada push (GitHub Actions)
+O workflow `deploy-oceandrive.yml` foi adicionado em `.github/workflows/`.
+
+Para ativar:
+
+1. No repositorio GitHub, abra `Settings > Secrets and variables > Actions`.
+2. Crie os secrets abaixo:
+  - `OCEAN_HOST`: IP do droplet (ex.: `157.230.35.21`)
+  - `OCEAN_USER`: usuario SSH (ex.: `root`)
+  - `OCEAN_SSH_KEY`: chave privada SSH usada no acesso ao servidor
+  - `OCEAN_APP_DIR`: diretorio do app no servidor (ex.: `/opt/checkcheck`)
+  - `OCEAN_PORT`: porta SSH (normalmente `22`)
+3. Garanta que o arquivo `.env` ja exista no servidor em `OCEAN_APP_DIR`.
+
+Com isso, todo push na branch `main`:
+
+1. Sincroniza o codigo no servidor por SSH (sem enviar `.env` e chaves de deploy).
+2. Executa `docker compose up -d --build` para atualizar os servicos.
