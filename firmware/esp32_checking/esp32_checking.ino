@@ -18,12 +18,18 @@ typedef enum {
 
 class WiFiIntellisenseShim {
 public:
-  wl_status_t status();
-  void disconnect(bool wifioff = false, bool eraseap = false);
-  void mode(int m);
-  void setSleep(bool enabled);
-  void begin(const char* ssid, const char* passphrase);
-  const char* localIP();
+  wl_status_t status() { return WL_DISCONNECTED; }
+  void disconnect(bool wifioff = false, bool eraseap = false) {
+    (void)wifioff;
+    (void)eraseap;
+  }
+  void mode(int m) { (void)m; }
+  void setSleep(bool enabled) { (void)enabled; }
+  void begin(const char* ssid, const char* passphrase) {
+    (void)ssid;
+    (void)passphrase;
+  }
+  const char* localIP() { return "0.0.0.0"; }
 };
 
 extern WiFiIntellisenseShim WiFi;

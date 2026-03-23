@@ -31,12 +31,14 @@
           <h2>Usuarios em Check-In</h2>
           <button id="refreshCheckin">Atualizar</button>
         </div>
-        <table>
-          <thead>
-            <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
-          </thead>
-          <tbody id="checkinBody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+            </thead>
+            <tbody id="checkinBody"></tbody>
+          </table>
+        </div>
       </section>
 
       <section id="tab-checkout" class="tab">
@@ -44,12 +46,14 @@
           <h2>Usuarios em Check-Out</h2>
           <button id="refreshCheckout">Atualizar</button>
         </div>
-        <table>
-          <thead>
-            <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
-          </thead>
-          <tbody id="checkoutBody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+            </thead>
+            <tbody id="checkoutBody"></tbody>
+          </table>
+        </div>
       </section>
 
       <section id="tab-cadastro" class="tab">
@@ -57,12 +61,14 @@
           <h2>Cadastro de Pendencias</h2>
           <button id="refreshPending">Atualizar</button>
         </div>
-        <table>
-          <thead>
-            <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Acoes</th></tr>
-          </thead>
-          <tbody id="pendingBody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Acoes</th></tr>
+            </thead>
+            <tbody id="pendingBody"></tbody>
+          </table>
+        </div>
       </section>
 
       <section id="tab-eventos" class="tab">
@@ -70,12 +76,14 @@
           <h2>Eventos</h2>
           <button id="refreshEvents">Atualizar</button>
         </div>
-        <table>
-          <thead>
-            <tr><th>ID</th><th>RFID</th><th>Acao</th><th>Status</th><th>Mensagem</th><th>Horario</th></tr>
-          </thead>
-          <tbody id="eventsBody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>ID</th><th>RFID</th><th>Acao</th><th>Status</th><th>Mensagem</th><th>Horario</th></tr>
+            </thead>
+            <tbody id="eventsBody"></tbody>
+          </table>
+        </div>
       </section>
 
       <p id="statusLine"></p>

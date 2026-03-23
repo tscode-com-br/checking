@@ -23,6 +23,25 @@ function setStatus(message, ok = true) {
   statusLine.className = ok ? "status-ok" : "status-err";
 }
 
+function applyResponsiveLabels(tbodyId) {
+  const body = document.getElementById(tbodyId);
+  if (!body) {
+    return;
+  }
+  const table = body.closest("table");
+  if (!table) {
+    return;
+  }
+  const headers = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+  body.querySelectorAll("tr").forEach((tr) => {
+    Array.from(tr.children).forEach((cell, idx) => {
+      if (cell.tagName === "TD") {
+        cell.setAttribute("data-label", headers[idx] || "Campo");
+      }
+    });
+  });
+}
+
 function switchTab(tab) {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
   document.querySelector(`.tabs button[data-tab=\"${tab}\"]`).classList.add("active");
@@ -49,6 +68,7 @@ function renderUsers(targetId, rows) {
     tr.innerHTML = `<td>${r.time}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${r.rfid}</td>`;
     body.appendChild(tr);
   });
+  applyResponsiveLabels(targetId);
 }
 
 function makePendingRow(r) {
@@ -86,6 +106,7 @@ async function loadPending() {
   const body = document.getElementById("pendingBody");
   body.innerHTML = "";
   rows.forEach((r) => body.appendChild(makePendingRow(r)));
+  applyResponsiveLabels("pendingBody");
   setStatus("Lista Completa", true);
 }
 
@@ -98,6 +119,7 @@ async function loadEvents() {
     tr.innerHTML = `<td>${r.id}</td><td>${r.rfid ?? "-"}</td><td>${r.action}</td><td>${r.status}</td><td>${r.message}</td><td>${r.event_time}</td>`;
     body.appendChild(tr);
   });
+  applyResponsiveLabels("eventsBody");
 }
 
 async function savePending(id, rfid) {
