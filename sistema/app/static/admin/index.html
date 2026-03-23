@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Checking Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Checking Admin</h1>
+      <div class="top-controls">
+        <label>
+          Admin Key
+          <input id="adminKey" type="password" placeholder="x-admin-key" />
+        </label>
+        <button id="saveKey">Salvar Chave</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button data-tab="checkin" class="active">Check-In</button>
+      <button data-tab="checkout">Check-Out</button>
+      <button data-tab="cadastro">Cadastro</button>
+      <button data-tab="eventos">Eventos</button>
+    </nav>
+
+    <main>
+      <section id="tab-checkin" class="tab active">
+        <div class="section-header">
+          <h2>Usuarios em Check-In</h2>
+          <button id="refreshCheckin">Atualizar</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+          </thead>
+          <tbody id="checkinBody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-checkout" class="tab">
+        <div class="section-header">
+          <h2>Usuarios em Check-Out</h2>
+          <button id="refreshCheckout">Atualizar</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+          </thead>
+          <tbody id="checkoutBody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-cadastro" class="tab">
+        <div class="section-header">
+          <h2>Cadastro de Pendencias</h2>
+          <button id="refreshPending">Atualizar</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Acoes</th></tr>
+          </thead>
+          <tbody id="pendingBody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-eventos" class="tab">
+        <div class="section-header">
+          <h2>Eventos</h2>
+          <button id="refreshEvents">Atualizar</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>RFID</th><th>Acao</th><th>Status</th><th>Mensagem</th><th>Horario</th></tr>
+          </thead>
+          <tbody id="eventsBody"></tbody>
+        </table>
+      </section>
+
+      <p id="statusLine"></p>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

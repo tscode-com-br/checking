@@ -1,0 +1,42 @@
+Rodar a API (porta padrao 8000):
+.\.venv\Scripts\python.exe -m uvicorn sistema.app.main:app --host 0.0.0.0 --port 8000
+
+Rodar a API sem conflito de portas:
+.\.venv\Scripts\python.exe -m uvicorn sistema.app.main:app --host 0.0.0.0 --port 8001
+
+Compilar firmware ESP32-S3:
+arduino-cli compile --fqbn esp32:esp32:esp32s3 .\firmware\esp32_checking
+
+Enviar firmware para COM5:
+arduino-cli upload -p COM5 --fqbn esp32:esp32:esp32s3 .\firmware\esp32_checking
+
+Fluxo de leitor unico:
+1. A ESP32 envia apenas o RFID para /api/scan.
+2. A API consulta users.checkin:
+	- False -> faz check-in.
+	- True -> faz check-out.
+3. RFID desconhecido entra em pendencia na aba Cadastro.
+
+PN532 - modo atual do firmware:
+1. O firmware tenta inicializar primeiro em I2C.
+2. Se I2C falhar, faz fallback automatico para SPI.
+3. O log serial mostra o barramento ativo em "bus=i2c" ou "bus=spi".
+
+Ligacao para teste I2C (PN532 V3):
+1. Ajustar o seletor/jumpers do modulo para I2C.
+2. ESP32 GPIO 8 -> SDA do PN532.
+3. ESP32 GPIO 9 -> SCL do PN532.
+4. 3V3 -> VCC e GND comum.
+
+Observacao sobre heartbeat:
+1. Corrigido no firmware para nao marcar falha quando a API retornar HTTP 200 com JSON compacto ("ok":true).
+
+Monitoramento em tempo real:
+1. Serial da ESP32 (diagnostico PN532 + Wi-Fi):
+	arduino-cli monitor -p COM5 -c baudrate=115200
+
+2. Estado da API:
+	.\.venv\Scripts\python.exe -c "import urllib.request; print(urllib.request.urlopen('http://172.20.10.3:8000/api/health').read().decode())"
+
+3. Contadores do banco (heartbeats, eventos, pendencias):
+	.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('checking.db'); cur=c.cursor(); print('heartbeats',cur.execute('select count(*) from device_heartbeats').fetchone()[0]); print('events',cur.execute('select count(*) from check_events').fetchone()[0]); print('pending',cur.execute('select count(*) from pending_registrations').fetchone()[0]); c.close()"
