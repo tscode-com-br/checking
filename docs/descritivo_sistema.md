@@ -1,22 +1,24 @@
 # Descritivo Completo do Sistema - Checking
 
 ## 1. Objetivo
-Sistema de controle de presenca com ESP32 + 1 leitor PN532, integrado a backend FastAPI e banco de dados, com envio automatizado para Microsoft Forms e tela administrativa.
+Sistema de controle de presenca com ESP32-S3 N16R8 e 2 leitores RFID-RC522 v133, integrado a backend FastAPI e banco de dados, com envio automatizado para Microsoft Forms e tela administrativa.
 
-## 2. Regra Principal do Leitor Unico
-- Existe apenas um leitor RFID.
-- A ESP32 envia somente o RFID para a API.
-- A API decide a acao automaticamente usando users.checkin:
-	- se users.checkin = false: faz check-in.
-	- se users.checkin = true: faz check-out.
+## 2. Regra Principal dos Dois Leitores
+- Existem 2 leitores RFID fisicamente separados.
+- O leitor 1 representa a acao de check-in.
+- O leitor 2 representa a acao de check-out.
+- A ESP32 envia para a API o RFID lido e a acao explicita.
+- A API nao infere mais a acao automaticamente a partir de `users.checkin`.
 
 ## 3. Escopo Funcional
 - Usuarios nao cadastrados vao para pendencia de cadastro.
 - Administracao via pagina web com abas Check-In, Check-Out, Cadastro e Eventos.
 - Operacao inicial sem usuarios pre-cadastrados e sem CSV.
+- O estado `users.checkin` continua sendo atualizado para refletir a ultima operacao bem-sucedida.
 
 ## 4. Componentes
-- Firmware: ESP32-S3 N16R8.
+- Firmware: ESP32-S3 N16R8 identificada na COM5.
+- Leitores: 2x RFID-RC522 v133 operando em SPI compartilhado com CS dedicado por sensor.
 - Backend: FastAPI.
 - Banco: SQLite para ambiente local e PostgreSQL para producao.
 - Automacao: worker Playwright para envio do formulario.
@@ -32,18 +34,33 @@ Sistema de controle de presenca com ESP32 + 1 leitor PN532, integrado a backend 
 1. ESP32 envia heartbeat a cada 3 minutos.
 2. Backend registra sinal de vida e responde status operacional.
 
-### 6.2 Leitura de Cartao (fluxo unico)
-1. ESP32 envia RFID para POST /api/scan.
-2. Se RFID nao existe em users: cria/atualiza pendencia e responde LED amarelo (2 piscadas).
-3. Se RFID existe:
-	 - users.checkin=false -> acao check-in.
-	 - users.checkin=true -> acao check-out.
-4. API envia formulario, atualiza users.checkin e users.time, registra evento e responde LED verde (2s) em sucesso.
+### 6.1.1 Sinalizacao visual de inicializacao e conectividade
+1. Ao energizar, a ESP32 acende imediatamente o LED interno amarelo.
+2. Enquanto estiver conectando ao Wi-Fi e validando resposta positiva da API na nuvem, o LED permanece amarelo.
+3. Quando o heartbeat recebe resposta positiva, o LED amarelo apaga e o LED branco passa a piscar 1 vez por segundo.
+4. A cada 3 minutos a ESP32 envia novo heartbeat para manter a verificacao operacional.
+5. Se o heartbeat falhar ou a conectividade for perdida, o LED branco para de piscar e o LED vermelho fica aceso continuamente.
+6. Enquanto o LED vermelho estiver ativo por indisponibilidade da nuvem, a leitura de cartoes fica bloqueada.
+7. Se a indisponibilidade persistir por 30 segundos, a ESP32 reinicia para refazer a conexao Wi-Fi e o handshake com o sistema.
 
-### 6.3 Cadastro
+### 6.2 Leitura de Cartao no Sensor 1
+1. O RC522 #1 detecta um cartao.
+2. A ESP32 envia `rfid` e `action=checkin` para `POST /api/scan`.
+3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde LED amarelo.
+4. Se o RFID existir, o backend submete o check-in ao Microsoft Forms.
+5. Em sucesso, o backend grava `users.checkin=true`, atualiza `users.time` e registra o evento.
+
+### 6.3 Leitura de Cartao no Sensor 2
+1. O RC522 #2 detecta um cartao.
+2. A ESP32 envia `rfid` e `action=checkout` para `POST /api/scan`.
+3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde LED amarelo.
+4. Se o RFID existir, o backend submete o check-out ao Microsoft Forms.
+5. Em sucesso, o backend grava `users.checkin=false`, atualiza `users.time` e registra o evento.
+
+### 6.4 Cadastro
 1. Admin abre aba Cadastro e visualiza pendencias.
 2. Admin salva Nome, Chave (4 alfanumericos) e Projeto (P80/P82/P83).
-3. Sistema grava em users e remove pendencia.
+3. Sistema grava em `users` e remove a pendencia.
 
 ## 7. Endpoints
 - GET /api/health
@@ -55,11 +72,29 @@ Sistema de controle de presenca com ESP32 + 1 leitor PN532, integrado a backend 
 - POST /api/admin/users
 - GET /api/admin/events
 
-## 8. Timezone e formato de horario
+## 8. Contrato de Leitura do Dispositivo
+Payload esperado em `POST /api/scan`:
+
+```json
+{
+	"rfid": "A1B2C3D4",
+	"action": "checkin",
+	"device_id": "ESP32-S3-01",
+	"request_id": "ESP32-S3-01-sensor-1-12345-A1B2C3D4",
+	"shared_key": "segredo-do-dispositivo"
+}
+```
+
+Valores validos para `action`:
+- `checkin`
+- `checkout`
+
+## 9. Timezone e formato de horario
 - Timezone operacional: Asia/Singapore.
 - Persistencia: datetime timezone-aware.
 
-## 9. Requisitos de Operacao
+## 10. Requisitos de Operacao
 - Deploy 100% nuvem (API + DB + automacao + admin).
 - Monitorar falhas de XPath para manutencao da automacao.
+- Validar estabilidade do barramento SPI com os dois RC522 conectados.
 - Definir politica de retencao e auditoria de eventos.

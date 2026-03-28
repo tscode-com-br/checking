@@ -26,7 +26,6 @@ class FormsWorker:
 
         projeto_xpath_map = {
             "P80": self.load_xpath("botao_projeto_P80.txt"),
-            "P82": self.load_xpath("botao_projeto_P82.txt"),
             "P83": self.load_xpath("botao_projeto_P83.txt"),
         }
 

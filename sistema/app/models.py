@@ -13,6 +13,7 @@ class User(Base):
     chave: Mapped[str] = mapped_column(String(4), nullable=False)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     checkin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

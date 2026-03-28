@@ -1,8 +1,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <SPI.h>
-#include <Wire.h>
-#include <Adafruit_PN532.h>
+#include <MFRC522.h>
 
 #if defined(__INTELLISENSE__)
 // IntelliSense shim: runtime build still uses the real ESP32 WiFi definitions.
@@ -39,52 +38,71 @@ extern WiFiIntellisenseShim WiFi;
 #endif
 #endif
 
-const char* WIFI_SSID = "P80_WiFi";
-const char* WIFI_PASSWORD = "Petrobras@80";
+const char* WIFI_SSID = "TS 14 PRO";
+const char* WIFI_PASSWORD = "00000000";
 const char* API_HOST = "157.230.35.21";
 const char* DEVICE_ID = "ESP32-S3-01";
 const char* SHARED_KEY = "gyb2YCkwhDFkhhYQQC6W80BafOf9YsTr";
+const char* DEVICE_LOCATION = "main";
 
 const int API_PORTS[] = {8000, 8001};
 const int API_PORTS_COUNT = 2;
 
-const int SPI_SCK = 12;
-const int SPI_MISO = 13;
-const int SPI_MOSI = 11;
-const int PN532_SS = 9;
+const int RFID_SCK_PIN = 12;
+const int RFID_MISO_PIN = 13;
+const int RFID_MOSI_PIN = 11;
+const int RFID_RST_PIN = 9;
+const int RFID_SENSOR_1_SS_PIN = 10;
+const int RFID_SENSOR_2_SS_PIN = 14;
 
-const int I2C_SDA = 8;
-const int I2C_SCL = 9;
-const int PN532_IRQ = -1;
-const int PN532_RESET = -1;
+struct ReaderSlot {
+  MFRC522 reader;
+  const char* sensorName;
+  const char* actionName;
+  byte ssPin;
+  bool ready;
+  unsigned long lastScanAt;
 
-Adafruit_PN532 rfidReaderSpi(PN532_SS);
-Adafruit_PN532 rfidReaderI2c(PN532_IRQ, PN532_RESET);
-Adafruit_PN532* activeReader = nullptr;
-
-enum ReaderBus {
-  BUS_NONE,
-  BUS_I2C,
-  BUS_SPI
+  ReaderSlot(byte ssPinValue, byte rstPinValue, const char* sensorNameValue, const char* actionNameValue)
+      : reader(ssPinValue, rstPinValue), sensorName(sensorNameValue), actionName(actionNameValue), ssPin(ssPinValue), ready(false), lastScanAt(0) {}
 };
 
-ReaderBus activeReaderBus = BUS_NONE;
+ReaderSlot readers[] = {
+  ReaderSlot(RFID_SENSOR_1_SS_PIN, RFID_RST_PIN, "sensor-1", "checkin"),
+  ReaderSlot(RFID_SENSOR_2_SS_PIN, RFID_RST_PIN, "sensor-2", "checkout")
+};
+
+const int READER_COUNT = sizeof(readers) / sizeof(readers[0]);
 
 unsigned long lastHeartbeat = 0;
-unsigned long lastScan = 0;
-unsigned long lastWifiAttempt = 0;
 unsigned long lastReaderRetry = 0;
+unsigned long nextCloudAttemptAt = 0;
+unsigned long offlineSince = 0;
 
 const unsigned long HEARTBEAT_MS = 180000;
 const unsigned long SCAN_COOLDOWN_MS = 1200;
-const unsigned long WIFI_RETRY_MS = 10000;
+const unsigned long CLOUD_RETRY_MS = 30000;
+const unsigned long OFFLINE_RESTART_MS = 30000;
 const unsigned long READER_RETRY_MS = 5000;
 
-bool readerReady = false;
 int activeApiPort = 0;
 
 unsigned long lastDiagPrint = 0;
 const unsigned long DIAG_PRINT_MS = 10000;
+
+enum CloudStatus {
+  CLOUD_CONNECTING,
+  CLOUD_ONLINE,
+  CLOUD_OFFLINE
+};
+
+CloudStatus cloudStatus = CLOUD_CONNECTING;
+
+unsigned long lastStatusBlinkAt = 0;
+unsigned long statusLedOnUntil = 0;
+bool statusLedPulseActive = false;
+const unsigned long STATUS_BLINK_INTERVAL_MS = 1000;
+const unsigned long STATUS_BLINK_ON_MS = 100;
 
 void setInternalLedOff() {
 #ifdef RGB_BUILTIN
@@ -104,6 +122,12 @@ void setInternalLedYellow() {
 #endif
 }
 
+void setInternalLedOrange() {
+#ifdef RGB_BUILTIN
+  neopixelWrite(RGB_BUILTIN, 255, 80, 0);
+#endif
+}
+
 void setInternalLedGreen() {
 #ifdef RGB_BUILTIN
   neopixelWrite(RGB_BUILTIN, 0, 255, 0);
@@ -116,46 +140,110 @@ void setInternalLedRed() {
 #endif
 }
 
-void blinkInternalGreenConnected() {
-  for (int i = 0; i < 3; i++) {
-    setInternalLedGreen();
-    delay(100);
-    setInternalLedOff();
-    delay(100);
+void resetStatusBlink() {
+  lastStatusBlinkAt = 0;
+  statusLedOnUntil = 0;
+  statusLedPulseActive = false;
+}
+
+bool anyReaderNotReady() {
+  for (int i = 0; i < READER_COUNT; i++) {
+    if (!readers[i].ready) {
+      return true;
+    }
   }
+  return false;
 }
 
-void ledsOff() {
+void applyCloudLedBaseline() {
+  if (cloudStatus == CLOUD_CONNECTING) {
+    resetStatusBlink();
+    setInternalLedYellow();
+    return;
+  }
+
+  if (cloudStatus == CLOUD_OFFLINE) {
+    resetStatusBlink();
+    setInternalLedRed();
+    return;
+  }
+
   setInternalLedOff();
-}
-
-void setWhiteOnline() {
-  setInternalLedWhite();
-}
-
-void setRedOffline() {
-  setInternalLedRed();
 }
 
 void pulseGreenSuccess() {
   setInternalLedGreen();
   delay(2000);
-  setWhiteOnline();
+  applyCloudLedBaseline();
 }
 
-void blinkYellowPending() {
-  for (int i = 0; i < 2; i++) {
-    setInternalLedYellow();
-    delay(250);
-    setInternalLedOff();
-    delay(250);
-  }
-  setWhiteOnline();
+void holdOrangePending() {
+  setInternalLedOrange();
+  delay(4000);
+  applyCloudLedBaseline();
 }
 
 void startupLedTest() {
-  // Keep LED off at boot; status colors are shown only by runtime state.
+  setInternalLedYellow();
+}
+
+void setCloudConnecting() {
+  cloudStatus = CLOUD_CONNECTING;
+  applyCloudLedBaseline();
+}
+
+void setCloudOnline() {
+  cloudStatus = CLOUD_ONLINE;
+  offlineSince = 0;
+  resetStatusBlink();
   setInternalLedOff();
+}
+
+void setCloudOffline() {
+  cloudStatus = CLOUD_OFFLINE;
+  if (offlineSince == 0) {
+    offlineSince = millis();
+  }
+  applyCloudLedBaseline();
+}
+
+bool canProcessCardReads() {
+  return cloudStatus == CLOUD_ONLINE;
+}
+
+void restartIfOfflineTooLong() {
+  if (cloudStatus != CLOUD_OFFLINE || offlineSince == 0) {
+    return;
+  }
+
+  if (millis() - offlineSince < OFFLINE_RESTART_MS) {
+    return;
+  }
+
+  Serial.println("[NET] Offline for 30s. Restarting ESP32 to retry Wi-Fi and cloud connection.");
+  delay(100);
+  ESP.restart();
+}
+
+void updateStatusLed() {
+  unsigned long now = millis();
+
+  if (cloudStatus == CLOUD_CONNECTING || cloudStatus == CLOUD_OFFLINE) {
+    applyCloudLedBaseline();
+    return;
+  }
+
+  if (statusLedPulseActive && (long)(now - statusLedOnUntil) >= 0) {
+    setInternalLedOff();
+    statusLedPulseActive = false;
+  }
+
+  if (!statusLedPulseActive && (lastStatusBlinkAt == 0 || now - lastStatusBlinkAt >= STATUS_BLINK_INTERVAL_MS)) {
+    lastStatusBlinkAt = now;
+    statusLedOnUntil = now + STATUS_BLINK_ON_MS;
+    setInternalLedWhite();
+    statusLedPulseActive = true;
+  }
 }
 
 String uidToString(uint8_t* uid, uint8_t uidLength) {
@@ -168,6 +256,10 @@ String uidToString(uint8_t* uid, uint8_t uidLength) {
   }
   out.toUpperCase();
   return out;
+}
+
+byte readReaderVersion(ReaderSlot& slot) {
+  return slot.reader.PCD_ReadRegister(MFRC522::VersionReg);
 }
 
 String buildApiUrl(const char* path, int port) {
@@ -240,7 +332,62 @@ bool sendHeartbeat() {
   return ok;
 }
 
-String sendScan(const String& uid) {
+bool ensureWifiConnected() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+
+  Serial.print("[NET] Connecting Wi-Fi SSID=");
+  Serial.println(WIFI_SSID);
+
+  WiFi.disconnect(true, true);
+  delay(150);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(300);
+  }
+
+  wl_status_t status = WiFi.status();
+  if (status != WL_CONNECTED) {
+    Serial.print("[NET] Wi-Fi connect failed. status=");
+    Serial.println((int)status);
+    activeApiPort = 0;
+    return false;
+  }
+
+  Serial.print("[NET] Wi-Fi connected. IP: ");
+  Serial.println(WiFi.localIP());
+  return true;
+}
+
+bool attemptCloudHandshake() {
+  setCloudConnecting();
+
+  if (!ensureWifiConnected()) {
+    setCloudOffline();
+    nextCloudAttemptAt = millis() + CLOUD_RETRY_MS;
+    return false;
+  }
+
+  if (sendHeartbeat()) {
+    Serial.println("[NET] Cloud heartbeat acknowledged.");
+    lastHeartbeat = millis();
+    nextCloudAttemptAt = 0;
+    setCloudOnline();
+    return true;
+  }
+
+  Serial.println("[NET] Cloud heartbeat failed.");
+  setCloudOffline();
+  nextCloudAttemptAt = millis() + CLOUD_RETRY_MS;
+  return false;
+}
+
+String sendScan(const String& uid, const char* action, const char* sensorName) {
   if (WiFi.status() != WL_CONNECTED) {
     return "network_error";
   }
@@ -258,10 +405,12 @@ String sendScan(const String& uid) {
     return "http_init_error";
   }
 
-  String requestId = String(DEVICE_ID) + "-" + String(millis()) + "-" + uid;
+  String requestId = String(DEVICE_ID) + "-" + String(sensorName) + "-" + String(millis()) + "-" + uid;
 
   String body = "{";
   body += "\"rfid\":\"" + uid + "\",";
+  body += "\"local\":\"" + String(DEVICE_LOCATION) + "\",";
+  body += "\"action\":\"" + String(action) + "\",";
   body += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   body += "\"request_id\":\"" + requestId + "\",";
   body += "\"shared_key\":\"" + String(SHARED_KEY) + "\"";
@@ -282,66 +431,66 @@ String sendScan(const String& uid) {
   return response;
 }
 
-bool initReader(Adafruit_PN532& reader, const char* modeName) {
-  reader.begin();
-  uint32_t versionData = reader.getFirmwareVersion();
-  if (!versionData) {
-    Serial.print("[PN532] ");
-    Serial.print(modeName);
-    Serial.println(" getFirmwareVersion=0x00000000 (sem resposta no barramento)");
+bool initReader(ReaderSlot& slot) {
+  digitalWrite(slot.ssPin, HIGH);
+  slot.reader.PCD_Init();
+  delay(50);
+
+  byte version = readReaderVersion(slot);
+  if (version == 0x00 || version == 0xFF) {
+    Serial.print("[RC522] ");
+    Serial.print(slot.sensorName);
+    Serial.println(" sem resposta no barramento SPI");
+    slot.ready = false;
     return false;
   }
-  Serial.print("[PN532] ");
-  Serial.print(modeName);
-  Serial.print(" getFirmwareVersion=0x");
-  Serial.println(versionData, HEX);
-  reader.SAMConfig();
+
+  slot.reader.PCD_AntennaOn();
+  slot.ready = true;
+  Serial.print("[RC522] ");
+  Serial.print(slot.sensorName);
+  Serial.print(" version=0x");
+  Serial.print(version, HEX);
+  Serial.print(" action=");
+  Serial.println(slot.actionName);
   return true;
 }
 
-bool initReaderI2C() {
-  Wire.begin(I2C_SDA, I2C_SCL);
-  delay(20);
-  if (initReader(rfidReaderI2c, "I2C")) {
-    activeReader = &rfidReaderI2c;
-    activeReaderBus = BUS_I2C;
-    return true;
-  }
-  return false;
-}
-
-bool initReaderSPI() {
-  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
-  delay(20);
-  if (initReader(rfidReaderSpi, "SPI")) {
-    activeReader = &rfidReaderSpi;
-    activeReaderBus = BUS_SPI;
-    return true;
-  }
-  return false;
-}
-
-const char* currentReaderBusName() {
-  if (activeReaderBus == BUS_I2C) {
-    return "i2c";
-  }
-  if (activeReaderBus == BUS_SPI) {
-    return "spi";
-  }
-  return "none";
-}
-
 void initReaderIfNeeded() {
-  if (!readerReady) {
-    readerReady = initReaderI2C();
-    if (!readerReady) {
-      readerReady = initReaderSPI();
+  bool allReady = true;
+
+  for (int i = 0; i < READER_COUNT; i++) {
+    if (!readers[i].ready) {
+      if (!initReader(readers[i])) {
+        allReady = false;
+      }
     }
-    Serial.print("[PN532] reader=");
-    Serial.print(readerReady ? "ok" : "fail");
-    Serial.print(" bus=");
-    Serial.println(currentReaderBusName());
   }
+
+  Serial.print("[RC522] initialized=");
+  Serial.println(allReady ? "all-ready" : "partial-or-failed");
+}
+
+void releaseCard(ReaderSlot& slot) {
+  slot.reader.PICC_HaltA();
+  slot.reader.PCD_StopCrypto1();
+}
+
+bool shouldThrottleReader(ReaderSlot& slot) {
+  return millis() - slot.lastScanAt < SCAN_COOLDOWN_MS;
+}
+
+bool readCardUid(ReaderSlot& slot, String& uid) {
+  if (!slot.reader.PICC_IsNewCardPresent()) {
+    return false;
+  }
+
+  if (!slot.reader.PICC_ReadCardSerial()) {
+    return false;
+  }
+
+  uid = uidToString(slot.reader.uid.uidByte, slot.reader.uid.size);
+  return uid.length() > 0;
 }
 
 void printDiagSnapshot() {
@@ -351,87 +500,64 @@ void printDiagSnapshot() {
   Serial.print(WiFi.localIP());
   Serial.print(" api_port=");
   Serial.print(activeApiPort);
-  Serial.print(" reader=");
-  Serial.print(readerReady ? "ok" : "fail");
-  Serial.print(" bus=");
-  Serial.println(currentReaderBusName());
+  Serial.print(" cloud=");
+  if (cloudStatus == CLOUD_CONNECTING) {
+    Serial.print("connecting");
+  } else if (cloudStatus == CLOUD_ONLINE) {
+    Serial.print("online");
+  } else {
+    Serial.print("offline");
+  }
+  for (int i = 0; i < READER_COUNT; i++) {
+    Serial.print(" ");
+    Serial.print(readers[i].sensorName);
+    Serial.print("=");
+    Serial.print(readers[i].ready ? "ok" : "fail");
+  }
+  Serial.println();
 }
 
-bool readAndProcess(Adafruit_PN532& reader) {
-  uint8_t uidBytes[7] = {0};
-  uint8_t uidLength = 0;
-  bool detected = reader.readPassiveTargetID(PN532_MIFARE_ISO14443A, uidBytes, &uidLength, 60);
-  if (!detected || uidLength == 0) {
+bool readAndProcess(ReaderSlot& slot) {
+  if (!slot.ready) {
     return false;
   }
 
-  if (millis() - lastScan < SCAN_COOLDOWN_MS) {
+  String uid = "";
+  if (!readCardUid(slot, uid)) {
+    return false;
+  }
+
+  releaseCard(slot);
+
+  if (shouldThrottleReader(slot)) {
     return true;
   }
 
-  String uid = uidToString(uidBytes, uidLength);
-  String response = sendScan(uid);
+  String response = sendScan(uid, slot.actionName, slot.sensorName);
 
   Serial.print("[SCAN] UID=");
   Serial.print(uid);
+  Serial.print(" sensor=");
+  Serial.print(slot.sensorName);
+  Serial.print(" action=");
+  Serial.print(slot.actionName);
   Serial.print(" response=");
   Serial.println(response);
 
-  if (response.indexOf("pending_registration") >= 0) {
-    blinkYellowPending();
+  if (response.indexOf("orange_4s") >= 0 || response.indexOf("pending_registration") >= 0) {
+    holdOrangePending();
   } else if (response.indexOf("green_2s") >= 0 || response.indexOf("submitted") >= 0) {
     pulseGreenSuccess();
   } else if (response.indexOf("duplicate") >= 0) {
-    setWhiteOnline();
+    applyCloudLedBaseline();
   } else {
-    setRedOffline();
+    setInternalLedRed();
     delay(1000);
-    setWhiteOnline();
+    applyCloudLedBaseline();
   }
 
-  lastScan = millis();
+  slot.lastScanAt = millis();
   return true;
-}
-
-void connectWifiAndSignal() {
-  if (WiFi.status() == WL_CONNECTED) {
-    return;
-  }
-
-  setInternalLedYellow();
-  Serial.print("[NET] Connecting Wi-Fi SSID=");
-  Serial.println(WIFI_SSID);
-
-  WiFi.disconnect(true, true);
-  delay(150);
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(300);
-  }
-
-  wl_status_t status = WiFi.status();
-  if (status != WL_CONNECTED) {
-    Serial.print("[NET] Wi-Fi connect failed. status=");
-    Serial.println((int)status);
-    activeApiPort = 0;
-    setRedOffline();
-    return;
-  }
-
-  blinkInternalGreenConnected();
-
-  if (sendHeartbeat()) {
-    Serial.print("[NET] Online. IP: ");
-    Serial.println(WiFi.localIP());
-    setWhiteOnline();
-  } else {
-    Serial.println("[NET] Online, but heartbeat failed.");
-    setRedOffline();
-  }
 }
 
 void setup() {
@@ -440,8 +566,13 @@ void setup() {
 
   startupLedTest();
 
-  initReaderIfNeeded();
-  connectWifiAndSignal();
+  SPI.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SENSOR_1_SS_PIN);
+  pinMode(RFID_SENSOR_1_SS_PIN, OUTPUT);
+  pinMode(RFID_SENSOR_2_SS_PIN, OUTPUT);
+  digitalWrite(RFID_SENSOR_1_SS_PIN, HIGH);
+  digitalWrite(RFID_SENSOR_2_SS_PIN, HIGH);
+
+  attemptCloudHandshake();
 }
 
 void loop() {
@@ -450,28 +581,39 @@ void loop() {
     printDiagSnapshot();
   }
 
-  if (!readerReady && millis() - lastReaderRetry > READER_RETRY_MS) {
+  if (anyReaderNotReady() && millis() - lastReaderRetry > READER_RETRY_MS) {
     lastReaderRetry = millis();
     initReaderIfNeeded();
   }
 
-  if (millis() - lastHeartbeat > HEARTBEAT_MS) {
-    lastHeartbeat = millis();
-    if (WiFi.status() == WL_CONNECTED && sendHeartbeat()) {
-      setWhiteOnline();
+  if (cloudStatus == CLOUD_ONLINE && WiFi.status() != WL_CONNECTED) {
+    Serial.println("[NET] Wi-Fi lost while online.");
+    activeApiPort = 0;
+    setCloudOffline();
+    nextCloudAttemptAt = millis() + CLOUD_RETRY_MS;
+  }
+
+  if (cloudStatus == CLOUD_ONLINE && millis() - lastHeartbeat > HEARTBEAT_MS) {
+    if (sendHeartbeat()) {
+      lastHeartbeat = millis();
     } else {
-      setRedOffline();
+      setCloudOffline();
+      nextCloudAttemptAt = millis() + CLOUD_RETRY_MS;
     }
   }
 
-  if (WiFi.status() != WL_CONNECTED && millis() - lastWifiAttempt > WIFI_RETRY_MS) {
-    lastWifiAttempt = millis();
-    connectWifiAndSignal();
+  if (cloudStatus != CLOUD_ONLINE && (nextCloudAttemptAt == 0 || (long)(millis() - nextCloudAttemptAt) >= 0)) {
+    attemptCloudHandshake();
   }
 
-  if (readerReady && activeReader != nullptr) {
-    readAndProcess(*activeReader);
+  if (canProcessCardReads()) {
+    for (int i = 0; i < READER_COUNT; i++) {
+      readAndProcess(readers[i]);
+    }
   }
+
+  updateStatusLed();
+  restartIfOfflineTooLong();
 
   delay(20);
 }

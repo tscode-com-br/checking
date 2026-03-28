@@ -10,29 +10,41 @@ arduino-cli compile --fqbn esp32:esp32:esp32s3 .\firmware\esp32_checking
 Enviar firmware para COM5:
 arduino-cli upload -p COM5 --fqbn esp32:esp32:esp32s3 .\firmware\esp32_checking
 
-Fluxo de leitor unico:
-1. A ESP32 envia apenas o RFID para /api/scan.
-2. A API consulta users.checkin:
-	- False -> faz check-in.
-	- True -> faz check-out.
-3. RFID desconhecido entra em pendencia na aba Cadastro.
+Instalar dependencias de firmware no Arduino CLI:
+arduino-cli lib install "MFRC522"
 
-PN532 - modo atual do firmware:
-1. O firmware tenta inicializar primeiro em I2C.
-2. Se I2C falhar, faz fallback automatico para SPI.
-3. O log serial mostra o barramento ativo em "bus=i2c" ou "bus=spi".
+Fluxo com 2 leitores RC522:
+1. O leitor RC522 #1 envia `action=checkin` para /api/scan.
+2. O leitor RC522 #2 envia `action=checkout` para /api/scan.
+3. A API executa a acao recebida e atualiza `users.checkin` apenas quando o envio ao Forms for bem-sucedido.
+4. RFID desconhecido entra em pendencia na aba Cadastro.
 
-Ligacao para teste I2C (PN532 V3):
-1. Ajustar o seletor/jumpers do modulo para I2C.
-2. ESP32 GPIO 8 -> SDA do PN532.
-3. ESP32 GPIO 9 -> SCL do PN532.
-4. 3V3 -> VCC e GND comum.
+Fluxo de boot e monitoramento da nuvem:
+1. Ao energizar, o LED interno da ESP32 acende amarelo imediatamente.
+2. A ESP32 tenta conectar ao Wi-Fi e enviar heartbeat para a API.
+3. Quando recebe resposta positiva da API, o LED branco passa a piscar 1 vez por segundo.
+4. A ESP32 repete o heartbeat a cada 3 minutos.
+5. Em falha de conectividade ou resposta negativa, o LED vermelho fica aceso continuamente.
+6. Enquanto o LED vermelho estiver aceso por indisponibilidade, a leitura de cartoes fica bloqueada.
+7. Se a indisponibilidade permanecer por 30 segundos, a ESP32 reinicia para repetir a tentativa de conexao ao Wi-Fi e ao sistema.
+
+Ligacao SPI dos dois RC522:
+1. ESP32 GPIO 12 -> SCK dos dois RC522.
+2. ESP32 GPIO 11 -> MOSI dos dois RC522.
+3. ESP32 GPIO 13 -> MISO dos dois RC522.
+4. ESP32 GPIO 9 -> RST dos dois RC522.
+5. ESP32 GPIO 10 -> SDA/SS do RC522 #1.
+6. ESP32 GPIO 14 -> SDA/SS do RC522 #2.
+7. 3V3 -> VCC e GND comum para ambos.
+
+Arquivo de referencia eletrica:
+docs\esquematico_esp32_rc522_duplo.md
 
 Observacao sobre heartbeat:
 1. Corrigido no firmware para nao marcar falha quando a API retornar HTTP 200 com JSON compacto ("ok":true).
 
 Monitoramento em tempo real:
-1. Serial da ESP32 (diagnostico PN532 + Wi-Fi):
+1. Serial da ESP32 (diagnostico RC522 + Wi-Fi):
 	arduino-cli monitor -p COM5 -c baudrate=115200
 
 2. Estado da API:

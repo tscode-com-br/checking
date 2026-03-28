@@ -27,6 +27,7 @@ def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
             nome=r.nome,
             chave=r.chave,
             projeto=r.projeto,
+            local=r.local,
             checkin=r.checkin,
             time=r.time,
         )
@@ -43,6 +44,7 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
             nome=r.nome,
             chave=r.chave,
             projeto=r.projeto,
+            local=r.local,
             checkin=r.checkin,
             time=r.time,
         )
@@ -78,6 +80,7 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
             nome=payload.nome,
             chave=payload.chave,
             projeto=payload.projeto,
+            local=None,
             checkin=False,
             time=now_sgt(),
         )
@@ -103,6 +106,17 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
     db.commit()
 
     return {"ok": True, "rfid": payload.rfid}
+
+
+@router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_key)])
+def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
+    pending = db.get(PendingRegistration, pending_id)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Pending registration not found")
+
+    db.delete(pending)
+    db.commit()
+    return {"ok": True, "id": pending_id}
 
 
 @router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_key)])

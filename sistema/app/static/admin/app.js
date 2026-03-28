@@ -71,22 +71,60 @@ function renderUsers(targetId, rows) {
   applyResponsiveLabels(targetId);
 }
 
+function formatAction(action) {
+  if (action === "checkin") {
+    return "Check-In";
+  }
+  if (action === "checkout") {
+    return "Check-Out";
+  }
+  if (action === "register") {
+    return "Cadastro";
+  }
+  return action;
+}
+
 function makePendingRow(r) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${r.rfid}</td>
-    <td><input class=\"inline\" id=\"nome-${r.id}\" /></td>
-    <td><input class=\"inline\" id=\"chave-${r.id}\" maxlength=\"4\" /></td>
+    <td><input class=\"inline\" id=\"nome-${r.id}\" disabled /></td>
+    <td><input class=\"inline\" id=\"chave-${r.id}\" maxlength=\"4\" disabled /></td>
     <td>
-      <select class=\"inline\" id=\"projeto-${r.id}\">
+      <select class=\"inline\" id=\"projeto-${r.id}\" disabled>
         <option value=\"P80\">P80</option>
-        <option value=\"P82\">P82</option>
         <option value=\"P83\">P83</option>
       </select>
     </td>
-    <td><button data-save=\"${r.id}\" data-rfid=\"${r.rfid}\">Salvar</button></td>
+    <td class=\"pending-actions\">
+      <button data-edit=\"${r.id}\">Editar</button>
+      <button data-remove=\"${r.id}\">Remover</button>
+      <button data-save=\"${r.id}\" data-rfid=\"${r.rfid}\" disabled>Salvar</button>
+    </td>
   `;
   return tr;
+}
+
+function setPendingEditingState(id, editing) {
+  const nome = document.getElementById(`nome-${id}`);
+  const chave = document.getElementById(`chave-${id}`);
+  const projeto = document.getElementById(`projeto-${id}`);
+  const saveButton = document.querySelector(`button[data-save="${id}"]`);
+  const editButton = document.querySelector(`button[data-edit="${id}"]`);
+
+  if (!nome || !chave || !projeto || !saveButton || !editButton) {
+    return;
+  }
+
+  nome.disabled = !editing;
+  chave.disabled = !editing;
+  projeto.disabled = !editing;
+  saveButton.disabled = !editing;
+  editButton.disabled = editing;
+
+  if (editing) {
+    nome.focus();
+  }
 }
 
 async function loadCheckin() {
@@ -116,7 +154,7 @@ async function loadEvents() {
   body.innerHTML = "";
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.id}</td><td>${r.rfid ?? "-"}</td><td>${r.action}</td><td>${r.status}</td><td>${r.message}</td><td>${r.event_time}</td>`;
+    tr.innerHTML = `<td>${r.id}</td><td>${r.rfid ?? "-"}</td><td>${formatAction(r.action)}</td><td>${r.status}</td><td>${r.message}</td><td>${r.event_time}</td>`;
     body.appendChild(tr);
   });
   applyResponsiveLabels("eventsBody");
@@ -154,6 +192,29 @@ async function savePending(id, rfid) {
   await loadPending();
 }
 
+async function removePending(id) {
+  const res = await fetch(`/api/admin/pending/${id}`, {
+    method: "DELETE",
+    headers: adminHeaders(),
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      setStatus("Admin Key ausente/invalida. Clique em Salvar Chave e tente novamente.", false);
+      return;
+    }
+    if (res.status === 404) {
+      setStatus("Pendencia nao encontrada para remocao.", false);
+      return;
+    }
+    setStatus(`Falha ao remover pendencia: HTTP ${res.status}`, false);
+    return;
+  }
+
+  setStatus("Pendencia removida com sucesso", true);
+  await loadPending();
+}
+
 function bindActions() {
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
@@ -171,6 +232,14 @@ function bindActions() {
 
   document.getElementById("pendingBody").addEventListener("click", (ev) => {
     const t = ev.target;
+    if (t.tagName === "BUTTON" && t.dataset.edit) {
+      setPendingEditingState(t.dataset.edit, true);
+      return;
+    }
+    if (t.tagName === "BUTTON" && t.dataset.remove) {
+      removePending(t.dataset.remove).catch((e) => setStatus(e.message, false));
+      return;
+    }
     if (t.tagName === "BUTTON" && t.dataset.save) {
       savePending(t.dataset.save, t.dataset.rfid).catch((e) => setStatus(e.message, false));
     }

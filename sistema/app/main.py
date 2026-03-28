@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
@@ -23,4 +24,12 @@ app.include_router(admin.router)
 
 static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.exists():
-    app.mount("/admin", StaticFiles(directory=static_dir / "admin", html=True), name="admin")
+    @app.get("/admin", include_in_schema=False)
+    def legacy_admin_redirect_root() -> RedirectResponse:
+        return RedirectResponse(url="./", status_code=307)
+
+    @app.get("/admin/{path:path}", include_in_schema=False)
+    def legacy_admin_redirect(path: str = "") -> RedirectResponse:
+        return RedirectResponse(url="../", status_code=307)
+
+    app.mount("/", StaticFiles(directory=static_dir / "admin", html=True), name="admin")

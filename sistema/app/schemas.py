@@ -16,14 +16,16 @@ class HeartbeatRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     rfid: str = Field(min_length=4, max_length=64)
+    local: str = Field(min_length=2, max_length=40)
+    action: Literal["checkin", "checkout"]
     device_id: str = Field(min_length=2, max_length=80)
     request_id: str = Field(min_length=8, max_length=80)
     shared_key: str
 
 
 class ScanResponse(BaseModel):
-    outcome: Literal["submitted", "pending_registration", "invalid_key", "duplicate"]
-    led: Literal["white", "yellow_blink_2", "green_2s", "red"]
+    outcome: Literal["submitted", "pending_registration", "invalid_key", "duplicate", "failed"]
+    led: Literal["white", "orange_4s", "green_2s", "red"]
     message: str
 
 
@@ -31,7 +33,7 @@ class AdminUserUpsert(BaseModel):
     rfid: str = Field(min_length=4, max_length=64)
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: Literal["P80", "P83"]
 
     @field_validator("chave")
     @classmethod
@@ -46,6 +48,7 @@ class UserRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    local: Optional[str]
     checkin: bool
     time: datetime
 

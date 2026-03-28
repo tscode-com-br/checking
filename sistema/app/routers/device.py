@@ -69,9 +69,9 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             CheckEvent(
                 idempotency_key=payload.request_id,
                 rfid=None,
-                action="auto",
+                action=payload.action,
                 status="pending_registration",
-                message="RFID not registered yet",
+                message=f"RFID not registered yet for {payload.action}",
                 project=None,
                 event_time=now_sgt(),
                 submitted_at=None,
@@ -81,11 +81,12 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         db.commit()
         return ScanResponse(
             outcome="pending_registration",
-            led="yellow_blink_2",
+            led="orange_4s",
             message="RFID added to pending registration",
         )
 
-    action = "checkout" if user.checkin else "checkin"
+    action = payload.action
+    user.local = payload.local
     worker = FormsWorker(assets_dir=Path("assets"))
     submission = worker.submit_with_retries(action=action, chave=user.chave, projeto=user.projeto)
 
@@ -117,7 +118,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         )
 
     return ScanResponse(
-        outcome="submitted",
+        outcome="failed",
         led="red",
         message="Operation failed after retries",
     )
