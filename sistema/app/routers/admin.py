@@ -8,6 +8,7 @@ from ..core.config import settings
 from ..database import get_db
 from ..models import CheckEvent, PendingRegistration, User
 from ..schemas import AdminUserUpsert, EventRow, PendingRow, UserRow
+from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -90,18 +91,19 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
     if pending:
         db.delete(pending)
 
-    db.add(
-        CheckEvent(
-            idempotency_key=f"register-{uuid4()}",
-            rfid=payload.rfid,
-            action="register",
-            status="done",
-            message="User registered via admin",
-            project=payload.projeto,
-            event_time=now_sgt(),
-            submitted_at=now_sgt(),
-            retry_count=0,
-        )
+    log_event(
+        db,
+        idempotency_key=f"register-{uuid4()}",
+        source="admin",
+        action="register",
+        status="done",
+        message="User registered via admin",
+        rfid=payload.rfid,
+        project=payload.projeto,
+        request_path="/api/admin/users",
+        http_status=200,
+        submitted_at=now_sgt(),
+        details=f"nome={payload.nome}",
     )
     db.commit()
 
@@ -112,9 +114,32 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
 def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
     pending = db.get(PendingRegistration, pending_id)
     if pending is None:
+        log_event(
+            db,
+            source="admin",
+            action="pending",
+            status="failed",
+            message="Pending registration not found for removal",
+            request_path=f"/api/admin/pending/{pending_id}",
+            http_status=404,
+            details=f"pending_id={pending_id}",
+            commit=True,
+        )
         raise HTTPException(status_code=404, detail="Pending registration not found")
 
+    pending_rfid = pending.rfid
     db.delete(pending)
+    log_event(
+        db,
+        source="admin",
+        action="pending",
+        status="removed",
+        message="Pending registration removed via admin",
+        rfid=pending_rfid,
+        request_path=f"/api/admin/pending/{pending_id}",
+        http_status=200,
+        details=f"pending_id={pending_id}",
+    )
     db.commit()
     return {"ok": True, "id": pending_id}
 
@@ -125,11 +150,18 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
     return [
         EventRow(
             id=r.id,
+            source=r.source,
             rfid=r.rfid,
+            device_id=r.device_id,
+            local=r.local,
             action=r.action,
             status=r.status,
             message=r.message,
+            details=r.details,
             project=r.project,
+            request_path=r.request_path,
+            http_status=r.http_status,
+            retry_count=r.retry_count,
             event_time=r.event_time,
         )
         for r in rows

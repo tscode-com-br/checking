@@ -24,8 +24,8 @@ class ScanRequest(BaseModel):
 
 
 class ScanResponse(BaseModel):
-    outcome: Literal["submitted", "pending_registration", "invalid_key", "duplicate", "failed"]
-    led: Literal["white", "orange_4s", "green_2s", "red"]
+    outcome: Literal["submitted", "pending_registration", "invalid_key", "duplicate", "failed", "local_updated"]
+    led: Literal["white", "orange_4s", "green_1s", "green_blink_3x_1s", "red", "red_2s", "red_blink_5x_1s"]
     message: str
 
 
@@ -63,9 +63,16 @@ class PendingRow(BaseModel):
 
 class EventRow(BaseModel):
     id: int
+    source: str
     rfid: Optional[str]
+    device_id: Optional[str]
+    local: Optional[str]
     action: str
     status: str
     message: str
+    details: Optional[str]
     project: Optional[str]
+    request_path: Optional[str]
+    http_status: Optional[int]
+    retry_count: int
     event_time: datetime

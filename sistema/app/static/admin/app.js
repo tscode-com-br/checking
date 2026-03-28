@@ -1,21 +1,8 @@
 const statusLine = document.getElementById("statusLine");
-const adminKeyInput = document.getElementById("adminKey");
 const DEFAULT_ADMIN_KEY = "change-admin-key";
 
-function resolveAdminKey() {
-  const typed = (adminKeyInput.value || "").trim();
-  if (typed) {
-    return typed;
-  }
-  const saved = (localStorage.getItem("checking_admin_key") || "").trim();
-  if (saved) {
-    return saved;
-  }
-  return DEFAULT_ADMIN_KEY;
-}
-
 function adminHeaders() {
-  return { "x-admin-key": resolveAdminKey() };
+  return { "x-admin-key": DEFAULT_ADMIN_KEY };
 }
 
 function setStatus(message, ok = true) {
@@ -53,7 +40,7 @@ async function fetchJson(url) {
   const res = await fetch(url, { headers: adminHeaders() });
   if (!res.ok) {
     if (res.status === 401) {
-      throw new Error("HTTP 401 - Admin Key ausente/invalida. Preencha a chave e clique em Salvar Chave.");
+      throw new Error("HTTP 401 - Admin Key ausente/invalida.");
     }
     throw new Error(`HTTP ${res.status}`);
   }
@@ -62,13 +49,37 @@ async function fetchJson(url) {
 
 function renderUsers(targetId, rows) {
   const body = document.getElementById(targetId);
+  const includeLocal = targetId === "checkinBody" || targetId === "checkoutBody";
   body.innerHTML = "";
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.time}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${r.rfid}</td>`;
+    if (includeLocal) {
+      tr.innerHTML = `<td>${r.time}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${formatLocal(r.local)}</td><td>${r.rfid}</td>`;
+    } else {
+      tr.innerHTML = `<td>${r.time}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${r.rfid}</td>`;
+    }
     body.appendChild(tr);
   });
   applyResponsiveLabels(targetId);
+}
+
+function formatLocal(local) {
+  if (local === "main") {
+    return "Escritorio Principal";
+  }
+  if (local === "co80") {
+    return "Escritorio Avancado P80";
+  }
+  if (local === "un80") {
+    return "A bordo da P80";
+  }
+  if (local === "co83") {
+    return "Escritorio Avancado P83";
+  }
+  if (local === "un83") {
+    return "A bordo da P83";
+  }
+  return local || "-";
 }
 
 function formatAction(action) {
@@ -154,7 +165,7 @@ async function loadEvents() {
   body.innerHTML = "";
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.id}</td><td>${r.rfid ?? "-"}</td><td>${formatAction(r.action)}</td><td>${r.status}</td><td>${r.message}</td><td>${r.event_time}</td>`;
+    tr.innerHTML = `<td>${r.id}</td><td>${r.event_time}</td><td>${r.source}</td><td>${formatAction(r.action)}</td><td>${r.status}</td><td>${r.device_id ?? "-"}</td><td>${formatLocal(r.local)}</td><td>${r.rfid ?? "-"}</td><td>${r.project ?? "-"}</td><td>${r.http_status ?? "-"}</td><td>${r.request_path ?? "-"}</td><td>${r.retry_count ?? 0}</td><td>${r.message}</td><td>${r.details ?? "-"}</td>`;
     body.appendChild(tr);
   });
   applyResponsiveLabels("eventsBody");
@@ -181,7 +192,7 @@ async function savePending(id, rfid) {
 
   if (!res.ok) {
     if (res.status === 401) {
-      setStatus("Admin Key ausente/invalida. Clique em Salvar Chave e tente novamente.", false);
+      setStatus("Admin Key ausente/invalida.", false);
       return;
     }
     setStatus(`Falha ao salvar cadastro: HTTP ${res.status}`, false);
@@ -200,7 +211,7 @@ async function removePending(id) {
 
   if (!res.ok) {
     if (res.status === 401) {
-      setStatus("Admin Key ausente/invalida. Clique em Salvar Chave e tente novamente.", false);
+      setStatus("Admin Key ausente/invalida.", false);
       return;
     }
     if (res.status === 404) {
@@ -218,11 +229,6 @@ async function removePending(id) {
 function bindActions() {
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-  });
-
-  document.getElementById("saveKey").addEventListener("click", () => {
-    localStorage.setItem("checking_admin_key", adminKeyInput.value.trim());
-    setStatus("Admin key salva no navegador", true);
   });
 
   document.getElementById("refreshCheckin").addEventListener("click", () => loadCheckin().catch((e) => setStatus(e.message, false)));
@@ -247,9 +253,6 @@ function bindActions() {
 }
 
 async function bootstrap() {
-  const bootKey = resolveAdminKey();
-  adminKeyInput.value = bootKey;
-  localStorage.setItem("checking_admin_key", bootKey);
   bindActions();
   try {
     await loadPending();

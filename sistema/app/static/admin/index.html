@@ -9,13 +9,6 @@
   <body>
     <header>
       <h1>Checking Admin</h1>
-      <div class="top-controls">
-        <label>
-          Admin Key
-          <input id="adminKey" type="password" placeholder="x-admin-key" />
-        </label>
-        <button id="saveKey">Salvar Chave</button>
-      </div>
     </header>
 
     <nav class="tabs">
@@ -34,7 +27,7 @@
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>RFID</th></tr>
             </thead>
             <tbody id="checkinBody"></tbody>
           </table>
@@ -49,7 +42,7 @@
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>RFID</th></tr>
+              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>RFID</th></tr>
             </thead>
             <tbody id="checkoutBody"></tbody>
           </table>
@@ -79,7 +72,7 @@
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>ID</th><th>RFID</th><th>Acao Solicitada</th><th>Status</th><th>Mensagem</th><th>Horario</th></tr>
+              <tr><th>ID</th><th>Horario</th><th>Origem</th><th>Acao</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Projeto</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>

@@ -103,6 +103,7 @@ unsigned long statusLedOnUntil = 0;
 bool statusLedPulseActive = false;
 const unsigned long STATUS_BLINK_INTERVAL_MS = 1000;
 const unsigned long STATUS_BLINK_ON_MS = 100;
+const unsigned long SUCCESS_GREEN_MS = 1000;
 
 void setInternalLedOff() {
 #ifdef RGB_BUILTIN
@@ -171,16 +172,55 @@ void applyCloudLedBaseline() {
   setInternalLedOff();
 }
 
+void resumeOnlineIdleState() {
+  if (cloudStatus != CLOUD_ONLINE) {
+    applyCloudLedBaseline();
+    return;
+  }
+
+  unsigned long now = millis();
+  lastStatusBlinkAt = now;
+  statusLedOnUntil = now + STATUS_BLINK_ON_MS;
+  statusLedPulseActive = true;
+  setInternalLedWhite();
+}
+
 void pulseGreenSuccess() {
   setInternalLedGreen();
-  delay(2000);
-  applyCloudLedBaseline();
+  delay(SUCCESS_GREEN_MS);
+  resumeOnlineIdleState();
 }
 
 void holdOrangePending() {
   setInternalLedOrange();
   delay(4000);
-  applyCloudLedBaseline();
+  resumeOnlineIdleState();
+}
+
+void holdRedTwoSeconds() {
+  setInternalLedRed();
+  delay(2000);
+  resumeOnlineIdleState();
+}
+
+void blinkGreenLocationUpdated() {
+  for (int i = 0; i < 3; i++) {
+    setInternalLedGreen();
+    delay(167);
+    setInternalLedOff();
+    delay(167);
+  }
+  resumeOnlineIdleState();
+}
+
+void blinkRedFailurePattern() {
+  for (int i = 0; i < 5; i++) {
+    setInternalLedRed();
+    delay(100);
+    setInternalLedOff();
+    delay(100);
+  }
+  resumeOnlineIdleState();
 }
 
 void startupLedTest() {
@@ -546,9 +586,15 @@ bool readAndProcess(ReaderSlot& slot) {
 
   if (response.indexOf("orange_4s") >= 0 || response.indexOf("pending_registration") >= 0) {
     holdOrangePending();
-  } else if (response.indexOf("green_2s") >= 0 || response.indexOf("submitted") >= 0) {
+  } else if (response.indexOf("green_1s") >= 0 || response.indexOf("green_2s") >= 0 || response.indexOf("submitted") >= 0) {
     pulseGreenSuccess();
-  } else if (response.indexOf("duplicate") >= 0) {
+  } else if (response.indexOf("green_blink_3x_1s") >= 0 || response.indexOf("local_updated") >= 0) {
+    blinkGreenLocationUpdated();
+  } else if (response.indexOf("red_2s") >= 0) {
+    holdRedTwoSeconds();
+  } else if (response.indexOf("red_blink_5x_1s") >= 0) {
+    blinkRedFailurePattern();
+  } else if (response.indexOf("duplicate") >= 0 || response.indexOf("\"led\":\"white\"") >= 0) {
     applyCloudLedBaseline();
   } else {
     setInternalLedRed();

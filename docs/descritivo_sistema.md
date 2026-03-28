@@ -33,6 +33,7 @@ Sistema de controle de presenca com ESP32-S3 N16R8 e 2 leitores RFID-RC522 v133,
 ### 6.1 Heartbeat
 1. ESP32 envia heartbeat a cada 3 minutos.
 2. Backend registra sinal de vida e responde status operacional.
+3. Cada heartbeat recebido ou rejeitado tambem gera registro detalhado na aba Eventos.
 
 ### 6.1.1 Sinalizacao visual de inicializacao e conectividade
 1. Ao energizar, a ESP32 acende imediatamente o LED interno amarelo.
@@ -46,20 +47,30 @@ Sistema de controle de presenca com ESP32-S3 N16R8 e 2 leitores RFID-RC522 v133,
 ### 6.2 Leitura de Cartao no Sensor 1
 1. O RC522 #1 detecta um cartao.
 2. A ESP32 envia `rfid` e `action=checkin` para `POST /api/scan`.
-3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde LED amarelo.
-4. Se o RFID existir, o backend submete o check-in ao Microsoft Forms.
-5. Em sucesso, o backend grava `users.checkin=true`, atualiza `users.time` e registra o evento.
+3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para acender o LED laranja por 4 segundos.
+4. Assim que o LED laranja apagar, a ESP32 volta ao estado online, retoma o pisca branco e libera uma nova leitura.
+5. Se o RFID existir e `users.checkin` ja estiver `true`, a API nao reenvia ao Forms: ela apenas atualiza `users.local`, mantem o usuario em Check-In e responde para a ESP32 piscar o LED verde 3 vezes em 1 segundo.
+6. Se o RFID existir e `users.checkin` estiver `false`, a propria API preenche o Microsoft Forms e busca os elementos do formulario em etapas de ate 10 segundos: chave, confirmacao da chave, botao Normal, botao Check-In, botao do projeto e botao Enviar.
+7. Para check-in, apenas os projetos P80 e P83 sao validos no formulario.
+8. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 sinalizar 5 piscadas vermelhas em 1 segundo e voltar ao estado de prontidao.
+9. A API aguarda ate 20 segundos pelo elemento de sucesso do formulario.
+10. Em sucesso, o backend grava `users.checkin=true`, atualiza `users.time` e registra o evento.
+11. Em sucesso, o usuario deixa de aparecer na aba Check-Out do admin, porque o estado atual passa a ser Check-In.
 
 ### 6.3 Leitura de Cartao no Sensor 2
 1. O RC522 #2 detecta um cartao.
 2. A ESP32 envia `rfid` e `action=checkout` para `POST /api/scan`.
-3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde LED amarelo.
-4. Se o RFID existir, o backend submete o check-out ao Microsoft Forms.
-5. Em sucesso, o backend grava `users.checkin=false`, atualiza `users.time` e registra o evento.
+3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para acender o LED laranja por 4 segundos.
+4. Assim que o LED laranja apagar, a ESP32 volta ao estado online, retoma o pisca branco e libera uma nova leitura.
+5. Se o usuario existir, mas `users.checkin` estiver `false`, o backend bloqueia o checkout, responde para acender o LED vermelho por 2 segundos e volta ao estado de prontidao.
+6. Se o usuario existir e `users.checkin` estiver `true`, o backend busca os elementos do formulario em etapas de ate 10 segundos: chave, confirmacao da chave, botao Normal, botao Check-Out e botao Enviar.
+7. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 sinalizar 5 piscadas vermelhas em 1 segundo e voltar ao estado de prontidao.
+8. A API aguarda ate 20 segundos pelo elemento de sucesso do formulario.
+9. Em sucesso, o backend grava `users.checkin=false`, atualiza `users.time` e registra o evento.
 
 ### 6.4 Cadastro
 1. Admin abre aba Cadastro e visualiza pendencias.
-2. Admin salva Nome, Chave (4 alfanumericos) e Projeto (P80/P82/P83).
+2. Admin salva Nome, Chave (4 alfanumericos) e Projeto (P80/P83).
 3. Sistema grava em `users` e remove a pendencia.
 
 ## 7. Endpoints
@@ -98,3 +109,8 @@ Valores validos para `action`:
 - Monitorar falhas de XPath para manutencao da automacao.
 - Validar estabilidade do barramento SPI com os dois RC522 conectados.
 - Definir politica de retencao e auditoria de eventos.
+
+## 11. Auditoria de Eventos
+- A aba Eventos funciona como trilha operacional da API.
+- O sistema registra heartbeats, scans recebidos, pendencias, bloqueios, tentativas de envio ao Forms, falhas, sucessos e operacoes administrativas de escrita.
+- Cada evento pode incluir origem, device, local, RFID, projeto, rota da requisicao, codigo HTTP, numero de tentativas, mensagem e detalhes adicionais.

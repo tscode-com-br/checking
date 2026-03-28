@@ -18,6 +18,18 @@ Fluxo com 2 leitores RC522:
 2. O leitor RC522 #2 envia `action=checkout` para /api/scan.
 3. A API executa a acao recebida e atualiza `users.checkin` apenas quando o envio ao Forms for bem-sucedido.
 4. RFID desconhecido entra em pendencia na aba Cadastro.
+5. Quando a API responder que o RFID nao esta cadastrado, o LED interno acende laranja por 4 segundos.
+6. Assim que o laranja apagar, a ESP32 volta imediatamente ao estado online, pisca o LED branco e aceita nova leitura de RFID.
+7. Se o usuario ja estiver em check-in, a API apenas atualiza o campo `local` e a ESP32 pisca o LED verde 3 vezes em 1 segundo antes de voltar ao branco de prontidao.
+8. Para usuario cadastrado fora de check-in, e a propria API que preenche o Forms e busca cada elemento obrigatorio em etapas de ate 10 segundos.
+9. No checkout, se o usuario nao tiver check-in ativo, a ESP32 acende o LED vermelho por 2 segundos e volta ao estado de prontidao.
+10. Se qualquer etapa obrigatoria falhar, a ESP32 pisca o LED vermelho 5 vezes em 1 segundo e volta ao estado de prontidao.
+11. Quando o envio ao Forms for concluido com sucesso, a ESP32 acende o LED verde por 1 segundo e volta ao estado online.
+12. Quando um usuario realiza check-in com sucesso, ele deixa de aparecer na aba Check-Out do admin.
+
+Auditoria da API na aba Eventos:
+1. A API registra heartbeats, scans recebidos, pendencias, bloqueios, tentativas e resultados do envio ao Forms.
+2. Cada registro pode incluir origem, device, local, RFID, projeto, rota, codigo HTTP, tentativas, mensagem e detalhes.
 
 Fluxo de boot e monitoramento da nuvem:
 1. Ao energizar, o LED interno da ESP32 acende amarelo imediatamente.
