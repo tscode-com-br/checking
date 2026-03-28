@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: deploy-oceandrive-main
@@ -52,3 +53,25 @@ jobs:
             fi
             docker compose up -d --build
             docker image prune -f
+
+      - name: Validate application health
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ secrets.OCEAN_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            cd ${{ secrets.OCEAN_APP_DIR }}
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsS http://127.0.0.1:8000/api/health; then
+                exit 0
+              fi
+              sleep 6
+            done
+            echo "Health check falhou apos o deploy"
+            docker compose ps
+            docker compose logs --tail=120 app
+            exit 1

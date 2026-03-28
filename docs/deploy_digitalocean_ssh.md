@@ -38,13 +38,13 @@ No Windows, no projeto:
 No root do projeto:
 
 ```powershell
-.\deploy\deploy_do_ssh.ps1 -Host "SEU_IP" -User "root" -KeyPath "C:\caminho\sua-chave.pem"
+.\deploy\deploy_do_ssh.ps1 -ServerHost "SEU_IP" -User "root" -KeyPath "C:\caminho\sua-chave.pem"
 ```
 
 Opcional: definir diretório remoto:
 
 ```powershell
-.\deploy\deploy_do_ssh.ps1 -Host "SEU_IP" -User "root" -KeyPath "C:\caminho\sua-chave.pem" -RemoteDir "~/apps/checkcheck"
+.\deploy\deploy_do_ssh.ps1 -ServerHost "SEU_IP" -User "root" -KeyPath "C:\caminho\sua-chave.pem" -RemoteDir "/root/checkcheck"
 ```
 
 ## 4) Validar no servidor
@@ -68,16 +68,29 @@ O workflow `deploy-oceandrive.yml` foi adicionado em `.github/workflows/`.
 
 Para ativar:
 
-1. No repositorio GitHub, abra `Settings > Secrets and variables > Actions`.
-2. Crie os secrets abaixo:
+1. Use o repositorio `git@github.com:tscode-com-br/checking.git` como `origin` local.
+2. No repositorio GitHub, abra `Settings > Secrets and variables > Actions`.
+3. Crie os secrets abaixo:
   - `OCEAN_HOST`: IP do droplet (ex.: `157.230.35.21`)
   - `OCEAN_USER`: usuario SSH (ex.: `root`)
   - `OCEAN_SSH_KEY`: chave privada SSH usada no acesso ao servidor
-  - `OCEAN_APP_DIR`: diretorio do app no servidor (ex.: `/opt/checkcheck`)
+  - `OCEAN_APP_DIR`: diretorio do app no servidor (atual: `/root/checkcheck`)
   - `OCEAN_PORT`: porta SSH (normalmente `22`)
-3. Garanta que o arquivo `.env` ja exista no servidor em `OCEAN_APP_DIR`.
+4. Garanta que o arquivo `.env` ja exista no servidor em `OCEAN_APP_DIR`.
+5. Dê push na branch `main`.
 
 Com isso, todo push na branch `main`:
 
-1. Sincroniza o codigo no servidor por SSH (sem enviar `.env` e chaves de deploy).
-2. Executa `docker compose up -d --build` para atualizar os servicos.
+1. Faz checkout do codigo mais recente no GitHub Actions.
+2. Sincroniza o codigo no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
+3. Executa `docker compose up -d --build` para atualizar os servicos.
+4. Valida `http://127.0.0.1:8000/api/health` no servidor e falha o workflow se a aplicacao nao subir.
+
+## 7) Remoto Git recomendado
+No clone local, padronize o remoto principal:
+
+```powershell
+git remote remove checkingapi
+git remote set-url origin git@github.com:tscode-com-br/checking.git
+git push -u origin main
+```

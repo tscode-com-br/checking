@@ -34,6 +34,12 @@ Implementacao inicial do sistema de check-in/check-out com:
 Compatibilidade:
 - A URL antiga `/admin` redireciona para `/`.
 
+## Repositorio e deploy automatico
+- Repositorio principal: `git@github.com:tscode-com-br/checking.git`
+- Todo push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`.
+- O workflow sincroniza o codigo com a OceanDrive, executa `docker compose up -d --build` e valida `GET /api/health` no servidor.
+- O arquivo `.env` de producao permanece somente no servidor e nao e enviado pelo GitHub Actions.
+
 Observacao:
 - O padrao local agora usa SQLite (`DATABASE_URL=sqlite:///./checking.db`), evitando travamento quando o Postgres nao estiver ativo.
 - Para usar Postgres, altere `DATABASE_URL` no `.env` e rode novamente.
