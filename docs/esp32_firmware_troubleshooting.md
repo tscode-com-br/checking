@@ -18,11 +18,12 @@ Ele cobre principalmente:
 
 ## 3. Leitura rapida por sintoma
 
-### 3.1 LED amarelo fixo por muito tempo
+### 3.1 LED azul piscando durante a inicializacao por muito tempo
 Significa:
 - a placa esta inicializando
 - ou tentando conectar no Wi-Fi
 - ou tentando validar a API
+- o estado visual esperado agora e azul com 3 piscadas dentro de 1500 ms
 
 Causas provaveis:
 - SSID ou senha incorretos no firmware
@@ -38,10 +39,13 @@ Como verificar:
    - `[NET] API not reachable on 8000/8001`
 3. Confirmar que a API responde em `GET /api/health`.
 
-### 3.2 LED vermelho pulsando continuamente
+### 3.2 LED vermelho piscando lentamente no offline
 Significa:
 - a placa entrou no estado offline
 - a leitura de cartoes esta bloqueada
+
+Observacao:
+- o estado visual esperado agora e uma piscada vermelha de 40 ms a cada 2 segundos
 
 Causas provaveis:
 - perda de Wi-Fi apos entrar online
@@ -57,7 +61,7 @@ Como verificar:
 
 ### 3.3 LED laranja em cartao nao cadastrado
 Significa na especificacao atual:
-- o firmware executa o estado `LED-07`, com 2 piscadas de 40 ms dentro de 1000 ms
+- o firmware executa o estado `LED-07`, com 3 piscadas de 40 ms dentro de 1500 ms
 
 Causas provaveis quando parecer diferente do esperado:
 - o mesmo UID esta sendo relido repetidamente
@@ -138,13 +142,13 @@ Como verificar:
 
 | ID | Interpretacao pratica | O que verificar |
 |---|---|---|
-| LED-01 | Boot ou handshake | Wi-Fi, SSID, reachability da API |
-| LED-02 | Sistema pronto | Estado normal de prontidao |
+| LED-01 | Boot ou handshake | Wi-Fi, SSID, reachability da API; 3 piscadas azuis em 1500 ms |
+| LED-02 | Sistema pronto | Estado normal de prontidao; 1 piscada verde de 20 ms a cada 2 s |
 | LED-04 | Leitura em processamento | Latencia da API ou fila de rede |
-| LED-07 | RFID nao cadastrado | Pendencia criada com 2 piscadas laranja de 40 ms |
-| LED-08 | Checkout invalido | Usuario sem check-in ativo |
-| LED-09 | Falha operacional | Contrato da API, timeout de automacao ou erro backend |
-| LED-10 | Offline | Wi-Fi, heartbeat, host, portas `8000/8001` |
+| LED-07 | RFID nao cadastrado | Pendencia criada com 3 piscadas laranja de 40 ms |
+| LED-08 | Checkout invalido | Usuario sem check-in ativo; 3 piscadas vermelhas de 40 ms |
+| LED-09 | Falha operacional | Contrato da API, timeout de automacao ou erro backend; vermelho fixo por 1500 ms |
+| LED-10 | Offline | Wi-Fi, heartbeat, host, portas `8000/8001`; 1 piscada vermelha de 40 ms a cada 2 s |
 | LED-11 | Resposta inesperada | Divergencia entre backend e firmware |
 
 ## 5. Logs seriais importantes

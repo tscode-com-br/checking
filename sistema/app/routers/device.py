@@ -38,18 +38,7 @@ def heartbeat(payload: HeartbeatRequest, db: Session = Depends(get_db)) -> dict:
         last_seen_at=now_sgt(),
     )
     db.add(heartbeat_row)
-    log_event(
-        db,
-        source="device",
-        action="heartbeat",
-        status="success",
-        message="Heartbeat accepted",
-        device_id=payload.device_id,
-        request_path="/api/device/heartbeat",
-        http_status=200,
-    )
     db.commit()
-    notify_admin_data_changed("heartbeat")
     return {"ok": True, "led": "white"}
 
 

@@ -36,11 +36,11 @@ Sistema de controle de presenca com ESP32-S3 N16R8 e 2 leitores RFID-RC522 v133,
 3. Cada heartbeat recebido ou rejeitado tambem gera registro detalhado na aba Eventos.
 
 ### 6.1.1 Sinalizacao visual de inicializacao e conectividade
-1. Ao energizar, a ESP32 acende imediatamente o LED interno amarelo.
-2. Enquanto estiver conectando ao Wi-Fi e validando resposta positiva da API na nuvem, o LED permanece amarelo.
-3. Quando o heartbeat recebe resposta positiva, o LED amarelo apaga e o LED branco passa a piscar com pulso curto de 30 ms a cada 1 segundo.
+1. Ao energizar, a ESP32 entra no estado de conexao e passa a piscar o LED azul 3 vezes a cada 1500 ms, com pulsos de 40 ms.
+2. Enquanto estiver conectando ao Wi-Fi e validando resposta positiva da API na nuvem, o LED azul continua nesse padrao.
+3. Quando o heartbeat recebe resposta positiva, a ESP32 entra no estado online de prontidao e o LED verde passa a piscar 1 vez a cada 2 segundos, com pulso de 20 ms.
 4. A cada 3 minutos a ESP32 envia novo heartbeat para manter a verificacao operacional.
-5. Se o heartbeat falhar ou a conectividade for perdida, o LED branco para de piscar e o LED vermelho passa a pulsar com 30 ms a cada 1 segundo.
+5. Se o heartbeat falhar ou a conectividade for perdida, o LED vermelho passa a piscar 1 vez a cada 2 segundos, com pulso de 40 ms.
 6. Enquanto o LED vermelho estiver ativo por indisponibilidade da nuvem, a leitura de cartoes fica bloqueada.
 7. Se a indisponibilidade persistir por 30 segundos, a ESP32 reinicia para refazer a conexao Wi-Fi e o handshake com o sistema.
 
@@ -48,21 +48,21 @@ Sistema de controle de presenca com ESP32-S3 N16R8 e 2 leitores RFID-RC522 v133,
 
 | ID | Estado | Cor / padrao | Duracao | Gatilho principal |
 |---|---|---|---|---|
-| LED-01 | Inicializando / conectando nuvem | Amarelo fixo | Indefinida | Boot da placa e inicio do handshake |
-| LED-02 | Online em repouso | Branco piscando | 30 ms ligado a cada 1000 ms | Nuvem online e dispositivo pronto |
-| LED-03 | Intervalo do repouso online | Apagado | ~970 ms entre pulsos | Parte normal do ciclo de pisca branco |
+| LED-01 | Inicializando / conectando nuvem | Azul piscando | 3 piscadas a cada 1500 ms, 40 ms cada | Boot da placa e inicio do handshake |
+| LED-02 | Online em repouso | Verde piscando | 1 piscada a cada 2 segundos, 20 ms cada | Nuvem online e dispositivo pronto |
+| LED-03 | Intervalo do repouso online | Apagado | ~1980 ms entre pulsos | Parte normal do ciclo de pisca verde |
 | LED-04 | Processando leitura | Azul fixo | Ate a resposta da API | Cartao lido e requisicao em andamento |
-| LED-05 | Sucesso de operacao | Verde 4 piscadas | 4 x 20 ms dentro de 1000 ms | `submitted` com `green_1s` ou `green_2s` |
-| LED-06 | Local atualizado | Verde 4 piscadas | 4 x 20 ms dentro de 1000 ms | `local_updated` com `green_blink_3x_1s` |
-| LED-07 | Cadastro pendente | Laranja 2 piscadas | 2 x 40 ms dentro de 1000 ms | `pending_registration` com `orange_4s` |
-| LED-08 | Erro de regra de negocio | Vermelho fixo | 2000 ms | `failed` com `red_2s` |
-| LED-09 | Erro operacional forte | Vermelho 2 piscadas | 2 x 40 ms dentro de 1000 ms | `red_blink_5x_1s` |
-| LED-10 | Offline | Vermelho piscando | 30 ms ligado a cada 1000 ms | Falha de Wi-Fi, API ou heartbeat |
+| LED-05 | Sucesso de operacao | Verde continuo | 1000 ms | `submitted` com `green_1s` ou `green_2s` |
+| LED-06 | Local atualizado | Verde continuo | 1000 ms | `local_updated` com `green_blink_3x_1s` |
+| LED-07 | Cadastro pendente | Laranja 3 piscadas | 3 x 40 ms dentro de 1500 ms | `pending_registration` com `orange_4s` |
+| LED-08 | Erro de regra de negocio | Vermelho 3 piscadas | 3 x 40 ms dentro de 1500 ms | `failed` com `red_2s` |
+| LED-09 | Erro operacional forte | Vermelho fixo | 1500 ms | `red_blink_5x_1s` |
+| LED-10 | Offline | Vermelho piscando | 1 piscada a cada 2 segundos, 40 ms cada | Falha de Wi-Fi, API ou heartbeat |
 | LED-11 | Fallback de resposta invalida | Vermelho 2 piscadas | 2 x 40 ms dentro de 1000 ms | Resposta da API nao reconhecida |
 
 Observacoes:
-- O LED-03 e a fase apagada do LED-02. Como o pulso branco tem 30 ms em um ciclo total de 1000 ms, a fase apagada fica em aproximadamente 970 ms.
-- Os estados LED-05, LED-06, LED-07, LED-09 e LED-11 sao animacoes bloqueantes no firmware atual; durante esses efeitos o loop principal aguarda o termino do padrao antes de voltar ao estado de prontidao.
+- O LED-03 e a fase apagada do LED-02. Como o pulso verde tem 20 ms em um ciclo total de 2000 ms, a fase apagada fica em aproximadamente 1980 ms.
+- Os estados LED-05, LED-06, LED-07, LED-09 e LED-11 sao efeitos bloqueantes no firmware atual; durante esses efeitos o loop principal aguarda o termino do padrao antes de voltar ao estado de prontidao.
 - O LED-10 representa indisponibilidade operacional da nuvem. Enquanto esse estado estiver ativo, a ESP32 nao processa leituras de cartao.
 
 ### 6.2 Leitura de Cartao no Sensor 1
@@ -70,10 +70,10 @@ Observacoes:
 2. A ESP32 envia `rfid` e `action=checkin` para `POST /api/scan`.
 3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para executar o estado LED-07, com duas piscadas laranja de 40 ms dentro de 1 segundo.
 4. Assim que o padrao do LED-07 termina, a ESP32 volta ao estado online, retoma o pulso branco de prontidao e libera uma nova leitura.
-5. Se o RFID existir e `users.checkin` ja estiver `true`, a API nao reenvia ao Forms: ela apenas atualiza `users.local`, mantem o usuario em Check-In e responde para a ESP32 executar o estado LED-06, com quatro piscadas verdes de 20 ms dentro de 1 segundo.
+5. Se o RFID existir e `users.checkin` ja estiver `true`, a API nao reenvia ao Forms: ela apenas atualiza `users.local`, mantem o usuario em Check-In e responde para a ESP32 executar o estado LED-06, com verde continuo por 1000 ms.
 6. Se o RFID existir e `users.checkin` estiver `false`, a propria API preenche o Microsoft Forms e busca os elementos do formulario em etapas de ate 10 segundos: chave, confirmacao da chave, botao Normal, botao Check-In, botao do projeto e botao Enviar.
 7. Para check-in, apenas os projetos P80 e P83 sao validos no formulario.
-8. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com duas piscadas vermelhas de 40 ms dentro de 1 segundo, e voltar ao estado de prontidao.
+8. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com LED vermelho fixo por 1500 ms, e voltar ao estado de prontidao.
 9. A API aguarda ate 20 segundos pelo elemento de sucesso do formulario.
 10. Em sucesso, o backend grava `users.checkin=true`, atualiza `users.time` e registra o evento.
 11. Em sucesso, o usuario deixa de aparecer na aba Check-Out do admin, porque o estado atual passa a ser Check-In.
@@ -81,11 +81,11 @@ Observacoes:
 ### 6.3 Leitura de Cartao no Sensor 2
 1. O RC522 #2 detecta um cartao.
 2. A ESP32 envia `rfid` e `action=checkout` para `POST /api/scan`.
-3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para executar o estado LED-07, com duas piscadas laranja de 40 ms dentro de 1 segundo.
+3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para executar o estado LED-07, com tres piscadas laranja de 40 ms dentro de 1500 ms.
 4. Assim que o padrao do LED-07 termina, a ESP32 volta ao estado online, retoma o pulso branco de prontidao e libera uma nova leitura.
-5. Se o usuario existir, mas `users.checkin` estiver `false`, o backend bloqueia o checkout, responde para executar o estado LED-08 por 2 segundos e volta ao estado de prontidao.
+5. Se o usuario existir, mas `users.checkin` estiver `false`, o backend bloqueia o checkout, responde para executar o estado LED-08, com tres piscadas vermelhas de 40 ms dentro de 1500 ms, e volta ao estado de prontidao.
 6. Se o usuario existir e `users.checkin` estiver `true`, o backend busca os elementos do formulario em etapas de ate 10 segundos: chave, confirmacao da chave, botao Normal, botao Check-Out e botao Enviar.
-7. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com duas piscadas vermelhas de 40 ms dentro de 1 segundo, e voltar ao estado de prontidao.
+7. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com LED vermelho fixo por 1500 ms, e voltar ao estado de prontidao.
 8. A API aguarda ate 20 segundos pelo elemento de sucesso do formulario.
 9. Em sucesso, o backend grava `users.checkin=false`, atualiza `users.time` e registra o evento.
 

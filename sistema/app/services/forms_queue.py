@@ -98,23 +98,14 @@ def _process_submission(submission_id: int) -> None:
             projeto=submission.projeto,
         )
 
-        for idx, event in enumerate(result.get("audit_events", []), start=1):
-            log_event(
-                db,
-                idempotency_key=f"{submission.request_id}:forms:{idx}",
-                source=event.get("source", "forms"),
-                action=event.get("action", submission.action),
-                status=event.get("status", "attempt"),
-                message=event.get("message", "Forms event"),
-                rfid=submission.rfid,
-                project=submission.projeto,
-                device_id=submission.device_id,
-                local=submission.local,
-                request_path="/api/scan",
-                http_status=200 if result.get("success") else 500,
-                retry_count=result.get("retry_count", 0),
-                details=event.get("details"),
-            )
+        final_audit_event = next(
+            (
+                event
+                for event in reversed(result.get("audit_events", []))
+                if event.get("status") in {"completed", "failed"}
+            ),
+            None,
+        )
 
         submission.retry_count = result.get("retry_count", 0)
         submission.updated_at = now_sgt()
@@ -129,7 +120,7 @@ def _process_submission(submission_id: int) -> None:
         log_event(
             db,
             idempotency_key=f"{submission.request_id}:result",
-            source="forms_queue",
+            source="forms",
             action=submission.action,
             status="success" if result.get("success") else "failed",
             message=result.get("message", "Forms submission processed"),
@@ -142,9 +133,12 @@ def _process_submission(submission_id: int) -> None:
             submitted_at=submission.processed_at if result.get("success") else None,
             retry_count=result.get("retry_count", 0),
             details=(
-                f"queue_status={submission.status}; "
-                f"error_code={result.get('error_code', 'none')}; "
-                f"failed_step={result.get('failed_step', '-')}"
+                (
+                    f"queue_status={submission.status}; "
+                    f"error_code={result.get('error_code', 'none')}; "
+                    f"failed_step={result.get('failed_step', '-')}; "
+                    f"forms_details={final_audit_event.get('details', '-') if final_audit_event else '-'}"
+                )[:1000]
             ),
         )
         db.commit()

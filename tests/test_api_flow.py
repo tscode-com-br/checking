@@ -306,6 +306,10 @@ def test_forms_step_timeout_returns_red_blink_pattern(monkeypatch):
         assert events.status_code == 200
         assert any(event["rfid"] == "CARDFAIL" and event["status"] == "failed" for event in events.json())
         assert any(event["source"] == "forms" and event["status"] == "failed" for event in events.json())
+        assert all(
+            not (event["source"] == "forms" and event["message"] == "Forms step timeout")
+            for event in events.json()
+        )
 
 
 def test_valid_scan_updates_user_before_forms_processing(monkeypatch):
@@ -402,6 +406,65 @@ def test_forms_queue_processing_persists_failure_state(monkeypatch):
             assert queued.status == "failed"
             assert queued.retry_count == 2
             assert queued.last_error == "mocked queue failure"
+
+
+def test_forms_success_generates_single_final_forms_event(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto: {
+            "success": True,
+            "message": "Form submitted successfully",
+            "retry_count": 0,
+            "audit_events": [
+                {
+                    "source": "forms",
+                    "action": "forms",
+                    "status": "opened",
+                    "message": "Microsoft Forms opened",
+                    "details": None,
+                },
+                {
+                    "source": "forms",
+                    "action": "forms",
+                    "status": "completed",
+                    "message": "Microsoft Forms completed",
+                    "details": "steps=ok; success_xpath_visible=true",
+                },
+            ],
+        },
+    )
+
+    with TestClient(app) as client:
+        save_user = client.post(
+            "/api/admin/users",
+            headers={"x-admin-key": "admin-test-key"},
+            json={"rfid": "FORMSOK", "nome": "Forms Final", "chave": "ZX12", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200
+
+        scan_response = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "FORMSOK",
+                "action": "checkin",
+                "device_id": "ESP32-FORMS",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_response.status_code == 200
+
+        processed = process_forms_submission_queue_once()
+        assert processed >= 1
+
+        events = client.get("/api/admin/events", headers={"x-admin-key": "admin-test-key"})
+        assert events.status_code == 200
+        forms_events = [event for event in events.json() if event["rfid"] == "FORMSOK" and event["source"] == "forms"]
+        assert len(forms_events) == 1
+        assert forms_events[0]["status"] == "success"
+        assert "forms_details=steps=ok; success_xpath_visible=true" in (forms_events[0]["details"] or "")
 
 
 def test_forms_worker_requires_success_xpath_after_submit(tmp_path, monkeypatch):
@@ -673,7 +736,7 @@ def test_forms_worker_fails_when_first_field_is_not_confirmed(tmp_path, monkeypa
     assert "expected_value=HR70" in result["audit_events"][0]["details"]
 
 
-def test_heartbeat_is_logged_in_events():
+def test_heartbeat_success_is_not_logged_in_events():
     with TestClient(app) as client:
         heartbeat = client.post(
             "/api/device/heartbeat",
@@ -683,10 +746,31 @@ def test_heartbeat_is_logged_in_events():
 
         events = client.get("/api/admin/events", headers={"x-admin-key": "admin-test-key"})
         assert events.status_code == 200
+        assert all(
+            not (
+                event["action"] == "heartbeat"
+                and event["status"] == "success"
+                and event["device_id"] == "ESP32-TEST"
+            )
+            for event in events.json()
+        )
+
+
+def test_heartbeat_failure_is_logged_in_events():
+    with TestClient(app) as client:
+        heartbeat = client.post(
+            "/api/device/heartbeat",
+            json={"device_id": "ESP32-BAD", "shared_key": "wrong-key"},
+        )
+        assert heartbeat.status_code == 200
+        assert heartbeat.json()["ok"] is False
+
+        events = client.get("/api/admin/events", headers={"x-admin-key": "admin-test-key"})
+        assert events.status_code == 200
         assert any(
             event["action"] == "heartbeat"
-            and event["status"] == "success"
-            and event["device_id"] == "ESP32-TEST"
+            and event["status"] == "failed"
+            and event["device_id"] == "ESP32-BAD"
             for event in events.json()
         )
 
@@ -844,12 +928,6 @@ def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):
     settings.event_archives_dir = str(tmp_path / "event_archives")
 
     with TestClient(app) as client:
-        heartbeat = client.post(
-            "/api/device/heartbeat",
-            json={"device_id": "ESP32-ARCHIVE", "shared_key": "device-test-key"},
-        )
-        assert heartbeat.status_code == 200
-
         save_user = client.post(
             "/api/admin/users",
             headers={"x-admin-key": "admin-test-key"},
@@ -862,10 +940,10 @@ def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):
 
         archive_payload = archive_res.json()
         assert archive_payload["created"] is True
-        assert archive_payload["cleared_count"] >= 2
+        assert archive_payload["cleared_count"] >= 1
         assert archive_payload["archive"]["file_name"].endswith(".csv")
         assert " a " in archive_payload["archive"]["period"]
-        assert archive_payload["archive"]["record_count"] >= 2
+        assert archive_payload["archive"]["record_count"] >= 1
         assert archive_payload["archives"]["total"] >= 1
         assert archive_payload["archives"]["total_size_bytes"] >= archive_payload["archive"]["size_bytes"]
         assert archive_payload["archives"]["items"][0]["file_name"] == archive_payload["archive"]["file_name"]
@@ -887,7 +965,7 @@ def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):
         assert download_res.status_code == 200
         assert "attachment;" in download_res.headers["content-disposition"]
         assert "event_time" in download_res.text
-        assert "ESP32-ARCHIVE" in download_res.text
+        assert "ARC1000" in download_res.text
 
         download_all_res = client.get("/api/admin/events/archives/download-all", headers={"x-admin-key": "admin-test-key"})
         assert download_all_res.status_code == 200
@@ -899,11 +977,12 @@ def test_delete_archived_event_csv(tmp_path):
     settings.event_archives_dir = str(tmp_path / "event_archives")
 
     with TestClient(app) as client:
-        heartbeat = client.post(
-            "/api/device/heartbeat",
-            json={"device_id": "ESP32-ARCHIVE-DELETE", "shared_key": "device-test-key"},
+        save_user = client.post(
+            "/api/admin/users",
+            headers={"x-admin-key": "admin-test-key"},
+            json={"rfid": "ARCDEL", "nome": "Usuario Delete", "chave": "DL90", "projeto": "P80"},
         )
-        assert heartbeat.status_code == 200
+        assert save_user.status_code == 200
 
         archive_res = client.post("/api/admin/events/archive", headers={"x-admin-key": "admin-test-key"})
         assert archive_res.status_code == 200
@@ -926,8 +1005,9 @@ def test_archive_events_without_current_rows_returns_existing_archives(tmp_path)
 
     with TestClient(app) as client:
         first = client.post(
-            "/api/device/heartbeat",
-            json={"device_id": "ESP32-ARCHIVE-EMPTY", "shared_key": "device-test-key"},
+            "/api/admin/users",
+            headers={"x-admin-key": "admin-test-key"},
+            json={"rfid": "ARCEMPTY", "nome": "Usuario Empty", "chave": "EM90", "projeto": "P83"},
         )
         assert first.status_code == 200
 

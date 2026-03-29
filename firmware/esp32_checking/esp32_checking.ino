@@ -103,23 +103,42 @@ enum CloudStatus {
 
 CloudStatus cloudStatus = CLOUD_CONNECTING;
 
-unsigned long lastStatusBlinkAt = 0;
-unsigned long statusLedOnUntil = 0;
-bool statusLedPulseActive = false;
-const unsigned long STATUS_BLINK_INTERVAL_MS = 1000;
-const unsigned long STATUS_BLINK_ON_MS = 30;
-const unsigned long SUCCESS_BLINK_COUNT = 4;
-const unsigned long SUCCESS_BLINK_ON_MS = 20;
+const unsigned long CONNECTING_BLINK_COUNT = 3;
+const unsigned long CONNECTING_BLINK_ON_MS = 40;
+const unsigned long CONNECTING_PATTERN_MS = 1500;
+const unsigned long ONLINE_BLINK_COUNT = 1;
+const unsigned long ONLINE_BLINK_ON_MS = 20;
+const unsigned long ONLINE_PATTERN_MS = 2000;
+const unsigned long OFFLINE_BLINK_COUNT = 1;
+const unsigned long OFFLINE_BLINK_ON_MS = 40;
+const unsigned long OFFLINE_PATTERN_MS = 2000;
+const unsigned long SUCCESS_BLINK_COUNT = 1;
+const unsigned long SUCCESS_BLINK_ON_MS = 1000;
 const unsigned long SUCCESS_PATTERN_MS = 1000;
-const unsigned long LOCAL_UPDATED_BLINK_COUNT = 4;
-const unsigned long LOCAL_UPDATED_BLINK_ON_MS = 20;
+const unsigned long LOCAL_UPDATED_BLINK_COUNT = 1;
+const unsigned long LOCAL_UPDATED_BLINK_ON_MS = 1000;
 const unsigned long LOCAL_UPDATED_PATTERN_MS = 1000;
-const unsigned long PENDING_BLINK_COUNT = 2;
+const unsigned long PENDING_BLINK_COUNT = 3;
 const unsigned long PENDING_BLINK_ON_MS = 40;
-const unsigned long PENDING_PATTERN_MS = 1000;
-const unsigned long FAILURE_BLINK_COUNT = 2;
-const unsigned long FAILURE_BLINK_ON_MS = 40;
-const unsigned long FAILURE_PATTERN_MS = 1000;
+const unsigned long PENDING_PATTERN_MS = 1500;
+const unsigned long BUSINESS_RULE_BLINK_COUNT = 3;
+const unsigned long BUSINESS_RULE_BLINK_ON_MS = 40;
+const unsigned long BUSINESS_RULE_PATTERN_MS = 1500;
+const unsigned long FAILURE_HOLD_MS = 1500;
+const unsigned long FALLBACK_BLINK_COUNT = 2;
+const unsigned long FALLBACK_BLINK_ON_MS = 40;
+const unsigned long FALLBACK_PATTERN_MS = 1000;
+
+void (*activeStatusLedSetter)() = nullptr;
+unsigned long activeStatusBlinkCount = 0;
+unsigned long activeStatusOnMs = 0;
+unsigned long activeStatusTotalMs = 0;
+unsigned long activeStatusSlotMs = 0;
+unsigned long statusCycleStartedAt = 0;
+unsigned long statusPulseEndsAt = 0;
+unsigned long nextStatusPulseAt = 0;
+unsigned long nextStatusPulseIndex = 0;
+bool statusLedIsOn = false;
 
 void setInternalLedOff() {
 #ifdef RGB_BUILTIN
@@ -185,9 +204,106 @@ void runLedBlinkPattern(void (*ledSetter)(), unsigned long blinkCount, unsigned 
 }
 
 void resetStatusBlink() {
-  lastStatusBlinkAt = 0;
-  statusLedOnUntil = 0;
-  statusLedPulseActive = false;
+  activeStatusLedSetter = nullptr;
+  activeStatusBlinkCount = 0;
+  activeStatusOnMs = 0;
+  activeStatusTotalMs = 0;
+  activeStatusSlotMs = 0;
+  statusCycleStartedAt = 0;
+  statusPulseEndsAt = 0;
+  nextStatusPulseAt = 0;
+  nextStatusPulseIndex = 0;
+  statusLedIsOn = false;
+}
+
+void getCloudStatusPattern(void (**ledSetter)(), unsigned long& blinkCount, unsigned long& onMs, unsigned long& totalMs) {
+  if (cloudStatus == CLOUD_CONNECTING) {
+    *ledSetter = setInternalLedBlue;
+    blinkCount = CONNECTING_BLINK_COUNT;
+    onMs = CONNECTING_BLINK_ON_MS;
+    totalMs = CONNECTING_PATTERN_MS;
+    return;
+  }
+
+  if (cloudStatus == CLOUD_OFFLINE) {
+    *ledSetter = setInternalLedRed;
+    blinkCount = OFFLINE_BLINK_COUNT;
+    onMs = OFFLINE_BLINK_ON_MS;
+    totalMs = OFFLINE_PATTERN_MS;
+    return;
+  }
+
+  *ledSetter = setInternalLedGreen;
+  blinkCount = ONLINE_BLINK_COUNT;
+  onMs = ONLINE_BLINK_ON_MS;
+  totalMs = ONLINE_PATTERN_MS;
+}
+
+void tickCloudStatusLed() {
+  unsigned long now = millis();
+  unsigned long blinkCount = 0;
+  unsigned long onMs = 0;
+  unsigned long totalMs = 0;
+  void (*statusLedSetter)() = nullptr;
+  getCloudStatusPattern(&statusLedSetter, blinkCount, onMs, totalMs);
+
+  if (statusLedSetter == nullptr || blinkCount == 0 || totalMs == 0) {
+    resetStatusBlink();
+    setInternalLedOff();
+    return;
+  }
+
+  unsigned long slotMs = totalMs / blinkCount;
+  if (slotMs < onMs) {
+    slotMs = onMs;
+  }
+
+  bool patternChanged = activeStatusLedSetter != statusLedSetter
+    || activeStatusBlinkCount != blinkCount
+    || activeStatusOnMs != onMs
+    || activeStatusTotalMs != totalMs;
+
+  if (patternChanged || statusCycleStartedAt == 0) {
+    activeStatusLedSetter = statusLedSetter;
+    activeStatusBlinkCount = blinkCount;
+    activeStatusOnMs = onMs;
+    activeStatusTotalMs = totalMs;
+    activeStatusSlotMs = slotMs;
+    statusCycleStartedAt = now;
+    statusPulseEndsAt = now + onMs;
+    nextStatusPulseIndex = 1;
+    nextStatusPulseAt = statusCycleStartedAt + activeStatusSlotMs;
+    statusLedIsOn = true;
+    activeStatusLedSetter();
+    return;
+  }
+
+  if (statusLedIsOn && (long)(now - statusPulseEndsAt) >= 0) {
+    statusLedIsOn = false;
+    setInternalLedOff();
+  }
+
+  while ((long)(now - (statusCycleStartedAt + activeStatusTotalMs)) >= 0) {
+    statusCycleStartedAt += activeStatusTotalMs;
+    nextStatusPulseIndex = 0;
+    nextStatusPulseAt = statusCycleStartedAt;
+  }
+
+  if (!statusLedIsOn && nextStatusPulseIndex < activeStatusBlinkCount && (long)(now - nextStatusPulseAt) >= 0) {
+    statusPulseEndsAt = now + activeStatusOnMs;
+    nextStatusPulseIndex++;
+    nextStatusPulseAt = statusCycleStartedAt + (nextStatusPulseIndex * activeStatusSlotMs);
+    statusLedIsOn = true;
+    activeStatusLedSetter();
+    return;
+  }
+
+  if (statusLedIsOn) {
+    activeStatusLedSetter();
+    return;
+  }
+
+  setInternalLedOff();
 }
 
 bool anyReaderNotReady() {
@@ -200,19 +316,9 @@ bool anyReaderNotReady() {
 }
 
 void applyCloudLedBaseline() {
-  if (cloudStatus == CLOUD_CONNECTING) {
-    resetStatusBlink();
-    setInternalLedYellow();
-    return;
-  }
-
-  if (cloudStatus == CLOUD_OFFLINE) {
-    resetStatusBlink();
-    setInternalLedOff();
-    return;
-  }
-
+  resetStatusBlink();
   setInternalLedOff();
+  tickCloudStatusLed();
 }
 
 void resumeOnlineIdleState() {
@@ -221,11 +327,8 @@ void resumeOnlineIdleState() {
     return;
   }
 
-  unsigned long now = millis();
-  lastStatusBlinkAt = now;
-  statusLedOnUntil = now + STATUS_BLINK_ON_MS;
-  statusLedPulseActive = true;
-  setInternalLedWhite();
+  resetStatusBlink();
+  setInternalLedOff();
 }
 
 void pulseGreenSuccess() {
@@ -234,24 +337,12 @@ void pulseGreenSuccess() {
 }
 
 void holdOrangePending() {
-  const unsigned long pendingOffMs = (PENDING_PATTERN_MS / PENDING_BLINK_COUNT) - PENDING_BLINK_ON_MS;
-
-  setInternalLedOrange();
-  delay(PENDING_BLINK_ON_MS);
-  setInternalLedOff();
-  delay(pendingOffMs);
-
-  setInternalLedOrange();
-  delay(PENDING_BLINK_ON_MS);
-  setInternalLedOff();
-  delay(pendingOffMs);
-
+  runLedBlinkPattern(setInternalLedOrange, PENDING_BLINK_COUNT, PENDING_BLINK_ON_MS, PENDING_PATTERN_MS);
   resumeOnlineIdleState();
 }
 
 void holdRedTwoSeconds() {
-  setInternalLedRed();
-  delay(2000);
+  runLedBlinkPattern(setInternalLedRed, BUSINESS_RULE_BLINK_COUNT, BUSINESS_RULE_BLINK_ON_MS, BUSINESS_RULE_PATTERN_MS);
   resumeOnlineIdleState();
 }
 
@@ -261,12 +352,13 @@ void blinkGreenLocationUpdated() {
 }
 
 void blinkRedFailurePattern() {
-  runLedBlinkPattern(setInternalLedRed, FAILURE_BLINK_COUNT, FAILURE_BLINK_ON_MS, FAILURE_PATTERN_MS);
+  setInternalLedRed();
+  delay(FAILURE_HOLD_MS);
   resumeOnlineIdleState();
 }
 
 void startupLedTest() {
-  setInternalLedYellow();
+  applyCloudLedBaseline();
 }
 
 void setCloudConnecting() {
@@ -308,26 +400,7 @@ void restartIfOfflineTooLong() {
 }
 
 void updateStatusLed() {
-  unsigned long now = millis();
-
-  if (cloudStatus == CLOUD_CONNECTING) {
-    applyCloudLedBaseline();
-    return;
-  }
-
-  void (*statusLedSetter)() = cloudStatus == CLOUD_OFFLINE ? setInternalLedRed : setInternalLedWhite;
-
-  if (statusLedPulseActive && (long)(now - statusLedOnUntil) >= 0) {
-    setInternalLedOff();
-    statusLedPulseActive = false;
-  }
-
-  if (!statusLedPulseActive && (lastStatusBlinkAt == 0 || now - lastStatusBlinkAt >= STATUS_BLINK_INTERVAL_MS)) {
-    lastStatusBlinkAt = now;
-    statusLedOnUntil = now + STATUS_BLINK_ON_MS;
-    statusLedSetter();
-    statusLedPulseActive = true;
-  }
+  tickCloudStatusLed();
 }
 
 String uidToString(uint8_t* uid, uint8_t uidLength) {
@@ -434,7 +507,8 @@ bool ensureWifiConnected() {
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(300);
+    tickCloudStatusLed();
+    delay(20);
   }
 
   wl_status_t status = WiFi.status();
@@ -712,7 +786,7 @@ bool readAndProcess(ReaderSlot& slot) {
     resumeOnlineIdleState();
   } else {
     Serial.println("[SCAN] Unrecognized API response; fallback red_1s activated.");
-    runLedBlinkPattern(setInternalLedRed, FAILURE_BLINK_COUNT, FAILURE_BLINK_ON_MS, FAILURE_PATTERN_MS);
+    runLedBlinkPattern(setInternalLedRed, FALLBACK_BLINK_COUNT, FALLBACK_BLINK_ON_MS, FALLBACK_PATTERN_MS);
     resumeOnlineIdleState();
   }
 
