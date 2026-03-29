@@ -16,7 +16,11 @@ class Settings(BaseSettings):
     tz_name: str = "Asia/Singapore"
 
     device_shared_key: str = "change-me"
-    admin_api_key: str = "change-admin-key"
+    admin_session_secret: str = "change-admin-session-secret"
+    admin_session_max_age_seconds: int = 28800
+    bootstrap_admin_key: str = "HR70"
+    bootstrap_admin_name: str = "Tamer Salmem"
+    bootstrap_admin_password: str = "eAcacdLe2"
     wifi_ssid: str = "TS 14 PRO"
     wifi_password: str = "00000000"
 

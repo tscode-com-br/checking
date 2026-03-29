@@ -134,4 +134,6 @@ Valores validos para `action`:
 ## 11. Auditoria de Eventos
 - A aba Eventos funciona como trilha operacional da API.
 - O sistema registra heartbeats, scans recebidos, pendencias, bloqueios, tentativas de envio ao Forms, falhas, sucessos e operacoes administrativas de escrita.
+- No fluxo administrativo autenticado, a trilha inclui criacao do admin bootstrap inicial, login, logout, solicitacao de acesso administrativo, aprovacao, rejeicao, pedido de recadastro de senha, redefinicao de senha, revogacao de administrador e falhas relevantes desses mesmos endpoints.
+- O modulo de arquivos de eventos tambem registra criacao de CSV consolidado, download individual, download em lote e remocao de arquivo arquivado, sem reprocessar em cascata os proprios logs tecnicos desse modulo.
 - Cada evento pode incluir origem, device, local, RFID, projeto, rota da requisicao, codigo HTTP, numero de tentativas, mensagem e detalhes adicionais.

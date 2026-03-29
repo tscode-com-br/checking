@@ -2,15 +2,22 @@ import asyncio
 import json
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
 from ..database import get_db
-from ..models import CheckEvent, PendingRegistration, User
+from ..models import AdminAccessRequest, AdminUser, CheckEvent, PendingRegistration, User
 from ..schemas import (
+    AdminAccessRequestCreate,
+    AdminActionResponse,
+    AdminIdentity,
+    AdminLoginRequest,
+    AdminManagementRow,
+    AdminPasswordResetRequest,
+    AdminPasswordSetRequest,
+    AdminSessionResponse,
     AdminUserListRow,
     AdminUserUpsert,
     EventArchiveCreateResponse,
@@ -20,6 +27,14 @@ from ..schemas import (
     InactiveUserRow,
     PendingRow,
     UserRow,
+)
+from ..services.admin_auth import (
+    get_authenticated_admin_from_session,
+    hash_password,
+    normalize_admin_key,
+    require_admin_session,
+    require_admin_stream_session,
+    verify_password,
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
 from ..services.event_archives import (
@@ -36,21 +51,264 @@ from ..services.user_activity import sync_user_inactivity
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-def require_admin_key(x_admin_key: str = Header(default="")) -> None:
-    if x_admin_key != settings.admin_api_key:
-        raise HTTPException(status_code=401, detail="Invalid admin key")
-
-
-def require_admin_stream_key(admin_key: str = Query(default="")) -> None:
-    if admin_key != settings.admin_api_key:
-        raise HTTPException(status_code=401, detail="Invalid admin key")
+def notify_admin_views(*reasons: str) -> None:
+    for reason in dict.fromkeys(reasons):
+        notify_admin_data_changed(reason)
 
 
 def encode_sse(payload: dict[str, str]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-@router.get("/stream", dependencies=[Depends(require_admin_stream_key)])
+def build_admin_identity(admin: AdminUser) -> AdminIdentity:
+    return AdminIdentity(id=admin.id, chave=admin.chave, nome_completo=admin.nome_completo)
+
+
+def list_admin_rows(db: Session) -> list[AdminManagementRow]:
+    admins = db.execute(select(AdminUser).order_by(AdminUser.nome_completo, AdminUser.chave)).scalars().all()
+    requests = db.execute(select(AdminAccessRequest).order_by(AdminAccessRequest.requested_at.desc())).scalars().all()
+
+    rows: list[AdminManagementRow] = []
+    for admin in admins:
+        status = "password_reset_requested" if admin.requires_password_reset else "active"
+        status_label = "Recadastro de Senha Pendente" if admin.requires_password_reset else "Administrador Ativo"
+        rows.append(
+            AdminManagementRow(
+                id=admin.id,
+                row_type="admin",
+                chave=admin.chave,
+                nome=admin.nome_completo,
+                status=status,
+                status_label=status_label,
+                can_revoke=not admin.requires_password_reset,
+                can_approve=False,
+                can_reject=False,
+                can_set_password=admin.requires_password_reset,
+            )
+        )
+
+    for request_row in requests:
+        rows.append(
+            AdminManagementRow(
+                id=request_row.id,
+                row_type="request",
+                chave=request_row.chave,
+                nome=request_row.nome_completo,
+                status="pending",
+                status_label="Solicitacao Pendente",
+                can_revoke=False,
+                can_approve=True,
+                can_reject=True,
+                can_set_password=False,
+            )
+        )
+
+    return rows
+
+
+@router.post("/auth/login", response_model=AdminActionResponse)
+def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)) -> AdminActionResponse:
+    key = normalize_admin_key(payload.chave)
+    admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
+
+    if admin is None:
+        log_event(
+            db,
+            source="admin",
+            action="login",
+            status="failed",
+            message="Administrative login rejected",
+            request_path="/api/admin/auth/login",
+            http_status=401,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=401, detail="Chave ou senha invalida")
+
+    if admin.password_hash is None or admin.requires_password_reset:
+        log_event(
+            db,
+            source="admin",
+            action="login",
+            status="blocked",
+            message="Administrative login blocked due to pending password reset",
+            request_path="/api/admin/auth/login",
+            http_status=403,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Sua senha foi removida. Solicite a outro administrador o recadastro da senha.",
+        )
+
+    if not verify_password(payload.senha, admin.password_hash):
+        log_event(
+            db,
+            source="admin",
+            action="login",
+            status="failed",
+            message="Administrative login rejected",
+            request_path="/api/admin/auth/login",
+            http_status=401,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=401, detail="Chave ou senha invalida")
+
+    request.session.clear()
+    request.session["admin_user_id"] = admin.id
+    log_event(
+        db,
+        source="admin",
+        action="login",
+        status="done",
+        message="Administrative login completed",
+        request_path="/api/admin/auth/login",
+        http_status=200,
+        details=f"chave={admin.chave}",
+        commit=True,
+    )
+    return AdminActionResponse(ok=True, message="Login realizado com sucesso.")
+
+
+@router.post("/auth/logout", response_model=AdminActionResponse)
+def admin_logout(request: Request, db: Session = Depends(get_db)) -> AdminActionResponse:
+    admin = get_authenticated_admin_from_session(request, db)
+    if admin is not None:
+        log_event(
+            db,
+            source="admin",
+            action="logout",
+            status="done",
+            message="Administrative logout completed",
+            request_path="/api/admin/auth/logout",
+            http_status=200,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+    request.session.clear()
+    return AdminActionResponse(ok=True, message="Sessao encerrada com sucesso.")
+
+
+@router.get("/auth/session", response_model=AdminSessionResponse)
+def admin_session(request: Request, db: Session = Depends(get_db)) -> AdminSessionResponse:
+    admin = get_authenticated_admin_from_session(request, db)
+    if admin is None:
+        return AdminSessionResponse(authenticated=False)
+    return AdminSessionResponse(authenticated=True, admin=build_admin_identity(admin))
+
+
+@router.post("/auth/request-access", response_model=AdminActionResponse)
+def request_admin_access(payload: AdminAccessRequestCreate, db: Session = Depends(get_db)) -> AdminActionResponse:
+    key = normalize_admin_key(payload.chave)
+    existing_admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
+    if existing_admin is not None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative access request rejected because key already belongs to an admin",
+            request_path="/api/admin/auth/request-access",
+            http_status=409,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe um administrador com essa chave.")
+
+    pending_request = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == key)).scalar_one_or_none()
+    if pending_request is not None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative access request rejected because another request is already pending",
+            request_path="/api/admin/auth/request-access",
+            http_status=409,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave.")
+
+    db.add(
+        AdminAccessRequest(
+            chave=key,
+            nome_completo=payload.nome_completo.strip(),
+            password_hash=hash_password(payload.senha),
+            requested_at=now_sgt(),
+        )
+    )
+    log_event(
+        db,
+        source="admin",
+        action="admin_request",
+        status="pending",
+        message="Administrative access request created",
+        request_path="/api/admin/auth/request-access",
+        http_status=200,
+        details=f"chave={key}; nome={payload.nome_completo.strip()}",
+    )
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Solicitacao enviada para aprovacao de um administrador.")
+
+
+@router.post("/auth/request-password-reset", response_model=AdminActionResponse)
+def request_password_reset(payload: AdminPasswordResetRequest, db: Session = Depends(get_db)) -> AdminActionResponse:
+    key = normalize_admin_key(payload.chave)
+    admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
+    if admin is None:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative password reset request failed because admin was not found",
+            request_path="/api/admin/auth/request-password-reset",
+            http_status=404,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado para a chave informada.")
+    if admin.requires_password_reset:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative password reset request rejected because a reset is already pending",
+            request_path="/api/admin/auth/request-password-reset",
+            http_status=409,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe um pedido de recadastro de senha para esta chave.")
+
+    admin.password_hash = None
+    admin.requires_password_reset = True
+    admin.password_reset_requested_at = now_sgt()
+    admin.updated_at = now_sgt()
+    log_event(
+        db,
+        source="admin",
+        action="password",
+        status="pending",
+        message="Administrative password reset requested",
+        request_path="/api/admin/auth/request-password-reset",
+        http_status=200,
+        details=f"chave={admin.chave}",
+    )
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(
+        ok=True,
+        message="Sua senha foi removida. Outro administrador devera cadastrar uma nova senha.",
+    )
+
+
+@router.get("/stream", dependencies=[Depends(require_admin_stream_session)])
 async def stream_updates(request: Request) -> StreamingResponse:
     subscriber_id, queue = admin_updates_broker.subscribe()
 
@@ -80,7 +338,240 @@ async def stream_updates(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/checkin", response_model=list[UserRow], dependencies=[Depends(require_admin_key)])
+@router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_admin_session)])
+def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRow]:
+    return list_admin_rows(db)
+
+
+@router.post(
+    "/administrators/requests/{request_id}/approve",
+    response_model=AdminActionResponse,
+)
+def approve_administrator_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
+    access_request = db.get(AdminAccessRequest, request_id)
+    if access_request is None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative access request approval failed because request was not found",
+            request_path=f"/api/admin/administrators/requests/{request_id}/approve",
+            http_status=404,
+            details=f"request_id={request_id}; approved_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Solicitacao de administrador nao encontrada.")
+
+    existing_admin = db.execute(select(AdminUser).where(AdminUser.chave == access_request.chave)).scalar_one_or_none()
+    if existing_admin is not None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative access request approval failed because target key is already assigned",
+            request_path=f"/api/admin/administrators/requests/{request_id}/approve",
+            http_status=409,
+            details=f"chave={access_request.chave}; approved_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe um administrador com essa chave.")
+
+    timestamp = now_sgt()
+    db.add(
+        AdminUser(
+            chave=access_request.chave,
+            nome_completo=access_request.nome_completo,
+            password_hash=access_request.password_hash,
+            requires_password_reset=False,
+            approved_by_admin_id=current_admin.id,
+            approved_at=timestamp,
+            password_reset_requested_at=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+    )
+    log_event(
+        db,
+        source="admin",
+        action="admin_request",
+        status="approved",
+        message="Administrative access request approved",
+        request_path=f"/api/admin/administrators/requests/{request_id}/approve",
+        http_status=200,
+        details=f"chave={access_request.chave}; approved_by={current_admin.chave}",
+    )
+    db.delete(access_request)
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Administrador aprovado com sucesso.")
+
+
+@router.post(
+    "/administrators/requests/{request_id}/reject",
+    response_model=AdminActionResponse,
+)
+def reject_administrator_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
+    access_request = db.get(AdminAccessRequest, request_id)
+    if access_request is None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative access request rejection failed because request was not found",
+            request_path=f"/api/admin/administrators/requests/{request_id}/reject",
+            http_status=404,
+            details=f"request_id={request_id}; rejected_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Solicitacao de administrador nao encontrada.")
+
+    log_event(
+        db,
+        source="admin",
+        action="admin_request",
+        status="rejected",
+        message="Administrative access request rejected",
+        request_path=f"/api/admin/administrators/requests/{request_id}/reject",
+        http_status=200,
+        details=f"chave={access_request.chave}; rejected_by={current_admin.chave}",
+    )
+    db.delete(access_request)
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Solicitacao rejeitada com sucesso.")
+
+
+@router.post("/administrators/{admin_id}/revoke", response_model=AdminActionResponse)
+def revoke_administrator(
+    admin_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
+    admin = db.get(AdminUser, admin_id)
+    if admin is None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_access",
+            status="failed",
+            message="Administrator revocation failed because target admin was not found",
+            request_path=f"/api/admin/administrators/{admin_id}/revoke",
+            http_status=404,
+            details=f"admin_id={admin_id}; revoked_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado.")
+    if admin.id == current_admin.id:
+        log_event(
+            db,
+            source="admin",
+            action="admin_access",
+            status="failed",
+            message="Administrator revocation rejected because self-revocation is not allowed",
+            request_path=f"/api/admin/administrators/{admin_id}/revoke",
+            http_status=409,
+            details=f"chave={admin.chave}; revoked_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Voce nao pode revogar seu proprio acesso.")
+
+    total_admins = db.execute(select(func.count(AdminUser.id))).scalar_one()
+    if total_admins <= 1:
+        log_event(
+            db,
+            source="admin",
+            action="admin_access",
+            status="failed",
+            message="Administrator revocation rejected because the last active admin cannot be removed",
+            request_path=f"/api/admin/administrators/{admin_id}/revoke",
+            http_status=409,
+            details=f"chave={admin.chave}; revoked_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Nao e possivel revogar o unico administrador ativo do sistema.")
+
+    log_event(
+        db,
+        source="admin",
+        action="admin_access",
+        status="removed",
+        message="Administrator access revoked",
+        request_path=f"/api/admin/administrators/{admin_id}/revoke",
+        http_status=200,
+        details=f"chave={admin.chave}; revoked_by={current_admin.chave}",
+    )
+    db.delete(admin)
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Administrador revogado com sucesso.")
+
+
+@router.post("/administrators/{admin_id}/set-password", response_model=AdminActionResponse)
+def set_administrator_password(
+    admin_id: int,
+    payload: AdminPasswordSetRequest,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
+    admin = db.get(AdminUser, admin_id)
+    if admin is None:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative password update failed because target admin was not found",
+            request_path=f"/api/admin/administrators/{admin_id}/set-password",
+            http_status=404,
+            details=f"admin_id={admin_id}; updated_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado.")
+    if not admin.requires_password_reset:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative password update rejected because no reset is pending",
+            request_path=f"/api/admin/administrators/{admin_id}/set-password",
+            http_status=409,
+            details=f"chave={admin.chave}; updated_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Esse administrador nao possui recadastro de senha pendente.")
+
+    admin.password_hash = hash_password(payload.nova_senha)
+    admin.requires_password_reset = False
+    admin.password_reset_requested_at = None
+    admin.updated_at = now_sgt()
+    log_event(
+        db,
+        source="admin",
+        action="password",
+        status="updated",
+        message="Administrative password updated",
+        request_path=f"/api/admin/administrators/{admin_id}/set-password",
+        http_status=200,
+        details=f"chave={admin.chave}; updated_by={current_admin.chave}",
+    )
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Nova senha cadastrada com sucesso.")
+
+
+@router.get("/checkin", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
 def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
     if sync_user_inactivity(db):
         db.commit()
@@ -103,7 +594,7 @@ def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
     ]
 
 
-@router.get("/checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_key)])
+@router.get("/checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
 def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     if sync_user_inactivity(db):
         db.commit()
@@ -126,7 +617,7 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     ]
 
 
-@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_key)])
+@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_session)])
 def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
     if sync_user_inactivity(db):
         db.commit()
@@ -146,7 +637,7 @@ def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
     ]
 
 
-@router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_admin_key)])
+@router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_admin_session)])
 def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     rows = db.execute(select(PendingRegistration).order_by(desc(PendingRegistration.last_seen_at))).scalars().all()
     return [
@@ -161,7 +652,7 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     ]
 
 
-@router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_admin_key)])
+@router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_admin_session)])
 def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
     rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
     return [
@@ -175,7 +666,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
     ]
 
 
-@router.post("/users", dependencies=[Depends(require_admin_key)])
+@router.post("/users", dependencies=[Depends(require_admin_session)])
 def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict:
     user = db.get(User, payload.rfid)
     if user:
@@ -215,12 +706,12 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
         details=f"nome={payload.nome}",
     )
     db.commit()
-    notify_admin_data_changed("register")
+    notify_admin_views("register", "event")
 
     return {"ok": True, "rfid": payload.rfid}
 
 
-@router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_key)])
+@router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_session)])
 def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
     pending = db.get(PendingRegistration, pending_id)
     if pending is None:
@@ -251,11 +742,11 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
         details=f"pending_id={pending_id}",
     )
     db.commit()
-    notify_admin_data_changed("pending")
+    notify_admin_views("pending", "event")
     return {"ok": True, "id": pending_id}
 
 
-@router.delete("/users/{rfid}", dependencies=[Depends(require_admin_key)])
+@router.delete("/users/{rfid}", dependencies=[Depends(require_admin_session)])
 def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
     user = db.get(User, rfid)
     if user is None:
@@ -290,11 +781,11 @@ def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
         details=f"rfid={rfid}; pending_removed={pending is not None}",
     )
     db.commit()
-    notify_admin_data_changed("register")
+    notify_admin_views("register", "event")
     return {"ok": True, "rfid": rfid}
 
 
-@router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_key)])
+@router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_session)])
 def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
     rows = db.execute(select(CheckEvent).order_by(desc(CheckEvent.id)).limit(200)).scalars().all()
     return [
@@ -318,15 +809,47 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
     ]
 
 
-@router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_key)])
-def archive_events(db: Session = Depends(get_db)) -> EventArchiveCreateResponse:
-    rows = db.execute(select(CheckEvent).order_by(CheckEvent.event_time, CheckEvent.id)).scalars().all()
+@router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_session)])
+def archive_events(
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> EventArchiveCreateResponse:
+    rows = db.execute(
+        select(CheckEvent)
+        .where(CheckEvent.action != "event_archive")
+        .order_by(CheckEvent.event_time, CheckEvent.id)
+    ).scalars().all()
     archive = create_event_archive(rows)
 
     if archive is not None:
-        db.execute(delete(CheckEvent))
+        db.execute(delete(CheckEvent).where(CheckEvent.action != "event_archive"))
         db.commit()
-        notify_admin_data_changed("event")
+        log_event(
+            db,
+            source="admin",
+            action="event_archive",
+            status="created",
+            message="Event log archive created",
+            request_path="/api/admin/events/archive",
+            http_status=200,
+            details=(
+                f"file_name={archive.file_name}; period={archive.period}; "
+                f"record_count={archive.record_count}; created_by={current_admin.chave}"
+            )[:1000],
+            commit=True,
+        )
+    else:
+        log_event(
+            db,
+            source="admin",
+            action="event_archive",
+            status="noop",
+            message="Event log archive requested but there were no current events to archive",
+            request_path="/api/admin/events/archive",
+            http_status=200,
+            details=f"created_by={current_admin.chave}",
+            commit=True,
+        )
 
     archives_page = list_event_archives_page()
 
@@ -346,7 +869,7 @@ def archive_events(db: Session = Depends(get_db)) -> EventArchiveCreateResponse:
     )
 
 
-@router.get("/events/archives", response_model=EventArchiveListResponse, dependencies=[Depends(require_admin_key)])
+@router.get("/events/archives", response_model=EventArchiveListResponse, dependencies=[Depends(require_admin_session)])
 def get_event_archives(
     q: str = Query(default=""),
     page: int = Query(default=1, ge=1),
@@ -364,12 +887,38 @@ def get_event_archives(
     )
 
 
-@router.get("/events/archives/download-all", dependencies=[Depends(require_admin_key)])
-def download_all_event_archives() -> Response:
+@router.get("/events/archives/download-all", dependencies=[Depends(require_admin_session)])
+def download_all_event_archives(
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> Response:
     try:
         file_name, payload = build_event_archives_zip()
     except FileNotFoundError as exc:
+        log_event(
+            db,
+            source="admin",
+            action="event_archive",
+            status="failed",
+            message="Download of all archived event logs failed because there are no archives",
+            request_path="/api/admin/events/archives/download-all",
+            http_status=404,
+            details=f"downloaded_by={current_admin.chave}",
+            commit=True,
+        )
         raise HTTPException(status_code=404, detail="No archived event logs found") from exc
+
+    log_event(
+        db,
+        source="admin",
+        action="event_archive",
+        status="downloaded",
+        message="All archived event logs downloaded as zip",
+        request_path="/api/admin/events/archives/download-all",
+        http_status=200,
+        details=f"file_name={file_name}; downloaded_by={current_admin.chave}",
+        commit=True,
+    )
 
     return Response(
         content=payload,
@@ -378,21 +927,75 @@ def download_all_event_archives() -> Response:
     )
 
 
-@router.get("/events/archives/{file_name}", dependencies=[Depends(require_admin_key)])
-def download_event_archive(file_name: str) -> FileResponse:
+@router.get("/events/archives/{file_name}", dependencies=[Depends(require_admin_session)])
+def download_event_archive(
+    file_name: str,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> FileResponse:
     try:
         archive_path = get_event_archive_path(file_name)
     except FileNotFoundError as exc:
+        log_event(
+            db,
+            source="admin",
+            action="event_archive",
+            status="failed",
+            message="Archived event log download failed because file was not found",
+            request_path=f"/api/admin/events/archives/{file_name}",
+            http_status=404,
+            details=f"file_name={file_name}; downloaded_by={current_admin.chave}",
+            commit=True,
+        )
         raise HTTPException(status_code=404, detail="Archived event log not found") from exc
+
+    log_event(
+        db,
+        source="admin",
+        action="event_archive",
+        status="downloaded",
+        message="Archived event log downloaded",
+        request_path=f"/api/admin/events/archives/{file_name}",
+        http_status=200,
+        details=f"file_name={file_name}; downloaded_by={current_admin.chave}",
+        commit=True,
+    )
 
     return FileResponse(path=archive_path, media_type="text/csv", filename=archive_path.name)
 
 
-@router.delete("/events/archives/{file_name}", dependencies=[Depends(require_admin_key)])
-def remove_event_archive(file_name: str) -> dict:
+@router.delete("/events/archives/{file_name}", dependencies=[Depends(require_admin_session)])
+def remove_event_archive(
+    file_name: str,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> dict:
     try:
         delete_event_archive(file_name)
     except FileNotFoundError as exc:
+        log_event(
+            db,
+            source="admin",
+            action="event_archive",
+            status="failed",
+            message="Archived event log removal failed because file was not found",
+            request_path=f"/api/admin/events/archives/{file_name}",
+            http_status=404,
+            details=f"file_name={file_name}; removed_by={current_admin.chave}",
+            commit=True,
+        )
         raise HTTPException(status_code=404, detail="Archived event log not found") from exc
+
+    log_event(
+        db,
+        source="admin",
+        action="event_archive",
+        status="removed",
+        message="Archived event log removed",
+        request_path=f"/api/admin/events/archives/{file_name}",
+        http_status=200,
+        details=f"file_name={file_name}; removed_by={current_admin.chave}",
+        commit=True,
+    )
 
     return {"ok": True, "file_name": file_name}

@@ -1,5 +1,10 @@
+const authShell = document.getElementById("authShell");
+const adminShell = document.getElementById("adminShell");
 const statusLine = document.getElementById("statusLine");
-const DEFAULT_ADMIN_KEY = "change-admin-key";
+const authStatus = document.getElementById("authStatus");
+const sessionBar = document.getElementById("sessionBar");
+const sessionUserLabel = document.getElementById("sessionUserLabel");
+
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
 const ARCHIVE_PAGE_SIZE = 8;
@@ -8,6 +13,8 @@ let activeTab = "checkin";
 let autoRefreshHandle = null;
 let realtimeConnected = false;
 let refreshAllTimer = null;
+let eventStream = null;
+let isAuthenticated = false;
 let registeredUsersTotal = 0;
 let inactiveUsersTotal = 0;
 let eventArchives = [];
@@ -17,13 +24,39 @@ let eventArchivesTotal = 0;
 let eventArchivesTotalPages = 0;
 let eventArchivesTotalSizeBytes = 0;
 
-function adminHeaders() {
-  return { "x-admin-key": DEFAULT_ADMIN_KEY };
+function setAuthStatus(message, kind = "info") {
+  authStatus.textContent = message || "";
+  authStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
 }
 
 function setStatus(message, ok = true) {
   statusLine.textContent = message;
   statusLine.className = ok ? "status-ok" : "status-err";
+}
+
+function clearStatus() {
+  statusLine.textContent = "";
+  statusLine.className = "";
+}
+
+function showAuthShell(message = "", kind = "info") {
+  isAuthenticated = false;
+  authShell.classList.remove("hidden");
+  adminShell.classList.add("hidden");
+  sessionBar.classList.add("hidden");
+  stopRealtimeUpdates();
+  stopAutoRefresh();
+  setAuthStatus(message, kind);
+  clearStatus();
+}
+
+function showAdminShell(admin) {
+  isAuthenticated = true;
+  authShell.classList.add("hidden");
+  adminShell.classList.remove("hidden");
+  sessionBar.classList.remove("hidden");
+  sessionUserLabel.textContent = `${admin.nome_completo} (${admin.chave})`;
+  setAuthStatus("");
 }
 
 function applyResponsiveLabels(tbodyId) {
@@ -45,148 +78,13 @@ function applyResponsiveLabels(tbodyId) {
   });
 }
 
-function switchTab(tab) {
-  activeTab = tab;
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
-  document.querySelector(`.tabs button[data-tab=\"${tab}\"]`).classList.add("active");
-  document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
-  document.getElementById(`tab-${tab}`).classList.add("active");
-
-  refreshActiveTab().catch((e) => setStatus(e.message, false));
-}
-
-function hasPendingEditInProgress() {
-  return Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
-}
-
-async function refreshActiveTab() {
-  if (activeTab === "checkin") {
-    await loadCheckin();
-    return;
-  }
-  if (activeTab === "checkout") {
-    await loadCheckout();
-    return;
-  }
-  if (activeTab === "inativos") {
-    await loadInactive();
-    return;
-  }
-  if (activeTab === "cadastro") {
-    if (!hasPendingEditInProgress()) {
-      await Promise.all([loadPending(), loadRegisteredUsers()]);
-    }
-    return;
-  }
-  await loadEvents();
-}
-
-async function refreshAllTables() {
-  const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents()];
-  if (!hasPendingEditInProgress()) {
-    jobs.push(loadPending());
-    jobs.push(loadRegisteredUsers());
-  }
-  await Promise.all(jobs);
-}
-
-function startAutoRefresh() {
-  if (autoRefreshHandle !== null) {
-    clearInterval(autoRefreshHandle);
-  }
-
-  autoRefreshHandle = window.setInterval(() => {
-    if (document.hidden || realtimeConnected) {
-      return;
-    }
-
-    refreshAllTables().catch((e) => setStatus(e.message, false));
-  }, AUTO_REFRESH_MS);
-}
-
-function requestRefreshAllTables() {
-  if (refreshAllTimer !== null) {
-    window.clearTimeout(refreshAllTimer);
-  }
-
-  refreshAllTimer = window.setTimeout(() => {
-    refreshAllTables().catch((e) => setStatus(e.message, false));
-    refreshAllTimer = null;
-  }, REALTIME_DEBOUNCE_MS);
-}
-
-function startRealtimeUpdates() {
-  const streamUrl = `/api/admin/stream?admin_key=${encodeURIComponent(DEFAULT_ADMIN_KEY)}`;
-  const stream = new EventSource(streamUrl);
-
-  stream.onopen = () => {
-    realtimeConnected = true;
-  };
-
-  stream.onmessage = () => {
-    realtimeConnected = true;
-    requestRefreshAllTables();
-  };
-
-  stream.onerror = () => {
-    realtimeConnected = false;
-  };
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      requestRefreshAllTables();
-    }
-  });
-}
-
-async function fetchJson(url) {
-  const res = await fetch(url, { headers: adminHeaders() });
-  if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error("HTTP 401 - Admin Key ausente/inválida.");
-    }
-    throw new Error(`HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-function renderUsers(targetId, rows) {
-  const body = document.getElementById(targetId);
-  const includeLocal = targetId === "checkinBody" || targetId === "checkoutBody";
-  body.innerHTML = "";
-  rows.forEach((r) => {
-    const tr = document.createElement("tr");
-    if (includeLocal) {
-      tr.innerHTML = `<td>${formatDateTime(r.time)}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${formatLocal(r.local)}</td>`;
-    } else {
-      tr.innerHTML = `<td>${formatDateTime(r.time)}</td><td>${r.nome}</td><td>${r.chave}</td><td>${r.projeto}</td><td>${r.rfid}</td>`;
-    }
-    body.appendChild(tr);
-  });
-  applyResponsiveLabels(targetId);
-  updateUserTitle(targetId, rows.length, registeredUsersTotal);
-}
-
-function updateUserTitle(targetId, totalRows, totalRegistered) {
-  if (targetId === "checkinBody") {
-    document.getElementById("checkinTitle").textContent = `Usuários em Check-In (${totalRows}/${totalRegistered})`;
-    return;
-  }
-
-  if (targetId === "checkoutBody") {
-    document.getElementById("checkoutTitle").textContent = `Usuários em Check-Out (${totalRows}/${totalRegistered})`;
-    return;
-  }
-
-  if (targetId === "inactiveBody") {
-    document.getElementById("inactiveTitle").textContent = `Inatividade (${totalRows}/${totalRegistered})`;
-  }
-}
-
-function syncUserTitles() {
-  updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
-  updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
-  updateUserTitle("inactiveBody", document.querySelectorAll("#inactiveBody tr").length, registeredUsersTotal);
+function escapeHtml(value) {
+  return String(value ?? "-")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function formatDateTime(value) {
@@ -240,6 +138,18 @@ function formatAction(action) {
   if (action === "register") {
     return "Cadastro";
   }
+  if (action === "admin_request") {
+    return "Solicitação Admin";
+  }
+  if (action === "admin_access") {
+    return "Admin";
+  }
+  if (action === "password") {
+    return "Senha";
+  }
+  if (action === "event_archive") {
+    return "Arquivo Eventos";
+  }
   return action;
 }
 
@@ -256,28 +166,102 @@ function formatEventDetails(details) {
   return cleanedParts.length > 0 ? cleanedParts.join("; ") : "-";
 }
 
-function escapeHtml(value) {
-  return String(value ?? "-")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function makeEventCell(value) {
-  const safeValue = escapeHtml(value ?? "-");
-  return `<span class="event-cell">${safeValue}</span>`;
+  return `<span class="event-cell">${escapeHtml(value ?? "-")}</span>`;
 }
 
 function makeEventDetailsButton() {
   return '<button type="button" class="event-details-button">Detalhes</button>';
 }
 
+function parseErrorPayload(payload, fallback) {
+  if (!payload) {
+    return fallback;
+  }
+  if (typeof payload.detail === "string") {
+    return payload.detail;
+  }
+  if (Array.isArray(payload.detail) && payload.detail.length > 0) {
+    return payload.detail.map((item) => item.msg || item.message || "Erro de validação").join("; ");
+  }
+  return fallback;
+}
+
+async function parseErrorResponse(res) {
+  let payload = null;
+  try {
+    payload = await res.json();
+  } catch {
+    payload = null;
+  }
+
+  if (res.status === 401) {
+    return parseErrorPayload(payload, "Sua sessão expirou. Faça login novamente.");
+  }
+  return parseErrorPayload(payload, `HTTP ${res.status}`);
+}
+
+async function handleUnauthorized(message) {
+  if (!isAuthenticated) {
+    setAuthStatus(message, "error");
+    return;
+  }
+
+  showAuthShell(message || "Sua sessão expirou. Faça login novamente.", "error");
+}
+
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, {
+    credentials: "same-origin",
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!res.ok) {
+    const message = await parseErrorResponse(res);
+    if (res.status === 401) {
+      await handleUnauthorized(message);
+    }
+    throw new Error(message);
+  }
+
+  if (res.status === 204) {
+    return null;
+  }
+
+  return res.json();
+}
+
+async function postJson(url, body) {
+  const options = {
+    method: "POST",
+    headers: {},
+  };
+  if (body !== null && body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  return fetchJson(url, options);
+}
+
+async function deleteJson(url) {
+  return fetchJson(url, { method: "DELETE" });
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll(".tabs button").forEach((button) => button.classList.remove("active"));
+  document.querySelector(`.tabs button[data-tab="${tab}"]`).classList.add("active");
+  document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
+  document.getElementById(`tab-${tab}`).classList.add("active");
+  refreshActiveTab().catch((error) => setStatus(error.message, false));
+}
+
 function openEventDetails(details) {
   const modal = document.getElementById("eventDetailsModal");
-  const textArea = document.getElementById("eventDetailsText");
-  textArea.value = details || "-";
+  document.getElementById("eventDetailsText").value = details || "-";
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
 }
@@ -300,6 +284,358 @@ function closeEventArchivesModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+function openRequestAdminModal() {
+  const modal = document.getElementById("requestAdminModal");
+  document.getElementById("requestAdminStatus").textContent = "";
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeRequestAdminModal() {
+  const modal = document.getElementById("requestAdminModal");
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function updateUserTitle(targetId, totalRows, totalRegistered) {
+  if (targetId === "checkinBody") {
+    document.getElementById("checkinTitle").textContent = `Usuários em Check-In (${totalRows}/${totalRegistered})`;
+    return;
+  }
+  if (targetId === "checkoutBody") {
+    document.getElementById("checkoutTitle").textContent = `Usuários em Check-Out (${totalRows}/${totalRegistered})`;
+    return;
+  }
+  if (targetId === "inactiveBody") {
+    document.getElementById("inactiveTitle").textContent = `Inatividade (${totalRows}/${totalRegistered})`;
+  }
+}
+
+function syncUserTitles() {
+  updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
+  updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
+  updateUserTitle("inactiveBody", document.querySelectorAll("#inactiveBody tr").length, registeredUsersTotal);
+}
+
+function renderUsers(targetId, rows) {
+  const body = document.getElementById(targetId);
+  const includeLocal = targetId === "checkinBody" || targetId === "checkoutBody";
+  body.innerHTML = "";
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    if (includeLocal) {
+      tr.innerHTML = `<td>${formatDateTime(row.time)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+    } else {
+      tr.innerHTML = `<td>${formatDateTime(row.time)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(row.rfid)}</td>`;
+    }
+    body.appendChild(tr);
+  });
+
+  applyResponsiveLabels(targetId);
+  updateUserTitle(targetId, rows.length, registeredUsersTotal);
+}
+
+function makePendingRow(row) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${escapeHtml(row.rfid)}</td>
+    <td><input class="inline" id="nome-${row.id}" disabled /></td>
+    <td><input class="inline" id="chave-${row.id}" maxlength="4" disabled /></td>
+    <td>
+      <select class="inline" id="projeto-${row.id}" disabled>
+        <option value="P80">P80</option>
+        <option value="P83">P83</option>
+      </select>
+    </td>
+    <td class="pending-actions">
+      <button data-edit="${row.id}">Editar</button>
+      <button data-remove="${row.id}">Remover</button>
+      <button data-save="${row.id}" data-rfid="${escapeHtml(row.rfid)}" disabled>Salvar</button>
+    </td>
+  `;
+  return tr;
+}
+
+function makeRegisteredUserRow(user) {
+  const tr = document.createElement("tr");
+  tr.dataset.rfid = user.rfid;
+  tr.innerHTML = `
+    <td>${escapeHtml(user.rfid)}</td>
+    <td><input class="inline user-nome" value="${escapeHtml(user.nome)}" disabled /></td>
+    <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
+    <td>
+      <select class="inline user-projeto" disabled>
+        <option value="P80">P80</option>
+        <option value="P83">P83</option>
+      </select>
+    </td>
+    <td class="pending-actions">
+      <button data-user-edit="${escapeHtml(user.rfid)}">Editar</button>
+      <button data-user-save="${escapeHtml(user.rfid)}" disabled>Salvar</button>
+      <button data-user-remove="${escapeHtml(user.rfid)}">Remover</button>
+    </td>
+  `;
+  tr.querySelector(".user-projeto").value = user.projeto;
+  return tr;
+}
+
+function formatInactivity(days) {
+  const value = Number(days || 0);
+  return value === 1 ? "1 dia" : `${value} dias`;
+}
+
+function makeInactiveUserRow(user) {
+  const tr = document.createElement("tr");
+  tr.dataset.rfid = user.rfid;
+  tr.innerHTML = `
+    <td>${escapeHtml(user.nome)}</td>
+    <td>${escapeHtml(user.chave)}</td>
+    <td>${escapeHtml(user.projeto)}</td>
+    <td>${escapeHtml(formatInactivity(user.inactivity_days))}</td>
+    <td class="pending-actions"><button type="button" data-inactive-remove="${escapeHtml(user.rfid)}">Remover</button></td>
+  `;
+  return tr;
+}
+
+function makeAdministratorRow(row) {
+  const tr = document.createElement("tr");
+  const actions = [];
+  if (row.can_revoke) {
+    actions.push(`<button type="button" data-admin-revoke="${row.id}">Revogar</button>`);
+  }
+  if (row.can_approve) {
+    actions.push(`<button type="button" data-admin-approve="${row.id}">Aprovar</button>`);
+  }
+  if (row.can_reject) {
+    actions.push(`<button type="button" data-admin-reject="${row.id}">Rejeitar</button>`);
+  }
+  if (row.can_set_password) {
+    actions.push(`<button type="button" data-admin-show-password="${row.id}">Cadastrar Senha</button>`);
+  }
+
+  tr.innerHTML = `
+    <td>${escapeHtml(row.chave)}</td>
+    <td>${escapeHtml(row.nome)}</td>
+    <td>${escapeHtml(row.status_label)}</td>
+    <td>
+      <div class="pending-actions">${actions.join("") || "-"}</div>
+      <div class="admin-password-editor" id="admin-password-editor-${row.id}">
+        <span class="admin-password-label">Nova Senha</span>
+        <input class="admin-password-input" id="admin-password-input-${row.id}" type="password" minlength="3" maxlength="20" />
+        <button type="button" data-admin-save-password="${row.id}">Salvar</button>
+        <button type="button" class="secondary-button" data-admin-cancel-password="${row.id}">Cancelar</button>
+      </div>
+    </td>
+  `;
+  return tr;
+}
+
+function hasPendingEditInProgress() {
+  return Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
+}
+
+function setPendingEditingState(id, editing) {
+  const nome = document.getElementById(`nome-${id}`);
+  const chave = document.getElementById(`chave-${id}`);
+  const projeto = document.getElementById(`projeto-${id}`);
+  const saveButton = document.querySelector(`button[data-save="${id}"]`);
+  const editButton = document.querySelector(`button[data-edit="${id}"]`);
+
+  if (!nome || !chave || !projeto || !saveButton || !editButton) {
+    return;
+  }
+
+  nome.disabled = !editing;
+  chave.disabled = !editing;
+  projeto.disabled = !editing;
+  saveButton.disabled = !editing;
+  editButton.disabled = editing;
+  if (editing) {
+    nome.focus();
+  }
+}
+
+function setRegisteredUserEditingState(rfid, editing) {
+  const row = document.querySelector(`#usersBody tr[data-rfid="${CSS.escape(rfid)}"]`);
+  if (!row) {
+    return;
+  }
+
+  const nome = row.querySelector(".user-nome");
+  const chave = row.querySelector(".user-chave");
+  const projeto = row.querySelector(".user-projeto");
+  const saveButton = row.querySelector(`[data-user-save="${rfid}"]`);
+  const editButton = row.querySelector(`[data-user-edit="${rfid}"]`);
+
+  nome.disabled = !editing;
+  chave.disabled = !editing;
+  projeto.disabled = !editing;
+  saveButton.disabled = !editing;
+  editButton.disabled = editing;
+  if (editing) {
+    nome.focus();
+  }
+}
+
+function toggleAdminPasswordEditor(id, active) {
+  const editor = document.getElementById(`admin-password-editor-${id}`);
+  if (!editor) {
+    return;
+  }
+  editor.classList.toggle("active", active);
+  const input = document.getElementById(`admin-password-input-${id}`);
+  if (!input) {
+    return;
+  }
+  if (active) {
+    input.focus();
+  } else {
+    input.value = "";
+  }
+}
+
+async function loadCheckin() {
+  const rows = await fetchJson("/api/admin/checkin");
+  renderUsers("checkinBody", rows);
+}
+
+async function loadCheckout() {
+  const rows = await fetchJson("/api/admin/checkout");
+  renderUsers("checkoutBody", rows);
+}
+
+async function loadPending() {
+  const rows = await fetchJson("/api/admin/pending");
+  const body = document.getElementById("pendingBody");
+  body.innerHTML = "";
+  rows.forEach((row) => body.appendChild(makePendingRow(row)));
+  applyResponsiveLabels("pendingBody");
+}
+
+async function loadAdministrators() {
+  const rows = await fetchJson("/api/admin/administrators");
+  const body = document.getElementById("administratorsBody");
+  body.innerHTML = "";
+  rows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
+  applyResponsiveLabels("administratorsBody");
+}
+
+async function loadRegisteredUsers() {
+  const rows = await fetchJson("/api/admin/users");
+  registeredUsersTotal = rows.length;
+  const body = document.getElementById("usersBody");
+  body.innerHTML = "";
+  rows.forEach((user) => body.appendChild(makeRegisteredUserRow(user)));
+  applyResponsiveLabels("usersBody");
+  syncUserTitles();
+}
+
+async function loadInactive() {
+  const rows = await fetchJson("/api/admin/inactive");
+  inactiveUsersTotal = rows.length;
+  const body = document.getElementById("inactiveBody");
+  body.innerHTML = "";
+  rows.forEach((user) => body.appendChild(makeInactiveUserRow(user)));
+  applyResponsiveLabels("inactiveBody");
+  updateUserTitle("inactiveBody", inactiveUsersTotal, registeredUsersTotal);
+}
+
+async function loadEvents() {
+  const rows = await fetchJson("/api/admin/events");
+  const body = document.getElementById("eventsBody");
+  body.innerHTML = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const formattedDetails = formatEventDetails(row.details);
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(formattedDetails));
+    body.appendChild(tr);
+  });
+  applyResponsiveLabels("eventsBody");
+}
+
+async function refreshActiveTab() {
+  if (activeTab === "checkin") {
+    await loadCheckin();
+    return;
+  }
+  if (activeTab === "checkout") {
+    await loadCheckout();
+    return;
+  }
+  if (activeTab === "inativos") {
+    await loadInactive();
+    return;
+  }
+  if (activeTab === "cadastro") {
+    if (!hasPendingEditInProgress()) {
+      await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers()]);
+    }
+    return;
+  }
+  await loadEvents();
+}
+
+async function refreshAllTables() {
+  const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents(), loadAdministrators()];
+  if (!hasPendingEditInProgress()) {
+    jobs.push(loadPending());
+    jobs.push(loadRegisteredUsers());
+  }
+  await Promise.all(jobs);
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  autoRefreshHandle = window.setInterval(() => {
+    if (document.hidden || realtimeConnected || !isAuthenticated) {
+      return;
+    }
+    refreshAllTables().catch((error) => setStatus(error.message, false));
+  }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshHandle !== null) {
+    window.clearInterval(autoRefreshHandle);
+    autoRefreshHandle = null;
+  }
+}
+
+function requestRefreshAllTables() {
+  if (refreshAllTimer !== null) {
+    window.clearTimeout(refreshAllTimer);
+  }
+  refreshAllTimer = window.setTimeout(() => {
+    refreshAllTables().catch((error) => setStatus(error.message, false));
+    refreshAllTimer = null;
+  }, REALTIME_DEBOUNCE_MS);
+}
+
+function startRealtimeUpdates() {
+  stopRealtimeUpdates();
+  eventStream = new EventSource("/api/admin/stream");
+  eventStream.onopen = () => {
+    realtimeConnected = true;
+  };
+  eventStream.onmessage = () => {
+    realtimeConnected = true;
+    requestRefreshAllTables();
+  };
+  eventStream.onerror = () => {
+    realtimeConnected = false;
+  };
+}
+
+function stopRealtimeUpdates() {
+  if (eventStream) {
+    eventStream.close();
+    eventStream = null;
+  }
+  realtimeConnected = false;
+}
+
 function parseDownloadFileName(contentDisposition, fallbackName) {
   const match = /filename="?([^";]+)"?/i.exec(contentDisposition || "");
   return match ? match[1] : fallbackName;
@@ -310,7 +646,6 @@ function formatBytes(bytes) {
   if (!Number.isFinite(value) || value <= 0) {
     return "0 B";
   }
-
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = value;
   let unitIndex = 0;
@@ -318,7 +653,6 @@ function formatBytes(bytes) {
     size /= 1024;
     unitIndex += 1;
   }
-
   const decimals = unitIndex === 0 ? 0 : size >= 10 ? 1 : 2;
   return `${size.toFixed(decimals)} ${units[unitIndex]}`;
 }
@@ -335,36 +669,19 @@ function downloadBlob(blob, fileName) {
 }
 
 async function fetchBlob(url, fallbackName) {
-  const res = await fetch(url, { headers: adminHeaders() });
+  const res = await fetch(url, { credentials: "same-origin" });
   if (!res.ok) {
+    const message = await parseErrorResponse(res);
     if (res.status === 401) {
-      throw new Error("HTTP 401 - Admin Key ausente/inválida.");
+      await handleUnauthorized(message);
     }
-    if (res.status === 404) {
-      throw new Error("Arquivo solicitado não encontrado.");
-    }
-    throw new Error(`HTTP ${res.status}`);
+    throw new Error(message);
   }
-
   const blob = await res.blob();
   return {
     blob,
     fileName: parseDownloadFileName(res.headers.get("Content-Disposition"), fallbackName),
   };
-}
-
-async function deleteJson(url) {
-  const res = await fetch(url, { method: "DELETE", headers: adminHeaders() });
-  if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error("HTTP 401 - Admin Key ausente/inválida.");
-    }
-    if (res.status === 404) {
-      throw new Error("Arquivo solicitado não encontrado.");
-    }
-    throw new Error(`HTTP ${res.status}`);
-  }
-  return res.json();
 }
 
 async function loadEventArchives() {
@@ -375,7 +692,6 @@ async function loadEventArchives() {
   if (eventArchivesFilterQuery.trim()) {
     params.set("q", eventArchivesFilterQuery.trim());
   }
-
   const payload = await fetchJson(`/api/admin/events/archives?${params.toString()}`);
   renderEventArchives(payload);
   return payload;
@@ -385,7 +701,6 @@ function updateArchivePagination() {
   const prevButton = document.getElementById("eventArchivesPrev");
   const nextButton = document.getElementById("eventArchivesNext");
   const pageInfo = document.getElementById("eventArchivesPageInfo");
-
   prevButton.disabled = eventArchivesPage <= 1 || eventArchivesTotal === 0;
   nextButton.disabled = eventArchivesPage >= eventArchivesTotalPages || eventArchivesTotal === 0;
   pageInfo.textContent = `Página ${eventArchivesTotal === 0 ? 0 : eventArchivesPage} de ${eventArchivesTotal === 0 ? 0 : eventArchivesTotalPages}`;
@@ -394,12 +709,7 @@ function updateArchivePagination() {
 function updateArchiveSummary() {
   const summary = document.getElementById("eventArchivesSummary");
   const storageSummary = document.getElementById("eventArchivesStorage");
-  if (eventArchivesFilterQuery.trim()) {
-    summary.textContent = `${eventArchives.length} de ${eventArchivesTotal} logs`;
-  } else {
-    summary.textContent = `${eventArchivesTotal} logs`;
-  }
-
+  summary.textContent = eventArchivesFilterQuery.trim() ? `${eventArchives.length} de ${eventArchivesTotal} logs` : `${eventArchivesTotal} logs`;
   storageSummary.textContent = `Espaço total usado: ${formatBytes(eventArchivesTotalSizeBytes)}`;
 }
 
@@ -412,7 +722,6 @@ function renderEventArchives(payload) {
   const body = document.getElementById("eventArchivesBody");
   const emptyState = document.getElementById("eventArchivesEmpty");
   const downloadAllButton = document.getElementById("downloadAllEventArchives");
-
   body.innerHTML = "";
   updateArchiveSummary();
   updateArchivePagination();
@@ -466,21 +775,9 @@ async function archiveAndClearEvents() {
     return;
   }
 
-  const res = await fetch("/api/admin/events/archive", {
-    method: "POST",
-    headers: adminHeaders(),
-  });
-
-  if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error("HTTP 401 - Admin Key ausente/inválida.");
-    }
-    throw new Error(`HTTP ${res.status}`);
-  }
-
-  const payload = await res.json();
+  const payload = await postJson("/api/admin/events/archive");
   eventArchivesPage = 1;
-  renderEventArchives(payload.archives || []);
+  renderEventArchives(payload.archives || {});
   openEventArchivesModal();
   await loadEvents();
 
@@ -488,224 +785,24 @@ async function archiveAndClearEvents() {
     setStatus(`Eventos salvos em ${payload.archive.period} e limpos (${payload.cleared_count} registros).`, true);
     return;
   }
-
   setStatus("Não havia eventos novos para salvar. Logs já salvos exibidos na janela.", true);
-}
-
-function makePendingRow(r) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td>${r.rfid}</td>
-    <td><input class=\"inline\" id=\"nome-${r.id}\" disabled /></td>
-    <td><input class=\"inline\" id=\"chave-${r.id}\" maxlength=\"4\" disabled /></td>
-    <td>
-      <select class=\"inline\" id=\"projeto-${r.id}\" disabled>
-        <option value=\"P80\">P80</option>
-        <option value=\"P83\">P83</option>
-      </select>
-    </td>
-    <td class=\"pending-actions\">
-      <button data-edit=\"${r.id}\">Editar</button>
-      <button data-remove=\"${r.id}\">Remover</button>
-      <button data-save=\"${r.id}\" data-rfid=\"${r.rfid}\" disabled>Salvar</button>
-    </td>
-  `;
-  return tr;
-}
-
-function makeRegisteredUserRow(user) {
-  const tr = document.createElement("tr");
-  tr.dataset.rfid = user.rfid;
-  tr.innerHTML = `
-    <td>${escapeHtml(user.rfid)}</td>
-    <td><input class="inline user-nome" value="${user.nome}" disabled /></td>
-    <td><input class="inline user-chave" maxlength="4" value="${user.chave}" disabled /></td>
-    <td>
-      <select class="inline user-projeto" disabled>
-        <option value="P80">P80</option>
-        <option value="P83">P83</option>
-      </select>
-    </td>
-    <td class="pending-actions">
-      <button data-user-edit="${user.rfid}">Editar</button>
-      <button data-user-save="${user.rfid}" disabled>Salvar</button>
-      <button data-user-remove="${user.rfid}">Remover</button>
-    </td>
-  `;
-  tr.querySelector(".user-projeto").value = user.projeto;
-  return tr;
-}
-
-function formatInactivity(days) {
-  const value = Number(days || 0);
-  return value === 1 ? "1 dia" : `${value} dias`;
-}
-
-function makeInactiveUserRow(user) {
-  const tr = document.createElement("tr");
-  tr.dataset.rfid = user.rfid;
-  tr.innerHTML = `
-    <td>${escapeHtml(user.nome)}</td>
-    <td>${escapeHtml(user.chave)}</td>
-    <td>${escapeHtml(user.projeto)}</td>
-    <td>${escapeHtml(formatInactivity(user.inactivity_days))}</td>
-    <td class="pending-actions"><button type="button" data-inactive-remove="${escapeHtml(user.rfid)}">Remover</button></td>
-  `;
-  return tr;
-}
-
-function setPendingEditingState(id, editing) {
-  const nome = document.getElementById(`nome-${id}`);
-  const chave = document.getElementById(`chave-${id}`);
-  const projeto = document.getElementById(`projeto-${id}`);
-  const saveButton = document.querySelector(`button[data-save="${id}"]`);
-  const editButton = document.querySelector(`button[data-edit="${id}"]`);
-
-  if (!nome || !chave || !projeto || !saveButton || !editButton) {
-    return;
-  }
-
-  nome.disabled = !editing;
-  chave.disabled = !editing;
-  projeto.disabled = !editing;
-  saveButton.disabled = !editing;
-  editButton.disabled = editing;
-
-  if (editing) {
-    nome.focus();
-  }
-}
-
-function setRegisteredUserEditingState(rfid, editing) {
-  const row = document.querySelector(`#usersBody tr[data-rfid="${CSS.escape(rfid)}"]`);
-  if (!row) {
-    return;
-  }
-
-  const nome = row.querySelector(".user-nome");
-  const chave = row.querySelector(".user-chave");
-  const projeto = row.querySelector(".user-projeto");
-  const saveButton = row.querySelector(`[data-user-save="${rfid}"]`);
-  const editButton = row.querySelector(`[data-user-edit="${rfid}"]`);
-
-  nome.disabled = !editing;
-  chave.disabled = !editing;
-  projeto.disabled = !editing;
-  saveButton.disabled = !editing;
-  editButton.disabled = editing;
-
-  if (editing) {
-    nome.focus();
-  }
-}
-
-async function loadCheckin() {
-  const rows = await fetchJson("/api/admin/checkin");
-  renderUsers("checkinBody", rows);
-  setStatus("Lista Completa", true);
-}
-
-async function loadCheckout() {
-  const rows = await fetchJson("/api/admin/checkout");
-  renderUsers("checkoutBody", rows);
-  setStatus("Lista Completa", true);
-}
-
-async function loadPending() {
-  const rows = await fetchJson("/api/admin/pending");
-  const body = document.getElementById("pendingBody");
-  body.innerHTML = "";
-  rows.forEach((r) => body.appendChild(makePendingRow(r)));
-  applyResponsiveLabels("pendingBody");
-  setStatus("Lista Completa", true);
-}
-
-async function loadRegisteredUsers() {
-  const rows = await fetchJson("/api/admin/users");
-  registeredUsersTotal = rows.length;
-  const body = document.getElementById("usersBody");
-  body.innerHTML = "";
-  rows.forEach((user) => body.appendChild(makeRegisteredUserRow(user)));
-  applyResponsiveLabels("usersBody");
-  syncUserTitles();
-}
-
-async function loadInactive() {
-  const rows = await fetchJson("/api/admin/inactive");
-  inactiveUsersTotal = rows.length;
-  const body = document.getElementById("inactiveBody");
-  body.innerHTML = "";
-  rows.forEach((user) => body.appendChild(makeInactiveUserRow(user)));
-  applyResponsiveLabels("inactiveBody");
-  updateUserTitle("inactiveBody", inactiveUsersTotal, registeredUsersTotal);
-}
-
-async function loadEvents() {
-  const rows = await fetchJson("/api/admin/events");
-  const body = document.getElementById("eventsBody");
-  body.innerHTML = "";
-  rows.forEach((r) => {
-    const tr = document.createElement("tr");
-    const formattedDetails = formatEventDetails(r.details);
-    tr.innerHTML = `<td>${makeEventCell(r.id)}</td><td>${makeEventCell(formatDateTime(r.event_time))}</td><td>${makeEventCell(r.source)}</td><td>${makeEventCell(formatAction(r.action))}</td><td>${makeEventCell(r.status)}</td><td>${makeEventCell(r.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(r.local))}</td><td>${makeEventCell(r.rfid ?? "-")}</td><td>${makeEventCell(r.project ?? "-")}</td><td>${makeEventCell(r.http_status ?? "-")}</td><td>${makeEventCell(r.request_path ?? "-")}</td><td>${makeEventCell(r.retry_count ?? 0)}</td><td>${makeEventCell(r.message)}</td><td>${makeEventDetailsButton()}</td>`;
-    const detailsButton = tr.querySelector(".event-details-button");
-    detailsButton.addEventListener("click", () => openEventDetails(formattedDetails));
-    body.appendChild(tr);
-  });
-  applyResponsiveLabels("eventsBody");
 }
 
 async function savePending(id, rfid) {
   const nome = document.getElementById(`nome-${id}`).value.trim();
   const chave = document.getElementById(`chave-${id}`).value.trim().toUpperCase();
   const projeto = document.getElementById(`projeto-${id}`).value;
-
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-
-  const res = await fetch("/api/admin/users", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...adminHeaders(),
-    },
-    body: JSON.stringify({ rfid, nome, chave, projeto }),
-  });
-
-  if (!res.ok) {
-    if (res.status === 401) {
-      setStatus("Admin Key ausente/inválida.", false);
-      return;
-    }
-    setStatus(`Falha ao salvar cadastro: HTTP ${res.status}`, false);
-    return;
-  }
-
+  await postJson("/api/admin/users", { rfid, nome, chave, projeto });
   setStatus("Cadastro salvo com sucesso", true);
-  await loadPending();
+  await Promise.all([loadPending(), loadRegisteredUsers()]);
 }
 
 async function removePending(id) {
-  const res = await fetch(`/api/admin/pending/${id}`, {
-    method: "DELETE",
-    headers: adminHeaders(),
-  });
-
-  if (!res.ok) {
-    if (res.status === 401) {
-      setStatus("Admin Key ausente/inválida.", false);
-      return;
-    }
-    if (res.status === 404) {
-      setStatus("Pendência não encontrada para remoção.", false);
-      return;
-    }
-    setStatus(`Falha ao remover pendência: HTTP ${res.status}`, false);
-    return;
-  }
-
+  await deleteJson(`/api/admin/pending/${id}`);
   setStatus("Pendência removida com sucesso", true);
   await loadPending();
 }
@@ -715,59 +812,142 @@ async function saveRegisteredUser(rfid) {
   if (!row) {
     return;
   }
-
   const nome = row.querySelector(".user-nome").value.trim();
   const chave = row.querySelector(".user-chave").value.trim().toUpperCase();
   const projeto = row.querySelector(".user-projeto").value;
-
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-
-  const res = await fetch("/api/admin/users", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...adminHeaders(),
-    },
-    body: JSON.stringify({ rfid, nome, chave, projeto }),
-  });
-
-  if (!res.ok) {
-    if (res.status === 401) {
-      setStatus("Admin Key ausente/inválida.", false);
-      return;
-    }
-    setStatus(`Falha ao salvar usuário: HTTP ${res.status}`, false);
-    return;
-  }
-
+  await postJson("/api/admin/users", { rfid, nome, chave, projeto });
   setStatus("Usuário salvo com sucesso", true);
   await loadRegisteredUsers();
 }
 
 async function removeRegisteredUser(rfid) {
-  const res = await fetch(`/api/admin/users/${encodeURIComponent(rfid)}`, {
-    method: "DELETE",
-    headers: adminHeaders(),
-  });
+  await deleteJson(`/api/admin/users/${encodeURIComponent(rfid)}`);
+  setStatus("Usuário removido com sucesso", true);
+  await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
+}
 
-  if (!res.ok) {
-    if (res.status === 401) {
-      setStatus("Admin Key ausente/inválida.", false);
-      return;
-    }
-    if (res.status === 404) {
-      setStatus("Usuário não encontrado para remoção.", false);
-      return;
-    }
-    setStatus(`Falha ao remover usuário: HTTP ${res.status}`, false);
+async function approveAdministrator(id) {
+  const payload = await postJson(`/api/admin/administrators/requests/${id}/approve`);
+  setStatus(payload.message, true);
+  await loadAdministrators();
+}
+
+async function rejectAdministrator(id) {
+  const payload = await postJson(`/api/admin/administrators/requests/${id}/reject`);
+  setStatus(payload.message, true);
+  await loadAdministrators();
+}
+
+async function revokeAdministrator(id) {
+  const confirmed = window.confirm("Deseja revogar o acesso deste administrador?");
+  if (!confirmed) {
+    return;
+  }
+  const payload = await postJson(`/api/admin/administrators/${id}/revoke`);
+  setStatus(payload.message, true);
+  await loadAdministrators();
+}
+
+async function saveAdministratorPassword(id) {
+  const input = document.getElementById(`admin-password-input-${id}`);
+  const novaSenha = input.value;
+  if (novaSenha.length < 3 || novaSenha.length > 20) {
+    setStatus("A nova senha deve ter entre 3 e 20 caracteres.", false);
+    return;
+  }
+  const payload = await postJson(`/api/admin/administrators/${id}/set-password`, { nova_senha: novaSenha });
+  toggleAdminPasswordEditor(id, false);
+  setStatus(payload.message, true);
+  await loadAdministrators();
+}
+
+async function submitLogin() {
+  const chave = document.getElementById("loginChave").value.trim().toUpperCase();
+  const senha = document.getElementById("loginSenha").value;
+  if (chave.length !== 4 || !/^[A-Z0-9]{4}$/i.test(chave)) {
+    setAuthStatus("A chave deve ter 4 caracteres alfanuméricos.", "error");
+    return;
+  }
+  if (senha.length < 3 || senha.length > 20) {
+    setAuthStatus("A senha deve ter entre 3 e 20 caracteres.", "error");
     return;
   }
 
-  setStatus("Usuário removido com sucesso", true);
-  await loadRegisteredUsers();
+  const payload = await postJson("/api/admin/auth/login", { chave, senha });
+  setAuthStatus(payload.message, "success");
+  document.getElementById("loginSenha").value = "";
+  await bootstrapAdmin();
+}
+
+async function submitRequestAdmin() {
+  const chave = document.getElementById("requestAdminChave").value.trim().toUpperCase();
+  const nomeCompleto = document.getElementById("requestAdminNome").value.trim();
+  const senha = document.getElementById("requestAdminSenha").value;
+  if (chave.length !== 4 || !/^[A-Z0-9]{4}$/i.test(chave)) {
+    document.getElementById("requestAdminStatus").textContent = "A chave deve ter 4 caracteres alfanuméricos.";
+    return;
+  }
+  if (nomeCompleto.length < 3) {
+    document.getElementById("requestAdminStatus").textContent = "Informe o nome completo.";
+    return;
+  }
+  if (senha.length < 3 || senha.length > 20) {
+    document.getElementById("requestAdminStatus").textContent = "A senha deve ter entre 3 e 20 caracteres.";
+    return;
+  }
+
+  const payload = await postJson("/api/admin/auth/request-access", {
+    chave,
+    nome_completo: nomeCompleto,
+    senha,
+  });
+  document.getElementById("requestAdminStatus").textContent = payload.message;
+  setAuthStatus(payload.message, "success");
+  window.setTimeout(() => {
+    closeRequestAdminModal();
+    document.getElementById("requestAdminChave").value = "";
+    document.getElementById("requestAdminNome").value = "";
+    document.getElementById("requestAdminSenha").value = "";
+  }, 700);
+}
+
+async function submitPasswordReset() {
+  const chave = document.getElementById("loginChave").value.trim().toUpperCase();
+  if (!chave) {
+    setAuthStatus("Informe sua chave antes de solicitar o recadastro da senha.", "error");
+    return;
+  }
+  if (chave.length !== 4 || !/^[A-Z0-9]{4}$/i.test(chave)) {
+    setAuthStatus("A chave deve ter 4 caracteres alfanuméricos.", "error");
+    return;
+  }
+
+  const payload = await postJson("/api/admin/auth/request-password-reset", { chave });
+  document.getElementById("loginSenha").value = "";
+  setAuthStatus(payload.message, "success");
+}
+
+async function logout() {
+  await postJson("/api/admin/auth/logout");
+  showAuthShell("Sessão encerrada com sucesso.", "success");
+}
+
+async function bootstrapAdmin() {
+  const session = await fetchJson("/api/admin/auth/session");
+  if (!session.authenticated || !session.admin) {
+    showAuthShell("", "info");
+    return;
+  }
+
+  showAdminShell(session.admin);
+  startAutoRefresh();
+  startRealtimeUpdates();
+  await refreshAllTables();
+  setStatus("Painel administrativo carregado.", true);
 }
 
 function bindActions() {
@@ -775,52 +955,87 @@ function bindActions() {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
+  document.getElementById("loginButton").addEventListener("click", () => {
+    submitLogin().catch((error) => setAuthStatus(error.message, "error"));
+  });
+  document.getElementById("loginSenha").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submitLogin().catch((error) => setAuthStatus(error.message, "error"));
+    }
+  });
+  document.getElementById("requestAdminButton").addEventListener("click", openRequestAdminModal);
+  document.getElementById("resetPasswordButton").addEventListener("click", () => {
+    submitPasswordReset().catch((error) => setAuthStatus(error.message, "error"));
+  });
+  document.getElementById("logoutButton").addEventListener("click", () => {
+    logout().catch((error) => setAuthStatus(error.message, "error"));
+  });
+
+  document.getElementById("closeRequestAdmin").addEventListener("click", closeRequestAdminModal);
+  document.getElementById("submitRequestAdmin").addEventListener("click", () => {
+    submitRequestAdmin().catch((error) => {
+      document.getElementById("requestAdminStatus").textContent = error.message;
+    });
+  });
+  document.getElementById("requestAdminModal").addEventListener("click", (event) => {
+    if (event.target.id === "requestAdminModal") {
+      closeRequestAdminModal();
+    }
+  });
+
   document.getElementById("clearEvents").addEventListener("click", () => {
-    archiveAndClearEvents().catch((e) => setStatus(e.message, false));
+    archiveAndClearEvents().catch((error) => setStatus(error.message, false));
   });
   document.getElementById("closeEventDetails").addEventListener("click", closeEventDetails);
   document.getElementById("closeEventArchives").addEventListener("click", closeEventArchivesModal);
   document.getElementById("closeEventArchivesFooter").addEventListener("click", closeEventArchivesModal);
   document.getElementById("downloadAllEventArchives").addEventListener("click", () => {
-    downloadAllEventArchives().catch((e) => setStatus(e.message, false));
+    downloadAllEventArchives().catch((error) => setStatus(error.message, false));
   });
-  document.getElementById("eventArchivesFilter").addEventListener("input", (ev) => {
-    eventArchivesFilterQuery = ev.target.value || "";
+  document.getElementById("eventArchivesFilter").addEventListener("input", (event) => {
+    eventArchivesFilterQuery = event.target.value || "";
     eventArchivesPage = 1;
-    loadEventArchives().catch((e) => setStatus(e.message, false));
+    loadEventArchives().catch((error) => setStatus(error.message, false));
   });
   document.getElementById("eventArchivesPrev").addEventListener("click", () => {
     if (eventArchivesPage > 1) {
       eventArchivesPage -= 1;
-      loadEventArchives().catch((e) => setStatus(e.message, false));
+      loadEventArchives().catch((error) => setStatus(error.message, false));
     }
   });
   document.getElementById("eventArchivesNext").addEventListener("click", () => {
     if (eventArchivesPage < eventArchivesTotalPages) {
       eventArchivesPage += 1;
-      loadEventArchives().catch((e) => setStatus(e.message, false));
+      loadEventArchives().catch((error) => setStatus(error.message, false));
     }
   });
-  document.getElementById("eventDetailsModal").addEventListener("click", (ev) => {
-    if (ev.target.id === "eventDetailsModal") {
+  document.getElementById("eventDetailsModal").addEventListener("click", (event) => {
+    if (event.target.id === "eventDetailsModal") {
       closeEventDetails();
     }
   });
-  document.getElementById("eventArchivesModal").addEventListener("click", (ev) => {
-    if (ev.target.id === "eventArchivesModal") {
+  document.getElementById("eventArchivesModal").addEventListener("click", (event) => {
+    if (event.target.id === "eventArchivesModal") {
       closeEventArchivesModal();
     }
   });
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && isAuthenticated) {
+      requestRefreshAllTables();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
       closeEventDetails();
       closeEventArchivesModal();
+      closeRequestAdminModal();
     }
   });
-  document.getElementById("eventArchivesBody").addEventListener("click", (ev) => {
-    const target = ev.target;
+
+  document.getElementById("eventArchivesBody").addEventListener("click", (event) => {
+    const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.archiveDownload) {
-      downloadEventArchive(target.dataset.archiveDownload).catch((e) => setStatus(e.message, false));
+      downloadEventArchive(target.dataset.archiveDownload).catch((error) => setStatus(error.message, false));
       return;
     }
     if (target.tagName === "BUTTON" && target.dataset.archiveDelete) {
@@ -829,57 +1044,84 @@ function bindActions() {
       if (!confirmed) {
         return;
       }
-      deleteEventArchive(fileName).catch((e) => setStatus(e.message, false));
+      deleteEventArchive(fileName).catch((error) => setStatus(error.message, false));
     }
   });
 
-  document.getElementById("pendingBody").addEventListener("click", (ev) => {
-    const t = ev.target;
-    if (t.tagName === "BUTTON" && t.dataset.edit) {
-      setPendingEditingState(t.dataset.edit, true);
+  document.getElementById("pendingBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.edit) {
+      setPendingEditingState(target.dataset.edit, true);
       return;
     }
-    if (t.tagName === "BUTTON" && t.dataset.remove) {
-      removePending(t.dataset.remove).catch((e) => setStatus(e.message, false));
+    if (target.tagName === "BUTTON" && target.dataset.remove) {
+      removePending(target.dataset.remove).catch((error) => setStatus(error.message, false));
       return;
     }
-    if (t.tagName === "BUTTON" && t.dataset.save) {
-      savePending(t.dataset.save, t.dataset.rfid).catch((e) => setStatus(e.message, false));
+    if (target.tagName === "BUTTON" && target.dataset.save) {
+      savePending(target.dataset.save, target.dataset.rfid).catch((error) => setStatus(error.message, false));
     }
   });
 
-  document.getElementById("usersBody").addEventListener("click", (ev) => {
-    const t = ev.target;
-    if (t.tagName === "BUTTON" && t.dataset.userEdit) {
-      setRegisteredUserEditingState(t.dataset.userEdit, true);
+  document.getElementById("usersBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userEdit) {
+      setRegisteredUserEditingState(target.dataset.userEdit, true);
       return;
     }
-    if (t.tagName === "BUTTON" && t.dataset.userSave) {
-      saveRegisteredUser(t.dataset.userSave).catch((e) => setStatus(e.message, false));
+    if (target.tagName === "BUTTON" && target.dataset.userSave) {
+      saveRegisteredUser(target.dataset.userSave).catch((error) => setStatus(error.message, false));
       return;
     }
-    if (t.tagName === "BUTTON" && t.dataset.userRemove) {
-      removeRegisteredUser(t.dataset.userRemove).catch((e) => setStatus(e.message, false));
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
     }
   });
 
-  document.getElementById("inactiveBody").addEventListener("click", (ev) => {
-    const t = ev.target;
-    if (t.tagName === "BUTTON" && t.dataset.inactiveRemove) {
-      removeRegisteredUser(t.dataset.inactiveRemove).catch((e) => setStatus(e.message, false));
+  document.getElementById("inactiveBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.inactiveRemove) {
+      removeRegisteredUser(target.dataset.inactiveRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("administratorsBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName !== "BUTTON") {
+      return;
+    }
+    if (target.dataset.adminApprove) {
+      approveAdministrator(target.dataset.adminApprove).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.dataset.adminReject) {
+      rejectAdministrator(target.dataset.adminReject).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.dataset.adminRevoke) {
+      revokeAdministrator(target.dataset.adminRevoke).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.dataset.adminShowPassword) {
+      toggleAdminPasswordEditor(target.dataset.adminShowPassword, true);
+      return;
+    }
+    if (target.dataset.adminCancelPassword) {
+      toggleAdminPasswordEditor(target.dataset.adminCancelPassword, false);
+      return;
+    }
+    if (target.dataset.adminSavePassword) {
+      saveAdministratorPassword(target.dataset.adminSavePassword).catch((error) => setStatus(error.message, false));
     }
   });
 }
 
 async function bootstrap() {
   bindActions();
-  startAutoRefresh();
-  startRealtimeUpdates();
   try {
-    await refreshAllTables();
-    setStatus("Lista Completa", true);
-  } catch (err) {
-    setStatus(String(err), false);
+    await bootstrapAdmin();
+  } catch (error) {
+    showAuthShell(error.message, "error");
   }
 }
 

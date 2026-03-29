@@ -1,32 +1,42 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from .core.config import settings
 from .database import Base, engine
 from .routers import admin, device, health
+from .services.admin_auth import seed_default_admin
 from .services.event_archives import ensure_event_archives_dir
 from .services.forms_queue import forms_submission_worker
 
 
-app = FastAPI(title=settings.app_name)
-
-
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
     if settings.app_env == "development":
         Base.metadata.create_all(bind=engine)
+    seed_default_admin()
     if settings.forms_queue_enabled:
         forms_submission_worker.start()
+    try:
+        yield
+    finally:
+        if settings.forms_queue_enabled:
+            forms_submission_worker.stop()
 
 
-@app.on_event("shutdown")
-def shutdown() -> None:
-    if settings.forms_queue_enabled:
-        forms_submission_worker.stop()
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.admin_session_secret,
+    max_age=settings.admin_session_max_age_seconds,
+    same_site="lax",
+    https_only=False,
+)
 
 
 app.include_router(health.router)

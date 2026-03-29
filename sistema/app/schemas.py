@@ -43,6 +43,79 @@ class AdminUserUpsert(BaseModel):
         return value.upper()
 
 
+class AdminLoginRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha: str = Field(min_length=3, max_length=20)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class AdminAccessRequestCreate(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    nome_completo: str = Field(min_length=3, max_length=180)
+    senha: str = Field(min_length=3, max_length=20)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class AdminPasswordResetRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class AdminPasswordSetRequest(BaseModel):
+    nova_senha: str = Field(min_length=3, max_length=20)
+
+
+class AdminIdentity(BaseModel):
+    id: int
+    chave: str
+    nome_completo: str
+
+
+class AdminSessionResponse(BaseModel):
+    authenticated: bool
+    admin: AdminIdentity | None = None
+    message: str | None = None
+
+
+class AdminManagementRow(BaseModel):
+    id: int
+    row_type: Literal["admin", "request"]
+    chave: str
+    nome: str
+    status: Literal["active", "pending", "password_reset_requested"]
+    status_label: str
+    can_revoke: bool
+    can_approve: bool
+    can_reject: bool
+    can_set_password: bool
+
+
+class AdminActionResponse(BaseModel):
+    ok: bool
+    message: str
+
+
 class UserRow(BaseModel):
     rfid: str
     nome: str

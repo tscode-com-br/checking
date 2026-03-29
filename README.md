@@ -9,7 +9,7 @@ Implementacao inicial do sistema de check-in/check-out com:
 - Automacao real de Microsoft Forms via Playwright
 - Fila persistida para envio assíncrono ao Microsoft Forms apos resposta rapida ao ESP32
 - Migracoes com Alembic
-- Painel web administrativo em /
+- Painel web administrativo em / com login por sessao
 
 ## Estrutura
 - assets/xpath: seletores XPath do formulario

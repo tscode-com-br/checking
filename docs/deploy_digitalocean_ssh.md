@@ -32,7 +32,7 @@ Saia e entre novamente no SSH para aplicar o grupo docker.
 No Windows, no projeto:
 
 1. Copie `deploy/.env.production.example` para `.env`.
-2. Preencha os valores reais: `POSTGRES_PASSWORD`, `FORMS_URL`, `DEVICE_SHARED_KEY`, `ADMIN_API_KEY`.
+2. Preencha os valores reais: `POSTGRES_PASSWORD`, `FORMS_URL`, `DEVICE_SHARED_KEY`, `ADMIN_SESSION_SECRET`, `BOOTSTRAP_ADMIN_PASSWORD`.
 
 ## 3) Executar deploy por SSH (Windows PowerShell)
 No root do projeto:

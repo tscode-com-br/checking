@@ -80,3 +80,30 @@ class FormsSubmission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+    __table_args__ = (UniqueConstraint("chave", name="uq_admin_users_chave"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    nome_completo: Mapped[str] = mapped_column(String(180), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requires_password_reset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    approved_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_reset_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdminAccessRequest(Base):
+    __tablename__ = "admin_access_requests"
+    __table_args__ = (UniqueConstraint("chave", name="uq_admin_access_requests_chave"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    nome_completo: Mapped[str] = mapped_column(String(180), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

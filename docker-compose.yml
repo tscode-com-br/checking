@@ -30,7 +30,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/checking}
       FORMS_URL: ${FORMS_URL}
       DEVICE_SHARED_KEY: ${DEVICE_SHARED_KEY:-change-me}
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-change-admin-key}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-admin-session-secret}
+      BOOTSTRAP_ADMIN_KEY: ${BOOTSTRAP_ADMIN_KEY:-HR70}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Tamer Salmem}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-eAcacdLe2}
       TZ_NAME: ${TZ_NAME:-Asia/Singapore}
       FORMS_TIMEOUT_SECONDS: ${FORMS_TIMEOUT_SECONDS:-30}
       FORMS_MAX_RETRIES: ${FORMS_MAX_RETRIES:-3}
