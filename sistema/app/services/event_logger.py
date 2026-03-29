@@ -3,6 +3,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from ..models import CheckEvent
+from .admin_updates import notify_admin_data_changed
 from .time_utils import now_sgt
 
 
@@ -45,4 +46,5 @@ def log_event(
     db.add(event)
     if commit:
         db.commit()
+        notify_admin_data_changed("event")
     return event

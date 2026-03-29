@@ -13,10 +13,37 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      OCEAN_PORT: ${{ secrets.OCEAN_PORT != '' && secrets.OCEAN_PORT || '22' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate deploy secrets
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_USER: ${{ secrets.OCEAN_USER }}
+          OCEAN_APP_DIR: ${{ secrets.OCEAN_APP_DIR }}
+          OCEAN_SSH_KEY: ${{ secrets.OCEAN_SSH_KEY }}
+        run: |
+          set -e
+          test -n "$OCEAN_HOST"
+          test -n "$OCEAN_USER"
+          test -n "$OCEAN_APP_DIR"
+          test -n "$OCEAN_SSH_KEY"
+
+      - name: Ensure remote app directory exists
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          script_stop: true
+          script: |
+            set -e
+            mkdir -p ${{ secrets.OCEAN_APP_DIR }}
 
       - name: Sync project to server
         uses: burnett01/rsync-deployments@7.0.2
@@ -26,6 +53,7 @@ jobs:
             --exclude ".git/"
             --exclude ".github/"
             --exclude ".venv/"
+            --exclude ".pytest_cache/"
             --exclude "*.db"
             --exclude "deploy/keys/"
             --exclude ".env"
@@ -34,7 +62,7 @@ jobs:
           remote_host: ${{ secrets.OCEAN_HOST }}
           remote_user: ${{ secrets.OCEAN_USER }}
           remote_key: ${{ secrets.OCEAN_SSH_KEY }}
-          remote_port: ${{ secrets.OCEAN_PORT || 22 }}
+          remote_port: ${{ env.OCEAN_PORT }}
 
       - name: Rebuild and restart services
         uses: appleboy/ssh-action@v1.2.0
@@ -42,7 +70,7 @@ jobs:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
-          port: ${{ secrets.OCEAN_PORT || 22 }}
+          port: ${{ env.OCEAN_PORT }}
           script_stop: true
           script: |
             set -e
@@ -51,7 +79,9 @@ jobs:
               echo "Arquivo .env nao encontrado em ${{ secrets.OCEAN_APP_DIR }}"
               exit 1
             fi
-            docker compose up -d --build
+            printf '%s\n' '${{ github.sha }}' > .deploy-release
+            docker compose up -d db
+            docker compose up -d --build --remove-orphans
             docker image prune -f
 
       - name: Validate application health
@@ -60,13 +90,15 @@ jobs:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
-          port: ${{ secrets.OCEAN_PORT || 22 }}
+          port: ${{ env.OCEAN_PORT }}
           script_stop: true
           script: |
             set -e
             cd ${{ secrets.OCEAN_APP_DIR }}
             for i in 1 2 3 4 5 6 7 8 9 10; do
               if curl -fsS http://127.0.0.1:8000/api/health; then
+                echo
+                docker compose ps
                 exit 0
               fi
               sleep 6

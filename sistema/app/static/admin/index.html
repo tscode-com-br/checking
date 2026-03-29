@@ -4,16 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Checking Admin</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/site_icon.png?v=1" />
+    <link rel="shortcut icon" type="image/png" href="/assets/img/site_icon.png?v=1" />
+    <link rel="apple-touch-icon" href="/assets/img/site_icon.png?v=1" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header>
-      <h1>Checking Admin</h1>
+      <div class="header-brand" role="img" aria-label="Checking">
+        <svg class="header-logo-icon" viewBox="0 0 220 170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+          <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+            <g transform="translate(18 16) rotate(-12 74 70)">
+              <rect x="12" y="8" width="120" height="120" rx="18" stroke-width="10" />
+              <rect x="28" y="30" width="34" height="28" rx="4" fill="#ffffff" stroke="none" />
+              <path d="M28 74H64" stroke-width="10" />
+              <path d="M28 96H56" stroke-width="10" />
+              <path d="M92 78L118 104L162 44" stroke-width="20" />
+              <path d="M154 30C167 34 176 43 180 56" stroke-width="8" />
+              <path d="M166 18C184 24 197 38 202 56" stroke-width="8" />
+            </g>
+          </g>
+        </svg>
+        <span class="header-logo-text">Checking</span>
+      </div>
     </header>
 
     <nav class="tabs">
       <button data-tab="checkin" class="active">Check-In</button>
       <button data-tab="checkout">Check-Out</button>
+      <button data-tab="inativos">Inativos</button>
       <button data-tab="cadastro">Cadastro</button>
       <button data-tab="eventos">Eventos</button>
     </nav>
@@ -21,13 +40,12 @@
     <main>
       <section id="tab-checkin" class="tab active">
         <div class="section-header">
-          <h2>Usuarios em Check-In</h2>
-          <button id="refreshCheckin">Atualizar</button>
+          <h2 id="checkinTitle">Usuários em Check-In (0/0)</h2>
         </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>RFID</th></tr>
+              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
             </thead>
             <tbody id="checkinBody"></tbody>
           </table>
@@ -36,30 +54,54 @@
 
       <section id="tab-checkout" class="tab">
         <div class="section-header">
-          <h2>Usuarios em Check-Out</h2>
-          <button id="refreshCheckout">Atualizar</button>
+          <h2 id="checkoutTitle">Usuários em Check-Out (0/0)</h2>
         </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horario</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>RFID</th></tr>
+              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
             </thead>
             <tbody id="checkoutBody"></tbody>
           </table>
         </div>
       </section>
 
-      <section id="tab-cadastro" class="tab">
+      <section id="tab-inativos" class="tab">
         <div class="section-header">
-          <h2>Cadastro de Pendencias</h2>
-          <button id="refreshPending">Atualizar</button>
+          <h2 id="inactiveTitle">Inatividade (0/0)</h2>
         </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Acoes</th></tr>
+              <tr><th>Nome Completo</th><th>Chave</th><th>Projeto</th><th>Inatividade</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="inactiveBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-cadastro" class="tab">
+        <div class="section-header">
+          <h2>Cadastro de Pendências</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Ações</th></tr>
             </thead>
             <tbody id="pendingBody"></tbody>
+          </table>
+        </div>
+
+        <div class="section-header">
+          <h2>Usuários Cadastrados</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="usersBody"></tbody>
           </table>
         </div>
       </section>
@@ -67,17 +109,61 @@
       <section id="tab-eventos" class="tab">
         <div class="section-header">
           <h2>Eventos</h2>
-          <button id="refreshEvents">Atualizar</button>
+          <button id="clearEvents" type="button">Limpar</button>
         </div>
-        <div class="table-wrap">
-          <table class="responsive-table">
+        <div class="table-wrap events-wrap">
+          <table class="responsive-table events-table">
             <thead>
-              <tr><th>ID</th><th>Horario</th><th>Origem</th><th>Acao</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Projeto</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
+              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Projeto</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>
         </div>
       </section>
+
+      <div id="eventDetailsModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="eventDetailsTitle">
+          <div class="section-header modal-header">
+            <h2 id="eventDetailsTitle">Detalhes do Evento</h2>
+            <button id="closeEventDetails" type="button">Fechar</button>
+          </div>
+          <textarea id="eventDetailsText" class="event-details-text" readonly></textarea>
+        </div>
+      </div>
+
+      <div id="eventArchivesModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card archive-modal-card" role="dialog" aria-modal="true" aria-labelledby="eventArchivesTitle">
+          <div class="section-header modal-header">
+            <div class="archive-title-block">
+              <h2 id="eventArchivesTitle">Logs Salvos</h2>
+              <p id="eventArchivesStorage" class="archive-storage-summary">Espaço total usado: 0 B</p>
+            </div>
+            <button id="closeEventArchives" type="button">Fechar</button>
+          </div>
+          <div class="archive-toolbar">
+            <input id="eventArchivesFilter" class="archive-filter-input" type="search" placeholder="Filtrar por período do log" />
+            <span id="eventArchivesSummary" class="archive-summary">0 logs</span>
+          </div>
+          <div class="table-wrap archive-list-wrap">
+            <table class="archive-table">
+              <thead>
+                <tr><th>Período</th><th>Registros</th><th>Tamanho</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="eventArchivesBody"></tbody>
+            </table>
+          </div>
+          <p id="eventArchivesEmpty" class="archive-empty hidden">Nenhum log salvo ainda.</p>
+          <div class="archive-pagination">
+            <button id="eventArchivesPrev" type="button" class="secondary-button">Anterior</button>
+            <span id="eventArchivesPageInfo" class="archive-page-info">Página 1 de 1</span>
+            <button id="eventArchivesNext" type="button" class="secondary-button">Próxima</button>
+          </div>
+          <div class="modal-footer">
+            <button id="downloadAllEventArchives" type="button" class="secondary-button">Baixar Tudo</button>
+            <button id="closeEventArchivesFooter" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
 
       <p id="statusLine"></p>
     </main>

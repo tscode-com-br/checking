@@ -163,7 +163,9 @@ void setInternalLedRed() {
 #endif
 }
 
-void runLedBlinkPattern(void (*ledSetter)(), unsigned long blinkCount, unsigned long onMs, unsigned long totalMs) {
+typedef void (*LedSetter)();
+
+void runLedBlinkPattern(LedSetter ledSetter, unsigned long blinkCount, unsigned long onMs, unsigned long totalMs) {
   if (blinkCount == 0 || ledSetter == nullptr) {
     return;
   }
@@ -315,7 +317,7 @@ void updateStatusLed() {
     return;
   }
 
-  void (*statusLedSetter)() = cloudStatus == CLOUD_OFFLINE ? setInternalLedRed : setInternalLedWhite;
+  LedSetter statusLedSetter = cloudStatus == CLOUD_OFFLINE ? setInternalLedRed : setInternalLedWhite;
 
   if (statusLedPulseActive && (long)(now - statusLedOnUntil) >= 0) {
     setInternalLedOff();

@@ -10,12 +10,19 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-checking}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   app:
     build: .
     restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_HOST: ${APP_HOST:-0.0.0.0}
@@ -27,8 +34,18 @@ services:
       TZ_NAME: ${TZ_NAME:-Asia/Singapore}
       FORMS_TIMEOUT_SECONDS: ${FORMS_TIMEOUT_SECONDS:-30}
       FORMS_MAX_RETRIES: ${FORMS_MAX_RETRIES:-3}
+      EVENT_ARCHIVES_DIR: ${EVENT_ARCHIVES_DIR:-/app/data/event_archives}
     ports:
       - "${APP_PORT:-8000}:8000"
+    volumes:
+      - event_archives:/app/data/event_archives
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
 
 volumes:
   pgdata:
+  event_archives:

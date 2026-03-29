@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     heartbeat_seconds: int = 180
     forms_timeout_seconds: int = 30
     forms_max_retries: int = 3
+    forms_queue_enabled: bool = True
+    event_archives_dir: str = "/app/data/event_archives"
 
 
 settings = Settings()

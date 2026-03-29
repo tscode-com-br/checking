@@ -53,6 +53,13 @@ class UserRow(BaseModel):
     time: datetime
 
 
+class AdminUserListRow(BaseModel):
+    rfid: str
+    nome: str
+    chave: str
+    projeto: str
+
+
 class PendingRow(BaseModel):
     id: int
     rfid: str
@@ -76,3 +83,36 @@ class EventRow(BaseModel):
     http_status: Optional[int]
     retry_count: int
     event_time: datetime
+
+
+class InactiveUserRow(BaseModel):
+    rfid: str
+    nome: str
+    chave: str
+    projeto: str
+    inactivity_days: int
+
+
+class EventArchiveRow(BaseModel):
+    file_name: str
+    period: str
+    record_count: int
+    size_bytes: int
+    created_at: datetime
+
+
+class EventArchiveListResponse(BaseModel):
+    items: list[EventArchiveRow]
+    total: int
+    total_size_bytes: int
+    page: int
+    page_size: int
+    total_pages: int
+    query: str = ""
+
+
+class EventArchiveCreateResponse(BaseModel):
+    created: bool
+    cleared_count: int
+    archive: EventArchiveRow | None
+    archives: EventArchiveListResponse

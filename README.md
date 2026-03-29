@@ -7,6 +7,7 @@ Implementacao inicial do sistema de check-in/check-out com:
 - Fluxo de pendencia para RFID nao cadastrado
 - Documentacao tecnica completa e esquematico de montagem
 - Automacao real de Microsoft Forms via Playwright
+- Fila persistida para envio assíncrono ao Microsoft Forms apos resposta rapida ao ESP32
 - Migracoes com Alembic
 - Painel web administrativo em /
 
@@ -14,11 +15,17 @@ Implementacao inicial do sistema de check-in/check-out com:
 - assets/xpath: seletores XPath do formulario
 - sistema/app: backend FastAPI
 - docs/descritivo_sistema.md: descritivo funcional e tecnico
+- docs/esp32_firmware_troubleshooting.md: troubleshooting operacional do firmware da ESP32 e dos estados de LED
 - docs/esquematico_esp32_rc522_duplo.md: guia de montagem eletrica para 2x RC522
 - docs/esp32-com5-specs.md: identificacao tecnica da placa conectada na COM5
 - firmware/esp32_checking/esp32_checking.ino: firmware da ESP32
 - alembic: migracoes de banco
 - tests/test_api_flow.py: testes E2E basicos
+
+## Documentacao do firmware ESP32
+- Estados oficiais do LED interno: ver `docs/descritivo_sistema.md`, secao `6.1.2 Tabela oficial de estados do LED interno`.
+- Troubleshooting do firmware e operacao em campo: `docs/esp32_firmware_troubleshooting.md`.
+- Identificacao tecnica da placa conectada na COM5: `docs/esp32-com5-specs.md`.
 
 ## Executar localmente (fase inicial)
 1. Criar .env a partir de .env.example
@@ -36,9 +43,11 @@ Compatibilidade:
 
 ## Repositorio e deploy automatico
 - Repositorio principal: `git@github.com:tscode-com-br/checking.git`
+- Repositorio alternativo por HTTPS: `https://github.com/tscode-com-br/checking.git`
 - Todo push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`.
-- O workflow sincroniza o codigo com a OceanDrive, executa `docker compose up -d --build` e valida `GET /api/health` no servidor.
+- O workflow sincroniza o codigo com a OceanDrive, cria o diretorio remoto se necessario, sobe o banco antes da aplicacao, executa `docker compose up -d --build --remove-orphans` e valida `GET /api/health` no servidor.
 - O arquivo `.env` de producao permanece somente no servidor e nao e enviado pelo GitHub Actions.
+- O remoto `origin` pode apontar para SSH ou HTTPS. Se a maquina local nao tiver chave SSH autorizada no GitHub, use HTTPS para o push.
 
 Observacao:
 - O padrao local agora usa SQLite (`DATABASE_URL=sqlite:///./checking.db`), evitando travamento quando o Postgres nao estiver ativo.

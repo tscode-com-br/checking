@@ -163,7 +163,9 @@ void setInternalLedRed() {
 #endif
 }
 
-void runLedBlinkPattern(void (*ledSetter)(), unsigned long blinkCount, unsigned long onMs, unsigned long totalMs) {
+typedef void (*LedSetter)();
+
+void runLedBlinkPattern(LedSetter ledSetter, unsigned long blinkCount, unsigned long onMs, unsigned long totalMs) {
   if (blinkCount == 0 || ledSetter == nullptr) {
     return;
   }
@@ -233,22 +235,6 @@ void pulseGreenSuccess() {
   resumeOnlineIdleState();
 }
 
-void holdOrangePending() {
-  const unsigned long pendingOffMs = (PENDING_PATTERN_MS / PENDING_BLINK_COUNT) - PENDING_BLINK_ON_MS;
-
-  setInternalLedOrange();
-  delay(PENDING_BLINK_ON_MS);
-  setInternalLedOff();
-  delay(pendingOffMs);
-
-  setInternalLedOrange();
-  delay(PENDING_BLINK_ON_MS);
-  setInternalLedOff();
-  delay(pendingOffMs);
-
-  resumeOnlineIdleState();
-}
-
 void holdRedTwoSeconds() {
   setInternalLedRed();
   delay(2000);
@@ -315,7 +301,7 @@ void updateStatusLed() {
     return;
   }
 
-  void (*statusLedSetter)() = cloudStatus == CLOUD_OFFLINE ? setInternalLedRed : setInternalLedWhite;
+  LedSetter statusLedSetter = cloudStatus == CLOUD_OFFLINE ? setInternalLedRed : setInternalLedWhite;
 
   if (statusLedPulseActive && (long)(now - statusLedOnUntil) >= 0) {
     setInternalLedOff();
@@ -699,7 +685,8 @@ bool readAndProcess(ReaderSlot& slot) {
   Serial.println(responseOutcome.length() > 0 ? responseOutcome : "-");
 
   if (responseLed == "orange_4s" || responseOutcome == "pending_registration" || response.indexOf("orange_4s") >= 0 || response.indexOf("pending_registration") >= 0) {
-    holdOrangePending();
+    Serial.println("[SCAN] Pending registration received; no LED effect configured.");
+    resumeOnlineIdleState();
   } else if (responseLed == "green_1s" || responseLed == "green_2s" || responseOutcome == "submitted" || response.indexOf("green_1s") >= 0 || response.indexOf("green_2s") >= 0 || response.indexOf("submitted") >= 0) {
     pulseGreenSuccess();
   } else if (responseLed == "green_blink_3x_1s" || responseOutcome == "local_updated" || response.indexOf("green_blink_3x_1s") >= 0 || response.indexOf("local_updated") >= 0) {

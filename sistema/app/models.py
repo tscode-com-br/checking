@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -14,8 +14,10 @@ class User(Base):
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    checkin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checkin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    inactivity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PendingRegistration(Base):
@@ -36,7 +38,7 @@ class CheckEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idempotency_key: Mapped[str] = mapped_column(String(80), nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="system")
-    rfid: Mapped[str] = mapped_column(String(64), ForeignKey("users.rfid"), nullable=True)
+    rfid: Mapped[str] = mapped_column(String(64), nullable=True)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     message: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -58,3 +60,23 @@ class DeviceHeartbeat(Base):
     device_id: Mapped[str] = mapped_column(String(80), nullable=False)
     is_online: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FormsSubmission(Base):
+    __tablename__ = "forms_submissions"
+    __table_args__ = (UniqueConstraint("request_id", name="uq_forms_submissions_request_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    rfid: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    local: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

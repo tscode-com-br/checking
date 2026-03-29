@@ -10,6 +10,8 @@ from ..core.config import settings
 
 FIELD_SEARCH_TIMEOUT_SECONDS = 10
 SUCCESS_SEARCH_TIMEOUT_SECONDS = 20
+PRE_SUBMIT_SUCCESS_CHECK_MS = 500
+STEP_CONFIRM_TIMEOUT_SECONDS = 10
 
 
 class FormsStepTimeoutError(Exception):
@@ -17,6 +19,13 @@ class FormsStepTimeoutError(Exception):
         self.step_name = step_name
         self.timeout_seconds = timeout_seconds
         super().__init__(f"Step '{step_name}' not found within {timeout_seconds} seconds")
+
+
+class FormsStepValidationError(Exception):
+    def __init__(self, step_name: str, details: str) -> None:
+        self.step_name = step_name
+        self.details = details
+        super().__init__(f"Step '{step_name}' validation failed: {details}")
 
 
 class FormsWorker:
@@ -43,11 +52,50 @@ class FormsWorker:
 
         raise FormsStepTimeoutError(step_name=step_name, timeout_seconds=timeout_seconds)
 
+    def _wait_for_step_confirmation(self, step_name: str, predicate, timeout_seconds: int, failure_details: str) -> None:
+        deadline = monotonic() + timeout_seconds
+
+        while monotonic() < deadline:
+            if predicate():
+                return
+
+        raise FormsStepValidationError(step_name=step_name, details=failure_details)
+
+    def _is_step_visible(self, page, xpath: str, timeout_ms: int = PRE_SUBMIT_SUCCESS_CHECK_MS) -> bool:
+        selector = f"xpath={xpath}"
+        try:
+            page.wait_for_selector(selector, state="visible", timeout=timeout_ms)
+            return True
+        except PlaywrightTimeoutError:
+            return False
+
+    def _normalize_detail_value(self, value: str) -> str:
+        sanitized = value.replace("\n", " ").replace("\r", " ").strip()
+        return " ".join(sanitized.split())
+
     def _fill_step(self, page, xpath: str, value: str, step_name: str) -> None:
-        self._wait_for_step(page, xpath, step_name, FIELD_SEARCH_TIMEOUT_SECONDS).fill(value)
+        locator = self._wait_for_step(page, xpath, step_name, FIELD_SEARCH_TIMEOUT_SECONDS)
+        locator.fill(value)
+        expected_value = value.strip()
+        self._wait_for_step_confirmation(
+            step_name=step_name,
+            predicate=lambda: self._normalize_detail_value(locator.input_value()) == expected_value,
+            timeout_seconds=STEP_CONFIRM_TIMEOUT_SECONDS,
+            failure_details=f"expected_value={expected_value}",
+        )
 
     def _click_step(self, page, xpath: str, step_name: str) -> None:
         self._wait_for_step(page, xpath, step_name, FIELD_SEARCH_TIMEOUT_SECONDS).click()
+
+    def _click_checked_step(self, page, xpath: str, step_name: str) -> None:
+        locator = self._wait_for_step(page, xpath, step_name, FIELD_SEARCH_TIMEOUT_SECONDS)
+        locator.click()
+        self._wait_for_step_confirmation(
+            step_name=step_name,
+            predicate=lambda: locator.is_checked(),
+            timeout_seconds=STEP_CONFIRM_TIMEOUT_SECONDS,
+            failure_details="expected_checked=true",
+        )
 
     def _audit(self, audit_events: list[dict], status: str, message: str, details: str | None = None) -> None:
         audit_events.append(
@@ -62,6 +110,7 @@ class FormsWorker:
 
     def _submit_once(self, action: Literal["checkin", "checkout"], chave: str, projeto: str | None) -> dict:
         audit_events: list[dict] = []
+        completed_steps: list[str] = []
         digitar_chave = self.load_xpath("digitar_chave.txt")
         confirmar_chave = self.load_xpath("confirmar_chave.txt")
         botao_normal = self.load_xpath("botao_normal.txt")
@@ -79,43 +128,44 @@ class FormsWorker:
             browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                self._audit(audit_events, "attempt", "Opening Microsoft Forms")
                 page.goto(settings.forms_url, timeout=settings.forms_timeout_seconds * 1000)
-                self._audit(audit_events, "success", "Microsoft Forms opened")
+                self._audit(audit_events, "opened", "Microsoft Forms opened")
 
-                self._audit(audit_events, "attempt", "Filling Petrobras key")
                 self._fill_step(page, digitar_chave, chave, "digitar_chave")
-                self._audit(audit_events, "success", "Petrobras key filled")
-
-                self._audit(audit_events, "attempt", "Confirming Petrobras key")
+                completed_steps.append("digitar_chave:filled+verified")
                 self._fill_step(page, confirmar_chave, chave, "confirmar_chave")
-                self._audit(audit_events, "success", "Petrobras key confirmed")
-
-                self._audit(audit_events, "attempt", "Selecting normal inform type")
-                self._click_step(page, botao_normal, "botao_normal")
-                self._audit(audit_events, "success", "Normal inform type selected")
+                completed_steps.append("confirmar_chave:filled+verified")
+                self._click_checked_step(page, botao_normal, "botao_normal")
+                completed_steps.append("botao_normal:clicked+verified")
 
                 if action == "checkin":
-                    self._audit(audit_events, "attempt", "Selecting check-in")
-                    self._click_step(page, botao_checkin, "botao_checkin")
-                    self._audit(audit_events, "success", "Check-in selected")
+                    self._click_checked_step(page, botao_checkin, "botao_checkin")
+                    completed_steps.append("botao_checkin:clicked+verified")
                     if projeto not in projeto_xpath_map:
                         raise ValueError("Projeto invalido para check-in")
-                    self._audit(audit_events, "attempt", f"Selecting project {projeto}")
-                    self._click_step(page, projeto_xpath_map[projeto], f"botao_projeto_{projeto}")
-                    self._audit(audit_events, "success", f"Project {projeto} selected")
+                    self._click_checked_step(page, projeto_xpath_map[projeto], f"botao_projeto_{projeto}")
+                    completed_steps.append(f"botao_projeto_{projeto}:clicked+verified")
                 else:
-                    self._audit(audit_events, "attempt", "Selecting check-out")
-                    self._click_step(page, botao_checkout, "botao_checkout")
-                    self._audit(audit_events, "success", "Check-out selected")
+                    self._click_checked_step(page, botao_checkout, "botao_checkout")
+                    completed_steps.append("botao_checkout:clicked+verified")
 
-                self._audit(audit_events, "attempt", "Submitting Microsoft Forms")
+                if self._is_step_visible(page, sucesso):
+                    raise ValueError("XPath de sucesso ja estava visivel antes do envio")
+
+                submit_started_at = monotonic()
                 self._click_step(page, botao_enviar, "botao_enviar")
-                self._audit(audit_events, "success", "Submit button clicked")
-
-                self._audit(audit_events, "attempt", "Waiting for success confirmation")
-                self._wait_for_step(page, sucesso, "sucesso", SUCCESS_SEARCH_TIMEOUT_SECONDS)
-                self._audit(audit_events, "success", "Success confirmation found")
+                completed_steps.append("botao_enviar:clicked")
+                success_locator = self._wait_for_step(page, sucesso, "sucesso", SUCCESS_SEARCH_TIMEOUT_SECONDS)
+                completed_steps.append("sucesso:visible")
+                submit_elapsed_ms = int((monotonic() - submit_started_at) * 1000)
+                success_text = self._normalize_detail_value(success_locator.inner_text())
+                completed_details = (
+                    f"steps={','.join(completed_steps)}; "
+                    "success_xpath_visible=true; "
+                    f"submit_to_success_ms={submit_elapsed_ms}; "
+                    f"success_text={success_text or '-'}"
+                )
+                self._audit(audit_events, "completed", "Microsoft Forms completed", completed_details)
             finally:
                 browser.close()
 
@@ -142,6 +192,23 @@ class FormsWorker:
                             "status": "failed",
                             "message": "Forms step timeout",
                             "details": f"step={exc.step_name}; timeout={exc.timeout_seconds}",
+                        }
+                    ],
+                }
+            except FormsStepValidationError as exc:
+                return {
+                    "success": False,
+                    "message": str(exc),
+                    "retry_count": attempt - 1,
+                    "error_code": "forms_step_validation_failed",
+                    "failed_step": exc.step_name,
+                    "audit_events": [
+                        {
+                            "source": "forms",
+                            "action": "forms",
+                            "status": "failed",
+                            "message": "Forms step validation failed",
+                            "details": f"step={exc.step_name}; {exc.details}",
                         }
                     ],
                 }

@@ -82,15 +82,18 @@ Para ativar:
 Com isso, todo push na branch `main`:
 
 1. Faz checkout do codigo mais recente no GitHub Actions.
-2. Sincroniza o codigo no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
-3. Executa `docker compose up -d --build` para atualizar os servicos.
-4. Valida `http://127.0.0.1:8000/api/health` no servidor e falha o workflow se a aplicacao nao subir.
+2. Cria o diretorio remoto caso ele ainda nao exista.
+3. Sincroniza o codigo no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
+4. Sobe primeiro o servico `db` e depois executa `docker compose up -d --build --remove-orphans` para atualizar os servicos.
+5. Valida `http://127.0.0.1:8000/api/health` no servidor, registra o commit implantado em `.deploy-release` e falha o workflow se a aplicacao nao subir.
 
 ## 7) Remoto Git recomendado
 No clone local, padronize o remoto principal:
 
 ```powershell
 git remote remove checkingapi
-git remote set-url origin git@github.com:tscode-com-br/checking.git
+git remote set-url origin https://github.com/tscode-com-br/checking.git
 git push -u origin main
 ```
+
+Se a maquina local tiver chave SSH autorizada no GitHub, voce pode usar `git@github.com:tscode-com-br/checking.git` no lugar da URL HTTPS.

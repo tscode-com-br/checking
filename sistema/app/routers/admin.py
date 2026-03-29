@@ -1,15 +1,37 @@
+import asyncio
+import json
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import desc, select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from sqlalchemy import delete, desc, select
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..database import get_db
 from ..models import CheckEvent, PendingRegistration, User
-from ..schemas import AdminUserUpsert, EventRow, PendingRow, UserRow
+from ..schemas import (
+    AdminUserListRow,
+    AdminUserUpsert,
+    EventArchiveCreateResponse,
+    EventArchiveListResponse,
+    EventArchiveRow,
+    EventRow,
+    InactiveUserRow,
+    PendingRow,
+    UserRow,
+)
+from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
+from ..services.event_archives import (
+    build_event_archives_zip,
+    create_event_archive,
+    delete_event_archive,
+    get_event_archive_path,
+    list_event_archives_page,
+)
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
+from ..services.user_activity import sync_user_inactivity
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -19,9 +41,54 @@ def require_admin_key(x_admin_key: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="Invalid admin key")
 
 
+def require_admin_stream_key(admin_key: str = Query(default="")) -> None:
+    if admin_key != settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+
+
+def encode_sse(payload: dict[str, str]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.get("/stream", dependencies=[Depends(require_admin_stream_key)])
+async def stream_updates(request: Request) -> StreamingResponse:
+    subscriber_id, queue = admin_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            admin_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/checkin", response_model=list[UserRow], dependencies=[Depends(require_admin_key)])
 def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
-    rows = db.execute(select(User).where(User.checkin.is_(True)).order_by(desc(User.time))).scalars().all()
+    if sync_user_inactivity(db):
+        db.commit()
+    rows = db.execute(
+        select(User)
+        .where(User.checkin.is_(True), User.time.is_not(None), User.inactivity_days == 0)
+        .order_by(desc(User.time))
+    ).scalars().all()
     return [
         UserRow(
             rfid=r.rfid,
@@ -38,7 +105,13 @@ def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
 
 @router.get("/checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_key)])
 def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
-    rows = db.execute(select(User).where(User.checkin.is_(False)).order_by(desc(User.time))).scalars().all()
+    if sync_user_inactivity(db):
+        db.commit()
+    rows = db.execute(
+        select(User)
+        .where(User.checkin.is_(False), User.time.is_not(None), User.inactivity_days == 0)
+        .order_by(desc(User.time))
+    ).scalars().all()
     return [
         UserRow(
             rfid=r.rfid,
@@ -53,6 +126,26 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     ]
 
 
+@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_key)])
+def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
+    if sync_user_inactivity(db):
+        db.commit()
+
+    rows = db.execute(
+        select(User).where(User.inactivity_days > 0).order_by(desc(User.inactivity_days), User.nome, User.rfid)
+    ).scalars().all()
+    return [
+        InactiveUserRow(
+            rfid=row.rfid,
+            nome=row.nome,
+            chave=row.chave,
+            projeto=row.projeto,
+            inactivity_days=row.inactivity_days,
+        )
+        for row in rows
+    ]
+
+
 @router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_admin_key)])
 def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     rows = db.execute(select(PendingRegistration).order_by(desc(PendingRegistration.last_seen_at))).scalars().all()
@@ -63,6 +156,20 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
             first_seen_at=r.first_seen_at,
             last_seen_at=r.last_seen_at,
             attempts=r.attempts,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_admin_key)])
+def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
+    rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
+    return [
+        AdminUserListRow(
+            rfid=r.rfid,
+            nome=r.nome,
+            chave=r.chave,
+            projeto=r.projeto,
         )
         for r in rows
     ]
@@ -82,8 +189,10 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
             chave=payload.chave,
             projeto=payload.projeto,
             local=None,
-            checkin=False,
-            time=now_sgt(),
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
         )
         db.add(user)
 
@@ -106,6 +215,7 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
         details=f"nome={payload.nome}",
     )
     db.commit()
+    notify_admin_data_changed("register")
 
     return {"ok": True, "rfid": payload.rfid}
 
@@ -141,7 +251,47 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
         details=f"pending_id={pending_id}",
     )
     db.commit()
+    notify_admin_data_changed("pending")
     return {"ok": True, "id": pending_id}
+
+
+@router.delete("/users/{rfid}", dependencies=[Depends(require_admin_key)])
+def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
+    user = db.get(User, rfid)
+    if user is None:
+        log_event(
+            db,
+            source="admin",
+            action="register",
+            status="failed",
+            message="User not found for removal",
+            rfid=rfid,
+            request_path=f"/api/admin/users/{rfid}",
+            http_status=404,
+            details=f"rfid={rfid}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="User not found")
+
+    pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == rfid)).scalar_one_or_none()
+    if pending is not None:
+        db.delete(pending)
+
+    db.delete(user)
+    log_event(
+        db,
+        source="admin",
+        action="register",
+        status="removed",
+        message="User removed via admin",
+        rfid=rfid,
+        request_path=f"/api/admin/users/{rfid}",
+        http_status=200,
+        details=f"rfid={rfid}; pending_removed={pending is not None}",
+    )
+    db.commit()
+    notify_admin_data_changed("register")
+    return {"ok": True, "rfid": rfid}
 
 
 @router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_key)])
@@ -166,3 +316,83 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
         )
         for r in rows
     ]
+
+
+@router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_key)])
+def archive_events(db: Session = Depends(get_db)) -> EventArchiveCreateResponse:
+    rows = db.execute(select(CheckEvent).order_by(CheckEvent.event_time, CheckEvent.id)).scalars().all()
+    archive = create_event_archive(rows)
+
+    if archive is not None:
+        db.execute(delete(CheckEvent))
+        db.commit()
+        notify_admin_data_changed("event")
+
+    archives_page = list_event_archives_page()
+
+    return EventArchiveCreateResponse(
+        created=archive is not None,
+        cleared_count=len(rows) if archive is not None else 0,
+        archive=EventArchiveRow(**archive.__dict__) if archive is not None else None,
+        archives=EventArchiveListResponse(
+            items=[EventArchiveRow(**item.__dict__) for item in archives_page.items],
+            total=archives_page.total,
+            total_size_bytes=archives_page.total_size_bytes,
+            page=archives_page.page,
+            page_size=archives_page.page_size,
+            total_pages=archives_page.total_pages,
+            query=archives_page.query,
+        ),
+    )
+
+
+@router.get("/events/archives", response_model=EventArchiveListResponse, dependencies=[Depends(require_admin_key)])
+def get_event_archives(
+    q: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=8, ge=1, le=100),
+) -> EventArchiveListResponse:
+    archives_page = list_event_archives_page(query=q, page=page, page_size=page_size)
+    return EventArchiveListResponse(
+        items=[EventArchiveRow(**item.__dict__) for item in archives_page.items],
+        total=archives_page.total,
+        total_size_bytes=archives_page.total_size_bytes,
+        page=archives_page.page,
+        page_size=archives_page.page_size,
+        total_pages=archives_page.total_pages,
+        query=archives_page.query,
+    )
+
+
+@router.get("/events/archives/download-all", dependencies=[Depends(require_admin_key)])
+def download_all_event_archives() -> Response:
+    try:
+        file_name, payload = build_event_archives_zip()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No archived event logs found") from exc
+
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.get("/events/archives/{file_name}", dependencies=[Depends(require_admin_key)])
+def download_event_archive(file_name: str) -> FileResponse:
+    try:
+        archive_path = get_event_archive_path(file_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Archived event log not found") from exc
+
+    return FileResponse(path=archive_path, media_type="text/csv", filename=archive_path.name)
+
+
+@router.delete("/events/archives/{file_name}", dependencies=[Depends(require_admin_key)])
+def remove_event_archive(file_name: str) -> dict:
+    try:
+        delete_event_archive(file_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Archived event log not found") from exc
+
+    return {"ok": True, "file_name": file_name}
