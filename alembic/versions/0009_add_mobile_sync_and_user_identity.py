@@ -1,6 +1,6 @@
 """add mobile sync and user identity
 
-Revision ID: 0009_add_mobile_sync_and_user_identity
+Revision ID: 0009_mobile_user_sync
 Revises: 0008_add_admin_auth_tables
 Create Date: 2026-04-06 15:30:00
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0009_add_mobile_sync_and_user_identity"
+revision = "0009_mobile_user_sync"
 down_revision = "0008_add_admin_auth_tables"
 branch_labels = None
 depends_on = None
