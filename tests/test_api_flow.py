@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import SessionLocal
-from sistema.app.models import AdminAccessRequest, AdminUser, FormsSubmission, User
+from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User
 from sistema.app.services.admin_updates import AdminUpdatesBroker
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
@@ -1148,6 +1148,114 @@ def test_mobile_sync_accepts_project_p82():
         )
         assert response.status_code == 200
         assert response.json()["state"]["projeto"] == "P82"
+
+
+def test_mobile_checkout_preserves_previous_checkin_history_without_existing_sync_events():
+    previous_checkin_at = now_sgt() - timedelta(hours=2)
+    checkout_at = now_sgt()
+
+    with SessionLocal() as db:
+        user = User(
+            rfid=None,
+            chave="LG11",
+            nome="Legado Mobile",
+            projeto="P80",
+            local=None,
+            checkin=True,
+            time=previous_checkin_at,
+            last_active_at=previous_checkin_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "LG11",
+                "projeto": "P80",
+                "action": "checkout",
+                "event_time": checkout_at.isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+
+        assert response.status_code == 200
+        state = response.json()["state"]
+        assert state["current_action"] == "checkout"
+        assert state["last_checkin_at"] is not None
+        assert state["last_checkout_at"] is not None
+
+
+def test_mobile_state_falls_back_to_check_events_history():
+    checkin_at = now_sgt() - timedelta(hours=3)
+    checkout_at = now_sgt() - timedelta(hours=1)
+
+    with SessionLocal() as db:
+        user = User(
+            rfid="RFBACK1",
+            chave="FB11",
+            nome="Fallback Historico",
+            projeto="P80",
+            local="main",
+            checkin=False,
+            time=checkout_at,
+            last_active_at=checkout_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            CheckEvent(
+                idempotency_key=f"fallback-checkin-{uuid.uuid4().hex}",
+                source="device",
+                rfid="RFBACK1",
+                action="checkin",
+                status="queued",
+                message="checkin historico",
+                details=None,
+                project="P80",
+                device_id="ESP32-FALLBACK",
+                local="main",
+                request_path="/api/scan",
+                http_status=202,
+                event_time=checkin_at,
+                submitted_at=None,
+                retry_count=0,
+            )
+        )
+        db.add(
+            CheckEvent(
+                idempotency_key=f"fallback-checkout-{uuid.uuid4().hex}",
+                source="device",
+                rfid="RFBACK1",
+                action="checkout",
+                status="queued",
+                message="checkout historico",
+                details=None,
+                project="P80",
+                device_id="ESP32-FALLBACK",
+                local="main",
+                request_path="/api/scan",
+                http_status=202,
+                event_time=checkout_at,
+                submitted_at=None,
+                retry_count=0,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/api/mobile/state?chave=FB11", headers=MOBILE_HEADERS)
+
+        assert response.status_code == 200
+        state = response.json()
+        assert state["found"] is True
+        assert state["current_action"] == "checkout"
+        assert state["last_checkin_at"] is not None
+        assert state["last_checkout_at"] is not None
 
 
 def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):

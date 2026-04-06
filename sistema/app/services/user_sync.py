@@ -7,12 +7,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..models import User, UserSyncEvent
+from ..models import CheckEvent, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse
 from .time_utils import now_sgt
 from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
+SYNC_EVENT_FALLBACK_STATUSES = ("queued", "updated", "success", "synced", "created", "submitted")
 
 
 def normalize_user_key(value: str) -> str:
@@ -113,6 +114,49 @@ def get_latest_sync_event(db: Session, *, user_id: int, action: str) -> UserSync
     ).scalar_one_or_none()
 
 
+def get_latest_check_event(db: Session, *, rfid: str, action: str) -> CheckEvent | None:
+    return db.execute(
+        select(CheckEvent)
+        .where(
+            CheckEvent.rfid == rfid,
+            CheckEvent.action == action,
+            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
+        )
+        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def ensure_current_user_state_event(db: Session, *, user: User) -> None:
+    if user.time is None or user.checkin is None:
+        return
+
+    action = "checkin" if user.checkin else "checkout"
+    existing = db.execute(
+        select(UserSyncEvent)
+        .where(
+            UserSyncEvent.user_id == user.id,
+            UserSyncEvent.action == action,
+            UserSyncEvent.event_time == user.time,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    create_user_sync_event(
+        db,
+        user=user,
+        source="state_import",
+        action=action,
+        event_time=user.time,
+        projeto=user.projeto,
+        local=user.local,
+        source_request_id=None,
+        device_id=None,
+    )
+
+
 def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateResponse:
     user = find_user_by_chave(db, chave)
     if user is None:
@@ -120,6 +164,8 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
 
     latest_checkin = get_latest_sync_event(db, user_id=user.id, action="checkin")
     latest_checkout = get_latest_sync_event(db, user_id=user.id, action="checkout")
+    fallback_checkin = get_latest_check_event(db, rfid=user.rfid, action="checkin") if user.rfid else None
+    fallback_checkout = get_latest_check_event(db, rfid=user.rfid, action="checkout") if user.rfid else None
     current_action = None
     if user.checkin is True:
         current_action = "checkin"
@@ -133,6 +179,14 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
         projeto=user.projeto,
         current_action=current_action,
         current_event_time=user.time,
-        last_checkin_at=latest_checkin.event_time if latest_checkin is not None else (user.time if user.checkin is True else None),
-        last_checkout_at=latest_checkout.event_time if latest_checkout is not None else (user.time if user.checkin is False else None),
+        last_checkin_at=(
+            latest_checkin.event_time
+            if latest_checkin is not None
+            else (fallback_checkin.event_time if fallback_checkin is not None else (user.time if user.checkin is True else None))
+        ),
+        last_checkout_at=(
+            latest_checkout.event_time
+            if latest_checkout is not None
+            else (fallback_checkout.event_time if fallback_checkout is not None else (user.time if user.checkin is False else None))
+        ),
     )

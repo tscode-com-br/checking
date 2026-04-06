@@ -12,6 +12,7 @@ from ..services.user_sync import (
     build_mobile_sync_state,
     create_user_sync_event,
     ensure_mobile_user,
+    ensure_current_user_state_event,
     normalize_event_time,
     normalize_user_key,
 )
@@ -58,6 +59,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
     event_time = normalize_event_time(payload.event_time)
+    ensure_current_user_state_event(db, user=user)
     apply_user_state(
         user,
         action=payload.action,
