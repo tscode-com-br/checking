@@ -8,7 +8,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, AdminUser, CheckEvent, PendingRegistration, User
+from ..models import AdminAccessRequest, AdminUser, CheckEvent, PendingRegistration, User, UserSyncEvent
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
@@ -46,6 +46,7 @@ from ..services.event_archives import (
 )
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
+from ..services.user_sync import find_user_by_chave, find_user_by_rfid
 from ..services.user_activity import sync_user_inactivity
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -657,6 +658,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
     rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
     return [
         AdminUserListRow(
+            id=r.id,
             rfid=r.rfid,
             nome=r.nome,
             chave=r.chave,
@@ -668,12 +670,34 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
 
 @router.post("/users", dependencies=[Depends(require_admin_session)])
 def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict:
-    user = db.get(User, payload.rfid)
+    user = None
+    if payload.user_id is not None:
+        user = db.get(User, payload.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    elif payload.rfid:
+        user = find_user_by_rfid(db, payload.rfid)
+        if user is None:
+            user = find_user_by_chave(db, payload.chave)
+
+    conflicting_user = find_user_by_chave(db, payload.chave)
+    if conflicting_user is not None and (user is None or conflicting_user.id != user.id):
+        if user is None and conflicting_user.rfid is None and payload.rfid is not None:
+            user = conflicting_user
+        else:
+            raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com essa chave")
+
     if user:
+        if payload.rfid is not None and user.rfid not in {None, payload.rfid}:
+            raise HTTPException(status_code=409, detail="Este usuario ja possui outro RFID vinculado")
         user.nome = payload.nome
         user.chave = payload.chave
         user.projeto = payload.projeto
+        if payload.rfid is not None:
+            user.rfid = payload.rfid
     else:
+        if payload.rfid is None:
+            raise HTTPException(status_code=400, detail="RFID is required for new users")
         user = User(
             rfid=payload.rfid,
             nome=payload.nome,
@@ -746,9 +770,9 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
     return {"ok": True, "id": pending_id}
 
 
-@router.delete("/users/{rfid}", dependencies=[Depends(require_admin_session)])
-def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
-    user = db.get(User, rfid)
+@router.delete("/users/{user_id}", dependencies=[Depends(require_admin_session)])
+def remove_user(user_id: int, db: Session = Depends(get_db)) -> dict:
+    user = db.get(User, user_id)
     if user is None:
         log_event(
             db,
@@ -756,18 +780,20 @@ def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
             action="register",
             status="failed",
             message="User not found for removal",
-            rfid=rfid,
-            request_path=f"/api/admin/users/{rfid}",
+            request_path=f"/api/admin/users/{user_id}",
             http_status=404,
-            details=f"rfid={rfid}",
+            details=f"user_id={user_id}",
             commit=True,
         )
         raise HTTPException(status_code=404, detail="User not found")
 
-    pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == rfid)).scalar_one_or_none()
+    pending = None
+    if user.rfid is not None:
+        pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == user.rfid)).scalar_one_or_none()
     if pending is not None:
         db.delete(pending)
 
+    db.execute(delete(UserSyncEvent).where(UserSyncEvent.user_id == user.id))
     db.delete(user)
     log_event(
         db,
@@ -775,14 +801,14 @@ def remove_user(rfid: str, db: Session = Depends(get_db)) -> dict:
         action="register",
         status="removed",
         message="User removed via admin",
-        rfid=rfid,
-        request_path=f"/api/admin/users/{rfid}",
+        rfid=user.rfid,
+        request_path=f"/api/admin/users/{user_id}",
         http_status=200,
-        details=f"rfid={rfid}; pending_removed={pending is not None}",
+        details=f"user_id={user_id}; pending_removed={pending is not None}",
     )
     db.commit()
     notify_admin_views("register", "event")
-    return {"ok": True, "rfid": rfid}
+    return {"ok": True, "user_id": user_id}
 
 
 @router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_session)])

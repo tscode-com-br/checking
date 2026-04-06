@@ -2,13 +2,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from .core.config import settings
 from .database import Base, engine
-from .routers import admin, device, health
+from .routers import admin, device, health, mobile
 from .services.admin_auth import seed_default_admin
 from .services.event_archives import ensure_event_archives_dir
 from .services.forms_queue import forms_submission_worker
@@ -31,6 +32,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://(tauri\.localhost|localhost(:\d+)?|127\.0\.0\.1(:\d+)?)$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(
     SessionMiddleware,
     secret_key=settings.admin_session_secret,
     max_age=settings.admin_session_max_age_seconds,
@@ -41,6 +49,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(device.router)
+app.include_router(mobile.router)
 app.include_router(admin.router)
 
 static_dir = Path(__file__).resolve().parent / "static"

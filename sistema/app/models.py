@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -9,8 +9,9 @@ from .database import Base
 class User(Base):
     __tablename__ = "users"
 
-    rfid: Mapped[str] = mapped_column(String(64), primary_key=True)
-    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rfid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -80,6 +81,24 @@ class FormsSubmission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserSyncEvent(Base):
+    __tablename__ = "user_sync_events"
+    __table_args__ = (UniqueConstraint("source", "source_request_id", name="uq_user_sync_events_source_request_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    rfid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    projeto: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    local: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 class AdminUser(Base):

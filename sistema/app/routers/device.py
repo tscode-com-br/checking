@@ -11,6 +11,7 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
 from ..services.time_utils import now_sgt
+from ..services.user_sync import create_user_sync_event, find_user_by_rfid
 from ..services.user_activity import mark_user_active
 
 router = APIRouter(prefix="/api", tags=["device"])
@@ -103,7 +104,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         commit=True,
     )
 
-    user = db.get(User, payload.rfid)
+    user = find_user_by_rfid(db, payload.rfid)
 
     if not user:
         pending = db.execute(
@@ -164,6 +165,17 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             request_path="/api/scan",
             http_status=200,
             details="forms_skipped=true; reason=already_checked_in",
+        )
+        create_user_sync_event(
+            db,
+            user=user,
+            source="rfid",
+            action=action,
+            event_time=user.time,
+            projeto=user.projeto,
+            local=user.local,
+            source_request_id=payload.request_id,
+            device_id=payload.device_id,
         )
         db.commit()
         notify_admin_data_changed("checkin")
@@ -247,6 +259,17 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         request_path="/api/scan",
         http_status=202,
         details="forms_deferred=true",
+    )
+    create_user_sync_event(
+        db,
+        user=user,
+        source="rfid",
+        action=action,
+        event_time=activity_time,
+        projeto=user.projeto,
+        local=user.local,
+        source_request_id=payload.request_id,
+        device_id=payload.device_id,
     )
     db.commit()
     notify_admin_data_changed(action)

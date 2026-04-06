@@ -16,12 +16,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.alter_column("users", "checkin", existing_type=sa.Boolean(), nullable=True, server_default=None)
-    op.alter_column("users", "time", existing_type=sa.DateTime(timezone=True), nullable=True)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column("checkin", existing_type=sa.Boolean(), nullable=True, server_default=None)
+        batch_op.alter_column("time", existing_type=sa.DateTime(timezone=True), nullable=True)
 
 
 def downgrade() -> None:
     op.execute("UPDATE users SET checkin = false WHERE checkin IS NULL")
     op.execute("UPDATE users SET time = CURRENT_TIMESTAMP WHERE time IS NULL")
-    op.alter_column("users", "checkin", existing_type=sa.Boolean(), nullable=False, server_default=sa.false())
-    op.alter_column("users", "time", existing_type=sa.DateTime(timezone=True), nullable=False)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column("checkin", existing_type=sa.Boolean(), nullable=False, server_default=sa.false())
+        batch_op.alter_column("time", existing_type=sa.DateTime(timezone=True), nullable=False)

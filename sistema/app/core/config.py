@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     tz_name: str = "Asia/Singapore"
 
     device_shared_key: str = "change-me"
+    mobile_app_shared_key: str = "change-mobile-app-shared-key"
     admin_session_secret: str = "change-admin-session-secret"
     admin_session_max_age_seconds: int = 28800
     bootstrap_admin_key: str = "HR70"

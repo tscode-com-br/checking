@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -30,10 +30,17 @@ class ScanResponse(BaseModel):
 
 
 class AdminUserUpsert(BaseModel):
-    rfid: str = Field(min_length=4, max_length=64)
+    user_id: int | None = Field(default=None, ge=1)
+    rfid: str | None = Field(default=None, min_length=4, max_length=64)
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P83"]
+    projeto: Literal["P80", "P82", "P83"]
+
+    @model_validator(mode="after")
+    def validate_identity(self):
+        if self.user_id is None and not self.rfid:
+            raise ValueError("user_id or rfid is required")
+        return self
 
     @field_validator("chave")
     @classmethod
@@ -127,7 +134,8 @@ class UserRow(BaseModel):
 
 
 class AdminUserListRow(BaseModel):
-    rfid: str
+    id: int
+    rfid: Optional[str]
     nome: str
     chave: str
     projeto: str
@@ -189,3 +197,37 @@ class EventArchiveCreateResponse(BaseModel):
     cleared_count: int
     archive: EventArchiveRow | None
     archives: EventArchiveListResponse
+
+
+class MobileSyncRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    projeto: Literal["P80", "P82", "P83"]
+    action: Literal["checkin", "checkout"]
+    event_time: datetime
+    client_event_id: str = Field(min_length=8, max_length=80)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_mobile_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class MobileSyncStateResponse(BaseModel):
+    found: bool
+    chave: str
+    nome: str | None = None
+    projeto: str | None = None
+    current_action: Literal["checkin", "checkout"] | None = None
+    current_event_time: datetime | None = None
+    last_checkin_at: datetime | None = None
+    last_checkout_at: datetime | None = None
+
+
+class MobileSyncResponse(BaseModel):
+    ok: bool
+    duplicate: bool = False
+    message: str
+    state: MobileSyncStateResponse

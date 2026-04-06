@@ -30,6 +30,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/checking}
       FORMS_URL: ${FORMS_URL}
       DEVICE_SHARED_KEY: ${DEVICE_SHARED_KEY:-change-me}
+      MOBILE_APP_SHARED_KEY: ${MOBILE_APP_SHARED_KEY:-change-mobile-app-shared-key}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-change-admin-session-secret}
       BOOTSTRAP_ADMIN_KEY: ${BOOTSTRAP_ADMIN_KEY:-HR70}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Tamer Salmem}

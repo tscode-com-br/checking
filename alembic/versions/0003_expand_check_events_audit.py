@@ -24,7 +24,8 @@ def upgrade() -> None:
     op.add_column("check_events", sa.Column("http_status", sa.Integer(), nullable=True))
 
     op.execute("UPDATE check_events SET source = 'system' WHERE source IS NULL")
-    op.alter_column("check_events", "source", nullable=False)
+    with op.batch_alter_table("check_events") as batch_op:
+        batch_op.alter_column("source", existing_type=sa.String(length=20), nullable=False)
 
 
 def downgrade() -> None:

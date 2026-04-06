@@ -15,14 +15,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_constraint("check_events_rfid_fkey", "check_events", type_="foreignkey")
+    if op.get_bind().dialect.name == "sqlite":
+        return
+    with op.batch_alter_table("check_events") as batch_op:
+        batch_op.drop_constraint("check_events_rfid_fkey", type_="foreignkey")
 
 
 def downgrade() -> None:
-    op.create_foreign_key(
-        "check_events_rfid_fkey",
-        "check_events",
-        "users",
-        ["rfid"],
-        ["rfid"],
-    )
+    if op.get_bind().dialect.name == "sqlite":
+        return
+    with op.batch_alter_table("check_events") as batch_op:
+        batch_op.create_foreign_key(
+            "check_events_rfid_fkey",
+            "users",
+            ["rfid"],
+            ["rfid"],
+        )

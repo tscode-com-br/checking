@@ -11,6 +11,7 @@ os.environ["APP_ENV"] = "development"
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test_checking.db"
 os.environ["FORMS_URL"] = "https://example.com/form"
 os.environ["DEVICE_SHARED_KEY"] = "device-test-key"
+os.environ["MOBILE_APP_SHARED_KEY"] = "mobile-test-key"
 os.environ["ADMIN_SESSION_SECRET"] = "test-admin-session-secret"
 os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
@@ -32,10 +33,12 @@ from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services.time_utils import now_sgt
+from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid
 
 
 ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
+MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
 
 
 def login_admin(client: TestClient, *, chave: str = ADMIN_LOGIN_CHAVE, senha: str = ADMIN_LOGIN_SENHA):
@@ -50,6 +53,18 @@ def ensure_admin_session(client: TestClient) -> None:
 
     login_response = login_admin(client)
     assert login_response.status_code == 200, login_response.text
+
+
+def get_user_by_rfid(db, rfid: str) -> User:
+    user = find_user_by_rfid(db, rfid)
+    assert user is not None
+    return user
+
+
+def get_user_by_chave(db, chave: str) -> User:
+    user = find_user_by_chave(db, chave)
+    assert user is not None
+    return user
 
 
 def test_health():
@@ -375,7 +390,7 @@ def test_valid_scan_updates_user_before_forms_processing(monkeypatch):
         assert scan_response.json()["led"] == "green_1s"
 
         with SessionLocal() as db:
-            user = db.get(User, "CARDFAST")
+            user = get_user_by_rfid(db, "CARDFAST")
             queued = db.execute(select(FormsSubmission).where(FormsSubmission.rfid == "CARDFAST")).scalar_one()
             assert user.checkin is True
             assert user.local == "main"
@@ -507,6 +522,7 @@ def test_forms_worker_requires_success_xpath_after_submit(tmp_path, monkeypatch)
         "botao_enviar.txt": "//botao_enviar",
         "sucesso.txt": "//sucesso",
         "botao_projeto_P80.txt": "//botao_projeto_P80",
+        "botao_projeto_P82.txt": "//botao_projeto_P82",
         "botao_projeto_P83.txt": "//botao_projeto_P83",
     }
     for name, content in xpaths.items():
@@ -622,6 +638,7 @@ def test_forms_worker_rejects_success_xpath_visible_before_submit(tmp_path, monk
         "botao_enviar.txt",
         "sucesso.txt",
         "botao_projeto_P80.txt",
+            "botao_projeto_P82.txt",
         "botao_projeto_P83.txt",
     ]:
         (xpath_dir / name).write_text(f"//{name}", encoding="utf-8")
@@ -700,6 +717,7 @@ def test_forms_worker_fails_when_first_field_is_not_confirmed(tmp_path, monkeypa
         "botao_enviar.txt": "//botao_enviar",
         "sucesso.txt": "//sucesso",
         "botao_projeto_P80.txt": "//botao_projeto_P80",
+        "botao_projeto_P82.txt": "//botao_projeto_P82",
         "botao_projeto_P83.txt": "//botao_projeto_P83",
     }
     for name, content in xpaths.items():
@@ -858,7 +876,9 @@ def test_list_and_remove_registered_user():
         assert users_before.status_code == 200
         assert any(row["rfid"] == "USERDEL1" and row["nome"] == "Usuario Cadastro" for row in users_before.json())
 
-        remove_user = client.delete("/api/admin/users/USERDEL1")
+        user_id = next(row["id"] for row in users_before.json() if row["rfid"] == "USERDEL1")
+
+        remove_user = client.delete(f"/api/admin/users/{user_id}")
         assert remove_user.status_code == 200
 
         users_after = client.get("/api/admin/users")
@@ -924,19 +944,19 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_check
             inactive_three_days = now_sgt() - timedelta(days=3)
             inactive_five_days = now_sgt() - timedelta(days=5)
 
-            user_active = db.get(User, "INA001")
+            user_active = get_user_by_rfid(db, "INA001")
             user_active.last_active_at = now_sgt()
             user_active.inactivity_days = 0
 
-            user_two = db.get(User, "INA002")
+            user_two = get_user_by_rfid(db, "INA002")
             user_two.last_active_at = inactive_three_days
             user_two.inactivity_days = 0
 
-            user_three = db.get(User, "INA003")
+            user_three = get_user_by_rfid(db, "INA003")
             user_three.last_active_at = inactive_five_days
             user_three.inactivity_days = 0
 
-            still_active = db.get(User, "INA001")
+            still_active = get_user_by_rfid(db, "INA001")
             still_active.last_active_at = now_sgt()
             still_active.inactivity_days = 0
             db.commit()
@@ -951,6 +971,183 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_check
         assert checkin_rows.status_code == 200
         assert all(row["rfid"] != "INA002" for row in checkin_rows.json())
         assert all(row["rfid"] != "INA003" for row in checkin_rows.json())
+
+
+def test_mobile_sync_autocreates_user_and_updates_state():
+    with TestClient(app) as client:
+        event_time = now_sgt().isoformat()
+        response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP11",
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": event_time,
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["duplicate"] is False
+        assert payload["state"]["found"] is True
+        assert payload["state"]["last_checkin_at"] is not None
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "AP11")
+            assert user.nome == "Oriundo do Aplicativo"
+            assert user.rfid is None
+            assert user.checkin is True
+
+
+def test_mobile_sync_is_idempotent_for_same_event_id():
+    with TestClient(app) as client:
+        client_event_id = f"android-{uuid.uuid4().hex}"
+        payload = {
+            "chave": "AP12",
+            "projeto": "P83",
+            "action": "checkout",
+            "event_time": now_sgt().isoformat(),
+            "client_event_id": client_event_id,
+        }
+        first = client.post("/api/mobile/events/sync", headers=MOBILE_HEADERS, json=payload)
+        second = client.post("/api/mobile/events/sync", headers=MOBILE_HEADERS, json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["duplicate"] is True
+
+
+def test_admin_can_edit_mobile_created_user_without_rfid():
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP13",
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert created.status_code == 200
+
+        ensure_admin_session(client)
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        created_user = next(row for row in users.json() if row["chave"] == "AP13")
+        assert created_user["rfid"] is None
+
+        updated = client.post(
+            "/api/admin/users",
+            json={
+                "user_id": created_user["id"],
+                "nome": "Nome Corrigido",
+                "chave": "AP13",
+                "projeto": "P83",
+            },
+        )
+        assert updated.status_code == 200
+
+        users_after = client.get("/api/admin/users")
+        assert users_after.status_code == 200
+        updated_user = next(row for row in users_after.json() if row["id"] == created_user["id"])
+        assert updated_user["nome"] == "Nome Corrigido"
+        assert updated_user["projeto"] == "P83"
+
+
+def test_admin_can_attach_rfid_to_mobile_created_user_by_unique_chave():
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP14",
+                "projeto": "P82",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert created.status_code == 200
+
+        ensure_admin_session(client)
+        attached = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "APPRFID1",
+                "nome": "Nome Ajustado",
+                "chave": "AP14",
+                "projeto": "P82",
+            },
+        )
+        assert attached.status_code == 200
+
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        matched = [row for row in users.json() if row["chave"] == "AP14"]
+        assert len(matched) == 1
+        assert matched[0]["rfid"] == "APPRFID1"
+        assert matched[0]["nome"] == "Nome Ajustado"
+        assert matched[0]["projeto"] == "P82"
+
+
+def test_mobile_state_reflects_rfid_scan_history(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto: {
+            "success": True,
+            "message": f"mocked {action}",
+            "retry_count": 0,
+        },
+    )
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "RFIDSYNC1", "nome": "Usuario Sync", "chave": "SY11", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200
+
+        scan_response = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "RFIDSYNC1",
+                "action": "checkin",
+                "device_id": "ESP32-SYNC",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_response.status_code == 200
+
+        mobile_state = client.get("/api/mobile/state?chave=SY11", headers=MOBILE_HEADERS)
+        assert mobile_state.status_code == 200
+        payload = mobile_state.json()
+        assert payload["found"] is True
+        assert payload["current_action"] == "checkin"
+        assert payload["last_checkin_at"] is not None
+
+
+def test_mobile_sync_accepts_project_p82():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP82",
+                "projeto": "P82",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["state"]["projeto"] == "P82"
 
 
 def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):

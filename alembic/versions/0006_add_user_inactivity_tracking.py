@@ -20,7 +20,8 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("inactivity_days", sa.Integer(), nullable=False, server_default="0"))
     op.execute("UPDATE users SET last_active_at = COALESCE(time, CURRENT_TIMESTAMP)")
     op.execute("UPDATE users SET inactivity_days = 0")
-    op.alter_column("users", "last_active_at", existing_type=sa.DateTime(timezone=True), nullable=False)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column("last_active_at", existing_type=sa.DateTime(timezone=True), nullable=False)
 
 
 def downgrade() -> None:

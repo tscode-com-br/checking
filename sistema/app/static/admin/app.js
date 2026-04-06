@@ -345,6 +345,7 @@ function makePendingRow(row) {
     <td>
       <select class="inline" id="projeto-${row.id}" disabled>
         <option value="P80">P80</option>
+        <option value="P82">P82</option>
         <option value="P83">P83</option>
       </select>
     </td>
@@ -359,21 +360,22 @@ function makePendingRow(row) {
 
 function makeRegisteredUserRow(user) {
   const tr = document.createElement("tr");
-  tr.dataset.rfid = user.rfid;
+  tr.dataset.userId = String(user.id);
   tr.innerHTML = `
-    <td>${escapeHtml(user.rfid)}</td>
+    <td>${escapeHtml(user.rfid ?? "-")}</td>
     <td><input class="inline user-nome" value="${escapeHtml(user.nome)}" disabled /></td>
     <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
     <td>
       <select class="inline user-projeto" disabled>
         <option value="P80">P80</option>
+        <option value="P82">P82</option>
         <option value="P83">P83</option>
       </select>
     </td>
     <td class="pending-actions">
-      <button data-user-edit="${escapeHtml(user.rfid)}">Editar</button>
-      <button data-user-save="${escapeHtml(user.rfid)}" disabled>Salvar</button>
-      <button data-user-remove="${escapeHtml(user.rfid)}">Remover</button>
+      <button data-user-edit="${user.id}">Editar</button>
+      <button data-user-save="${user.id}" disabled>Salvar</button>
+      <button data-user-remove="${user.id}">Remover</button>
     </td>
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
@@ -456,8 +458,8 @@ function setPendingEditingState(id, editing) {
   }
 }
 
-function setRegisteredUserEditingState(rfid, editing) {
-  const row = document.querySelector(`#usersBody tr[data-rfid="${CSS.escape(rfid)}"]`);
+function setRegisteredUserEditingState(userId, editing) {
+  const row = document.querySelector(`#usersBody tr[data-user-id="${CSS.escape(String(userId))}"]`);
   if (!row) {
     return;
   }
@@ -465,8 +467,8 @@ function setRegisteredUserEditingState(rfid, editing) {
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
   const projeto = row.querySelector(".user-projeto");
-  const saveButton = row.querySelector(`[data-user-save="${rfid}"]`);
-  const editButton = row.querySelector(`[data-user-edit="${rfid}"]`);
+  const saveButton = row.querySelector(`[data-user-save="${userId}"]`);
+  const editButton = row.querySelector(`[data-user-edit="${userId}"]`);
 
   nome.disabled = !editing;
   chave.disabled = !editing;
@@ -807,8 +809,8 @@ async function removePending(id) {
   await loadPending();
 }
 
-async function saveRegisteredUser(rfid) {
-  const row = document.querySelector(`#usersBody tr[data-rfid="${CSS.escape(rfid)}"]`);
+async function saveRegisteredUser(userId) {
+  const row = document.querySelector(`#usersBody tr[data-user-id="${CSS.escape(String(userId))}"]`);
   if (!row) {
     return;
   }
@@ -819,13 +821,13 @@ async function saveRegisteredUser(rfid) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  await postJson("/api/admin/users", { rfid, nome, chave, projeto });
+  await postJson("/api/admin/users", { user_id: Number(userId), nome, chave, projeto });
   setStatus("Usuário salvo com sucesso", true);
   await loadRegisteredUsers();
 }
 
-async function removeRegisteredUser(rfid) {
-  await deleteJson(`/api/admin/users/${encodeURIComponent(rfid)}`);
+async function removeRegisteredUser(userId) {
+  await deleteJson(`/api/admin/users/${encodeURIComponent(userId)}`);
   setStatus("Usuário removido com sucesso", true);
   await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
 }
