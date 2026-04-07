@@ -28,7 +28,7 @@ from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import SessionLocal
 from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User
-from sistema.app.services.admin_updates import AdminUpdatesBroker
+from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
@@ -1000,6 +1000,54 @@ def test_mobile_sync_autocreates_user_and_updates_state():
             assert user.nome == "Oriundo do Aplicativo"
             assert user.rfid is None
             assert user.checkin is True
+
+
+def test_admin_checkin_list_accepts_mobile_user_without_rfid():
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP15",
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert created.status_code == 200
+
+        ensure_admin_session(client)
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200
+        payload = checkin_rows.json()
+        matched = next(row for row in payload if row["chave"] == "AP15")
+        assert matched["rfid"] is None
+        assert matched["checkin"] is True
+
+
+def test_mobile_sync_notifies_admin_realtime_subscribers():
+    subscriber_id, queue = admin_updates_broker.subscribe()
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/mobile/events/sync",
+                headers=MOBILE_HEADERS,
+                json={
+                    "chave": "AP16",
+                    "projeto": "P83",
+                    "action": "checkout",
+                    "event_time": now_sgt().isoformat(),
+                    "client_event_id": f"android-{uuid.uuid4().hex}",
+                },
+            )
+
+        assert response.status_code == 200
+        payload = queue.get_nowait()
+        assert '"reason": "checkout"' in payload
+    finally:
+        admin_updates_broker.unsubscribe(subscriber_id)
 
 
 def test_mobile_sync_is_idempotent_for_same_event_id():

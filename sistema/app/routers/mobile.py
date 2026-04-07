@@ -6,6 +6,7 @@ from ..core.config import settings
 from ..database import get_db
 from ..models import UserSyncEvent
 from ..schemas import MobileSyncRequest, MobileSyncResponse, MobileSyncStateResponse
+from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.user_sync import (
     apply_user_state,
@@ -91,6 +92,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         details=f"chave={user.chave}; event_time={event_time.isoformat()}",
     )
     db.commit()
+    notify_admin_data_changed(payload.action)
     state = build_mobile_sync_state(db, chave=user.chave)
     return MobileSyncResponse(
         ok=True,

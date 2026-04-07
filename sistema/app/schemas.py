@@ -124,7 +124,7 @@ class AdminActionResponse(BaseModel):
 
 
 class UserRow(BaseModel):
-    rfid: str
+    rfid: Optional[str]
     nome: str
     chave: str
     projeto: str
@@ -168,7 +168,7 @@ class EventRow(BaseModel):
 
 class InactiveUserRow(BaseModel):
     id: int
-    rfid: str
+    rfid: Optional[str]
     nome: str
     chave: str
     projeto: str
