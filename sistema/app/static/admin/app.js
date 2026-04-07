@@ -806,8 +806,12 @@ async function savePending(id, rfid) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  await postJson("/api/admin/users", { rfid, nome, chave, projeto });
-  setStatus("Cadastro salvo com sucesso", true);
+  const payload = await postJson("/api/admin/users", { rfid, nome, chave, projeto });
+  if (payload?.linked_existing_user) {
+    setStatus("Cadastro salvo com sucesso e RFID vinculado ao usuário já existente pela chave.", true);
+  } else {
+    setStatus("Cadastro salvo com sucesso", true);
+  }
   await Promise.all([loadPending(), loadRegisteredUsers()]);
 }
 

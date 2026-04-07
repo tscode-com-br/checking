@@ -672,6 +672,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
 @router.post("/users", dependencies=[Depends(require_admin_session)])
 def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict:
     user = None
+    linked_existing_user = False
     if payload.user_id is not None:
         user = db.get(User, payload.user_id)
         if user is None:
@@ -680,11 +681,14 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
         user = find_user_by_rfid(db, payload.rfid)
         if user is None:
             user = find_user_by_chave(db, payload.chave)
+            if user is not None and user.rfid is None:
+                linked_existing_user = True
 
     conflicting_user = find_user_by_chave(db, payload.chave)
     if conflicting_user is not None and (user is None or conflicting_user.id != user.id):
         if user is None and conflicting_user.rfid is None and payload.rfid is not None:
             user = conflicting_user
+            linked_existing_user = True
         else:
             raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com essa chave")
 
@@ -733,7 +737,12 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
     db.commit()
     notify_admin_views("register", "event")
 
-    return {"ok": True, "rfid": payload.rfid}
+    return {
+        "ok": True,
+        "rfid": payload.rfid,
+        "user_id": user.id,
+        "linked_existing_user": linked_existing_user,
+    }
 
 
 @router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_session)])

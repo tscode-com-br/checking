@@ -1132,6 +1132,7 @@ def test_admin_can_attach_rfid_to_mobile_created_user_by_unique_chave():
             },
         )
         assert attached.status_code == 200
+        assert attached.json()["linked_existing_user"] is True
 
         users = client.get("/api/admin/users")
         assert users.status_code == 200
@@ -1140,6 +1141,61 @@ def test_admin_can_attach_rfid_to_mobile_created_user_by_unique_chave():
         assert matched[0]["rfid"] == "APPRFID1"
         assert matched[0]["nome"] == "Nome Ajustado"
         assert matched[0]["projeto"] == "P82"
+
+
+def test_pending_registration_links_rfid_to_existing_mobile_user_by_chave():
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AP17",
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert created.status_code == 200
+
+        ensure_admin_session(client)
+        scan_pending = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "LINKRFID17",
+                "action": "checkin",
+                "device_id": "ESP32-LINK",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_pending.status_code == 200
+        assert scan_pending.json()["outcome"] == "pending_registration"
+
+        attached = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "LINKRFID17",
+                "nome": "Nome Vindo da Pendência",
+                "chave": "AP17",
+                "projeto": "P83",
+            },
+        )
+        assert attached.status_code == 200
+        assert attached.json()["linked_existing_user"] is True
+
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        matched = [row for row in users.json() if row["chave"] == "AP17"]
+        assert len(matched) == 1
+        assert matched[0]["rfid"] == "LINKRFID17"
+        assert matched[0]["nome"] == "Nome Vindo da Pendência"
+        assert matched[0]["projeto"] == "P83"
+
+        pending = client.get("/api/admin/pending")
+        assert pending.status_code == 200
+        assert all(row["rfid"] != "LINKRFID17" for row in pending.json())
 
 
 def test_mobile_state_reflects_rfid_scan_history(monkeypatch):
