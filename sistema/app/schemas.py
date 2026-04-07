@@ -167,6 +167,7 @@ class EventRow(BaseModel):
 
 
 class InactiveUserRow(BaseModel):
+    id: int
     rfid: str
     nome: str
     chave: str

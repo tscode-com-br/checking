@@ -964,6 +964,7 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_check
         inactive_rows = client.get("/api/admin/inactive")
         assert inactive_rows.status_code == 200
         inactive_payload = inactive_rows.json()
+        assert all(isinstance(row["id"], int) and row["id"] > 0 for row in inactive_payload)
         assert [row["nome"] for row in inactive_payload] == ["Bruno Inativo", "Ana Inativa"]
         assert [row["inactivity_days"] for row in inactive_payload] == [5, 3]
 

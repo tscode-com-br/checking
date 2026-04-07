@@ -628,6 +628,7 @@ def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
     ).scalars().all()
     return [
         InactiveUserRow(
+            id=row.id,
             rfid=row.rfid,
             nome=row.nome,
             chave=row.chave,

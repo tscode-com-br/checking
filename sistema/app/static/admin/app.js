@@ -250,6 +250,14 @@ async function deleteJson(url) {
   return fetchJson(url, { method: "DELETE" });
 }
 
+function requireIntegerId(value, label) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`${label} inválido para esta ação.`);
+  }
+  return normalized;
+}
+
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll(".tabs button").forEach((button) => button.classList.remove("active"));
@@ -389,13 +397,13 @@ function formatInactivity(days) {
 
 function makeInactiveUserRow(user) {
   const tr = document.createElement("tr");
-  tr.dataset.rfid = user.rfid;
+  tr.dataset.userId = String(user.id);
   tr.innerHTML = `
     <td>${escapeHtml(user.nome)}</td>
     <td>${escapeHtml(user.chave)}</td>
     <td>${escapeHtml(user.projeto)}</td>
     <td>${escapeHtml(formatInactivity(user.inactivity_days))}</td>
-    <td class="pending-actions"><button type="button" data-inactive-remove="${escapeHtml(user.rfid)}">Remover</button></td>
+    <td class="pending-actions"><button type="button" data-inactive-remove="${escapeHtml(user.id)}">Remover</button></td>
   `;
   return tr;
 }
@@ -810,7 +818,8 @@ async function removePending(id) {
 }
 
 async function saveRegisteredUser(userId) {
-  const row = document.querySelector(`#usersBody tr[data-user-id="${CSS.escape(String(userId))}"]`);
+  const normalizedUserId = requireIntegerId(userId, "Usuário");
+  const row = document.querySelector(`#usersBody tr[data-user-id="${CSS.escape(normalizedUserId)}"]`);
   if (!row) {
     return;
   }
@@ -821,13 +830,14 @@ async function saveRegisteredUser(userId) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  await postJson("/api/admin/users", { user_id: Number(userId), nome, chave, projeto });
+  await postJson("/api/admin/users", { user_id: Number(normalizedUserId), nome, chave, projeto });
   setStatus("Usuário salvo com sucesso", true);
   await loadRegisteredUsers();
 }
 
 async function removeRegisteredUser(userId) {
-  await deleteJson(`/api/admin/users/${encodeURIComponent(userId)}`);
+  const normalizedUserId = requireIntegerId(userId, "Usuário");
+  await deleteJson(`/api/admin/users/${normalizedUserId}`);
   setStatus("Usuário removido com sucesso", true);
   await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
 }
