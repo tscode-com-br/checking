@@ -578,11 +578,12 @@ def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
         db.commit()
     rows = db.execute(
         select(User)
-        .where(User.checkin.is_(True), User.time.is_not(None), User.inactivity_days == 0)
+        .where(User.checkin.is_(True), User.time.is_not(None))
         .order_by(desc(User.time))
     ).scalars().all()
     return [
         UserRow(
+            id=r.id,
             rfid=r.rfid,
             nome=r.nome,
             chave=r.chave,
@@ -601,11 +602,12 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
         db.commit()
     rows = db.execute(
         select(User)
-        .where(User.checkin.is_(False), User.time.is_not(None), User.inactivity_days == 0)
+        .where(User.checkin.is_(False), User.time.is_not(None))
         .order_by(desc(User.time))
     ).scalars().all()
     return [
         UserRow(
+            id=r.id,
             rfid=r.rfid,
             nome=r.nome,
             chave=r.chave,

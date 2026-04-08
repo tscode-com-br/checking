@@ -898,7 +898,7 @@ def test_list_and_remove_registered_user():
         assert any(event["rfid"] == "USERDEL1" for event in events_after.json())
 
 
-def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_checkin_checkout(monkeypatch):
+def test_inactive_users_are_listed_by_highest_inactivity_and_kept_visible_in_checkin_checkout(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
@@ -945,18 +945,28 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_check
             inactive_five_days = now_sgt() - timedelta(days=5)
 
             user_active = get_user_by_rfid(db, "INA001")
+            user_active.checkin = True
+            user_active.time = now_sgt()
             user_active.last_active_at = now_sgt()
             user_active.inactivity_days = 0
 
             user_two = get_user_by_rfid(db, "INA002")
+            user_two.checkin = True
+            user_two.time = inactive_three_days
+            user_two.local = "co83"
             user_two.last_active_at = inactive_three_days
             user_two.inactivity_days = 0
 
             user_three = get_user_by_rfid(db, "INA003")
+            user_three.checkin = False
+            user_three.time = inactive_five_days
+            user_three.local = "main"
             user_three.last_active_at = inactive_five_days
             user_three.inactivity_days = 0
 
             still_active = get_user_by_rfid(db, "INA001")
+            still_active.checkin = True
+            still_active.time = now_sgt()
             still_active.last_active_at = now_sgt()
             still_active.inactivity_days = 0
             db.commit()
@@ -970,8 +980,13 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_excluded_from_check
 
         checkin_rows = client.get("/api/admin/checkin")
         assert checkin_rows.status_code == 200
-        assert all(row["rfid"] != "INA002" for row in checkin_rows.json())
-        assert all(row["rfid"] != "INA003" for row in checkin_rows.json())
+        checkin_payload = checkin_rows.json()
+        assert any(row["rfid"] == "INA002" and row["id"] > 0 for row in checkin_payload)
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200
+        checkout_payload = checkout_rows.json()
+        assert any(row["rfid"] == "INA003" and row["id"] > 0 for row in checkout_payload)
 
 
 def test_mobile_sync_autocreates_user_and_updates_state():

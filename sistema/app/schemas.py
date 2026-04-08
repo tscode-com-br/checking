@@ -124,6 +124,7 @@ class AdminActionResponse(BaseModel):
 
 
 class UserRow(BaseModel):
+    id: int
     rfid: Optional[str]
     nome: str
     chave: str

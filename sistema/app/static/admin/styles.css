@@ -195,6 +195,21 @@ th, td {
   padding: 8px;
   font-size: 14px;
 }
+
+.stale-user-row td {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.stale-user-row .user-table-actions {
+  color: inherit;
+}
+
+.stale-user-row .user-table-actions button {
+  color: #ffffff;
+  font-weight: 700;
+}
+
 th { background: #f3f4f6; }
 .events-table {
   min-width: 1680px;

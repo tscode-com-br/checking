@@ -392,7 +392,7 @@ Regras de negocio importantes:
 
 Caracteristicas:
 
-- `checkin` e `checkout` exibem apenas usuarios com `inactivity_days == 0`;
+- `checkin` e `checkout` exibem usuarios com estado atual definido, inclusive aqueles sem atividade ha mais de 24 horas;
 - `inactive` devolve `id`, `rfid`, `nome`, `chave`, `projeto`, `inactivity_days`;
 - `events` retorna ate 200 eventos correntes, ordenados do mais recente para o mais antigo, ocultando os logs internos de `event_archive` da tabela principal.
 
@@ -497,12 +497,14 @@ Detalhes:
 #### Check-In
 
 - fonte: `GET /api/admin/checkin`
-- colunas: horario, nome, chave, projeto, local
+- colunas: horario, nome, chave, projeto, local, acoes
+- quando o ultimo evento ultrapassa 24 horas, a data recebe sufixo `ha X dias`, a linha fica vermelha/negrito e o admin pode remover o usuario diretamente dessa tabela
 
 #### Check-Out
 
 - fonte: `GET /api/admin/checkout`
-- colunas: horario, nome, chave, projeto, local
+- colunas: horario, nome, chave, projeto, local, acoes
+- quando o ultimo evento ultrapassa 24 horas, a data recebe sufixo `ha X dias`, a linha fica vermelha/negrito e o admin pode remover o usuario diretamente dessa tabela
 
 #### Cadastro / Pendencias
 

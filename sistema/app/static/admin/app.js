@@ -319,18 +319,59 @@ function syncUserTitles() {
   updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
 }
 
+function getElapsedDaysSince(value) {
+  if (!value) {
+    return 0;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 0;
+  }
+
+  const elapsedMs = Date.now() - date.getTime();
+  if (elapsedMs < 24 * 60 * 60 * 1000) {
+    return 0;
+  }
+
+  return Math.max(1, Math.floor(elapsedMs / (24 * 60 * 60 * 1000)));
+}
+
+function formatElapsedDays(days) {
+  return days === 1 ? "há 1 dia" : `há ${days} dias`;
+}
+
+function formatUserTableTime(value) {
+  const formatted = formatDateTime(value);
+  const elapsedDays = getElapsedDaysSince(value);
+  if (!elapsedDays) {
+    return { formatted, elapsedDays: 0, isStale: false };
+  }
+
+  return {
+    formatted: `${formatted} (${formatElapsedDays(elapsedDays)})`,
+    elapsedDays,
+    isStale: true,
+  };
+}
+
 function renderUsers(targetId, rows) {
   const body = document.getElementById(targetId);
-  const includeLocal = targetId === "checkinBody" || targetId === "checkoutBody";
   body.innerHTML = "";
 
   rows.forEach((row) => {
     const tr = document.createElement("tr");
-    if (includeLocal) {
-      tr.innerHTML = `<td>${formatDateTime(row.time)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
-    } else {
-      tr.innerHTML = `<td>${formatDateTime(row.time)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(row.rfid)}</td>`;
+    tr.dataset.userId = String(row.id);
+    const timeDisplay = formatUserTableTime(row.time);
+    const removeAction = timeDisplay.isStale
+      ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>`
+      : "-";
+
+    if (timeDisplay.isStale) {
+      tr.classList.add("stale-user-row");
     }
+
+    tr.innerHTML = `<td>${escapeHtml(timeDisplay.formatted)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${removeAction}</td>`;
     body.appendChild(tr);
   });
 
@@ -1051,6 +1092,20 @@ function bindActions() {
       saveRegisteredUser(target.dataset.userSave).catch((error) => setStatus(error.message, false));
       return;
     }
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("checkinBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("checkoutBody").addEventListener("click", (event) => {
+    const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
     }
