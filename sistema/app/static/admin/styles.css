@@ -196,18 +196,16 @@ th, td {
   font-size: 14px;
 }
 
-.stale-user-row td {
+.inactive-users-section {
+  margin-top: 24px;
+}
+
+.inactive-user-row td {
   color: #b91c1c;
-  font-weight: 700;
 }
 
-.stale-user-row .user-table-actions {
+.inactive-user-row .user-table-actions {
   color: inherit;
-}
-
-.stale-user-row .user-table-actions button {
-  color: #ffffff;
-  font-weight: 700;
 }
 
 th { background: #f3f4f6; }

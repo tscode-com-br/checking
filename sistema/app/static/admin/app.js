@@ -355,28 +355,48 @@ function formatUserTableTime(value) {
   };
 }
 
-function renderUsers(targetId, rows) {
-  const body = document.getElementById(targetId);
-  body.innerHTML = "";
+function buildPresenceRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.userId = String(row.id);
+  const timeDisplay = formatUserTableTime(row.time);
+  const removeAction = timeDisplay.isStale
+    ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>`
+    : "-";
+
+  if (timeDisplay.isStale) {
+    tr.classList.add("inactive-user-row");
+  }
+
+  tr.innerHTML = `<td>${escapeHtml(timeDisplay.formatted)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${removeAction}</td>`;
+  return { tr, isStale: timeDisplay.isStale };
+}
+
+function renderPresenceTables(activeBodyId, inactiveBodyId, inactiveSectionId, rows) {
+  const activeBody = document.getElementById(activeBodyId);
+  const inactiveBody = document.getElementById(inactiveBodyId);
+  const inactiveSection = document.getElementById(inactiveSectionId);
+  activeBody.innerHTML = "";
+  inactiveBody.innerHTML = "";
+
+  let activeRows = 0;
+  let inactiveRows = 0;
 
   rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.dataset.userId = String(row.id);
-    const timeDisplay = formatUserTableTime(row.time);
-    const removeAction = timeDisplay.isStale
-      ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>`
-      : "-";
-
-    if (timeDisplay.isStale) {
-      tr.classList.add("stale-user-row");
+    const { tr, isStale } = buildPresenceRow(row);
+    if (isStale) {
+      inactiveBody.appendChild(tr);
+      inactiveRows += 1;
+      return;
     }
 
-    tr.innerHTML = `<td>${escapeHtml(timeDisplay.formatted)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${removeAction}</td>`;
-    body.appendChild(tr);
+    activeBody.appendChild(tr);
+    activeRows += 1;
   });
 
-  applyResponsiveLabels(targetId);
-  updateUserTitle(targetId, rows.length, registeredUsersTotal);
+  inactiveSection.classList.toggle("hidden", inactiveRows === 0);
+  applyResponsiveLabels(activeBodyId);
+  applyResponsiveLabels(inactiveBodyId);
+  updateUserTitle(activeBodyId, activeRows, registeredUsersTotal);
 }
 
 function makePendingRow(row) {
@@ -524,12 +544,12 @@ function toggleAdminPasswordEditor(id, active) {
 
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
-  renderUsers("checkinBody", rows);
+  renderPresenceTables("checkinBody", "checkinInactiveBody", "checkinInactiveSection", rows);
 }
 
 async function loadCheckout() {
   const rows = await fetchJson("/api/admin/checkout");
-  renderUsers("checkoutBody", rows);
+  renderPresenceTables("checkoutBody", "checkoutInactiveBody", "checkoutInactiveSection", rows);
 }
 
 async function loadPending() {
@@ -1104,7 +1124,21 @@ function bindActions() {
     }
   });
 
+  document.getElementById("checkinInactiveBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
   document.getElementById("checkoutBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("checkoutInactiveBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
