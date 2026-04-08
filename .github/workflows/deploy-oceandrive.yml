@@ -82,7 +82,6 @@ jobs:
             printf '%s\n' '${{ github.sha }}' > .deploy-release
             docker compose up -d db
             docker compose up -d --build --remove-orphans
-            docker image prune -f
 
       - name: Validate application health
         uses: appleboy/ssh-action@v1.2.0
@@ -107,3 +106,18 @@ jobs:
             docker compose ps
             docker compose logs --tail=120 app
             exit 1
+
+      - name: Prune unused Docker artifacts
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          script_stop: true
+          script: |
+            set -e
+            docker image prune -af || true
+            docker builder prune -af || true
+            docker system prune -f || true
+            docker system df
