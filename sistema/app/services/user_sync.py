@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,13 @@ from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
 SYNC_EVENT_FALLBACK_STATUSES = ("queued", "updated", "success", "synced", "created", "submitted")
+
+
+@dataclass(frozen=True)
+class ResolvedUserActivity:
+    action: str
+    event_time: datetime
+    local: str | None
 
 
 def normalize_user_key(value: str) -> str:
@@ -114,6 +122,15 @@ def get_latest_sync_event(db: Session, *, user_id: int, action: str) -> UserSync
     ).scalar_one_or_none()
 
 
+def get_latest_user_sync_event(db: Session, *, user_id: int) -> UserSyncEvent | None:
+    return db.execute(
+        select(UserSyncEvent)
+        .where(UserSyncEvent.user_id == user_id, UserSyncEvent.action.in_(("checkin", "checkout")))
+        .order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def get_latest_check_event(db: Session, *, rfid: str, action: str) -> CheckEvent | None:
     return db.execute(
         select(CheckEvent)
@@ -125,6 +142,71 @@ def get_latest_check_event(db: Session, *, rfid: str, action: str) -> CheckEvent
         .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
         .limit(1)
     ).scalar_one_or_none()
+
+
+def get_latest_check_activity_event(db: Session, *, rfid: str) -> CheckEvent | None:
+    return db.execute(
+        select(CheckEvent)
+        .where(
+            CheckEvent.rfid == rfid,
+            CheckEvent.action.in_(("checkin", "checkout")),
+            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
+        )
+        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActivity | None:
+    candidates: list[tuple[datetime, int, ResolvedUserActivity]] = []
+
+    if user.time is not None and user.checkin is not None:
+        candidates.append(
+            (
+                user.time,
+                3,
+                ResolvedUserActivity(
+                    action="checkin" if user.checkin else "checkout",
+                    event_time=user.time,
+                    local=user.local,
+                ),
+            )
+        )
+
+    latest_sync = get_latest_user_sync_event(db, user_id=user.id)
+    if latest_sync is not None:
+        candidates.append(
+            (
+                latest_sync.event_time,
+                2,
+                ResolvedUserActivity(
+                    action=latest_sync.action,
+                    event_time=latest_sync.event_time,
+                    local=latest_sync.local,
+                ),
+            )
+        )
+
+    if user.rfid:
+        latest_check_event = get_latest_check_activity_event(db, rfid=user.rfid)
+        if latest_check_event is not None:
+            candidates.append(
+                (
+                    latest_check_event.event_time,
+                    1,
+                    ResolvedUserActivity(
+                        action=latest_check_event.action,
+                        event_time=latest_check_event.event_time,
+                        local=latest_check_event.local,
+                    ),
+                )
+            )
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
 
 
 def ensure_current_user_state_event(db: Session, *, user: User) -> None:

@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import SessionLocal
-from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User
+from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User, UserSyncEvent
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
@@ -987,6 +987,124 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_kept_visible_in_che
         assert checkout_rows.status_code == 200
         checkout_payload = checkout_rows.json()
         assert any(row["rfid"] == "INA003" and row["id"] > 0 for row in checkout_payload)
+
+
+def test_admin_presence_lists_follow_latest_activity_even_when_current_state_is_missing_or_stale():
+    with SessionLocal() as db:
+        stale_user = User(
+            rfid="LATE001",
+            chave="LT01",
+            nome="Usuario Estado Antigo",
+            projeto="P80",
+            local="main",
+            checkin=True,
+            time=now_sgt() - timedelta(days=5),
+            last_active_at=now_sgt() - timedelta(days=5),
+            inactivity_days=0,
+        )
+        check_event_only_user = User(
+            rfid="LATE002",
+            chave="LT02",
+            nome="Usuario Historico RFID",
+            projeto="P83",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt() - timedelta(days=3),
+            inactivity_days=0,
+        )
+        no_activity_user = User(
+            rfid="LATE003",
+            chave="LT03",
+            nome="Usuario Sem Atividade",
+            projeto="P82",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([stale_user, check_event_only_user, no_activity_user])
+        db.flush()
+
+        db.add(
+            UserSyncEvent(
+                user_id=stale_user.id,
+                chave=stale_user.chave,
+                rfid=stale_user.rfid,
+                source="android",
+                action="checkout",
+                projeto=stale_user.projeto,
+                local="co80",
+                event_time=now_sgt() - timedelta(hours=6),
+                created_at=now_sgt(),
+                source_request_id=f"android-{uuid.uuid4().hex}",
+                device_id=None,
+            )
+        )
+        db.add(
+            CheckEvent(
+                idempotency_key=f"late-checkout-{uuid.uuid4().hex}",
+                source="device",
+                rfid="LATE002",
+                action="checkout",
+                status="queued",
+                message="checkout antigo",
+                details=None,
+                project="P83",
+                device_id="ESP32-LATE",
+                local="main",
+                request_path="/api/scan",
+                http_status=202,
+                event_time=now_sgt() - timedelta(days=2),
+                submitted_at=None,
+                retry_count=0,
+            )
+        )
+        db.add(
+            CheckEvent(
+                idempotency_key=f"late-checkin-{uuid.uuid4().hex}",
+                source="device",
+                rfid="LATE002",
+                action="checkin",
+                status="queued",
+                message="checkin recente",
+                details=None,
+                project="P83",
+                device_id="ESP32-LATE",
+                local="co83",
+                request_path="/api/scan",
+                http_status=202,
+                event_time=now_sgt() - timedelta(hours=3),
+                submitted_at=None,
+                retry_count=0,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200
+        checkin_payload = checkin_rows.json()
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200
+        checkout_payload = checkout_rows.json()
+
+        assert all(row["chave"] != "LT01" for row in checkin_payload)
+        stale_checkout = next(row for row in checkout_payload if row["chave"] == "LT01")
+        assert stale_checkout["local"] == "co80"
+        assert stale_checkout["checkin"] is False
+
+        fallback_checkin = next(row for row in checkin_payload if row["chave"] == "LT02")
+        assert fallback_checkin["local"] == "co83"
+        assert fallback_checkin["checkin"] is True
+        assert all(row["chave"] != "LT02" for row in checkout_payload)
+
+        assert all(row["chave"] != "LT03" for row in checkin_payload)
+        assert all(row["chave"] != "LT03" for row in checkout_payload)
 
 
 def test_mobile_sync_autocreates_user_and_updates_state():
