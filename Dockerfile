@@ -6,10 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-RUN playwright install --with-deps chromium
+RUN pip install --no-cache-dir -r requirements.txt \
+	&& playwright install --with-deps chromium \
+	&& rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-COPY . .
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY assets ./assets
+COPY sistema ./sistema
 
 EXPOSE 8000
 

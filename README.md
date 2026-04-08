@@ -32,13 +32,15 @@ Implementacao inicial do sistema de check-in/check-out com:
 
 ## Executar localmente (fase inicial)
 1. Criar .env a partir de .env.example
-2. Instalar dependencias Python:
+2. Instalar dependencias Python de runtime:
    pip install -r requirements.txt
-3. Aplicar migracoes:
+3. Para desenvolvimento e testes, instalar tambem as dependencias dev:
+   pip install -r requirements-dev.txt
+4. Aplicar migracoes:
    alembic upgrade head
-4. Subir API:
+5. Subir API:
    uvicorn sistema.app.main:app --reload --host 0.0.0.0 --port 8000
-5. Abrir painel admin:
+6. Abrir painel admin:
    http://127.0.0.1:8000/
 
 Compatibilidade:
@@ -48,7 +50,7 @@ Compatibilidade:
 - Repositorio principal: `git@github.com:tscode-com-br/checking.git`
 - Repositorio alternativo por HTTPS: `https://github.com/tscode-com-br/checking.git`
 - Todo push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`.
-- O workflow sincroniza o codigo com a OceanDrive, cria o diretorio remoto se necessario, sobe o banco antes da aplicacao, executa `docker compose up -d --build --remove-orphans` e valida `GET /api/health` no servidor.
+- O workflow sincroniza o codigo com a OceanDrive, cria o diretorio remoto se necessario, sobe o banco antes da aplicacao, executa `docker compose up -d --build --remove-orphans`, valida `GET /api/health` no servidor e poda cache Docker nao utilizado apos deploy bem-sucedido.
 - O arquivo `.env` de producao permanece somente no servidor e nao e enviado pelo GitHub Actions.
 - O remoto `origin` pode apontar para SSH ou HTTPS. Se a maquina local nao tiver chave SSH autorizada no GitHub, use HTTPS para o push.
 
@@ -93,6 +95,7 @@ Exemplo de sincronizacao mobile:
 ## Testes
 - Executar suite:
    pytest -q
+- Se o ambiente foi criado apenas com runtime, instalar antes `pip install -r requirements-dev.txt`.
 
 ## Payload de scan
 O firmware envia para `POST /api/scan`:
