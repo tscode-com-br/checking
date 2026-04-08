@@ -16,7 +16,6 @@ let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
 let registeredUsersTotal = 0;
-let inactiveUsersTotal = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
 let eventArchivesPage = 1;
@@ -312,17 +311,12 @@ function updateUserTitle(targetId, totalRows, totalRegistered) {
   }
   if (targetId === "checkoutBody") {
     document.getElementById("checkoutTitle").textContent = `Usuários em Check-Out (${totalRows}/${totalRegistered})`;
-    return;
-  }
-  if (targetId === "inactiveBody") {
-    document.getElementById("inactiveTitle").textContent = `Inatividade (${totalRows}/${totalRegistered})`;
   }
 }
 
 function syncUserTitles() {
   updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
   updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
-  updateUserTitle("inactiveBody", document.querySelectorAll("#inactiveBody tr").length, registeredUsersTotal);
 }
 
 function renderUsers(targetId, rows) {
@@ -387,24 +381,6 @@ function makeRegisteredUserRow(user) {
     </td>
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
-  return tr;
-}
-
-function formatInactivity(days) {
-  const value = Number(days || 0);
-  return value === 1 ? "1 dia" : `${value} dias`;
-}
-
-function makeInactiveUserRow(user) {
-  const tr = document.createElement("tr");
-  tr.dataset.userId = String(user.id);
-  tr.innerHTML = `
-    <td>${escapeHtml(user.nome)}</td>
-    <td>${escapeHtml(user.chave)}</td>
-    <td>${escapeHtml(user.projeto)}</td>
-    <td>${escapeHtml(formatInactivity(user.inactivity_days))}</td>
-    <td class="pending-actions"><button type="button" data-inactive-remove="${escapeHtml(user.id)}">Remover</button></td>
-  `;
   return tr;
 }
 
@@ -541,16 +517,6 @@ async function loadRegisteredUsers() {
   syncUserTitles();
 }
 
-async function loadInactive() {
-  const rows = await fetchJson("/api/admin/inactive");
-  inactiveUsersTotal = rows.length;
-  const body = document.getElementById("inactiveBody");
-  body.innerHTML = "";
-  rows.forEach((user) => body.appendChild(makeInactiveUserRow(user)));
-  applyResponsiveLabels("inactiveBody");
-  updateUserTitle("inactiveBody", inactiveUsersTotal, registeredUsersTotal);
-}
-
 async function loadEvents() {
   const rows = await fetchJson("/api/admin/events");
   const body = document.getElementById("eventsBody");
@@ -574,10 +540,6 @@ async function refreshActiveTab() {
     await loadCheckout();
     return;
   }
-  if (activeTab === "inativos") {
-    await loadInactive();
-    return;
-  }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers()]);
@@ -588,7 +550,7 @@ async function refreshActiveTab() {
 }
 
 async function refreshAllTables() {
-  const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents(), loadAdministrators()];
+  const jobs = [loadCheckin(), loadCheckout(), loadEvents(), loadAdministrators()];
   if (!hasPendingEditInProgress()) {
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
@@ -843,7 +805,7 @@ async function removeRegisteredUser(userId) {
   const normalizedUserId = requireIntegerId(userId, "Usuário");
   await deleteJson(`/api/admin/users/${normalizedUserId}`);
   setStatus("Usuário removido com sucesso", true);
-  await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
+  await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout()]);
 }
 
 async function approveAdministrator(id) {
@@ -1091,13 +1053,6 @@ function bindActions() {
     }
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
-
-  document.getElementById("inactiveBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.inactiveRemove) {
-      removeRegisteredUser(target.dataset.inactiveRemove).catch((error) => setStatus(error.message, false));
     }
   });
 

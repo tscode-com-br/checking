@@ -64,6 +64,7 @@ Observacoes:
 - O LED-03 e a fase apagada do LED-02. Como o pulso verde tem 20 ms em um ciclo total de 2000 ms, a fase apagada fica em aproximadamente 1980 ms.
 - Os estados LED-05, LED-06, LED-07, LED-09 e LED-11 sao efeitos bloqueantes no firmware atual; durante esses efeitos o loop principal aguarda o termino do padrao antes de voltar ao estado de prontidao.
 - O LED-10 representa indisponibilidade operacional da nuvem. Enquanto esse estado estiver ativo, a ESP32 nao processa leituras de cartao.
+- Sempre que uma leitura de cartao terminar em falha (`red_2s`, `red_blink_5x_1s` ou fallback de resposta invalida), a ESP32 segura o `RST` compartilhado dos RC522 em nivel baixo por 2 segundos e depois reinicia.
 
 ### 6.2 Leitura de Cartao no Sensor 1
 1. O RC522 #1 detecta um cartao.
@@ -83,9 +84,9 @@ Observacoes:
 2. A ESP32 envia `rfid` e `action=checkout` para `POST /api/scan`.
 3. Se o RFID nao existir em `users`, o backend cria ou atualiza a pendencia e responde para executar o estado LED-07, com tres piscadas laranja de 40 ms dentro de 1500 ms.
 4. Assim que o padrao do LED-07 termina, a ESP32 volta ao estado online, retoma o pulso branco de prontidao e libera uma nova leitura.
-5. Se o usuario existir, mas `users.checkin` estiver `false`, o backend bloqueia o checkout, responde para executar o estado LED-08, com tres piscadas vermelhas de 40 ms dentro de 1500 ms, e volta ao estado de prontidao.
+5. Se o usuario existir, mas `users.checkin` estiver `false`, o backend bloqueia o checkout, responde para executar o estado LED-08, com tres piscadas vermelhas de 40 ms dentro de 1500 ms, e a ESP32 reinicia ao final do padrao.
 6. Se o usuario existir e `users.checkin` estiver `true`, o backend busca os elementos do formulario em etapas de ate 10 segundos: chave, confirmacao da chave, botao Normal, botao Check-Out e botao Enviar.
-7. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com LED vermelho fixo por 1500 ms, e voltar ao estado de prontidao.
+7. Se qualquer elemento obrigatorio nao for encontrado no tempo definido, a API retorna erro para a ESP32 executar o estado LED-09, com LED vermelho fixo por 1500 ms, e reiniciar ao final do padrao.
 8. A API aguarda ate 20 segundos pelo elemento de sucesso do formulario.
 9. Em sucesso, o backend grava `users.checkin=false`, atualiza `users.time` e registra o evento.
 

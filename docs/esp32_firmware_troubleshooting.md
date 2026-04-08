@@ -103,7 +103,7 @@ Como verificar:
    - `sensor-2`
 2. Validar pinagem configurada no firmware:
    - `sensor-1 SS = GPIO 10`
-   - `sensor-2 SS = GPIO 14`
+   - `sensor-2 SS = GPIO 15`
    - `RST = GPIO 9`
 3. Testar cada leitor isoladamente se necessario.
 
@@ -118,6 +118,20 @@ Causas provaveis:
 
 Como verificar:
 1. Observar intervalo entre `showProcessingLed()` e o log de resposta `[SCAN] response=...`.
+
+### 3.7 ESP32 reinicia apos falha de leitura
+Significa:
+- a leitura do cartao terminou em falha de regra de negocio, erro operacional do backend ou resposta nao reconhecida
+- o firmware foi configurado para manter o `RST` compartilhado dos RC522 em nivel baixo por 2 segundos e depois reiniciar a placa apos concluir o padrao vermelho correspondente
+
+Como verificar:
+1. Observar na serial se aparece uma das respostas de falha no scan:
+   - `parsed_led=red_2s`
+   - `parsed_led=red_blink_5x_1s`
+   - resposta nao reconhecida seguida de fallback vermelho
+2. Confirmar o log imediatamente antes do reboot:
+   - `[SYS] Restarting after scan failure: ...`
+3. Se o reboot ocorrer com frequencia, revisar a causa da falha na API ou no fluxo de negocio, porque o reinicio e consequencia e nao causa raiz.
 2. Validar se a API esta respondendo com rapidez.
 3. Revisar disponibilidade do servidor e do banco.
 

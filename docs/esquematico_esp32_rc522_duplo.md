@@ -29,7 +29,7 @@ Barramento SPI compartilhado:
 
 Selecao individual dos leitores:
 - ESP32 GPIO 10 -> SDA/SS do RC522 #1, dedicado a check-in
-- ESP32 GPIO 14 -> SDA/SS do RC522 #2, dedicado a check-out
+- ESP32 GPIO 15 -> SDA/SS do RC522 #2, dedicado a check-out
 
 Pinos nao utilizados do RC522:
 - IRQ pode ficar desconectado nos dois modulos
@@ -49,7 +49,7 @@ Pinos nao utilizados do RC522:
 | MOSI | MOSI | MOSI | GPIO 11 |
 | MISO | MISO | MISO | GPIO 13 |
 | SDA/SS | SDA | - | GPIO 10 |
-| SDA/SS | - | SDA | GPIO 14 |
+| SDA/SS | - | SDA | GPIO 15 |
 
 ## 6. Componentes adicionais recomendados
 - 1 capacitor eletrolitico de 100 uF entre 5V e GND na alimentacao principal

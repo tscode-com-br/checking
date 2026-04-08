@@ -16,6 +16,8 @@ Implementacao inicial do sistema de check-in/check-out com:
 - assets/xpath: seletores XPath do formulario
 - sistema/app: backend FastAPI
 - docs/descritivo_sistema.md: descritivo funcional e tecnico
+- docs/context/contexto_geral_projeto.md: contexto consolidado da arquitetura e operacao do projeto
+- docs/context/contexto_api_admin_web.md: contexto detalhado da API FastAPI e do website administrativo
 - docs/esp32_firmware_troubleshooting.md: troubleshooting operacional do firmware da ESP32 e dos estados de LED
 - docs/esquematico_esp32_rc522_duplo.md: guia de montagem eletrica para 2x RC522
 - docs/esp32-com5-specs.md: identificacao tecnica da placa conectada na COM5

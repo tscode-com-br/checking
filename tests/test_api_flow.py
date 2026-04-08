@@ -1389,9 +1389,7 @@ def test_archive_events_creates_csv_clears_table_and_lists_downloads(tmp_path):
 
         events_after = client.get("/api/admin/events")
         assert events_after.status_code == 200
-        assert len(events_after.json()) == 1
-        assert events_after.json()[0]["action"] == "event_archive"
-        assert events_after.json()[0]["status"] == "created"
+        assert events_after.json() == []
 
         archives_list = client.get("/api/admin/events/archives")
         assert archives_list.status_code == 200
@@ -1469,38 +1467,40 @@ def test_event_archive_operations_are_logged(tmp_path):
 
         events_res = client.get("/api/admin/events")
         assert events_res.status_code == 200
-        events = events_res.json()
+        assert events_res.json() == []
+
+        with SessionLocal() as db:
+            archive_events = db.execute(
+                select(CheckEvent)
+                .where(CheckEvent.action == "event_archive")
+                .order_by(CheckEvent.id)
+            ).scalars().all()
 
         assert any(
-            event["action"] == "event_archive"
-            and event["status"] == "created"
-            and event["request_path"] == "/api/admin/events/archive"
-            for event in events
+            event.status == "created"
+            and event.request_path == "/api/admin/events/archive"
+            for event in archive_events
         )
         assert any(
-            event["action"] == "event_archive"
-            and event["status"] == "downloaded"
-            and event["request_path"] == f"/api/admin/events/archives/{file_name}"
-            for event in events
+            event.status == "downloaded"
+            and event.request_path == f"/api/admin/events/archives/{file_name}"
+            for event in archive_events
         )
         assert any(
-            event["action"] == "event_archive"
-            and event["status"] == "downloaded"
-            and event["request_path"] == "/api/admin/events/archives/download-all"
-            for event in events
+            event.status == "downloaded"
+            and event.request_path == "/api/admin/events/archives/download-all"
+            for event in archive_events
         )
         assert any(
-            event["action"] == "event_archive"
-            and event["status"] == "removed"
-            and event["request_path"] == f"/api/admin/events/archives/{file_name}"
-            for event in events
+            event.status == "removed"
+            and event.request_path == f"/api/admin/events/archives/{file_name}"
+            for event in archive_events
         )
         assert any(
-            event["action"] == "event_archive"
-            and event["status"] == "failed"
-            and event["http_status"] == 404
-            and event["request_path"] == f"/api/admin/events/archives/{file_name}"
-            for event in events
+            event.status == "failed"
+            and event.http_status == 404
+            and event.request_path == f"/api/admin/events/archives/{file_name}"
+            for event in archive_events
         )
 
 

@@ -823,7 +823,12 @@ def remove_user(user_id: int, db: Session = Depends(get_db)) -> dict:
 
 @router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_session)])
 def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
-    rows = db.execute(select(CheckEvent).order_by(desc(CheckEvent.id)).limit(200)).scalars().all()
+    rows = db.execute(
+        select(CheckEvent)
+        .where(CheckEvent.action != "event_archive")
+        .order_by(desc(CheckEvent.id))
+        .limit(200)
+    ).scalars().all()
     return [
         EventRow(
             id=r.id,
@@ -850,16 +855,19 @@ def archive_events(
     db: Session = Depends(get_db),
     current_admin: AdminUser = Depends(require_admin_session),
 ) -> EventArchiveCreateResponse:
-    rows = db.execute(
+    current_rows = db.execute(
         select(CheckEvent)
-        .where(CheckEvent.action != "event_archive")
         .order_by(CheckEvent.event_time, CheckEvent.id)
     ).scalars().all()
+    rows = [row for row in current_rows if row.action != "event_archive"]
     archive = create_event_archive(rows)
+    pruned_archive_rows = len(current_rows) - len(rows)
+
+    if current_rows:
+        db.execute(delete(CheckEvent))
+        db.commit()
 
     if archive is not None:
-        db.execute(delete(CheckEvent).where(CheckEvent.action != "event_archive"))
-        db.commit()
         log_event(
             db,
             source="admin",
@@ -870,7 +878,8 @@ def archive_events(
             http_status=200,
             details=(
                 f"file_name={archive.file_name}; period={archive.period}; "
-                f"record_count={archive.record_count}; created_by={current_admin.chave}"
+                f"record_count={archive.record_count}; pruned_archive_rows={pruned_archive_rows}; "
+                f"created_by={current_admin.chave}"
             )[:1000],
             commit=True,
         )
@@ -883,7 +892,7 @@ def archive_events(
             message="Event log archive requested but there were no current events to archive",
             request_path="/api/admin/events/archive",
             http_status=200,
-            details=f"created_by={current_admin.chave}",
+            details=f"pruned_archive_rows={pruned_archive_rows}; created_by={current_admin.chave}",
             commit=True,
         )
 

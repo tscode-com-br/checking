@@ -31,7 +31,7 @@ Consolidar o estado atual da API e do website administrativo para preparar a int
 
 ### Fluxo administrativo
 
-- O admin lista usuarios em check-in, check-out e inativos.
+- O admin lista usuarios em check-in e check-out.
 - O admin cadastra usuarios a partir de pendencias de RFID desconhecido.
 - O admin remove pendencias e usuarios.
 - O admin visualiza eventos operacionais.

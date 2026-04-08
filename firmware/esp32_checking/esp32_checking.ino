@@ -38,8 +38,8 @@ extern WiFiIntellisenseShim WiFi;
 #endif
 #endif
 
-const char* WIFI_SSID = "TS 14 PRO";
-const char* WIFI_PASSWORD = "00000000";
+const char* WIFI_SSID = "P80_WiFi";
+const char* WIFI_PASSWORD = "Petrobras@80";
 const char* API_HOST = "157.230.35.21";
 const char* DEVICE_ID = "ESP32-S3-01";
 const char* SHARED_KEY = "gyb2YCkwhDFkhhYQQC6W80BafOf9YsTr";
@@ -53,7 +53,7 @@ const int RFID_MISO_PIN = 13;
 const int RFID_MOSI_PIN = 11;
 const int RFID_RST_PIN = 9;
 const int RFID_SENSOR_1_SS_PIN = 10;
-const int RFID_SENSOR_2_SS_PIN = 14;
+const int RFID_SENSOR_2_SS_PIN = 15;
 
 struct ReaderSlot {
   MFRC522 reader;
@@ -87,6 +87,7 @@ const unsigned long SAME_CARD_SUPPRESSION_MS = 3000;
 const unsigned long CLOUD_RETRY_MS = 30000;
 const unsigned long OFFLINE_RESTART_MS = 30000;
 const unsigned long READER_RETRY_MS = 5000;
+const unsigned long READER_RESET_HOLD_MS = 2000;
 const uint16_t API_CONNECT_TIMEOUT_MS = 10000;
 const uint16_t API_RESPONSE_TIMEOUT_MS = 60000;
 
@@ -337,7 +338,8 @@ void pulseGreenSuccess() {
 }
 
 void holdOrangePending() {
-  runLedBlinkPattern(setInternalLedOrange, PENDING_BLINK_COUNT, PENDING_BLINK_ON_MS, PENDING_PATTERN_MS);
+  setInternalLedOrange();
+  delay(1500);
   resumeOnlineIdleState();
 }
 
@@ -355,6 +357,23 @@ void blinkRedFailurePattern() {
   setInternalLedRed();
   delay(FAILURE_HOLD_MS);
   resumeOnlineIdleState();
+}
+
+void hardResetReaders() {
+  Serial.println("[RC522] Holding shared RST low before ESP restart.");
+  digitalWrite(RFID_SENSOR_1_SS_PIN, HIGH);
+  digitalWrite(RFID_SENSOR_2_SS_PIN, HIGH);
+  digitalWrite(RFID_RST_PIN, LOW);
+  delay(READER_RESET_HOLD_MS);
+  digitalWrite(RFID_RST_PIN, HIGH);
+  delay(50);
+}
+
+void restartAfterScanFailure(const char* reason) {
+  Serial.print("[SYS] Restarting after scan failure: ");
+  Serial.println(reason);
+  hardResetReaders();
+  ESP.restart();
 }
 
 void startupLedTest() {
@@ -780,14 +799,16 @@ bool readAndProcess(ReaderSlot& slot) {
     blinkGreenLocationUpdated();
   } else if (responseLed == "red_2s" || response.indexOf("red_2s") >= 0) {
     holdRedTwoSeconds();
+    restartAfterScanFailure("business_rule_failure");
   } else if (responseLed == "red_blink_5x_1s" || response.indexOf("red_blink_5x_1s") >= 0) {
     blinkRedFailurePattern();
+    restartAfterScanFailure("operational_failure");
   } else if (responseLed == "white" || responseOutcome == "duplicate" || response.indexOf("duplicate") >= 0 || response.indexOf("\"led\":\"white\"") >= 0) {
     resumeOnlineIdleState();
   } else {
     Serial.println("[SCAN] Unrecognized API response; fallback red_1s activated.");
     runLedBlinkPattern(setInternalLedRed, FALLBACK_BLINK_COUNT, FALLBACK_BLINK_ON_MS, FALLBACK_PATTERN_MS);
-    resumeOnlineIdleState();
+    restartAfterScanFailure("unrecognized_scan_response");
   }
 
   return true;
@@ -800,8 +821,10 @@ void setup() {
   startupLedTest();
 
   SPI.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SENSOR_1_SS_PIN);
+  pinMode(RFID_RST_PIN, OUTPUT);
   pinMode(RFID_SENSOR_1_SS_PIN, OUTPUT);
   pinMode(RFID_SENSOR_2_SS_PIN, OUTPUT);
+  digitalWrite(RFID_RST_PIN, HIGH);
   digitalWrite(RFID_SENSOR_1_SS_PIN, HIGH);
   digitalWrite(RFID_SENSOR_2_SS_PIN, HIGH);
 
