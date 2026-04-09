@@ -4,6 +4,26 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+def _normalize_optional_local(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(str(value).strip().split())
+    if not normalized:
+        return None
+    if len(normalized) > 40:
+        raise ValueError("O local deve ter no maximo 40 caracteres")
+    return normalized
+
+
+def _normalize_required_local(value: str) -> str:
+    normalized = " ".join(str(value).strip().split())
+    if len(normalized) < 2:
+        raise ValueError("O local deve ter ao menos 2 caracteres")
+    if len(normalized) > 40:
+        raise ValueError("O local deve ter no maximo 40 caracteres")
+    return normalized
+
+
 class HealthResponse(BaseModel):
     status: str
     app: str
@@ -48,6 +68,41 @@ class AdminUserUpsert(BaseModel):
         if not value.isalnum():
             raise ValueError("chave must be alphanumeric")
         return value.upper()
+
+
+class LocationRow(BaseModel):
+    id: int
+    local: str
+    latitude: float
+    longitude: float
+    tolerance_meters: int
+
+
+class AdminLocationUpsert(BaseModel):
+    location_id: int | None = Field(default=None, ge=1)
+    local: str
+    latitude: float
+    longitude: float
+    tolerance_meters: int = Field(ge=1, le=9999)
+
+    @field_validator("local", mode="before")
+    @classmethod
+    def validate_location_name(cls, value: str) -> str:
+        return _normalize_required_local(value)
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude(cls, value: float) -> float:
+        if value < -90 or value > 90:
+            raise ValueError("A latitude deve estar entre -90 e 90")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude(cls, value: float) -> float:
+        if value < -180 or value > 180:
+            raise ValueError("A longitude deve estar entre -180 e 180")
+        return value
 
 
 class AdminLoginRequest(BaseModel):
@@ -206,6 +261,7 @@ class MobileSyncRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     projeto: Literal["P80", "P82", "P83"]
     action: Literal["checkin", "checkout"]
+    local: str | None = None
     event_time: datetime
     client_event_id: str = Field(min_length=8, max_length=80)
 
@@ -217,11 +273,17 @@ class MobileSyncRequest(BaseModel):
             raise ValueError("A chave deve ter 4 caracteres alfanumericos")
         return normalized
 
+    @field_validator("local", mode="before")
+    @classmethod
+    def validate_mobile_sync_local(cls, value: str | None) -> str | None:
+        return _normalize_optional_local(value)
+
 
 class MobileSubmitRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     projeto: Literal["P80", "P82", "P83"]
     action: Literal["checkin", "checkout"]
+    local: str | None = None
     event_time: datetime
     client_event_id: str = Field(min_length=8, max_length=80)
 
@@ -233,11 +295,17 @@ class MobileSubmitRequest(BaseModel):
             raise ValueError("A chave deve ter 4 caracteres alfanumericos")
         return normalized
 
+    @field_validator("local", mode="before")
+    @classmethod
+    def validate_mobile_submit_local(cls, value: str | None) -> str | None:
+        return _normalize_optional_local(value)
+
 
 class MobileFormsSubmitRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     projeto: Literal["P80", "P82", "P83"]
     action: Literal["checkin", "checkout"]
+    local: str | None = None
     informe: Literal["normal", "retroativo"]
     event_time: datetime
     client_event_id: str = Field(min_length=8, max_length=80)
@@ -257,6 +325,11 @@ class MobileFormsSubmitRequest(BaseModel):
         if normalized not in {"normal", "retroativo"}:
             raise ValueError("Informe deve ser 'Normal' ou 'Retroativo'")
         return normalized
+
+    @field_validator("local", mode="before")
+    @classmethod
+    def validate_mobile_forms_submit_local(cls, value: str | None) -> str | None:
+        return _normalize_optional_local(value)
 
 
 class MobileSyncStateResponse(BaseModel):
@@ -283,3 +356,17 @@ class MobileSubmitResponse(BaseModel):
     queued_forms: bool = True
     message: str
     state: MobileSyncStateResponse
+
+
+class MobileLocationRow(BaseModel):
+    id: int
+    local: str
+    latitude: float
+    longitude: float
+    tolerance_meters: int
+    updated_at: datetime
+
+
+class MobileLocationsResponse(BaseModel):
+    items: list[MobileLocationRow]
+    synced_at: datetime

@@ -200,6 +200,12 @@ th, td {
   margin-top: 24px;
 }
 
+.locations-actions-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .inactive-user-row td {
   color: #b91c1c;
 }
@@ -511,6 +517,12 @@ input.inline, select.inline {
     gap: 8px;
   }
   .section-header button {
+    width: 100%;
+  }
+  .locations-actions-bar {
+    justify-content: stretch;
+  }
+  .locations-actions-bar button {
     width: 100%;
   }
 

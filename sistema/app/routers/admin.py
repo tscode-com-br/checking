@@ -8,11 +8,12 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, AdminUser, CheckEvent, PendingRegistration, User, UserSyncEvent
+from ..models import AdminAccessRequest, AdminUser, CheckEvent, ManagedLocation, PendingRegistration, User, UserSyncEvent
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
     AdminIdentity,
+    AdminLocationUpsert,
     AdminLoginRequest,
     AdminManagementRow,
     AdminPasswordResetRequest,
@@ -25,6 +26,7 @@ from ..schemas import (
     EventArchiveRow,
     EventRow,
     InactiveUserRow,
+    LocationRow,
     PendingRow,
     UserRow,
 )
@@ -89,6 +91,16 @@ def encode_sse(payload: dict[str, str]) -> str:
 
 def build_admin_identity(admin: AdminUser) -> AdminIdentity:
     return AdminIdentity(id=admin.id, chave=admin.chave, nome_completo=admin.nome_completo)
+
+
+def build_location_row(location: ManagedLocation) -> LocationRow:
+    return LocationRow(
+        id=location.id,
+        local=location.local,
+        latitude=location.latitude,
+        longitude=location.longitude,
+        tolerance_meters=location.tolerance_meters,
+    )
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
@@ -646,6 +658,98 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
         )
         for r in rows
     ]
+
+
+@router.get("/locations", response_model=list[LocationRow], dependencies=[Depends(require_admin_session)])
+def list_locations(db: Session = Depends(get_db)) -> list[LocationRow]:
+    rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
+    return [build_location_row(row) for row in rows]
+
+
+@router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db)) -> AdminActionResponse:
+    location = db.get(ManagedLocation, payload.location_id) if payload.location_id is not None else None
+    if payload.location_id is not None and location is None:
+        raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
+
+    conflicting_location = db.execute(
+        select(ManagedLocation).where(ManagedLocation.local == payload.local)
+    ).scalar_one_or_none()
+    if conflicting_location is not None and (location is None or conflicting_location.id != location.id):
+        raise HTTPException(status_code=409, detail="Ja existe uma localizacao cadastrada com esse nome.")
+
+    timestamp = now_sgt()
+    created = False
+    if location is None:
+        location = ManagedLocation(
+            local=payload.local,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            tolerance_meters=payload.tolerance_meters,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(location)
+        created = True
+    else:
+        location.local = payload.local
+        location.latitude = payload.latitude
+        location.longitude = payload.longitude
+        location.tolerance_meters = payload.tolerance_meters
+        location.updated_at = timestamp
+
+    log_event(
+        db,
+        source="admin",
+        action="location",
+        status="created" if created else "updated",
+        message="Location saved via admin",
+        local=payload.local,
+        request_path="/api/admin/locations",
+        http_status=200,
+        details=(
+            f"latitude={payload.latitude:.6f}; longitude={payload.longitude:.6f}; "
+            f"tolerance_meters={payload.tolerance_meters}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("location", "event")
+    return AdminActionResponse(ok=True, message="Localizacao salva com sucesso.")
+
+
+@router.delete("/locations/{location_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+def remove_location(location_id: int, db: Session = Depends(get_db)) -> AdminActionResponse:
+    location = db.get(ManagedLocation, location_id)
+    if location is None:
+        log_event(
+            db,
+            source="admin",
+            action="location",
+            status="failed",
+            message="Location not found for removal",
+            request_path=f"/api/admin/locations/{location_id}",
+            http_status=404,
+            details=f"location_id={location_id}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
+
+    location_name = location.local
+    db.delete(location)
+    log_event(
+        db,
+        source="admin",
+        action="location",
+        status="removed",
+        message="Location removed via admin",
+        local=location_name,
+        request_path=f"/api/admin/locations/{location_id}",
+        http_status=200,
+        details=f"location_id={location_id}",
+    )
+    db.commit()
+    notify_admin_views("location", "event")
+    return AdminActionResponse(ok=True, message="Localizacao removida com sucesso.")
 
 
 @router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_admin_session)])

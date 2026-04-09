@@ -22,6 +22,8 @@ let eventArchivesPage = 1;
 let eventArchivesTotal = 0;
 let eventArchivesTotalPages = 0;
 let eventArchivesTotalSizeBytes = 0;
+let nextLocationDraftId = 1;
+let locationRows = [];
 
 function setAuthStatus(message, kind = "info") {
   authStatus.textContent = message || "";
@@ -443,6 +445,204 @@ function renderMissingCheckoutTable(rows) {
   applyResponsiveLabels("checkoutMissingBody");
 }
 
+function createLocationRow(overrides = {}) {
+  return {
+    id: overrides.id ?? `draft-${nextLocationDraftId++}`,
+    local: "",
+    coordinates: "",
+    tolerance: "",
+    isEditing: false,
+    ...overrides,
+  };
+}
+
+function isPersistedLocationRowId(rowId) {
+  return /^\d+$/.test(String(rowId ?? "").trim());
+}
+
+function getLocationRowById(rowId) {
+  return locationRows.find((row) => String(row.id) === String(rowId));
+}
+
+function isBlankLocationRow(row) {
+  return !String(row.local || "").trim()
+    && !String(row.coordinates || "").trim()
+    && !String(row.tolerance || "").trim();
+}
+
+function hasBlankLocationRow() {
+  return locationRows.some((row) => isBlankLocationRow(row));
+}
+
+function normalizeLocationName(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    throw new Error("Informe a descrição do local.");
+  }
+  if (normalized.length > 40) {
+    throw new Error("O local deve ter no máximo 40 caracteres.");
+  }
+  if (!/^[\p{L}\p{N} ]+$/u.test(normalized)) {
+    throw new Error("O local deve conter apenas letras, números e espaços.");
+  }
+  return normalized;
+}
+
+function normalizeCoordinates(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  const match = /^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(normalized);
+  if (!match) {
+    throw new Error("As coordenadas devem estar no formato latitude, longitude.");
+  }
+
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    throw new Error("A latitude deve estar entre -90 e 90.");
+  }
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new Error("A longitude deve estar entre -180 e 180.");
+  }
+
+  return `${latitude}, ${longitude}`;
+}
+
+function normalizeTolerance(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d{1,4}$/.test(normalized)) {
+    throw new Error("A tolerância deve ter de 1 a 4 algarismos inteiros.");
+  }
+
+  const tolerance = Number(normalized);
+  if (!Number.isInteger(tolerance) || tolerance < 1 || tolerance > 9999) {
+    throw new Error("A tolerância deve ser um inteiro entre 1 e 9999 metros.");
+  }
+  return String(tolerance);
+}
+
+function makeLocationRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.locationId = String(row.id);
+  tr.innerHTML = `
+    <td><input class="inline location-name" maxlength="100" value="${escapeHtml(row.local)}" ${row.isEditing ? "" : "disabled"} /></td>
+    <td><input class="inline location-coordinates" maxlength="40" placeholder="1.255936, 103.611066" value="${escapeHtml(row.coordinates)}" ${row.isEditing ? "" : "disabled"} /></td>
+    <td><input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" ${row.isEditing ? "" : "disabled"} /></td>
+    <td class="pending-actions">
+      <button type="button" data-location-edit="${row.id}">${row.isEditing ? "Salvar" : "Editar"}</button>
+      <button type="button" data-location-remove="${row.id}">Remover</button>
+    </td>
+  `;
+  return tr;
+}
+
+function renderLocations() {
+  const body = document.getElementById("locationsBody");
+  const addButton = document.getElementById("addLocationButton");
+  body.innerHTML = "";
+  locationRows.forEach((row) => body.appendChild(makeLocationRow(row)));
+  applyResponsiveLabels("locationsBody");
+  addButton.disabled = hasBlankLocationRow();
+}
+
+function focusLocationRow(rowId) {
+  const row = document.querySelector(`#locationsBody tr[data-location-id="${CSS.escape(String(rowId))}"]`);
+  row?.querySelector(".location-name")?.focus();
+}
+
+function setLocationEditingState(rowId, editing) {
+  const row = getLocationRowById(rowId);
+  if (!row) {
+    return;
+  }
+
+  row.isEditing = editing;
+  renderLocations();
+  if (editing) {
+    focusLocationRow(rowId);
+  }
+}
+
+function addLocationRow() {
+  if (hasBlankLocationRow()) {
+    setStatus("Finalize ou remova a linha em branco antes de adicionar outra localização.", false);
+    renderLocations();
+    return;
+  }
+
+  const row = createLocationRow({ isEditing: true });
+  locationRows.push(row);
+  renderLocations();
+  focusLocationRow(row.id);
+  setStatus("Nova localização pronta para preenchimento.", true);
+}
+
+async function saveLocationRow(rowId) {
+  const row = getLocationRowById(rowId);
+  if (!row) {
+    return;
+  }
+
+  const rowElement = document.querySelector(`#locationsBody tr[data-location-id="${CSS.escape(String(rowId))}"]`);
+  if (!rowElement) {
+    return;
+  }
+
+  const local = normalizeLocationName(rowElement.querySelector(".location-name")?.value);
+  const coordinates = normalizeCoordinates(rowElement.querySelector(".location-coordinates")?.value);
+  const tolerance = normalizeTolerance(rowElement.querySelector(".location-tolerance")?.value);
+  const [latitude, longitude] = coordinates.split(",").map((value) => Number(value.trim()));
+  const payload = {
+    local,
+    latitude,
+    longitude,
+    tolerance_meters: Number(tolerance),
+  };
+  if (isPersistedLocationRowId(rowId)) {
+    payload.location_id = Number(rowId);
+  }
+
+  const response = await postJson("/api/admin/locations", payload);
+  await loadLocations();
+  setStatus(response.message, true);
+}
+
+async function removeLocationRow(rowId) {
+  const row = getLocationRowById(rowId);
+  if (!row) {
+    return;
+  }
+
+  if (!isPersistedLocationRowId(rowId)) {
+    locationRows = locationRows.filter((item) => String(item.id) !== String(rowId));
+    renderLocations();
+    setStatus(`Localização ${row.local || "em branco"} removida.`, true);
+    return;
+  }
+
+  const confirmed = window.confirm(`Deseja remover a localização ${row.local}?`);
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await deleteJson(`/api/admin/locations/${rowId}`);
+  await loadLocations();
+  setStatus(response.message, true);
+}
+
+async function loadLocations() {
+  const rows = await fetchJson("/api/admin/locations");
+  locationRows = rows.map((row) =>
+    createLocationRow({
+      id: row.id,
+      local: row.local,
+      coordinates: `${row.latitude}, ${row.longitude}`,
+      tolerance: String(row.tolerance_meters),
+      isEditing: false,
+    })
+  );
+  renderLocations();
+}
+
 function makePendingRow(row) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
@@ -523,7 +723,8 @@ function makeAdministratorRow(row) {
 }
 
 function hasPendingEditInProgress() {
-  return Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
+  return locationRows.some((row) => row.isEditing)
+    || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
 }
 
 function setPendingEditingState(id, editing) {
@@ -654,7 +855,7 @@ async function refreshActiveTab() {
   }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
-      await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers()]);
+      await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers(), loadLocations()]);
     }
     return;
   }
@@ -666,6 +867,7 @@ async function refreshAllTables() {
   if (!hasPendingEditInProgress()) {
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
+    jobs.push(loadLocations());
   }
   await Promise.all(jobs);
 }
@@ -1150,6 +1352,30 @@ function bindActions() {
     }
     if (target.tagName === "BUTTON" && target.dataset.save) {
       savePending(target.dataset.save, target.dataset.rfid).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("addLocationButton").addEventListener("click", addLocationRow);
+
+  document.getElementById("locationsBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName !== "BUTTON") {
+      return;
+    }
+    if (target.dataset.locationEdit) {
+      const row = getLocationRowById(target.dataset.locationEdit);
+      if (!row) {
+        return;
+      }
+      if (row.isEditing) {
+        saveLocationRow(target.dataset.locationEdit).catch((error) => setStatus(error.message, false));
+        return;
+      }
+      setLocationEditingState(target.dataset.locationEdit, true);
+      return;
+    }
+    if (target.dataset.locationRemove) {
+      removeLocationRow(target.dataset.locationRemove).catch((error) => setStatus(error.message, false));
     }
   });
 

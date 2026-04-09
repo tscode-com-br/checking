@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..database import get_db
-from ..models import UserSyncEvent
+from ..models import ManagedLocation, UserSyncEvent
 from ..schemas import (
+    MobileLocationRow,
+    MobileLocationsResponse,
     MobileFormsSubmitRequest,
     MobileSubmitRequest,
     MobileSubmitResponse,
@@ -26,8 +28,10 @@ from ..services.user_sync import (
     normalize_event_time,
     normalize_user_key,
 )
+from ..services.time_utils import now_sgt
 
 router = APIRouter(prefix="/api/mobile", tags=["mobile"])
+DEFAULT_MOBILE_LOCAL = "Aplicativo"
 
 
 def require_mobile_shared_key(
@@ -55,8 +59,28 @@ def get_mobile_state(chave: str, db: Session = Depends(get_db)) -> MobileSyncSta
     return build_mobile_sync_state(db, chave=normalize_user_key(chave))
 
 
+@router.get("/locations", response_model=MobileLocationsResponse, dependencies=[Depends(require_mobile_shared_key)])
+def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsResponse:
+    rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
+    return MobileLocationsResponse(
+        items=[
+            MobileLocationRow(
+                id=row.id,
+                local=row.local,
+                latitude=row.latitude,
+                longitude=row.longitude,
+                tolerance_meters=row.tolerance_meters,
+                updated_at=row.updated_at,
+            )
+            for row in rows
+        ],
+        synced_at=now_sgt(),
+    )
+
+
 @router.post("/events/submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
+    resolved_local = payload.local or DEFAULT_MOBILE_LOCAL
     existing = db.execute(
         select(UserSyncEvent).where(
             UserSyncEvent.source == "android",
@@ -81,6 +105,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         action=payload.action,
         event_time=event_time,
         projeto=payload.projeto,
+        local=resolved_local,
     )
 
     try:
@@ -92,7 +117,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
             chave=user.chave,
             projeto=user.projeto,
             device_id="android-app",
-            local=None,
+            local=resolved_local,
         )
     except IntegrityError:
         db.rollback()
@@ -112,7 +137,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         action=payload.action,
         event_time=event_time,
         projeto=payload.projeto,
-        local=None,
+        local=resolved_local,
         source_request_id=payload.client_event_id,
         device_id="android-app",
     )
@@ -125,6 +150,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         message="Mobile event accepted and queued for Forms submission",
         rfid=user.rfid,
         project=user.projeto,
+        local=resolved_local,
         request_path="/api/mobile/events/submit",
         http_status=202,
         details=f"chave={user.chave}; event_time={event_time.isoformat()}; forms_deferred=true",
@@ -144,6 +170,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
 @router.post("/events/forms-submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
     ontime = payload.informe == "normal"
+    resolved_local = payload.local or DEFAULT_MOBILE_LOCAL
 
     existing = db.execute(
         select(UserSyncEvent).where(
@@ -169,6 +196,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
         action=payload.action,
         event_time=event_time,
         projeto=payload.projeto,
+        local=resolved_local,
     )
 
     try:
@@ -180,7 +208,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
             chave=user.chave,
             projeto=user.projeto,
             device_id="android-app",
-            local=None,
+            local=resolved_local,
             ontime=ontime,
         )
     except IntegrityError:
@@ -201,7 +229,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
         action=payload.action,
         event_time=event_time,
         projeto=user.projeto,
-        local=None,
+        local=resolved_local,
         ontime=ontime,
         source_request_id=payload.client_event_id,
         device_id="android-app",
@@ -215,6 +243,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
         message="Mobile Forms event accepted and queued for Forms submission",
         rfid=user.rfid,
         project=user.projeto,
+        local=resolved_local,
         request_path="/api/mobile/events/forms-submit",
         http_status=202,
         ontime=ontime,
@@ -237,6 +266,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
 
 @router.post("/events/sync", response_model=MobileSyncResponse, dependencies=[Depends(require_mobile_shared_key)])
 def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db)) -> MobileSyncResponse:
+    resolved_local = payload.local or DEFAULT_MOBILE_LOCAL
     existing = db.execute(
         select(UserSyncEvent).where(
             UserSyncEvent.source == "android",
@@ -255,6 +285,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         action=payload.action,
         event_time=event_time,
         projeto=payload.projeto,
+        local=resolved_local,
     )
     create_user_sync_event(
         db,
@@ -263,7 +294,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         action=payload.action,
         event_time=event_time,
         projeto=payload.projeto,
-        local=None,
+        local=resolved_local,
         source_request_id=payload.client_event_id,
         device_id=None,
     )
@@ -276,6 +307,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         message="Mobile event synchronized",
         rfid=user.rfid,
         project=user.projeto,
+        local=resolved_local,
         request_path="/api/mobile/events/sync",
         http_status=200,
         details=f"chave={user.chave}; event_time={event_time.isoformat()}",

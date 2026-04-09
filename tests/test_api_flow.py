@@ -1138,6 +1138,65 @@ def test_mobile_sync_autocreates_user_and_updates_state():
             assert user.checkin is True
 
 
+def test_mobile_submit_autocreates_user_with_app_origin_name():
+    client_event_id = f"android-submit-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AS11",
+                "projeto": "P83",
+                "action": "checkout",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["duplicate"] is False
+        assert payload["state"]["found"] is True
+        assert payload["state"]["projeto"] == "P83"
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "AS11")
+            assert user.nome == "Oriundo do Aplicativo"
+            assert user.rfid is None
+            assert user.projeto == "P83"
+
+
+def test_mobile_forms_submit_autocreates_user_with_app_origin_name():
+    client_event_id = f"android-forms-create-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF11",
+                "projeto": "P82",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["duplicate"] is False
+        assert payload["state"]["found"] is True
+        assert payload["state"]["projeto"] == "P82"
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "AF11")
+            assert user.nome == "Oriundo do Aplicativo"
+            assert user.rfid is None
+            assert user.projeto == "P82"
+
+
 def test_admin_checkin_list_accepts_mobile_user_without_rfid():
     with TestClient(app) as client:
         created = client.post(
@@ -1999,3 +2058,119 @@ def test_admin_event_audit_covers_new_auth_lifecycle():
             and event["request_path"] == f"/api/admin/administrators/{reset_row['id']}/revoke"
             for event in events
         )
+
+
+def test_admin_locations_crud_and_mobile_catalog_sync():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+        assert create_location.json()["ok"] is True
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+        base_p80 = next(row for row in locations.json() if row["local"] == "Base P80")
+        assert base_p80["tolerance_meters"] == 150
+
+        update_location = client.post(
+            "/api/admin/locations",
+            json={
+                "location_id": base_p80["id"],
+                "local": "Base P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "tolerance_meters": 250,
+            },
+        )
+        assert update_location.status_code == 200
+        assert update_location.json()["ok"] is True
+
+        mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
+        assert mobile_catalog.status_code == 200
+        synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
+        assert synced_row["tolerance_meters"] == 250
+
+        remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
+        assert remove_location.status_code == 200
+        assert remove_location.json()["ok"] is True
+
+        locations_after = client.get("/api/admin/locations")
+        assert locations_after.status_code == 200
+        assert all(row["id"] != base_p80["id"] for row in locations_after.json())
+
+
+def test_mobile_forms_submit_uses_default_and_custom_local():
+    with TestClient(app) as client:
+        first_event = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "LX01",
+                "projeto": "P83",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"mobile-{uuid.uuid4().hex}",
+            },
+        )
+        assert first_event.status_code == 200
+        assert first_event.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "LX01")
+            queued = db.execute(
+                select(FormsSubmission)
+                .where(FormsSubmission.chave == "LX01")
+                .order_by(FormsSubmission.id.desc())
+            ).scalars().first()
+            sync_event = db.execute(
+                select(UserSyncEvent)
+                .where(UserSyncEvent.chave == "LX01")
+                .order_by(UserSyncEvent.id.desc())
+            ).scalars().first()
+
+            assert user.local == "Aplicativo"
+            assert queued is not None and queued.local == "Aplicativo"
+            assert sync_event is not None and sync_event.local == "Aplicativo"
+
+        second_event = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "LX01",
+                "projeto": "P83",
+                "action": "checkout",
+                "local": "Base P80",
+                "informe": "retroativo",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"mobile-{uuid.uuid4().hex}",
+            },
+        )
+        assert second_event.status_code == 200
+        assert second_event.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "LX01")
+            queued = db.execute(
+                select(FormsSubmission)
+                .where(FormsSubmission.chave == "LX01")
+                .order_by(FormsSubmission.id.desc())
+            ).scalars().first()
+            sync_event = db.execute(
+                select(UserSyncEvent)
+                .where(UserSyncEvent.chave == "LX01")
+                .order_by(UserSyncEvent.id.desc())
+            ).scalars().first()
+
+            assert user.local == "Base P80"
+            assert queued is not None and queued.local == "Base P80"
+            assert sync_event is not None and sync_event.local == "Base P80"
