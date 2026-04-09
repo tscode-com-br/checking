@@ -1,6 +1,6 @@
 """make forms submission rfid nullable
 
-Revision ID: 0010_forms_submission_rfid_nullable
+Revision ID: 0010_forms_rfid_nullable
 Revises: 0009_mobile_user_sync
 Create Date: 2026-04-08 17:40:00
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0010_forms_submission_rfid_nullable"
+revision = "0010_forms_rfid_nullable"
 down_revision = "0009_mobile_user_sync"
 branch_labels = None
 depends_on = None

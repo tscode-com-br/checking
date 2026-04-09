@@ -1,7 +1,7 @@
 """add ontime to forms and events
 
-Revision ID: 0011_add_ontime_to_forms_and_events
-Revises: 0010_forms_submission_rfid_nullable
+Revision ID: 0011_ontime_forms_events
+Revises: 0010_forms_rfid_nullable
 Create Date: 2026-04-09 12:40:00
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0011_add_ontime_to_forms_and_events"
-down_revision = "0010_forms_submission_rfid_nullable"
+revision = "0011_ontime_forms_events"
+down_revision = "0010_forms_rfid_nullable"
 branch_labels = None
 depends_on = None
 
