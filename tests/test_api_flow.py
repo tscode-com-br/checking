@@ -170,7 +170,7 @@ def test_explicit_checkin_and_checkout_flow(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -261,7 +261,7 @@ def test_checkout_without_checkin_returns_red_2s(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -301,7 +301,7 @@ def test_forms_step_timeout_returns_red_blink_pattern(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": False,
             "message": "Step 'digitar_chave' not found within 10 seconds",
             "retry_count": 0,
@@ -359,7 +359,7 @@ def test_valid_scan_updates_user_before_forms_processing(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -401,7 +401,7 @@ def test_forms_queue_processing_persists_failure_state(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": False,
             "message": "mocked queue failure",
             "retry_count": 2,
@@ -455,7 +455,7 @@ def test_forms_success_generates_single_final_forms_event(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": "Form submitted successfully",
             "retry_count": 0,
@@ -517,6 +517,7 @@ def test_forms_worker_requires_success_xpath_after_submit(tmp_path, monkeypatch)
         "digitar_chave.txt": "//digitar_chave",
         "confirmar_chave.txt": "//confirmar_chave",
         "botao_normal.txt": "//botao_normal",
+        "botao_retroativo.txt": "//botao_retroativo",
         "botao_checkin.txt": "//botao_checkin",
         "botao_checkout.txt": "//botao_checkout",
         "botao_enviar.txt": "//botao_enviar",
@@ -633,6 +634,7 @@ def test_forms_worker_rejects_success_xpath_visible_before_submit(tmp_path, monk
         "digitar_chave.txt",
         "confirmar_chave.txt",
         "botao_normal.txt",
+        "botao_retroativo.txt",
         "botao_checkin.txt",
         "botao_checkout.txt",
         "botao_enviar.txt",
@@ -712,6 +714,7 @@ def test_forms_worker_fails_when_first_field_is_not_confirmed(tmp_path, monkeypa
         "digitar_chave.txt": "//digitar_chave",
         "confirmar_chave.txt": "//confirmar_chave",
         "botao_normal.txt": "//botao_normal",
+        "botao_retroativo.txt": "//botao_retroativo",
         "botao_checkin.txt": "//botao_checkin",
         "botao_checkout.txt": "//botao_checkout",
         "botao_enviar.txt": "//botao_enviar",
@@ -902,7 +905,7 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_kept_visible_in_che
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -1335,7 +1338,7 @@ def test_mobile_state_reflects_rfid_scan_history(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto: {
+        lambda self, action, chave, projeto, ontime=True: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -1369,6 +1372,88 @@ def test_mobile_state_reflects_rfid_scan_history(monkeypatch):
         assert payload["found"] is True
         assert payload["current_action"] == "checkin"
         assert payload["last_checkin_at"] is not None
+
+
+def test_mobile_forms_submit_accepts_retroativo_and_persists_ontime_false(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto, ontime=True: {
+            "success": True,
+            "message": f"mocked {action}",
+            "retry_count": 0,
+        },
+    )
+
+    client_event_id = f"android-forms-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "RT11",
+                "projeto": "P82",
+                "action": "checkin",
+                "informe": "Retroativo",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["duplicate"] is False
+        assert payload["queued_forms"] is True
+        assert payload["state"]["current_action"] == "checkin"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == client_event_id)
+            ).scalar_one()
+            sync_event = db.execute(
+                select(UserSyncEvent).where(
+                    UserSyncEvent.source == "android_forms",
+                    UserSyncEvent.source_request_id == client_event_id,
+                )
+            ).scalar_one()
+            assert queued.ontime is False
+            assert sync_event.ontime is False
+
+        processed = process_forms_submission_queue_once()
+        assert processed >= 1
+
+        ensure_admin_session(client)
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        assert any(
+            event["request_path"] == "/api/mobile/events/forms-submit"
+            and event["ontime"] is False
+            and event["status"] == "queued"
+            for event in events.json()
+        )
+        assert any(
+            event["source"] == "forms" and event["ontime"] is False and event["status"] == "success"
+            for event in events.json()
+        )
+
+
+def test_mobile_forms_submit_is_idempotent_for_same_event_id():
+    with TestClient(app) as client:
+        client_event_id = f"android-forms-{uuid.uuid4().hex}"
+        payload = {
+            "chave": "RT12",
+            "projeto": "P80",
+            "action": "checkout",
+            "informe": "normal",
+            "event_time": now_sgt().isoformat(),
+            "client_event_id": client_event_id,
+        }
+        first = client.post("/api/mobile/events/forms-submit", headers=MOBILE_HEADERS, json=payload)
+        second = client.post("/api/mobile/events/forms-submit", headers=MOBILE_HEADERS, json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["duplicate"] is True
 
 
 def test_mobile_sync_accepts_project_p82():

@@ -108,6 +108,29 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function getSingaporeDayKey(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
 function formatLocal(local) {
   if (local === "main") {
     return "Escritório Principal";
@@ -171,6 +194,12 @@ function makeEventCell(value) {
 
 function makeEventDetailsButton() {
   return '<button type="button" class="event-details-button">Detalhes</button>';
+}
+
+function formatOntime(value) {
+  if (value === true) return "Sim";
+  if (value === false) return "Não";
+  return "-";
 }
 
 function parseErrorPayload(payload, fallback) {
@@ -319,22 +348,21 @@ function syncUserTitles() {
   updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
 }
 
-function getElapsedDaysSince(value) {
-  if (!value) {
+function getSingaporeCalendarDayDiff(value) {
+  const eventDayKey = getSingaporeDayKey(value);
+  const todayKey = getSingaporeDayKey();
+  if (!eventDayKey || !todayKey) {
     return 0;
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const eventMidnightUtcMs = Date.parse(`${eventDayKey}T00:00:00Z`);
+  const todayMidnightUtcMs = Date.parse(`${todayKey}T00:00:00Z`);
+  if (Number.isNaN(eventMidnightUtcMs) || Number.isNaN(todayMidnightUtcMs)) {
     return 0;
   }
 
-  const elapsedMs = Date.now() - date.getTime();
-  if (elapsedMs < 24 * 60 * 60 * 1000) {
-    return 0;
-  }
-
-  return Math.max(1, Math.floor(elapsedMs / (24 * 60 * 60 * 1000)));
+  const diffDays = Math.floor((todayMidnightUtcMs - eventMidnightUtcMs) / (24 * 60 * 60 * 1000));
+  return Math.max(0, diffDays);
 }
 
 function formatElapsedDays(days) {
@@ -343,14 +371,14 @@ function formatElapsedDays(days) {
 
 function formatUserTableTime(value) {
   const formatted = formatDateTime(value);
-  const elapsedDays = getElapsedDaysSince(value);
-  if (!elapsedDays) {
+  const calendarDayDiff = getSingaporeCalendarDayDiff(value);
+  if (!calendarDayDiff) {
     return { formatted, elapsedDays: 0, isStale: false };
   }
 
   return {
-    formatted: `${formatted} (${formatElapsedDays(elapsedDays)})`,
-    elapsedDays,
+    formatted: `${formatted} (${formatElapsedDays(calendarDayDiff)})`,
+    elapsedDays: calendarDayDiff,
     isStale: true,
   };
 }
@@ -397,6 +425,22 @@ function renderPresenceTables(activeBodyId, inactiveBodyId, inactiveSectionId, r
   applyResponsiveLabels(activeBodyId);
   applyResponsiveLabels(inactiveBodyId);
   updateUserTitle(activeBodyId, activeRows, registeredUsersTotal);
+}
+
+function renderMissingCheckoutTable(rows) {
+  const body = document.getElementById("checkoutMissingBody");
+  const section = document.getElementById("checkoutMissingSection");
+  const title = document.getElementById("checkoutMissingTitle");
+
+  body.innerHTML = "";
+  rows.forEach((row) => {
+    const { tr } = buildPresenceRow(row);
+    body.appendChild(tr);
+  });
+
+  section.classList.toggle("hidden", rows.length === 0);
+  title.textContent = `Usuários sem Check-Out (${rows.length})`;
+  applyResponsiveLabels("checkoutMissingBody");
 }
 
 function makePendingRow(row) {
@@ -548,8 +592,15 @@ async function loadCheckin() {
 }
 
 async function loadCheckout() {
-  const rows = await fetchJson("/api/admin/checkout");
-  renderPresenceTables("checkoutBody", "checkoutInactiveBody", "checkoutInactiveSection", rows);
+  const [checkoutRows, checkinRows] = await Promise.all([
+    fetchJson("/api/admin/checkout"),
+    fetchJson("/api/admin/checkin"),
+  ]);
+
+  renderPresenceTables("checkoutBody", "checkoutInactiveBody", "checkoutInactiveSection", checkoutRows);
+
+  const usersWithoutCheckout = (checkinRows || []).filter((row) => getSingaporeCalendarDayDiff(row.time) > 0);
+  renderMissingCheckoutTable(usersWithoutCheckout);
 }
 
 async function loadPending() {
@@ -585,7 +636,7 @@ async function loadEvents() {
   rows.forEach((row) => {
     const tr = document.createElement("tr");
     const formattedDetails = formatEventDetails(row.details);
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(formattedDetails));
     body.appendChild(tr);
   });
@@ -1139,6 +1190,13 @@ function bindActions() {
   });
 
   document.getElementById("checkoutInactiveBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("checkoutMissingBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));

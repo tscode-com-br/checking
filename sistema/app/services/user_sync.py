@@ -93,6 +93,7 @@ def create_user_sync_event(
     event_time: datetime,
     projeto: str | None,
     local: str | None,
+    ontime: bool = True,
     source_request_id: str | None,
     device_id: str | None,
 ) -> UserSyncEvent:
@@ -104,6 +105,7 @@ def create_user_sync_event(
         action=action,
         projeto=projeto,
         local=local,
+        ontime=ontime,
         event_time=event_time,
         created_at=now_sgt(),
         source_request_id=source_request_id,
@@ -234,6 +236,7 @@ def ensure_current_user_state_event(db: Session, *, user: User) -> None:
         event_time=user.time,
         projeto=user.projeto,
         local=user.local,
+        ontime=True,
         source_request_id=None,
         device_id=None,
     )

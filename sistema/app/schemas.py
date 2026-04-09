@@ -161,6 +161,7 @@ class EventRow(BaseModel):
     message: str
     details: Optional[str]
     project: Optional[str]
+    ontime: bool | None
     request_path: Optional[str]
     http_status: Optional[int]
     retry_count: int
@@ -217,6 +218,47 @@ class MobileSyncRequest(BaseModel):
         return normalized
 
 
+class MobileSubmitRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    projeto: Literal["P80", "P82", "P83"]
+    action: Literal["checkin", "checkout"]
+    event_time: datetime
+    client_event_id: str = Field(min_length=8, max_length=80)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_mobile_submit_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class MobileFormsSubmitRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    projeto: Literal["P80", "P82", "P83"]
+    action: Literal["checkin", "checkout"]
+    informe: Literal["normal", "retroativo"]
+    event_time: datetime
+    client_event_id: str = Field(min_length=8, max_length=80)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_mobile_forms_submit_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("informe", mode="before")
+    @classmethod
+    def validate_informe(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"normal", "retroativo"}:
+            raise ValueError("Informe deve ser 'Normal' ou 'Retroativo'")
+        return normalized
+
+
 class MobileSyncStateResponse(BaseModel):
     found: bool
     chave: str
@@ -231,5 +273,13 @@ class MobileSyncStateResponse(BaseModel):
 class MobileSyncResponse(BaseModel):
     ok: bool
     duplicate: bool = False
+    message: str
+    state: MobileSyncStateResponse
+
+
+class MobileSubmitResponse(BaseModel):
+    ok: bool
+    duplicate: bool = False
+    queued_forms: bool = True
     message: str
     state: MobileSyncStateResponse

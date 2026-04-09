@@ -1,13 +1,22 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..database import get_db
 from ..models import UserSyncEvent
-from ..schemas import MobileSyncRequest, MobileSyncResponse, MobileSyncStateResponse
+from ..schemas import (
+    MobileFormsSubmitRequest,
+    MobileSubmitRequest,
+    MobileSubmitResponse,
+    MobileSyncRequest,
+    MobileSyncResponse,
+    MobileSyncStateResponse,
+)
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
+from ..services.forms_queue import enqueue_forms_submission
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -44,6 +53,186 @@ def require_mobile_shared_key(
 @router.get("/state", response_model=MobileSyncStateResponse, dependencies=[Depends(require_mobile_shared_key)])
 def get_mobile_state(chave: str, db: Session = Depends(get_db)) -> MobileSyncStateResponse:
     return build_mobile_sync_state(db, chave=normalize_user_key(chave))
+
+
+@router.post("/events/submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
+def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
+    existing = db.execute(
+        select(UserSyncEvent).where(
+            UserSyncEvent.source == "android",
+            UserSyncEvent.source_request_id == payload.client_event_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        state = build_mobile_sync_state(db, chave=payload.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=True,
+            queued_forms=False,
+            message="Mobile event already submitted",
+            state=state,
+        )
+
+    user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
+    event_time = normalize_event_time(payload.event_time)
+    ensure_current_user_state_event(db, user=user)
+    apply_user_state(
+        user,
+        action=payload.action,
+        event_time=event_time,
+        projeto=payload.projeto,
+    )
+
+    try:
+        enqueue_forms_submission(
+            db,
+            request_id=payload.client_event_id,
+            rfid=user.rfid,
+            action=payload.action,
+            chave=user.chave,
+            projeto=user.projeto,
+            device_id="android-app",
+            local=None,
+        )
+    except IntegrityError:
+        db.rollback()
+        state = build_mobile_sync_state(db, chave=payload.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=True,
+            queued_forms=False,
+            message="Mobile event already submitted",
+            state=state,
+        )
+
+    create_user_sync_event(
+        db,
+        user=user,
+        source="android",
+        action=payload.action,
+        event_time=event_time,
+        projeto=payload.projeto,
+        local=None,
+        source_request_id=payload.client_event_id,
+        device_id="android-app",
+    )
+    log_event(
+        db,
+        idempotency_key=f"mobile-submit:{payload.client_event_id}",
+        source="mobile",
+        action=payload.action,
+        status="queued",
+        message="Mobile event accepted and queued for Forms submission",
+        rfid=user.rfid,
+        project=user.projeto,
+        request_path="/api/mobile/events/submit",
+        http_status=202,
+        details=f"chave={user.chave}; event_time={event_time.isoformat()}; forms_deferred=true",
+    )
+    db.commit()
+    notify_admin_data_changed(payload.action)
+    state = build_mobile_sync_state(db, chave=user.chave)
+    return MobileSubmitResponse(
+        ok=True,
+        duplicate=False,
+        queued_forms=True,
+        message="Mobile event accepted and queued for Forms submission",
+        state=state,
+    )
+
+
+@router.post("/events/forms-submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
+def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
+    ontime = payload.informe == "normal"
+
+    existing = db.execute(
+        select(UserSyncEvent).where(
+            UserSyncEvent.source == "android_forms",
+            UserSyncEvent.source_request_id == payload.client_event_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        state = build_mobile_sync_state(db, chave=payload.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=True,
+            queued_forms=False,
+            message="Mobile Forms event already submitted",
+            state=state,
+        )
+
+    user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
+    event_time = normalize_event_time(payload.event_time)
+    ensure_current_user_state_event(db, user=user)
+    apply_user_state(
+        user,
+        action=payload.action,
+        event_time=event_time,
+        projeto=payload.projeto,
+    )
+
+    try:
+        enqueue_forms_submission(
+            db,
+            request_id=payload.client_event_id,
+            rfid=user.rfid,
+            action=payload.action,
+            chave=user.chave,
+            projeto=user.projeto,
+            device_id="android-app",
+            local=None,
+            ontime=ontime,
+        )
+    except IntegrityError:
+        db.rollback()
+        state = build_mobile_sync_state(db, chave=payload.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=True,
+            queued_forms=False,
+            message="Mobile Forms event already submitted",
+            state=state,
+        )
+
+    create_user_sync_event(
+        db,
+        user=user,
+        source="android_forms",
+        action=payload.action,
+        event_time=event_time,
+        projeto=user.projeto,
+        local=None,
+        ontime=ontime,
+        source_request_id=payload.client_event_id,
+        device_id="android-app",
+    )
+    log_event(
+        db,
+        idempotency_key=f"mobile-forms-submit:{payload.client_event_id}",
+        source="mobile",
+        action=payload.action,
+        status="queued",
+        message="Mobile Forms event accepted and queued for Forms submission",
+        rfid=user.rfid,
+        project=user.projeto,
+        request_path="/api/mobile/events/forms-submit",
+        http_status=202,
+        ontime=ontime,
+        details=(
+            f"chave={user.chave}; event_time={event_time.isoformat()}; "
+            f"forms_deferred=true; informe={payload.informe}; ontime={ontime}"
+        ),
+    )
+    db.commit()
+    notify_admin_data_changed(payload.action)
+    state = build_mobile_sync_state(db, chave=user.chave)
+    return MobileSubmitResponse(
+        ok=True,
+        duplicate=False,
+        queued_forms=True,
+        message="Mobile Forms event accepted and queued for Forms submission",
+        state=state,
+    )
 
 
 @router.post("/events/sync", response_model=MobileSyncResponse, dependencies=[Depends(require_mobile_shared_key)])

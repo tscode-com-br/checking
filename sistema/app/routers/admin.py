@@ -835,6 +835,7 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
             message=r.message,
             details=r.details,
             project=r.project,
+            ontime=r.ontime,
             request_path=r.request_path,
             http_status=r.http_status,
             retry_count=r.retry_count,

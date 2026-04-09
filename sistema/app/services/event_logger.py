@@ -24,8 +24,13 @@ def log_event(
     submitted_at=None,
     retry_count: int = 0,
     details: str | None = None,
+    ontime: bool | None = None,
     commit: bool = False,
 ) -> CheckEvent:
+    derived_ontime = ontime
+    if derived_ontime is None and source == "device" and action in {"checkin", "checkout"}:
+        derived_ontime = True
+
     event = CheckEvent(
         idempotency_key=idempotency_key or str(uuid4()),
         source=source[:20],
@@ -39,6 +44,7 @@ def log_event(
         local=(local or "")[:40] or None,
         rfid=rfid,
         project=project,
+        ontime=derived_ontime,
         event_time=now_sgt(),
         submitted_at=submitted_at,
         retry_count=retry_count,

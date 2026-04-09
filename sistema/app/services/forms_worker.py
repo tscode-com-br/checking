@@ -108,12 +108,13 @@ class FormsWorker:
             }
         )
 
-    def _submit_once(self, action: Literal["checkin", "checkout"], chave: str, projeto: str | None) -> dict:
+    def _submit_once(self, action: Literal["checkin", "checkout"], chave: str, projeto: str | None, ontime: bool) -> dict:
         audit_events: list[dict] = []
         completed_steps: list[str] = []
         digitar_chave = self.load_xpath("digitar_chave.txt")
         confirmar_chave = self.load_xpath("confirmar_chave.txt")
         botao_normal = self.load_xpath("botao_normal.txt")
+        botao_retroativo = self.load_xpath("botao_retroativo.txt")
         botao_checkin = self.load_xpath("botao_checkin.txt")
         botao_checkout = self.load_xpath("botao_checkout.txt")
         botao_enviar = self.load_xpath("botao_enviar.txt")
@@ -136,8 +137,10 @@ class FormsWorker:
                 completed_steps.append("digitar_chave:filled+verified")
                 self._fill_step(page, confirmar_chave, chave, "confirmar_chave")
                 completed_steps.append("confirmar_chave:filled+verified")
-                self._click_checked_step(page, botao_normal, "botao_normal")
-                completed_steps.append("botao_normal:clicked+verified")
+                informe_xpath = botao_normal if ontime else botao_retroativo
+                informe_step_name = "botao_normal" if ontime else "botao_retroativo"
+                self._click_checked_step(page, informe_xpath, informe_step_name)
+                completed_steps.append(f"{informe_step_name}:clicked+verified")
 
                 if action == "checkin":
                     self._click_checked_step(page, botao_checkin, "botao_checkin")
@@ -162,6 +165,7 @@ class FormsWorker:
                 success_text = self._normalize_detail_value(success_locator.inner_text())
                 completed_details = (
                     f"steps={','.join(completed_steps)}; "
+                    f"ontime={ontime}; "
                     "success_xpath_visible=true; "
                     f"submit_to_success_ms={submit_elapsed_ms}; "
                     f"success_text={success_text or '-'}"
@@ -172,11 +176,11 @@ class FormsWorker:
 
         return {"success": True, "message": "Form submitted successfully", "audit_events": audit_events}
 
-    def submit_with_retries(self, action: Literal["checkin", "checkout"], chave: str, projeto: str | None) -> dict:
+    def submit_with_retries(self, action: Literal["checkin", "checkout"], chave: str, projeto: str | None, ontime: bool = True) -> dict:
         last_error = ""
         for attempt in range(1, settings.forms_max_retries + 1):
             try:
-                result = self._submit_once(action=action, chave=chave, projeto=projeto)
+                result = self._submit_once(action=action, chave=chave, projeto=projeto, ontime=ontime)
                 result["retry_count"] = attempt - 1
                 return result
             except FormsStepTimeoutError as exc:

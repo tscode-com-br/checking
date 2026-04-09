@@ -25,12 +25,13 @@ def enqueue_forms_submission(
     db,
     *,
     request_id: str,
-    rfid: str,
+    rfid: str | None,
     action: str,
     chave: str,
     projeto: str,
     device_id: str | None,
     local: str | None,
+    ontime: bool = True,
 ) -> FormsSubmission:
     timestamp = now_sgt()
     submission = FormsSubmission(
@@ -41,6 +42,7 @@ def enqueue_forms_submission(
         projeto=projeto,
         device_id=device_id,
         local=local,
+        ontime=ontime,
         status="pending",
         retry_count=0,
         last_error=None,
@@ -96,6 +98,7 @@ def _process_submission(submission_id: int) -> None:
             action=submission.action,
             chave=submission.chave,
             projeto=submission.projeto,
+            ontime=submission.ontime,
         )
 
         final_audit_event = next(
@@ -130,10 +133,12 @@ def _process_submission(submission_id: int) -> None:
             local=submission.local,
             request_path="/api/scan",
             http_status=200 if result.get("success") else 500,
+            ontime=submission.ontime,
             submitted_at=submission.processed_at if result.get("success") else None,
             retry_count=result.get("retry_count", 0),
             details=(
                 (
+                    f"ontime={submission.ontime}; "
                     f"queue_status={submission.status}; "
                     f"error_code={result.get('error_code', 'none')}; "
                     f"failed_step={result.get('failed_step', '-')}; "
