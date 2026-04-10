@@ -73,6 +73,7 @@
       <nav class="tabs">
         <button data-tab="checkin" class="active">Check-In</button>
         <button data-tab="checkout">Check-Out</button>
+        <button data-tab="inactive">Inativos</button>
         <button data-tab="cadastro">Cadastro</button>
         <button data-tab="eventos">Eventos</button>
       </nav>
@@ -90,20 +91,6 @@
             <tbody id="checkinBody"></tbody>
           </table>
         </div>
-
-        <div id="checkinInactiveSection" class="inactive-users-section hidden">
-          <div class="section-header">
-            <h2>Usuários Inativos</h2>
-          </div>
-          <div class="table-wrap">
-            <table class="responsive-table">
-              <thead>
-                <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>Ações</th></tr>
-              </thead>
-              <tbody id="checkinInactiveBody"></tbody>
-            </table>
-          </div>
-        </div>
       </section>
 
       <section id="tab-checkout" class="tab">
@@ -118,33 +105,19 @@
             <tbody id="checkoutBody"></tbody>
           </table>
         </div>
+      </section>
 
-        <div id="checkoutMissingSection" class="inactive-users-section hidden">
-          <div class="section-header">
-            <h2 id="checkoutMissingTitle">Usuários sem Check-Out (0)</h2>
-          </div>
-          <div class="table-wrap">
-            <table class="responsive-table">
-              <thead>
-                <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>Ações</th></tr>
-              </thead>
-              <tbody id="checkoutMissingBody"></tbody>
-            </table>
-          </div>
+      <section id="tab-inactive" class="tab">
+        <div class="section-header">
+          <h2 id="inactiveTitle">Usuários Inativos (0)</h2>
         </div>
-
-        <div id="checkoutInactiveSection" class="inactive-users-section hidden">
-          <div class="section-header">
-            <h2>Usuários Inativos</h2>
-          </div>
-          <div class="table-wrap">
-            <table class="responsive-table">
-              <thead>
-                <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th><th>Ações</th></tr>
-              </thead>
-              <tbody id="checkoutInactiveBody"></tbody>
-            </table>
-          </div>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr><th>Nome</th><th>Chave</th><th>Projeto</th><th>Última Atividade</th><th>Inatividade</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="inactiveBody"></tbody>
+          </table>
         </div>
       </section>
 

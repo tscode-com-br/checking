@@ -345,6 +345,10 @@ function updateUserTitle(targetId, totalRows, totalRegistered) {
   }
 }
 
+function updateInactiveTitle(totalRows) {
+  document.getElementById("inactiveTitle").textContent = `Usuários Inativos (${totalRows})`;
+}
+
 function syncUserTitles() {
   updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
   updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
@@ -388,61 +392,43 @@ function formatUserTableTime(value) {
 function buildPresenceRow(row) {
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
-  const timeDisplay = formatUserTableTime(row.time);
-  const removeAction = timeDisplay.isStale
-    ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>`
-    : "-";
-
-  if (timeDisplay.isStale) {
-    tr.classList.add("inactive-user-row");
-  }
-
-  tr.innerHTML = `<td>${escapeHtml(timeDisplay.formatted)}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${removeAction}</td>`;
-  return { tr, isStale: timeDisplay.isStale };
+  tr.innerHTML = `<td>${escapeHtml(formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">-</td>`;
+  return tr;
 }
 
-function renderPresenceTables(activeBodyId, inactiveBodyId, inactiveSectionId, rows) {
-  const activeBody = document.getElementById(activeBodyId);
-  const inactiveBody = document.getElementById(inactiveBodyId);
-  const inactiveSection = document.getElementById(inactiveSectionId);
-  activeBody.innerHTML = "";
-  inactiveBody.innerHTML = "";
-
-  let activeRows = 0;
-  let inactiveRows = 0;
-
-  rows.forEach((row) => {
-    const { tr, isStale } = buildPresenceRow(row);
-    if (isStale) {
-      inactiveBody.appendChild(tr);
-      inactiveRows += 1;
-      return;
-    }
-
-    activeBody.appendChild(tr);
-    activeRows += 1;
-  });
-
-  inactiveSection.classList.toggle("hidden", inactiveRows === 0);
-  applyResponsiveLabels(activeBodyId);
-  applyResponsiveLabels(inactiveBodyId);
-  updateUserTitle(activeBodyId, activeRows, registeredUsersTotal);
-}
-
-function renderMissingCheckoutTable(rows) {
-  const body = document.getElementById("checkoutMissingBody");
-  const section = document.getElementById("checkoutMissingSection");
-  const title = document.getElementById("checkoutMissingTitle");
-
+function renderPresenceTable(bodyId, rows) {
+  const body = document.getElementById(bodyId);
   body.innerHTML = "";
-  rows.forEach((row) => {
-    const { tr } = buildPresenceRow(row);
-    body.appendChild(tr);
-  });
+  rows.forEach((row) => body.appendChild(buildPresenceRow(row)));
+  applyResponsiveLabels(bodyId);
+  updateUserTitle(bodyId, rows.length, registeredUsersTotal);
+}
 
-  section.classList.toggle("hidden", rows.length === 0);
-  title.textContent = `Usuários sem Check-Out (${rows.length})`;
-  applyResponsiveLabels("checkoutMissingBody");
+function formatInactivityDays(days) {
+  return days === 1 ? "1 dia" : `${days} dias`;
+}
+
+function buildInactiveRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.userId = String(row.id);
+  tr.classList.add("inactive-user-row");
+  tr.innerHTML = `
+    <td>${escapeHtml(row.nome)}</td>
+    <td>${escapeHtml(row.chave)}</td>
+    <td>${escapeHtml(row.projeto)}</td>
+    <td>${escapeHtml(`${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time)}`)}</td>
+    <td>${escapeHtml(formatInactivityDays(row.inactivity_days))}</td>
+    <td class="user-table-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></td>
+  `;
+  return tr;
+}
+
+function renderInactiveTable(rows) {
+  const body = document.getElementById("inactiveBody");
+  body.innerHTML = "";
+  rows.forEach((row) => body.appendChild(buildInactiveRow(row)));
+  applyResponsiveLabels("inactiveBody");
+  updateInactiveTitle(rows.length);
 }
 
 function createLocationRow(overrides = {}) {
@@ -789,19 +775,17 @@ function toggleAdminPasswordEditor(id, active) {
 
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
-  renderPresenceTables("checkinBody", "checkinInactiveBody", "checkinInactiveSection", rows);
+  renderPresenceTable("checkinBody", rows);
 }
 
 async function loadCheckout() {
-  const [checkoutRows, checkinRows] = await Promise.all([
-    fetchJson("/api/admin/checkout"),
-    fetchJson("/api/admin/checkin"),
-  ]);
+  const rows = await fetchJson("/api/admin/checkout");
+  renderPresenceTable("checkoutBody", rows);
+}
 
-  renderPresenceTables("checkoutBody", "checkoutInactiveBody", "checkoutInactiveSection", checkoutRows);
-
-  const usersWithoutCheckout = (checkinRows || []).filter((row) => getSingaporeCalendarDayDiff(row.time) > 0);
-  renderMissingCheckoutTable(usersWithoutCheckout);
+async function loadInactive() {
+  const rows = await fetchJson("/api/admin/inactive");
+  renderInactiveTable(rows);
 }
 
 async function loadPending() {
@@ -853,6 +837,10 @@ async function refreshActiveTab() {
     await loadCheckout();
     return;
   }
+  if (activeTab === "inactive") {
+    await loadInactive();
+    return;
+  }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers(), loadLocations()]);
@@ -863,7 +851,7 @@ async function refreshActiveTab() {
 }
 
 async function refreshAllTables() {
-  const jobs = [loadCheckin(), loadCheckout(), loadEvents(), loadAdministrators()];
+  const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents(), loadAdministrators()];
   if (!hasPendingEditInProgress()) {
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
@@ -1119,7 +1107,7 @@ async function removeRegisteredUser(userId) {
   const normalizedUserId = requireIntegerId(userId, "Usuário");
   await deleteJson(`/api/admin/users/${normalizedUserId}`);
   setStatus("Usuário removido com sucesso", true);
-  await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout()]);
+  await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
 }
 
 async function approveAdministrator(id) {
@@ -1401,13 +1389,6 @@ function bindActions() {
     }
   });
 
-  document.getElementById("checkinInactiveBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
-
   document.getElementById("checkoutBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
@@ -1415,14 +1396,7 @@ function bindActions() {
     }
   });
 
-  document.getElementById("checkoutInactiveBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
-
-  document.getElementById("checkoutMissingBody").addEventListener("click", (event) => {
+  document.getElementById("inactiveBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));

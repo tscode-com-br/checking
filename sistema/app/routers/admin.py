@@ -48,19 +48,22 @@ from ..services.event_archives import (
 )
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
+from ..services.user_activity import calculate_inactivity_days, is_user_inactive, sync_user_inactivity
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activity
-from ..services.user_activity import sync_user_inactivity
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-def build_presence_rows(db: Session, *, action: str) -> list[UserRow]:
+def build_presence_rows(db: Session, *, action: str, reference_time=None) -> list[UserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[UserRow] = []
+    current_time = reference_time or now_sgt()
 
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
+            continue
+        if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
 
         payload.append(
@@ -77,6 +80,35 @@ def build_presence_rows(db: Session, *, action: str) -> list[UserRow]:
         )
 
     payload.sort(key=lambda row: row.time, reverse=True)
+    return payload
+
+
+def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUserRow]:
+    rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
+    payload: list[InactiveUserRow] = []
+    current_time = reference_time or now_sgt()
+
+    for user in rows:
+        latest_activity = resolve_latest_user_activity(db, user=user)
+        if latest_activity is None:
+            continue
+        if not is_user_inactive(latest_activity.event_time, reference_time=current_time):
+            continue
+
+        payload.append(
+            InactiveUserRow(
+                id=user.id,
+                rfid=user.rfid,
+                nome=user.nome,
+                chave=user.chave,
+                projeto=user.projeto,
+                latest_action=latest_activity.action,
+                latest_time=latest_activity.event_time,
+                inactivity_days=calculate_inactivity_days(latest_activity.event_time, reference_time=current_time),
+            )
+        )
+
+    payload.sort(key=lambda row: (-row.inactivity_days, row.nome, row.chave))
     return payload
 
 
@@ -612,37 +644,26 @@ def set_administrator_password(
 
 @router.get("/checkin", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
 def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
-    if sync_user_inactivity(db):
+    reference_time = now_sgt()
+    if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-    return build_presence_rows(db, action="checkin")
+    return build_presence_rows(db, action="checkin", reference_time=reference_time)
 
 
 @router.get("/checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
 def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
-    if sync_user_inactivity(db):
+    reference_time = now_sgt()
+    if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-    return build_presence_rows(db, action="checkout")
+    return build_presence_rows(db, action="checkout", reference_time=reference_time)
 
 
 @router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_session)])
 def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
-    if sync_user_inactivity(db):
+    reference_time = now_sgt()
+    if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-
-    rows = db.execute(
-        select(User).where(User.inactivity_days > 0).order_by(desc(User.inactivity_days), User.nome, User.rfid)
-    ).scalars().all()
-    return [
-        InactiveUserRow(
-            id=row.id,
-            rfid=row.rfid,
-            nome=row.nome,
-            chave=row.chave,
-            projeto=row.projeto,
-            inactivity_days=row.inactivity_days,
-        )
-        for row in rows
-    ]
+    return build_inactive_rows(db, reference_time=reference_time)
 
 
 @router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_admin_session)])

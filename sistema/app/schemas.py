@@ -229,6 +229,8 @@ class InactiveUserRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    latest_action: Literal["checkin", "checkout"]
+    latest_time: datetime
     inactivity_days: int
 
 
@@ -339,6 +341,7 @@ class MobileSyncStateResponse(BaseModel):
     projeto: str | None = None
     current_action: Literal["checkin", "checkout"] | None = None
     current_event_time: datetime | None = None
+    current_local: str | None = None
     last_checkin_at: datetime | None = None
     last_checkout_at: datetime | None = None
 
