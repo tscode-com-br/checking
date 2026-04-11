@@ -13,6 +13,7 @@ from .time_utils import now_sgt
 
 SINGAPORE_TZ = ZoneInfo(settings.tz_name)
 SECONDS_PER_DAY = 24 * 60 * 60
+INACTIVE_AFTER_BUSINESS_DAYS = 3
 
 
 def _to_singapore_time(value: datetime) -> datetime:
@@ -48,13 +49,27 @@ def calculate_inactivity_days(last_active_at: datetime | None, *, reference_time
     return inactivity_seconds // SECONDS_PER_DAY
 
 
+def calculate_singapore_calendar_day_diff(event_time: datetime | None, *, reference_time: datetime | None = None) -> int:
+    if event_time is None:
+        return 0
+
+    current_time = reference_time or now_sgt()
+    current_local = _to_singapore_time(current_time)
+    event_local = _to_singapore_time(event_time)
+    return max((current_local.date() - event_local.date()).days, 0)
+
+
+def has_missing_checkout_since_midnight(checkin_time: datetime | None, *, reference_time: datetime | None = None) -> bool:
+    return calculate_singapore_calendar_day_diff(checkin_time, reference_time=reference_time) > 0
+
+
 def is_user_inactive(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> bool:
     current_time = reference_time or now_sgt()
     if _to_singapore_time(current_time).weekday() >= 5:
         return False
 
     inactivity_seconds = calculate_business_inactivity_seconds(last_active_at, reference_time=current_time)
-    return inactivity_seconds > SECONDS_PER_DAY
+    return inactivity_seconds > INACTIVE_AFTER_BUSINESS_DAYS * SECONDS_PER_DAY
 
 
 def mark_user_active(user: User, *, activity_time=None) -> None:

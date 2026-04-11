@@ -48,7 +48,12 @@ from ..services.event_archives import (
 )
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
-from ..services.user_activity import calculate_inactivity_days, is_user_inactive, sync_user_inactivity
+from ..services.user_activity import (
+    calculate_inactivity_days,
+    has_missing_checkout_since_midnight,
+    is_user_inactive,
+    sync_user_inactivity,
+)
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activity
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -63,7 +68,11 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
             continue
-        if is_user_inactive(latest_activity.event_time, reference_time=current_time):
+        missing_checkout = action == "checkin" and has_missing_checkout_since_midnight(
+            latest_activity.event_time,
+            reference_time=current_time,
+        )
+        if is_user_inactive(latest_activity.event_time, reference_time=current_time) and not missing_checkout:
             continue
 
         payload.append(
@@ -83,6 +92,35 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
     return payload
 
 
+def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[UserRow]:
+    rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
+    payload: list[UserRow] = []
+    current_time = reference_time or now_sgt()
+
+    for user in rows:
+        latest_activity = resolve_latest_user_activity(db, user=user)
+        if latest_activity is None or latest_activity.action != "checkin":
+            continue
+        if not has_missing_checkout_since_midnight(latest_activity.event_time, reference_time=current_time):
+            continue
+
+        payload.append(
+            UserRow(
+                id=user.id,
+                rfid=user.rfid,
+                nome=user.nome,
+                chave=user.chave,
+                projeto=user.projeto,
+                local=latest_activity.local if latest_activity.local is not None else user.local,
+                checkin=True,
+                time=latest_activity.event_time,
+            )
+        )
+
+    payload.sort(key=lambda row: row.time, reverse=True)
+    return payload
+
+
 def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[InactiveUserRow] = []
@@ -91,6 +129,11 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
+            continue
+        if latest_activity.action == "checkin" and has_missing_checkout_since_midnight(
+            latest_activity.event_time,
+            reference_time=current_time,
+        ):
             continue
         if not is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
@@ -656,6 +699,14 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
     return build_presence_rows(db, action="checkout", reference_time=reference_time)
+
+
+@router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
+def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
+    reference_time = now_sgt()
+    if sync_user_inactivity(db, reference_time=reference_time):
+        db.commit()
+    return build_missing_checkout_rows(db, reference_time=reference_time)
 
 
 @router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_session)])

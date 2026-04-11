@@ -210,7 +210,15 @@ th, td {
   color: #b91c1c;
 }
 
+.attention-user-row td {
+  color: #b91c1c;
+}
+
 .inactive-user-row .user-table-actions {
+  color: inherit;
+}
+
+.attention-user-row .user-table-actions {
   color: inherit;
 }
 

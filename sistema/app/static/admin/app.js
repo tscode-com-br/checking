@@ -349,6 +349,10 @@ function updateInactiveTitle(totalRows) {
   document.getElementById("inactiveTitle").textContent = `Usuários Inativos (${totalRows})`;
 }
 
+function updateMissingCheckoutTitle(totalRows) {
+  document.getElementById("missingCheckoutTitle").textContent = `Usuários com Check-in e sem Check-Out (${totalRows})`;
+}
+
 function syncUserTitles() {
   updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
   updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
@@ -389,17 +393,24 @@ function formatUserTableTime(value) {
   };
 }
 
-function buildPresenceRow(row) {
+function buildPresenceRow(row, options = {}) {
+  const { highlightMissingCheckout = false, includeElapsedDays = false, allowRemove = false } = options;
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
-  tr.innerHTML = `<td>${escapeHtml(formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">-</td>`;
+  const timeDisplay = includeElapsedDays ? formatUserTableTime(row.time) : { formatted: formatDateTime(row.time), isStale: false };
+  const staleCheckin = getSingaporeCalendarDayDiff(row.time) > 0;
+  if (highlightMissingCheckout && staleCheckin) {
+    tr.classList.add("attention-user-row");
+  }
+
+  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${allowRemove ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>` : "-"}</td>`;
   return tr;
 }
 
-function renderPresenceTable(bodyId, rows) {
+function renderPresenceTable(bodyId, rows, options = {}) {
   const body = document.getElementById(bodyId);
   body.innerHTML = "";
-  rows.forEach((row) => body.appendChild(buildPresenceRow(row)));
+  rows.forEach((row) => body.appendChild(buildPresenceRow(row, options)));
   applyResponsiveLabels(bodyId);
   updateUserTitle(bodyId, rows.length, registeredUsersTotal);
 }
@@ -429,6 +440,27 @@ function renderInactiveTable(rows) {
   rows.forEach((row) => body.appendChild(buildInactiveRow(row)));
   applyResponsiveLabels("inactiveBody");
   updateInactiveTitle(rows.length);
+}
+
+function buildMissingCheckoutRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.userId = String(row.id);
+  const timeDisplay = formatUserTableTime(row.time);
+  tr.innerHTML = `
+    <td>${escapeHtml(row.nome)}</td>
+    <td>${escapeHtml(row.chave)}</td>
+    <td>${escapeHtml(timeDisplay.formatted)}</td>
+    <td class="user-table-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></td>
+  `;
+  return tr;
+}
+
+function renderMissingCheckoutTable(rows) {
+  const body = document.getElementById("missingCheckoutBody");
+  body.innerHTML = "";
+  rows.forEach((row) => body.appendChild(buildMissingCheckoutRow(row)));
+  applyResponsiveLabels("missingCheckoutBody");
+  updateMissingCheckoutTitle(rows.length);
 }
 
 function createLocationRow(overrides = {}) {
@@ -775,12 +807,16 @@ function toggleAdminPasswordEditor(id, active) {
 
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
-  renderPresenceTable("checkinBody", rows);
+  renderPresenceTable("checkinBody", rows, { highlightMissingCheckout: true, includeElapsedDays: true });
 }
 
 async function loadCheckout() {
-  const rows = await fetchJson("/api/admin/checkout");
+  const [rows, missingCheckoutRows] = await Promise.all([
+    fetchJson("/api/admin/checkout"),
+    fetchJson("/api/admin/missing-checkout"),
+  ]);
   renderPresenceTable("checkoutBody", rows);
+  renderMissingCheckoutTable(missingCheckoutRows);
 }
 
 async function loadInactive() {
@@ -1397,6 +1433,13 @@ function bindActions() {
   });
 
   document.getElementById("inactiveBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("missingCheckoutBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
