@@ -20,7 +20,10 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
 from ..services.managed_locations import extract_location_coordinates
-from ..services.location_settings import get_location_update_interval_seconds
+from ..services.location_settings import (
+    get_location_accuracy_threshold_meters,
+    get_location_update_interval_seconds,
+)
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -82,6 +85,7 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
         ],
         synced_at=now_sgt(),
         location_update_interval_seconds=get_location_update_interval_seconds(db),
+        location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
     )
 
 

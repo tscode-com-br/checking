@@ -26,6 +26,7 @@ let nextLocationDraftId = 1;
 let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let locationUpdateIntervalSeconds = 60;
+let locationAccuracyThresholdMeters = 30;
 
 function setAuthStatus(message, kind = "info") {
   authStatus.textContent = message || "";
@@ -545,9 +546,15 @@ function getLocationUpdateIntervalInput() {
   return document.getElementById("locationUpdateIntervalSeconds");
 }
 
+function getLocationAccuracyThresholdInput() {
+  return document.getElementById("locationAccuracyThresholdMeters");
+}
+
 function isLocationUpdateIntervalEditing() {
-  const input = getLocationUpdateIntervalInput();
-  return Boolean(input) && document.activeElement === input;
+  const intervalInput = getLocationUpdateIntervalInput();
+  const accuracyInput = getLocationAccuracyThresholdInput();
+  return Boolean(intervalInput && document.activeElement === intervalInput)
+    || Boolean(accuracyInput && document.activeElement === accuracyInput);
 }
 
 function normalizeLocationUpdateInterval(value) {
@@ -561,6 +568,19 @@ function normalizeLocationUpdateInterval(value) {
     throw new Error("O tempo para atualização da localização deve ser um inteiro entre 1 e 86400 segundos.");
   }
   return String(seconds);
+}
+
+function normalizeLocationAccuracyThreshold(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("O erro máximo para considerar a coordenada do usuário deve ser um inteiro em metros.");
+  }
+
+  const meters = Number(normalized);
+  if (!Number.isInteger(meters) || meters < 1 || meters > 9999) {
+    throw new Error("O erro máximo para considerar a coordenada do usuário deve ser um inteiro entre 1 e 9999 metros.");
+  }
+  return String(meters);
 }
 
 function normalizeLocationName(value) {
@@ -662,14 +682,18 @@ function renderLocations() {
 }
 
 function renderLocationUpdateInterval() {
-  const input = getLocationUpdateIntervalInput();
-  if (!input) {
-    return;
+  const intervalInput = getLocationUpdateIntervalInput();
+  const accuracyInput = getLocationAccuracyThresholdInput();
+  if (intervalInput) {
+    const normalizedInterval = String(locationUpdateIntervalSeconds);
+    intervalInput.value = normalizedInterval;
+    intervalInput.dataset.persistedValue = normalizedInterval;
   }
-
-  const normalized = String(locationUpdateIntervalSeconds);
-  input.value = normalized;
-  input.dataset.persistedValue = normalized;
+  if (accuracyInput) {
+    const normalizedAccuracy = String(locationAccuracyThresholdMeters);
+    accuracyInput.value = normalizedAccuracy;
+    accuracyInput.dataset.persistedValue = normalizedAccuracy;
+  }
 }
 
 function focusLocationRow(rowId, coordinateId = null) {
@@ -815,36 +839,47 @@ async function removeLocationRow(rowId) {
 }
 
 async function saveLocationUpdateInterval() {
-  const input = getLocationUpdateIntervalInput();
-  if (!input) {
+  const intervalInput = getLocationUpdateIntervalInput();
+  const accuracyInput = getLocationAccuracyThresholdInput();
+  if (!intervalInput || !accuracyInput) {
     return;
   }
 
-  const normalized = normalizeLocationUpdateInterval(input.value);
-  if (normalized === String(locationUpdateIntervalSeconds)) {
-    input.value = normalized;
+  const normalizedInterval = normalizeLocationUpdateInterval(intervalInput.value);
+  const normalizedAccuracy = normalizeLocationAccuracyThreshold(accuracyInput.value);
+  if (
+    normalizedInterval === String(locationUpdateIntervalSeconds)
+    && normalizedAccuracy === String(locationAccuracyThresholdMeters)
+  ) {
+    intervalInput.value = normalizedInterval;
+    accuracyInput.value = normalizedAccuracy;
     return;
   }
 
-  input.disabled = true;
+  intervalInput.disabled = true;
+  accuracyInput.disabled = true;
   try {
     const response = await postJson("/api/admin/locations/settings", {
-      location_update_interval_seconds: Number(normalized),
+      location_update_interval_seconds: Number(normalizedInterval),
+      location_accuracy_threshold_meters: Number(normalizedAccuracy),
     });
     locationUpdateIntervalSeconds = response.location_update_interval_seconds;
+    locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
     renderLocationUpdateInterval();
     setStatus(response.message, true);
   } catch (error) {
     renderLocationUpdateInterval();
     throw error;
   } finally {
-    input.disabled = false;
+    intervalInput.disabled = false;
+    accuracyInput.disabled = false;
   }
 }
 
 async function loadLocations() {
   const response = await fetchJson("/api/admin/locations");
   locationUpdateIntervalSeconds = response.location_update_interval_seconds;
+  locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
   locationRows = response.items.map((row) =>
     createLocationRow({
       id: row.id,
@@ -1585,6 +1620,21 @@ function bindActions() {
     saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
   });
   document.getElementById("locationUpdateIntervalSeconds").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      renderLocationUpdateInterval();
+      event.currentTarget.blur();
+    }
+  });
+  document.getElementById("locationAccuracyThresholdMeters").addEventListener("change", () => {
+    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
+  });
+  document.getElementById("locationAccuracyThresholdMeters").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       event.currentTarget.blur();

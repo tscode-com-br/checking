@@ -109,6 +109,7 @@ class LocationRow(BaseModel):
 class AdminLocationsResponse(BaseModel):
     items: list[LocationRow]
     location_update_interval_seconds: int = Field(ge=1, le=86400)
+    location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
 class AdminLocationUpsert(BaseModel):
@@ -164,6 +165,7 @@ class AdminLocationUpsert(BaseModel):
 
 class AdminLocationSettingsUpdate(BaseModel):
     location_update_interval_seconds: int = Field(ge=1, le=86400)
+    location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
 class AdminLoginRequest(BaseModel):
@@ -241,6 +243,7 @@ class AdminActionResponse(BaseModel):
 
 class AdminLocationSettingsResponse(AdminActionResponse):
     location_update_interval_seconds: int = Field(ge=1, le=86400)
+    location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
 class UserRow(BaseModel):
@@ -440,3 +443,4 @@ class MobileLocationsResponse(BaseModel):
     items: list[MobileLocationRow]
     synced_at: datetime
     location_update_interval_seconds: int = Field(ge=1, le=86400)
+    location_accuracy_threshold_meters: int = Field(ge=1, le=9999)

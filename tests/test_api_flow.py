@@ -2440,17 +2440,22 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
         assert locations.json()["location_update_interval_seconds"] == 60
+        assert locations.json()["location_accuracy_threshold_meters"] == 30
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["coordinates"] == [{"latitude": 1.255936, "longitude": 103.611066}]
         assert base_p80["tolerance_meters"] == 150
 
         update_location_settings = client.post(
             "/api/admin/locations/settings",
-            json={"location_update_interval_seconds": 75},
+            json={
+                "location_update_interval_seconds": 75,
+                "location_accuracy_threshold_meters": 45,
+            },
         )
         assert update_location_settings.status_code == 200
         assert update_location_settings.json()["ok"] is True
         assert update_location_settings.json()["location_update_interval_seconds"] == 75
+        assert update_location_settings.json()["location_accuracy_threshold_meters"] == 45
 
         update_location = client.post(
             "/api/admin/locations",
@@ -2480,6 +2485,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
         assert mobile_catalog.status_code == 200
         assert mobile_catalog.json()["location_update_interval_seconds"] == 75
+        assert mobile_catalog.json()["location_accuracy_threshold_meters"] == 45
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
         assert synced_row["tolerance_meters"] == 250
         assert synced_row["coordinates"] == [

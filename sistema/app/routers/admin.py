@@ -51,7 +51,11 @@ from ..services.event_archives import (
 )
 from ..services.event_logger import log_event
 from ..services.managed_locations import dump_location_coordinates, extract_location_coordinates
-from ..services.location_settings import get_location_update_interval_seconds, upsert_location_update_interval_seconds
+from ..services.location_settings import (
+    get_location_accuracy_threshold_meters,
+    get_location_update_interval_seconds,
+    upsert_location_settings,
+)
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
     calculate_inactivity_days,
@@ -739,6 +743,7 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     return AdminLocationsResponse(
         items=[build_location_row(row) for row in rows],
         location_update_interval_seconds=get_location_update_interval_seconds(db),
+        location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
     )
 
 
@@ -805,26 +810,31 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
 
 @router.post("/locations/settings", response_model=AdminLocationSettingsResponse, dependencies=[Depends(require_admin_session)])
 def update_location_settings(payload: AdminLocationSettingsUpdate, db: Session = Depends(get_db)) -> AdminLocationSettingsResponse:
-    settings = upsert_location_update_interval_seconds(
+    settings = upsert_location_settings(
         db,
         seconds=payload.location_update_interval_seconds,
+        accuracy_threshold_meters=payload.location_accuracy_threshold_meters,
     )
     log_event(
         db,
         source="admin",
         action="location_settings",
         status="updated",
-        message="Location update interval saved via admin",
+        message="Location settings saved via admin",
         request_path="/api/admin/locations/settings",
         http_status=200,
-        details=f"location_update_interval_seconds={settings.location_update_interval_seconds}",
+        details=(
+            f"location_update_interval_seconds={settings.location_update_interval_seconds}; "
+            f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}"
+        ),
     )
     db.commit()
     notify_admin_views("location", "event")
     return AdminLocationSettingsResponse(
         ok=True,
-        message="Tempo de atualizacao da localizacao salvo com sucesso.",
+        message="Configuracoes de localizacao salvas com sucesso.",
         location_update_interval_seconds=settings.location_update_interval_seconds,
+        location_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
     )
 
 
