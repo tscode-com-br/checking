@@ -23,6 +23,7 @@ let eventArchivesTotal = 0;
 let eventArchivesTotalPages = 0;
 let eventArchivesTotalSizeBytes = 0;
 let nextLocationDraftId = 1;
+let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let locationUpdateIntervalSeconds = 60;
 
@@ -464,15 +465,38 @@ function renderMissingCheckoutTable(rows) {
   updateMissingCheckoutTitle(rows.length);
 }
 
-function createLocationRow(overrides = {}) {
+function createLocationCoordinateEntry(value = "", overrides = {}) {
   return {
+    id: overrides.id ?? `coord-${nextLocationCoordinateDraftId++}`,
+    value: String(value ?? ""),
+  };
+}
+
+function normalizeLocationCoordinateEntries(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [createLocationCoordinateEntry("")];
+  }
+
+  return entries.map((entry) => {
+    if (typeof entry === "string") {
+      return createLocationCoordinateEntry(entry);
+    }
+
+    return createLocationCoordinateEntry(entry?.value ?? "", { id: entry?.id });
+  });
+}
+
+function createLocationRow(overrides = {}) {
+  const row = {
     id: overrides.id ?? `draft-${nextLocationDraftId++}`,
     local: "",
-    coordinates: "",
+    coordinates: [createLocationCoordinateEntry("")],
     tolerance: "",
     isEditing: false,
     ...overrides,
   };
+  row.coordinates = normalizeLocationCoordinateEntries(overrides.coordinates);
+  return row;
 }
 
 function isPersistedLocationRowId(rowId) {
@@ -483,9 +507,33 @@ function getLocationRowById(rowId) {
   return locationRows.find((row) => String(row.id) === String(rowId));
 }
 
+function getLocationRowElement(rowId) {
+  return document.querySelector(`#locationsBody tr[data-location-id="${CSS.escape(String(rowId))}"]`);
+}
+
+function captureLocationRowDraft(rowId) {
+  const row = getLocationRowById(rowId);
+  const rowElement = getLocationRowElement(rowId);
+  if (!row || !rowElement) {
+    return row;
+  }
+
+  row.local = rowElement.querySelector(".location-name")?.value ?? row.local;
+  row.tolerance = rowElement.querySelector(".location-tolerance")?.value ?? row.tolerance;
+  const coordinateInputs = Array.from(rowElement.querySelectorAll(".location-coordinate-input"));
+  row.coordinates = coordinateInputs.length
+    ? coordinateInputs.map((input, index) =>
+        createLocationCoordinateEntry(input.value, {
+          id: input.dataset.coordinateId || row.coordinates[index]?.id,
+        })
+      )
+    : [createLocationCoordinateEntry("")];
+  return row;
+}
+
 function isBlankLocationRow(row) {
   return !String(row.local || "").trim()
-    && !String(row.coordinates || "").trim()
+    && !(row.coordinates || []).some((coordinate) => String(coordinate.value || "").trim())
     && !String(row.tolerance || "").trim();
 }
 
@@ -561,15 +609,43 @@ function normalizeTolerance(value) {
   return String(tolerance);
 }
 
+function makeLocationCoordinateLines(row) {
+  return row.coordinates.map((coordinate, index) => `
+    <div class="location-coordinate-line">
+      <input
+        class="inline location-coordinate-input"
+        data-coordinate-id="${escapeHtml(String(coordinate.id))}"
+        maxlength="40"
+        placeholder="1.255936, 103.611066"
+        value="${escapeHtml(coordinate.value)}"
+        ${row.isEditing ? "" : "disabled"}
+      />
+      ${row.isEditing && index > 0 ? `<button type="button" class="secondary-button location-coordinate-remove-button" data-location-coordinate-remove="${row.id}" data-coordinate-id="${escapeHtml(String(coordinate.id))}">Remover</button>` : ""}
+    </div>
+  `).join("");
+}
+
 function makeLocationRow(row) {
   const tr = document.createElement("tr");
+  tr.className = "location-row";
   tr.dataset.locationId = String(row.id);
   tr.innerHTML = `
-    <td><input class="inline location-name" maxlength="100" value="${escapeHtml(row.local)}" ${row.isEditing ? "" : "disabled"} /></td>
-    <td><input class="inline location-coordinates" maxlength="40" placeholder="1.255936, 103.611066" value="${escapeHtml(row.coordinates)}" ${row.isEditing ? "" : "disabled"} /></td>
-    <td><input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" ${row.isEditing ? "" : "disabled"} /></td>
-    <td class="pending-actions">
+    <td class="location-cell">
+      <div class="location-cell-stack">
+        <input class="inline location-name" maxlength="100" value="${escapeHtml(row.local)}" ${row.isEditing ? "" : "disabled"} />
+      </div>
+    </td>
+    <td class="location-cell location-coordinates-cell">
+      <div class="location-coordinates-stack">${makeLocationCoordinateLines(row)}</div>
+    </td>
+    <td class="location-cell">
+      <div class="location-cell-stack">
+        <input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" ${row.isEditing ? "" : "disabled"} />
+      </div>
+    </td>
+    <td class="pending-actions location-actions">
       <button type="button" data-location-edit="${row.id}">${row.isEditing ? "Salvar" : "Editar"}</button>
+      <button type="button" class="secondary-button" data-location-add-coordinate="${row.id}">Adicionar Coordenadas</button>
       <button type="button" data-location-remove="${row.id}">Remover</button>
     </td>
   `;
@@ -596,9 +672,18 @@ function renderLocationUpdateInterval() {
   input.dataset.persistedValue = normalized;
 }
 
-function focusLocationRow(rowId) {
-  const row = document.querySelector(`#locationsBody tr[data-location-id="${CSS.escape(String(rowId))}"]`);
-  row?.querySelector(".location-name")?.focus();
+function focusLocationRow(rowId, coordinateId = null) {
+  const row = getLocationRowElement(rowId);
+  if (!row) {
+    return;
+  }
+
+  if (coordinateId !== null) {
+    row.querySelector(`[data-coordinate-id="${CSS.escape(String(coordinateId))}"]`)?.focus();
+    return;
+  }
+
+  row.querySelector(".location-name")?.focus();
 }
 
 function setLocationEditingState(rowId, editing) {
@@ -607,6 +692,9 @@ function setLocationEditingState(rowId, editing) {
     return;
   }
 
+  if (row.isEditing) {
+    captureLocationRowDraft(rowId);
+  }
   row.isEditing = editing;
   renderLocations();
   if (editing) {
@@ -628,25 +716,68 @@ function addLocationRow() {
   setStatus("Nova localização pronta para preenchimento.", true);
 }
 
-async function saveLocationRow(rowId) {
+function addLocationCoordinate(rowId) {
   const row = getLocationRowById(rowId);
   if (!row) {
     return;
   }
 
-  const rowElement = document.querySelector(`#locationsBody tr[data-location-id="${CSS.escape(String(rowId))}"]`);
-  if (!rowElement) {
+  captureLocationRowDraft(rowId);
+  if (!row.isEditing) {
+    row.isEditing = true;
+  }
+  const coordinate = createLocationCoordinateEntry("");
+  row.coordinates.push(coordinate);
+  renderLocations();
+  focusLocationRow(rowId, coordinate.id);
+}
+
+function removeLocationCoordinate(rowId, coordinateId) {
+  const row = getLocationRowById(rowId);
+  if (!row) {
     return;
   }
 
-  const local = normalizeLocationName(rowElement.querySelector(".location-name")?.value);
-  const coordinates = normalizeCoordinates(rowElement.querySelector(".location-coordinates")?.value);
-  const tolerance = normalizeTolerance(rowElement.querySelector(".location-tolerance")?.value);
-  const [latitude, longitude] = coordinates.split(",").map((value) => Number(value.trim()));
+  captureLocationRowDraft(rowId);
+  if (row.coordinates.length <= 1) {
+    return;
+  }
+
+  row.coordinates = row.coordinates.filter((coordinate) => String(coordinate.id) !== String(coordinateId));
+  if (!row.coordinates.length) {
+    row.coordinates = [createLocationCoordinateEntry("")];
+  }
+
+  renderLocations();
+  focusLocationRow(rowId, row.coordinates[Math.max(0, row.coordinates.length - 1)]?.id ?? null);
+}
+
+async function saveLocationRow(rowId) {
+  const row = captureLocationRowDraft(rowId);
+  if (!row) {
+    return;
+  }
+
+  const local = normalizeLocationName(row.local);
+  const tolerance = normalizeTolerance(row.tolerance);
+  const normalizedCoordinates = row.coordinates
+    .map((coordinate) => String(coordinate.value || "").trim())
+    .filter((value) => value)
+    .map((value) => normalizeCoordinates(value));
+  if (!normalizedCoordinates.length) {
+    throw new Error("Informe ao menos uma coordenada para o local.");
+  }
+
+  const coordinatesPayload = normalizedCoordinates.map((value) => {
+    const [latitude, longitude] = value.split(",").map((part) => Number(part.trim()));
+    return { latitude, longitude };
+  });
+  const primaryCoordinate = coordinatesPayload[0];
   const payload = {
     local,
-    latitude,
-    longitude,
+    latitude: primaryCoordinate.latitude,
+    longitude: primaryCoordinate.longitude,
+    coordinates: coordinatesPayload,
     tolerance_meters: Number(tolerance),
   };
   if (isPersistedLocationRowId(rowId)) {
@@ -663,6 +794,8 @@ async function removeLocationRow(rowId) {
   if (!row) {
     return;
   }
+
+  captureLocationRowDraft(rowId);
 
   if (!isPersistedLocationRowId(rowId)) {
     locationRows = locationRows.filter((item) => String(item.id) !== String(rowId));
@@ -716,7 +849,10 @@ async function loadLocations() {
     createLocationRow({
       id: row.id,
       local: row.local,
-      coordinates: `${row.latitude}, ${row.longitude}`,
+      coordinates: (Array.isArray(row.coordinates) && row.coordinates.length
+        ? row.coordinates
+        : [{ latitude: row.latitude, longitude: row.longitude }]
+      ).map((coordinate) => `${coordinate.latitude}, ${coordinate.longitude}`),
       tolerance: String(row.tolerance_meters),
       isEditing: false,
     })
@@ -1476,6 +1612,17 @@ function bindActions() {
         return;
       }
       setLocationEditingState(target.dataset.locationEdit, true);
+      return;
+    }
+    if (target.dataset.locationAddCoordinate) {
+      addLocationCoordinate(target.dataset.locationAddCoordinate);
+      return;
+    }
+    if (target.dataset.locationCoordinateRemove) {
+      removeLocationCoordinate(
+        target.dataset.locationCoordinateRemove,
+        target.dataset.coordinateId,
+      );
       return;
     }
     if (target.dataset.locationRemove) {

@@ -19,6 +19,7 @@ from ..schemas import (
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
+from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import get_location_update_interval_seconds
 from ..services.user_sync import (
     apply_user_state,
@@ -70,12 +71,14 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
             MobileLocationRow(
                 id=row.id,
                 local=row.local,
-                latitude=row.latitude,
-                longitude=row.longitude,
+                latitude=coordinates[0]["latitude"],
+                longitude=coordinates[0]["longitude"],
+                coordinates=coordinates,
                 tolerance_meters=row.tolerance_meters,
                 updated_at=row.updated_at,
             )
             for row in rows
+            for coordinates in [extract_location_coordinates(row)]
         ],
         synced_at=now_sgt(),
         location_update_interval_seconds=get_location_update_interval_seconds(db),

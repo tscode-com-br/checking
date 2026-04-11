@@ -446,6 +446,30 @@ input.inline, select.inline {
   width: 100%;
   padding: 4px;
 }
+.location-row td {
+  vertical-align: top;
+}
+.location-cell-stack,
+.location-coordinates-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.location-coordinate-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.location-coordinate-input {
+  flex: 1 1 auto;
+}
+.location-coordinate-remove-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.location-actions {
+  align-items: flex-start;
+}
 .pending-actions {
   display: flex;
   gap: 6px;
@@ -619,6 +643,10 @@ input.inline, select.inline {
   .responsive-table td select.inline,
   .responsive-table td button {
     width: 100%;
+  }
+  .location-coordinate-line {
+    flex-direction: column;
+    align-items: stretch;
   }
   .events-table {
     min-width: 2140px;

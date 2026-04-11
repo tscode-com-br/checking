@@ -24,6 +24,18 @@ def _normalize_required_local(value: str) -> str:
     return normalized
 
 
+def _validate_latitude(value: float) -> float:
+    if value < -90 or value > 90:
+        raise ValueError("A latitude deve estar entre -90 e 90")
+    return value
+
+
+def _validate_longitude(value: float) -> float:
+    if value < -180 or value > 180:
+        raise ValueError("A longitude deve estar entre -180 e 180")
+    return value
+
+
 class HealthResponse(BaseModel):
     status: str
     app: str
@@ -70,11 +82,27 @@ class AdminUserUpsert(BaseModel):
         return value.upper()
 
 
+class LocationCoordinate(BaseModel):
+    latitude: float
+    longitude: float
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude(cls, value: float) -> float:
+        return _validate_latitude(value)
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude(cls, value: float) -> float:
+        return _validate_longitude(value)
+
+
 class LocationRow(BaseModel):
     id: int
     local: str
     latitude: float
     longitude: float
+    coordinates: list[LocationCoordinate]
     tolerance_meters: int
 
 
@@ -86,9 +114,27 @@ class AdminLocationsResponse(BaseModel):
 class AdminLocationUpsert(BaseModel):
     location_id: int | None = Field(default=None, ge=1)
     local: str
-    latitude: float
-    longitude: float
+    latitude: float | None = None
+    longitude: float | None = None
+    coordinates: list[LocationCoordinate] | None = None
     tolerance_meters: int = Field(ge=1, le=9999)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_coordinates_payload(cls, value):
+        if not isinstance(value, dict):
+            return value
+        if value.get("coordinates") is not None:
+            return value
+
+        latitude = value.get("latitude")
+        longitude = value.get("longitude")
+        if latitude is None and longitude is None:
+            return value
+
+        normalized = dict(value)
+        normalized["coordinates"] = [{"latitude": latitude, "longitude": longitude}]
+        return normalized
 
     @field_validator("local", mode="before")
     @classmethod
@@ -97,17 +143,23 @@ class AdminLocationUpsert(BaseModel):
 
     @field_validator("latitude")
     @classmethod
-    def validate_latitude(cls, value: float) -> float:
-        if value < -90 or value > 90:
-            raise ValueError("A latitude deve estar entre -90 e 90")
-        return value
+    def validate_optional_latitude(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        return _validate_latitude(value)
 
     @field_validator("longitude")
     @classmethod
-    def validate_longitude(cls, value: float) -> float:
-        if value < -180 or value > 180:
-            raise ValueError("A longitude deve estar entre -180 e 180")
-        return value
+    def validate_optional_longitude(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        return _validate_longitude(value)
+
+    @model_validator(mode="after")
+    def validate_coordinates(self):
+        if not self.coordinates:
+            raise ValueError("Informe ao menos uma coordenada para o local")
+        return self
 
 
 class AdminLocationSettingsUpdate(BaseModel):
@@ -379,6 +431,7 @@ class MobileLocationRow(BaseModel):
     local: str
     latitude: float
     longitude: float
+    coordinates: list[LocationCoordinate]
     tolerance_meters: int
     updated_at: datetime
 

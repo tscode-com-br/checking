@@ -50,6 +50,7 @@ from ..services.event_archives import (
     list_event_archives_page,
 )
 from ..services.event_logger import log_event
+from ..services.managed_locations import dump_location_coordinates, extract_location_coordinates
 from ..services.location_settings import get_location_update_interval_seconds, upsert_location_update_interval_seconds
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
@@ -166,11 +167,14 @@ def build_admin_identity(admin: AdminUser) -> AdminIdentity:
 
 
 def build_location_row(location: ManagedLocation) -> LocationRow:
+    coordinates = extract_location_coordinates(location)
+    primary_coordinate = coordinates[0]
     return LocationRow(
         id=location.id,
         local=location.local,
-        latitude=location.latitude,
-        longitude=location.longitude,
+        latitude=primary_coordinate["latitude"],
+        longitude=primary_coordinate["longitude"],
+        coordinates=coordinates,
         tolerance_meters=location.tolerance_meters,
     )
 
@@ -751,12 +755,19 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
         raise HTTPException(status_code=409, detail="Ja existe uma localizacao cadastrada com esse nome.")
 
     timestamp = now_sgt()
+    coordinates = [
+        {"latitude": coordinate.latitude, "longitude": coordinate.longitude}
+        for coordinate in (payload.coordinates or [])
+    ]
+    primary_coordinate = coordinates[0]
+    coordinates_json = dump_location_coordinates(coordinates)
     created = False
     if location is None:
         location = ManagedLocation(
             local=payload.local,
-            latitude=payload.latitude,
-            longitude=payload.longitude,
+            latitude=primary_coordinate["latitude"],
+            longitude=primary_coordinate["longitude"],
+            coordinates_json=coordinates_json,
             tolerance_meters=payload.tolerance_meters,
             created_at=timestamp,
             updated_at=timestamp,
@@ -765,10 +776,16 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
         created = True
     else:
         location.local = payload.local
-        location.latitude = payload.latitude
-        location.longitude = payload.longitude
+        location.latitude = primary_coordinate["latitude"]
+        location.longitude = primary_coordinate["longitude"]
+        location.coordinates_json = coordinates_json
         location.tolerance_meters = payload.tolerance_meters
         location.updated_at = timestamp
+
+    coordinates_details = " | ".join(
+        f"{coordinate['latitude']:.6f},{coordinate['longitude']:.6f}"
+        for coordinate in coordinates
+    )
 
     log_event(
         db,
@@ -779,10 +796,7 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
         local=payload.local,
         request_path="/api/admin/locations",
         http_status=200,
-        details=(
-            f"latitude={payload.latitude:.6f}; longitude={payload.longitude:.6f}; "
-            f"tolerance_meters={payload.tolerance_meters}"
-        ),
+        details=f"coordinates={coordinates_details}; tolerance_meters={payload.tolerance_meters}",
     )
     db.commit()
     notify_admin_views("location", "event")

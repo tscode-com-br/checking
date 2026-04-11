@@ -2441,6 +2441,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert locations.status_code == 200
         assert locations.json()["location_update_interval_seconds"] == 60
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
+        assert base_p80["coordinates"] == [{"latitude": 1.255936, "longitude": 103.611066}]
         assert base_p80["tolerance_meters"] == 150
 
         update_location_settings = client.post(
@@ -2456,19 +2457,37 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             json={
                 "location_id": base_p80["id"],
                 "local": "Base P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": [
+                    {"latitude": 1.255936, "longitude": 103.611066},
+                    {"latitude": 1.260001, "longitude": 103.612002},
+                ],
                 "tolerance_meters": 250,
             },
         )
         assert update_location.status_code == 200
         assert update_location.json()["ok"] is True
 
+        updated_locations = client.get("/api/admin/locations")
+        assert updated_locations.status_code == 200
+        updated_base_p80 = next(row for row in updated_locations.json()["items"] if row["local"] == "Base P80")
+        assert updated_base_p80["coordinates"] == [
+            {"latitude": 1.255936, "longitude": 103.611066},
+            {"latitude": 1.260001, "longitude": 103.612002},
+        ]
+        assert updated_base_p80["latitude"] == 1.255936
+        assert updated_base_p80["longitude"] == 103.611066
+
         mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
         assert mobile_catalog.status_code == 200
         assert mobile_catalog.json()["location_update_interval_seconds"] == 75
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
         assert synced_row["tolerance_meters"] == 250
+        assert synced_row["coordinates"] == [
+            {"latitude": 1.255936, "longitude": 103.611066},
+            {"latitude": 1.260001, "longitude": 103.612002},
+        ]
+        assert synced_row["latitude"] == 1.255936
+        assert synced_row["longitude"] == 103.611066
 
         remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
         assert remove_location.status_code == 200
