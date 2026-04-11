@@ -65,9 +65,6 @@ def has_missing_checkout_since_midnight(checkin_time: datetime | None, *, refere
 
 def is_user_inactive(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> bool:
     current_time = reference_time or now_sgt()
-    if _to_singapore_time(current_time).weekday() >= 5:
-        return False
-
     inactivity_days = calculate_inactivity_days(last_active_at, reference_time=current_time)
     return inactivity_days >= INACTIVE_AFTER_BUSINESS_DAYS
 
