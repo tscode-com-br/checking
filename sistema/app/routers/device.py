@@ -11,8 +11,13 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
 from ..services.time_utils import now_sgt
-from ..services.user_sync import create_user_sync_event, find_user_by_rfid
-from ..services.user_activity import mark_user_active
+from ..services.user_sync import (
+    apply_user_state,
+    create_user_sync_event,
+    find_user_by_rfid,
+    resolve_latest_user_activity,
+    should_enqueue_forms_for_action,
+)
 
 router = APIRouter(prefix="/api", tags=["device"])
 
@@ -146,59 +151,28 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
 
     action = payload.action
     activity_time = now_sgt()
-    user.local = payload.local
+    latest_activity = resolve_latest_user_activity(db, user=user)
+    should_queue_forms = should_enqueue_forms_for_action(
+        latest_activity=latest_activity,
+        action=action,
+        event_time=activity_time,
+    )
 
-    if action == "checkin" and user.checkin is True:
-        user.time = activity_time
-        mark_user_active(user, activity_time=user.time)
-        log_event(
-            db,
-            idempotency_key=f"{payload.request_id}:local-updated",
-            source="device",
-            action=action,
-            status="updated",
-            message="Active check-in location updated without submitting Forms",
-            rfid=user.rfid,
-            project=user.projeto,
-            device_id=payload.device_id,
-            local=payload.local,
-            request_path="/api/scan",
-            http_status=200,
-            details="forms_skipped=true; reason=already_checked_in",
-        )
-        create_user_sync_event(
-            db,
-            user=user,
-            source="rfid",
-            action=action,
-            event_time=user.time,
-            projeto=user.projeto,
-            local=user.local,
-            source_request_id=payload.request_id,
-            device_id=payload.device_id,
-        )
-        db.commit()
-        notify_admin_data_changed("checkin")
-        return ScanResponse(
-            outcome="local_updated",
-            led="green_blink_3x_1s",
-            message="Local updated for active check-in",
-        )
-
-    if action == "checkout" and user.checkin is not True:
+    if action == "checkout" and latest_activity is None:
         log_event(
             db,
             idempotency_key=f"{payload.request_id}:blocked",
             source="device",
             action=action,
             status="blocked",
-            message="Checkout blocked because user has no active check-in",
+            message="Checkout blocked because user has no prior activity",
             rfid=user.rfid,
             project=user.projeto,
             device_id=payload.device_id,
             local=payload.local,
             request_path="/api/scan",
             http_status=409,
+            details="forms_skipped=true; reason=no_prior_activity",
         )
         db.commit()
         notify_admin_data_changed("checkout")
@@ -208,9 +182,56 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             message="Check-in not found for checkout",
         )
 
-    user.checkin = action == "checkin"
-    user.time = activity_time
-    mark_user_active(user, activity_time=activity_time)
+    if not should_queue_forms:
+        apply_user_state(
+            user,
+            action=action,
+            event_time=activity_time,
+            local=payload.local,
+        )
+        log_event(
+            db,
+            idempotency_key=f"{payload.request_id}:local-updated",
+            source="device",
+            action=action,
+            status="updated",
+            message="Repeated same-day action accepted without submitting Forms",
+            rfid=user.rfid,
+            project=user.projeto,
+            device_id=payload.device_id,
+            local=payload.local,
+            request_path="/api/scan",
+            http_status=200,
+            details=(
+                f"forms_skipped=true; reason=repeated_same_action_same_day; "
+                f"latest_action={latest_activity.action if latest_activity else 'unknown'}"
+            ),
+        )
+        create_user_sync_event(
+            db,
+            user=user,
+            source="rfid",
+            action=action,
+            event_time=activity_time,
+            projeto=user.projeto,
+            local=user.local,
+            source_request_id=payload.request_id,
+            device_id=payload.device_id,
+        )
+        db.commit()
+        notify_admin_data_changed(action)
+        return ScanResponse(
+            outcome="local_updated",
+            led="green_blink_3x_1s",
+            message="Operation accepted without new Forms submission",
+        )
+
+    apply_user_state(
+        user,
+        action=action,
+        event_time=activity_time,
+        local=payload.local,
+    )
 
     try:
         enqueue_forms_submission(

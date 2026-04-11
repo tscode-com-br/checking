@@ -13,6 +13,9 @@ from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
     AdminIdentity,
+    AdminLocationsResponse,
+    AdminLocationSettingsResponse,
+    AdminLocationSettingsUpdate,
     AdminLocationUpsert,
     AdminLoginRequest,
     AdminManagementRow,
@@ -47,6 +50,7 @@ from ..services.event_archives import (
     list_event_archives_page,
 )
 from ..services.event_logger import log_event
+from ..services.location_settings import get_location_update_interval_seconds, upsert_location_update_interval_seconds
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
     calculate_inactivity_days,
@@ -68,11 +72,7 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
             continue
-        missing_checkout = action == "checkin" and has_missing_checkout_since_midnight(
-            latest_activity.event_time,
-            reference_time=current_time,
-        )
-        if is_user_inactive(latest_activity.event_time, reference_time=current_time) and not missing_checkout:
+        if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
 
         payload.append(
@@ -100,6 +100,8 @@ def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[Use
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != "checkin":
+            continue
+        if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
         if not has_missing_checkout_since_midnight(latest_activity.event_time, reference_time=current_time):
             continue
@@ -129,11 +131,6 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
-            continue
-        if latest_activity.action == "checkin" and has_missing_checkout_since_midnight(
-            latest_activity.event_time,
-            reference_time=current_time,
-        ):
             continue
         if not is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
@@ -732,10 +729,13 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     ]
 
 
-@router.get("/locations", response_model=list[LocationRow], dependencies=[Depends(require_admin_session)])
-def list_locations(db: Session = Depends(get_db)) -> list[LocationRow]:
+@router.get("/locations", response_model=AdminLocationsResponse, dependencies=[Depends(require_admin_session)])
+def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
-    return [build_location_row(row) for row in rows]
+    return AdminLocationsResponse(
+        items=[build_location_row(row) for row in rows],
+        location_update_interval_seconds=get_location_update_interval_seconds(db),
+    )
 
 
 @router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
@@ -787,6 +787,31 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
     db.commit()
     notify_admin_views("location", "event")
     return AdminActionResponse(ok=True, message="Localizacao salva com sucesso.")
+
+
+@router.post("/locations/settings", response_model=AdminLocationSettingsResponse, dependencies=[Depends(require_admin_session)])
+def update_location_settings(payload: AdminLocationSettingsUpdate, db: Session = Depends(get_db)) -> AdminLocationSettingsResponse:
+    settings = upsert_location_update_interval_seconds(
+        db,
+        seconds=payload.location_update_interval_seconds,
+    )
+    log_event(
+        db,
+        source="admin",
+        action="location_settings",
+        status="updated",
+        message="Location update interval saved via admin",
+        request_path="/api/admin/locations/settings",
+        http_status=200,
+        details=f"location_update_interval_seconds={settings.location_update_interval_seconds}",
+    )
+    db.commit()
+    notify_admin_views("location", "event")
+    return AdminLocationSettingsResponse(
+        ok=True,
+        message="Tempo de atualizacao da localizacao salvo com sucesso.",
+        location_update_interval_seconds=settings.location_update_interval_seconds,
+    )
 
 
 @router.delete("/locations/{location_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])

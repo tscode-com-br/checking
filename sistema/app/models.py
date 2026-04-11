@@ -98,6 +98,15 @@ class ManagedLocation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class MobileAppSettings(Base):
+    __tablename__ = "mobile_app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class UserSyncEvent(Base):
     __tablename__ = "user_sync_events"
     __table_args__ = (UniqueConstraint("source", "source_request_id", name="uq_user_sync_events_source_request_id"),)

@@ -78,6 +78,11 @@ class LocationRow(BaseModel):
     tolerance_meters: int
 
 
+class AdminLocationsResponse(BaseModel):
+    items: list[LocationRow]
+    location_update_interval_seconds: int = Field(ge=1, le=86400)
+
+
 class AdminLocationUpsert(BaseModel):
     location_id: int | None = Field(default=None, ge=1)
     local: str
@@ -103,6 +108,10 @@ class AdminLocationUpsert(BaseModel):
         if value < -180 or value > 180:
             raise ValueError("A longitude deve estar entre -180 e 180")
         return value
+
+
+class AdminLocationSettingsUpdate(BaseModel):
+    location_update_interval_seconds: int = Field(ge=1, le=86400)
 
 
 class AdminLoginRequest(BaseModel):
@@ -176,6 +185,10 @@ class AdminManagementRow(BaseModel):
 class AdminActionResponse(BaseModel):
     ok: bool
     message: str
+
+
+class AdminLocationSettingsResponse(AdminActionResponse):
+    location_update_interval_seconds: int = Field(ge=1, le=86400)
 
 
 class UserRow(BaseModel):
@@ -373,3 +386,4 @@ class MobileLocationRow(BaseModel):
 class MobileLocationsResponse(BaseModel):
     items: list[MobileLocationRow]
     synced_at: datetime
+    location_update_interval_seconds: int = Field(ge=1, le=86400)

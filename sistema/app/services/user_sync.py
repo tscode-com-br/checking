@@ -35,6 +35,22 @@ def normalize_event_time(value: datetime) -> datetime:
     return value.astimezone(target_tz)
 
 
+def is_same_singapore_day(first: datetime, second: datetime) -> bool:
+    return normalize_event_time(first).date() == normalize_event_time(second).date()
+
+
+def should_enqueue_forms_for_action(
+    *,
+    latest_activity: ResolvedUserActivity | None,
+    action: str,
+    event_time: datetime,
+) -> bool:
+    if latest_activity is None:
+        return True
+
+    return latest_activity.action != action or not is_same_singapore_day(latest_activity.event_time, event_time)
+
+
 def find_user_by_rfid(db: Session, rfid: str) -> User | None:
     return db.execute(select(User).where(User.rfid == rfid)).scalar_one_or_none()
 
@@ -264,6 +280,7 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
         projeto=user.projeto,
         current_action=current_action,
         current_event_time=user.time,
+        current_local=user.local,
         last_checkin_at=(
             latest_checkin.event_time
             if latest_checkin is not None

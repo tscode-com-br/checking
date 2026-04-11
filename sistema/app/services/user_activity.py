@@ -68,8 +68,8 @@ def is_user_inactive(last_active_at: datetime | None, *, reference_time: datetim
     if _to_singapore_time(current_time).weekday() >= 5:
         return False
 
-    inactivity_seconds = calculate_business_inactivity_seconds(last_active_at, reference_time=current_time)
-    return inactivity_seconds > INACTIVE_AFTER_BUSINESS_DAYS * SECONDS_PER_DAY
+    inactivity_days = calculate_inactivity_days(last_active_at, reference_time=current_time)
+    return inactivity_days >= INACTIVE_AFTER_BUSINESS_DAYS
 
 
 def mark_user_active(user: User, *, activity_time=None) -> None:

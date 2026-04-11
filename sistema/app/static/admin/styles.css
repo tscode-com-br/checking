@@ -477,6 +477,40 @@ input.inline, select.inline {
   font: inherit;
 }
 
+.locations-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.locations-settings-row label {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.locations-settings-input-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.locations-settings-input-group input {
+  width: 120px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font: inherit;
+  text-align: right;
+}
+
+.locations-settings-input-group span {
+  color: #475569;
+  font-size: 14px;
+}
+
 .pending-actions button[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
@@ -525,6 +559,16 @@ input.inline, select.inline {
     gap: 8px;
   }
   .section-header button {
+    width: 100%;
+  }
+  .locations-settings-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .locations-settings-input-group {
+    justify-content: flex-start;
+  }
+  .locations-settings-input-group input {
     width: 100%;
   }
   .locations-actions-bar {

@@ -24,6 +24,7 @@ let eventArchivesTotalPages = 0;
 let eventArchivesTotalSizeBytes = 0;
 let nextLocationDraftId = 1;
 let locationRows = [];
+let locationUpdateIntervalSeconds = 60;
 
 function setAuthStatus(message, kind = "info") {
   authStatus.textContent = message || "";
@@ -394,7 +395,7 @@ function formatUserTableTime(value) {
 }
 
 function buildPresenceRow(row, options = {}) {
-  const { highlightMissingCheckout = false, includeElapsedDays = false, allowRemove = false } = options;
+  const { highlightMissingCheckout = false, includeElapsedDays = false } = options;
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
   const timeDisplay = includeElapsedDays ? formatUserTableTime(row.time) : { formatted: formatDateTime(row.time), isStale: false };
@@ -403,7 +404,7 @@ function buildPresenceRow(row, options = {}) {
     tr.classList.add("attention-user-row");
   }
 
-  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td><td class="user-table-actions">${allowRemove ? `<button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button>` : "-"}</td>`;
+  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -492,6 +493,28 @@ function hasBlankLocationRow() {
   return locationRows.some((row) => isBlankLocationRow(row));
 }
 
+function getLocationUpdateIntervalInput() {
+  return document.getElementById("locationUpdateIntervalSeconds");
+}
+
+function isLocationUpdateIntervalEditing() {
+  const input = getLocationUpdateIntervalInput();
+  return Boolean(input) && document.activeElement === input;
+}
+
+function normalizeLocationUpdateInterval(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("O tempo para atualização da localização deve ser um inteiro em segundos.");
+  }
+
+  const seconds = Number(normalized);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
+    throw new Error("O tempo para atualização da localização deve ser um inteiro entre 1 e 86400 segundos.");
+  }
+  return String(seconds);
+}
+
 function normalizeLocationName(value) {
   const normalized = String(value || "").trim().replace(/\s+/g, " ");
   if (!normalized) {
@@ -560,6 +583,17 @@ function renderLocations() {
   locationRows.forEach((row) => body.appendChild(makeLocationRow(row)));
   applyResponsiveLabels("locationsBody");
   addButton.disabled = hasBlankLocationRow();
+}
+
+function renderLocationUpdateInterval() {
+  const input = getLocationUpdateIntervalInput();
+  if (!input) {
+    return;
+  }
+
+  const normalized = String(locationUpdateIntervalSeconds);
+  input.value = normalized;
+  input.dataset.persistedValue = normalized;
 }
 
 function focusLocationRow(rowId) {
@@ -647,9 +681,38 @@ async function removeLocationRow(rowId) {
   setStatus(response.message, true);
 }
 
+async function saveLocationUpdateInterval() {
+  const input = getLocationUpdateIntervalInput();
+  if (!input) {
+    return;
+  }
+
+  const normalized = normalizeLocationUpdateInterval(input.value);
+  if (normalized === String(locationUpdateIntervalSeconds)) {
+    input.value = normalized;
+    return;
+  }
+
+  input.disabled = true;
+  try {
+    const response = await postJson("/api/admin/locations/settings", {
+      location_update_interval_seconds: Number(normalized),
+    });
+    locationUpdateIntervalSeconds = response.location_update_interval_seconds;
+    renderLocationUpdateInterval();
+    setStatus(response.message, true);
+  } catch (error) {
+    renderLocationUpdateInterval();
+    throw error;
+  } finally {
+    input.disabled = false;
+  }
+}
+
 async function loadLocations() {
-  const rows = await fetchJson("/api/admin/locations");
-  locationRows = rows.map((row) =>
+  const response = await fetchJson("/api/admin/locations");
+  locationUpdateIntervalSeconds = response.location_update_interval_seconds;
+  locationRows = response.items.map((row) =>
     createLocationRow({
       id: row.id,
       local: row.local,
@@ -659,6 +722,7 @@ async function loadLocations() {
     })
   );
   renderLocations();
+  renderLocationUpdateInterval();
 }
 
 function makePendingRow(row) {
@@ -742,6 +806,7 @@ function makeAdministratorRow(row) {
 
 function hasPendingEditInProgress() {
   return locationRows.some((row) => row.isEditing)
+    || isLocationUpdateIntervalEditing()
     || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
 }
 
@@ -1380,6 +1445,21 @@ function bindActions() {
   });
 
   document.getElementById("addLocationButton").addEventListener("click", addLocationRow);
+  document.getElementById("locationUpdateIntervalSeconds").addEventListener("change", () => {
+    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
+  });
+  document.getElementById("locationUpdateIntervalSeconds").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      renderLocationUpdateInterval();
+      event.currentTarget.blur();
+    }
+  });
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const target = event.target;
@@ -1413,20 +1493,6 @@ function bindActions() {
       saveRegisteredUser(target.dataset.userSave).catch((error) => setStatus(error.message, false));
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
-
-  document.getElementById("checkinBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
-
-  document.getElementById("checkoutBody").addEventListener("click", (event) => {
-    const target = event.target;
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
     }

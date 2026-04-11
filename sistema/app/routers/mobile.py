@@ -19,6 +19,7 @@ from ..schemas import (
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
+from ..services.location_settings import get_location_update_interval_seconds
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -27,6 +28,8 @@ from ..services.user_sync import (
     ensure_current_user_state_event,
     normalize_event_time,
     normalize_user_key,
+    resolve_latest_user_activity,
+    should_enqueue_forms_for_action,
 )
 from ..services.time_utils import now_sgt
 
@@ -75,6 +78,7 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
             for row in rows
         ],
         synced_at=now_sgt(),
+        location_update_interval_seconds=get_location_update_interval_seconds(db),
     )
 
 
@@ -100,6 +104,12 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
     event_time = normalize_event_time(payload.event_time)
     ensure_current_user_state_event(db, user=user)
+    latest_activity = resolve_latest_user_activity(db, user=user)
+    should_queue_forms = should_enqueue_forms_for_action(
+        latest_activity=latest_activity,
+        action=payload.action,
+        event_time=event_time,
+    )
     apply_user_state(
         user,
         action=payload.action,
@@ -107,6 +117,46 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         projeto=payload.projeto,
         local=resolved_local,
     )
+
+    if not should_queue_forms:
+        create_user_sync_event(
+            db,
+            user=user,
+            source="android",
+            action=payload.action,
+            event_time=event_time,
+            projeto=payload.projeto,
+            local=resolved_local,
+            source_request_id=payload.client_event_id,
+            device_id="android-app",
+        )
+        log_event(
+            db,
+            idempotency_key=f"mobile-submit:{payload.client_event_id}",
+            source="mobile",
+            action=payload.action,
+            status="updated",
+            message="Mobile event accepted without new Forms submission",
+            rfid=user.rfid,
+            project=user.projeto,
+            local=resolved_local,
+            request_path="/api/mobile/events/submit",
+            http_status=200,
+            details=(
+                f"chave={user.chave}; event_time={event_time.isoformat()}; forms_skipped=true; "
+                "reason=repeated_same_action_same_day"
+            ),
+        )
+        db.commit()
+        notify_admin_data_changed(payload.action)
+        state = build_mobile_sync_state(db, chave=user.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=False,
+            queued_forms=False,
+            message="Mobile event accepted without new Forms submission",
+            state=state,
+        )
 
     try:
         enqueue_forms_submission(
@@ -191,6 +241,12 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
     event_time = normalize_event_time(payload.event_time)
     ensure_current_user_state_event(db, user=user)
+    latest_activity = resolve_latest_user_activity(db, user=user)
+    should_queue_forms = should_enqueue_forms_for_action(
+        latest_activity=latest_activity,
+        action=payload.action,
+        event_time=event_time,
+    )
     apply_user_state(
         user,
         action=payload.action,
@@ -198,6 +254,49 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
         projeto=payload.projeto,
         local=resolved_local,
     )
+
+    if not should_queue_forms:
+        create_user_sync_event(
+            db,
+            user=user,
+            source="android_forms",
+            action=payload.action,
+            event_time=event_time,
+            projeto=user.projeto,
+            local=resolved_local,
+            ontime=ontime,
+            source_request_id=payload.client_event_id,
+            device_id="android-app",
+        )
+        log_event(
+            db,
+            idempotency_key=f"mobile-forms-submit:{payload.client_event_id}",
+            source="mobile",
+            action=payload.action,
+            status="updated",
+            message="Mobile Forms event accepted without new Forms submission",
+            rfid=user.rfid,
+            project=user.projeto,
+            local=resolved_local,
+            request_path="/api/mobile/events/forms-submit",
+            http_status=200,
+            ontime=ontime,
+            details=(
+                f"chave={user.chave}; event_time={event_time.isoformat()}; "
+                f"forms_skipped=true; informe={payload.informe}; ontime={ontime}; "
+                "reason=repeated_same_action_same_day"
+            ),
+        )
+        db.commit()
+        notify_admin_data_changed(payload.action)
+        state = build_mobile_sync_state(db, chave=user.chave)
+        return MobileSubmitResponse(
+            ok=True,
+            duplicate=False,
+            queued_forms=False,
+            message="Mobile Forms event accepted without new Forms submission",
+            state=state,
+        )
 
     try:
         enqueue_forms_submission(

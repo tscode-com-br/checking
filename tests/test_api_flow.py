@@ -1,8 +1,9 @@
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -28,10 +29,12 @@ from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import SessionLocal
 from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User, UserSyncEvent
+from sistema.app.routers import admin as admin_router
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
+from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.time_utils import now_sgt
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid
 
@@ -295,6 +298,129 @@ def test_checkout_without_checkin_returns_red_2s(monkeypatch):
         events = client.get("/api/admin/events")
         assert events.status_code == 200
         assert any(event["rfid"] == "CARD2000" and event["status"] == "blocked" for event in events.json())
+
+
+def test_repeated_same_day_checkout_updates_state_without_forms_submission(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto, ontime=True: {
+            "success": True,
+            "message": f"mocked {action}",
+            "retry_count": 0,
+        },
+    )
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "CARD2001", "nome": "Usuario Checkout Repetido", "chave": "EG57", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200
+
+        scan_checkin = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "CARD2001",
+                "action": "checkin",
+                "device_id": "ESP32-TEST",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_checkin.status_code == 200
+        assert scan_checkin.json()["outcome"] == "submitted"
+
+        first_checkout = client.post(
+            "/api/scan",
+            json={
+                "local": "co80-a",
+                "rfid": "CARD2001",
+                "action": "checkout",
+                "device_id": "ESP32-TEST",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert first_checkout.status_code == 200
+        assert first_checkout.json()["outcome"] == "submitted"
+
+        second_checkout = client.post(
+            "/api/scan",
+            json={
+                "local": "co80-b",
+                "rfid": "CARD2001",
+                "action": "checkout",
+                "device_id": "ESP32-TEST",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert second_checkout.status_code == 200
+        assert second_checkout.json()["outcome"] == "local_updated"
+        assert second_checkout.json()["led"] == "green_blink_3x_1s"
+
+        with SessionLocal() as db:
+            user = get_user_by_rfid(db, "CARD2001")
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.rfid == "CARD2001")).scalars().all()
+
+            assert user.checkin is False
+            assert user.local == "co80-b"
+            assert len(queued) == 2
+
+
+def test_repeated_checkout_after_singapore_midnight_is_queued_again(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto, ontime=True: {
+            "success": True,
+            "message": f"mocked {action}",
+            "retry_count": 0,
+        },
+    )
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "CARD2002", "nome": "Usuario Midnight", "chave": "EG58", "projeto": "P83"},
+        )
+        assert save_user.status_code == 200
+
+        with SessionLocal() as db:
+            user = get_user_by_rfid(db, "CARD2002")
+            prior_checkout = now_sgt() - timedelta(days=1)
+            user.checkin = False
+            user.local = "co83-old"
+            user.time = prior_checkout
+            user.last_active_at = prior_checkout
+            db.commit()
+
+        scan_checkout = client.post(
+            "/api/scan",
+            json={
+                "local": "co83-new",
+                "rfid": "CARD2002",
+                "action": "checkout",
+                "device_id": "ESP32-TEST",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_checkout.status_code == 200
+        assert scan_checkout.json()["outcome"] == "submitted"
+        assert scan_checkout.json()["led"] == "green_1s"
+
+        with SessionLocal() as db:
+            user = get_user_by_rfid(db, "CARD2002")
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.rfid == "CARD2002")).scalars().all()
+
+            assert user.checkin is False
+            assert user.local == "co83-new"
+            assert len(queued) == 1
 
 
 def test_forms_step_timeout_returns_red_blink_pattern(monkeypatch):
@@ -901,16 +1027,10 @@ def test_list_and_remove_registered_user():
         assert any(event["rfid"] == "USERDEL1" for event in events_after.json())
 
 
-def test_inactive_users_are_listed_by_highest_inactivity_and_kept_visible_in_checkin_checkout(monkeypatch):
-    monkeypatch.setattr(
-        FormsWorker,
-        "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
-            "success": True,
-            "message": f"mocked {action}",
-            "retry_count": 0,
-        },
-    )
+def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch):
+    fixed_now = datetime(2024, 4, 8, 12, 0, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(user_activity_module, "now_sgt", lambda: fixed_now)
 
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -926,70 +1046,124 @@ def test_inactive_users_are_listed_by_highest_inactivity_and_kept_visible_in_che
             "/api/admin/users",
             json={"rfid": "INA003", "nome": "Bruno Inativo", "chave": "CC33", "projeto": "P80"},
         )
+        save_d = client.post(
+            "/api/admin/users",
+            json={"rfid": "INA004", "nome": "Carlos Checkout", "chave": "DD55", "projeto": "P82"},
+        )
+        save_e = client.post(
+            "/api/admin/users",
+            json={"rfid": "INA005", "nome": "Eva Sem Checkout", "chave": "EE66", "projeto": "P83"},
+        )
         assert save_a.status_code == 200
         assert save_b.status_code == 200
         assert save_c.status_code == 200
-
-        scan_active = client.post(
-            "/api/scan",
-            json={
-                "local": "main",
-                "rfid": "INA001",
-                "action": "checkin",
-                "device_id": "ESP32-INACTIVE",
-                "request_id": f"req-{uuid.uuid4().hex}",
-                "shared_key": "device-test-key",
-            },
-        )
-        assert scan_active.status_code == 200
+        assert save_d.status_code == 200
+        assert save_e.status_code == 200
 
         with SessionLocal() as db:
-            inactive_three_days = now_sgt() - timedelta(days=3)
-            inactive_five_days = now_sgt() - timedelta(days=5)
-
             user_active = get_user_by_rfid(db, "INA001")
             user_active.checkin = True
-            user_active.time = now_sgt()
-            user_active.last_active_at = now_sgt()
+            user_active.local = "main"
+            user_active.time = fixed_now - timedelta(hours=3)
+            user_active.last_active_at = fixed_now - timedelta(hours=3)
             user_active.inactivity_days = 0
 
             user_two = get_user_by_rfid(db, "INA002")
             user_two.checkin = True
-            user_two.time = inactive_three_days
             user_two.local = "co83"
-            user_two.last_active_at = inactive_three_days
+            user_two.time = datetime(2024, 4, 3, 11, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_two.last_active_at = user_two.time
             user_two.inactivity_days = 0
 
             user_three = get_user_by_rfid(db, "INA003")
             user_three.checkin = False
-            user_three.time = inactive_five_days
             user_three.local = "main"
-            user_three.last_active_at = inactive_five_days
+            user_three.time = datetime(2024, 4, 3, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_three.last_active_at = user_three.time
             user_three.inactivity_days = 0
 
-            still_active = get_user_by_rfid(db, "INA001")
-            still_active.checkin = True
-            still_active.time = now_sgt()
-            still_active.last_active_at = now_sgt()
-            still_active.inactivity_days = 0
+            user_four = get_user_by_rfid(db, "INA004")
+            user_four.checkin = False
+            user_four.local = "co80"
+            user_four.time = datetime(2024, 4, 4, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_four.last_active_at = user_four.time
+            user_four.inactivity_days = 0
+
+            user_five = get_user_by_rfid(db, "INA005")
+            user_five.checkin = True
+            user_five.local = "un83"
+            user_five.time = datetime(2024, 4, 5, 11, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_five.last_active_at = user_five.time
+            user_five.inactivity_days = 0
             db.commit()
 
         inactive_rows = client.get("/api/admin/inactive")
         assert inactive_rows.status_code == 200
         inactive_payload = inactive_rows.json()
         assert all(isinstance(row["id"], int) and row["id"] > 0 for row in inactive_payload)
-        assert [row["nome"] for row in inactive_payload] == ["Bruno Inativo", "Ana Inativa"]
-        assert [row["inactivity_days"] for row in inactive_payload] == [5, 3]
+        assert [row["nome"] for row in inactive_payload] == ["Ana Inativa", "Bruno Inativo"]
+        assert [row["inactivity_days"] for row in inactive_payload] == [3, 3]
+        assert [row["latest_action"] for row in inactive_payload] == ["checkin", "checkout"]
+        assert inactive_payload[0]["latest_time"].startswith("2024-04-03T11:00:00")
+        assert inactive_payload[1]["latest_time"].startswith("2024-04-03T09:00:00")
 
         checkin_rows = client.get("/api/admin/checkin")
         assert checkin_rows.status_code == 200
         checkin_payload = checkin_rows.json()
-        assert any(row["rfid"] == "INA002" and row["id"] > 0 for row in checkin_payload)
+        assert any(row["rfid"] == "INA001" and row["id"] > 0 for row in checkin_payload)
+        assert all(row["rfid"] != "INA002" for row in checkin_payload)
+        assert any(row["rfid"] == "INA005" and row["id"] > 0 for row in checkin_payload)
+
+        missing_checkout_rows = client.get("/api/admin/missing-checkout")
+        assert missing_checkout_rows.status_code == 200
+        missing_checkout_payload = missing_checkout_rows.json()
+        assert [row["rfid"] for row in missing_checkout_payload] == ["INA005"]
+        assert missing_checkout_payload[0]["time"].startswith("2024-04-05T11:00:00")
 
         checkout_rows = client.get("/api/admin/checkout")
         assert checkout_rows.status_code == 200
         checkout_payload = checkout_rows.json()
-        assert any(row["rfid"] == "INA003" and row["id"] > 0 for row in checkout_payload)
+        assert all(row["rfid"] != "INA003" for row in checkout_payload)
+        assert any(row["rfid"] == "INA004" and row["id"] > 0 for row in checkout_payload)
+
+
+def test_inactive_users_are_hidden_on_weekends_and_weekends_do_not_increase_inactivity(monkeypatch):
+    fixed_now = datetime(2024, 4, 7, 12, 0, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(user_activity_module, "now_sgt", lambda: fixed_now)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "INA010", "nome": "Fabio Fim Semana", "chave": "DD44", "projeto": "P82"},
+        )
+        assert save_user.status_code == 200
+
+        with SessionLocal() as db:
+            weekend_user = get_user_by_rfid(db, "INA010")
+            weekend_user.checkin = True
+            weekend_user.local = "main"
+            weekend_user.time = datetime(2024, 4, 4, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            weekend_user.last_active_at = weekend_user.time
+            weekend_user.inactivity_days = 0
+            db.commit()
+
+        inactive_rows = client.get("/api/admin/inactive")
+        assert inactive_rows.status_code == 200
+        assert inactive_rows.json() == []
+
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200
+        assert any(row["rfid"] == "INA010" for row in checkin_rows.json())
+
+        missing_checkout_rows = client.get("/api/admin/missing-checkout")
+        assert missing_checkout_rows.status_code == 200
+        assert any(row["rfid"] == "INA010" for row in missing_checkout_rows.json())
+
+        with SessionLocal() as db:
+            weekend_user = get_user_by_rfid(db, "INA010")
+            assert weekend_user.inactivity_days == 1
 
 
 def test_admin_presence_lists_follow_latest_activity_even_when_current_state_is_missing_or_stale():
@@ -1195,6 +1369,133 @@ def test_mobile_forms_submit_autocreates_user_with_app_origin_name():
             assert user.nome == "Oriundo do Aplicativo"
             assert user.rfid is None
             assert user.projeto == "P82"
+
+
+def test_mobile_forms_submit_skips_same_day_repeated_action():
+    first_event_time = now_sgt()
+    second_event_time = first_event_time + timedelta(minutes=5)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF12",
+                "projeto": "P82",
+                "action": "checkin",
+                "local": "Area A",
+                "informe": "normal",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"android-forms-same-day-1-{uuid.uuid4().hex}",
+            },
+        )
+        second = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF12",
+                "projeto": "P82",
+                "action": "checkin",
+                "local": "Area B",
+                "informe": "normal",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"android-forms-same-day-2-{uuid.uuid4().hex}",
+            },
+        )
+
+        assert first.status_code == 200
+        assert first.json()["queued_forms"] is True
+        assert second.status_code == 200
+        assert second.json()["ok"] is True
+        assert second.json()["duplicate"] is False
+        assert second.json()["queued_forms"] is False
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "AF12")
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.chave == "AF12")).scalars().all()
+            sync_events = db.execute(
+                select(UserSyncEvent).where(UserSyncEvent.chave == "AF12", UserSyncEvent.action == "checkin")
+            ).scalars().all()
+
+            assert user.checkin is True
+            assert user.local == "Area B"
+            assert len(queued) == 1
+            assert len(sync_events) == 2
+
+
+def test_mobile_forms_submit_requeues_same_action_after_singapore_midnight():
+    first_event_time = now_sgt() - timedelta(days=1)
+    second_event_time = now_sgt()
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF13",
+                "projeto": "P83",
+                "action": "checkin",
+                "local": "Area A",
+                "informe": "normal",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"android-forms-next-day-1-{uuid.uuid4().hex}",
+            },
+        )
+        second = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF13",
+                "projeto": "P83",
+                "action": "checkin",
+                "local": "Area C",
+                "informe": "normal",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"android-forms-next-day-2-{uuid.uuid4().hex}",
+            },
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["ok"] is True
+        assert second.json()["duplicate"] is False
+        assert second.json()["queued_forms"] is True
+
+        with SessionLocal() as db:
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.chave == "AF13")).scalars().all()
+            user = get_user_by_chave(db, "AF13")
+
+            assert len(queued) == 2
+            assert user.checkin is True
+            assert user.local == "Area C"
+
+
+def test_mobile_state_returns_current_location_for_checked_in_user():
+    with TestClient(app) as client:
+        submit_response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF14",
+                "projeto": "P80",
+                "action": "checkin",
+                "local": "Base P80",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-forms-state-{uuid.uuid4().hex}",
+            },
+        )
+        assert submit_response.status_code == 200
+
+        state_response = client.get(
+            "/api/mobile/state?chave=AF14",
+            headers=MOBILE_HEADERS,
+        )
+        assert state_response.status_code == 200
+        payload = state_response.json()
+        assert payload["found"] is True
+        assert payload["current_action"] == "checkin"
+        assert payload["current_local"] == "Base P80"
 
 
 def test_admin_checkin_list_accepts_mobile_user_without_rfid():
@@ -2078,8 +2379,17 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
-        base_p80 = next(row for row in locations.json() if row["local"] == "Base P80")
+        assert locations.json()["location_update_interval_seconds"] == 60
+        base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["tolerance_meters"] == 150
+
+        update_location_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_update_interval_seconds": 75},
+        )
+        assert update_location_settings.status_code == 200
+        assert update_location_settings.json()["ok"] is True
+        assert update_location_settings.json()["location_update_interval_seconds"] == 75
 
         update_location = client.post(
             "/api/admin/locations",
@@ -2096,6 +2406,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
         assert mobile_catalog.status_code == 200
+        assert mobile_catalog.json()["location_update_interval_seconds"] == 75
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
         assert synced_row["tolerance_meters"] == 250
 
@@ -2105,7 +2416,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         locations_after = client.get("/api/admin/locations")
         assert locations_after.status_code == 200
-        assert all(row["id"] != base_p80["id"] for row in locations_after.json())
+        assert all(row["id"] != base_p80["id"] for row in locations_after.json()["items"])
 
 
 def test_mobile_forms_submit_uses_default_and_custom_local():
