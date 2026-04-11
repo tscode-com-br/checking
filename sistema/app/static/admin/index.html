@@ -86,7 +86,7 @@
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
+              <tr><th>Horário</th><th>Assiduidade</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
             </thead>
             <tbody id="checkinBody"></tbody>
           </table>
@@ -100,7 +100,7 @@
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
+              <tr><th>Horário</th><th>Assiduidade</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Local</th></tr>
             </thead>
             <tbody id="checkoutBody"></tbody>
           </table>
@@ -162,18 +162,20 @@
         <div class="locations-actions-bar">
           <button id="addLocationButton" type="button">Adicionar Localização</button>
         </div>
-        <div class="locations-settings-row">
-          <label for="locationUpdateIntervalSeconds">Tempo para atualização da localização:</label>
-          <div class="locations-settings-input-group">
-            <input id="locationUpdateIntervalSeconds" type="number" min="1" max="86400" inputmode="numeric" value="60" />
-            <span>segundos</span>
+        <div class="locations-settings-panel">
+          <div class="locations-settings-row">
+            <label for="locationUpdateIntervalSeconds">Tempo para atualização da localização:</label>
+            <div class="locations-settings-input-group">
+              <input id="locationUpdateIntervalSeconds" type="number" min="1" max="86400" inputmode="numeric" value="60" />
+              <span>segundos</span>
+            </div>
           </div>
-        </div>
-        <div class="locations-settings-row">
-          <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
-          <div class="locations-settings-input-group">
-            <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
-            <span>metros</span>
+          <div class="locations-settings-row">
+            <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
+            <div class="locations-settings-input-group">
+              <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
+              <span>metros</span>
+            </div>
           </div>
         </div>
 
@@ -210,7 +212,7 @@
         <div class="table-wrap events-wrap">
           <table class="responsive-table events-table">
             <thead>
-              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Projeto</th><th>Ontime</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
+              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Ontime</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>

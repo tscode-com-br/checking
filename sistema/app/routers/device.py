@@ -172,7 +172,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             local=payload.local,
             request_path="/api/scan",
             http_status=409,
-            details="forms_skipped=true; reason=no_prior_activity",
+            details=f"chave={user.chave}; forms_skipped=true; reason=no_prior_activity",
         )
         db.commit()
         notify_admin_data_changed("checkout")
@@ -203,7 +203,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             request_path="/api/scan",
             http_status=200,
             details=(
-                f"forms_skipped=true; reason=repeated_same_action_same_day; "
+                f"chave={user.chave}; forms_skipped=true; reason=repeated_same_action_same_day; "
                 f"latest_action={latest_activity.action if latest_activity else 'unknown'}"
             ),
         )
@@ -258,6 +258,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             local=payload.local,
             request_path="/api/scan",
             http_status=200,
+            details=f"chave={user.chave}",
             commit=True,
         )
         return ScanResponse(
@@ -279,7 +280,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         local=payload.local,
         request_path="/api/scan",
         http_status=202,
-        details="forms_deferred=true",
+        details=f"chave={user.chave}; forms_deferred=true",
     )
     create_user_sync_event(
         db,

@@ -22,6 +22,7 @@ class ResolvedUserActivity:
     action: str
     event_time: datetime
     local: str | None
+    ontime: bool | None
 
 
 def normalize_user_key(value: str) -> str:
@@ -182,11 +183,12 @@ def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActi
         candidates.append(
             (
                 user.time,
-                3,
+                2,
                 ResolvedUserActivity(
                     action="checkin" if user.checkin else "checkout",
                     event_time=user.time,
                     local=user.local,
+                    ontime=True,
                 ),
             )
         )
@@ -196,11 +198,12 @@ def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActi
         candidates.append(
             (
                 latest_sync.event_time,
-                2,
+                3,
                 ResolvedUserActivity(
                     action=latest_sync.action,
                     event_time=latest_sync.event_time,
                     local=latest_sync.local,
+                    ontime=latest_sync.ontime,
                 ),
             )
         )
@@ -216,6 +219,7 @@ def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActi
                         action=latest_check_event.action,
                         event_time=latest_check_event.event_time,
                         local=latest_check_event.local,
+                        ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
                     ),
                 )
             )

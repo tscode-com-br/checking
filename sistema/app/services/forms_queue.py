@@ -138,6 +138,7 @@ def _process_submission(submission_id: int) -> None:
             retry_count=result.get("retry_count", 0),
             details=(
                 (
+                    f"chave={submission.chave}; "
                     f"ontime={submission.ontime}; "
                     f"queue_status={submission.status}; "
                     f"error_code={result.get('error_code', 'none')}; "

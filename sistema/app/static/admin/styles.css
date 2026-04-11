@@ -224,7 +224,7 @@ th, td {
 
 th { background: #f3f4f6; }
 .events-table {
-  min-width: 1680px;
+  min-width: 1900px;
   table-layout: fixed;
 }
 .events-table th,
@@ -270,23 +270,31 @@ th { background: #f3f4f6; }
 }
 .events-table th:nth-child(10),
 .events-table td:nth-child(10) {
-  width: 72px;
+  width: 84px;
 }
 .events-table th:nth-child(11),
 .events-table td:nth-child(11) {
-  width: 116px;
+  width: 72px;
 }
 .events-table th:nth-child(12),
 .events-table td:nth-child(12) {
-  width: 88px;
+  width: 76px;
 }
 .events-table th:nth-child(13),
 .events-table td:nth-child(13) {
-  width: 220px;
+  width: 124px;
 }
 .events-table th:nth-child(14),
 .events-table td:nth-child(14) {
-  width: 254px;
+  width: 88px;
+}
+.events-table th:nth-child(15),
+.events-table td:nth-child(15) {
+  width: 320px;
+}
+.events-table th:nth-child(16),
+.events-table td:nth-child(16) {
+  width: 112px;
 }
 .event-cell {
   display: -webkit-box;
@@ -511,6 +519,10 @@ input.inline, select.inline {
   margin-top: 14px;
 }
 
+.locations-settings-panel {
+  margin-bottom: 26px;
+}
+
 .locations-settings-row label {
   font-weight: 700;
   color: #0f172a;
@@ -649,7 +661,7 @@ input.inline, select.inline {
     align-items: stretch;
   }
   .events-table {
-    min-width: 2140px;
+    min-width: 2240px;
     table-layout: fixed;
   }
   .events-wrap {
@@ -693,23 +705,31 @@ input.inline, select.inline {
   }
   .events-table th:nth-child(10),
   .events-table td:nth-child(10) {
-    width: 88px;
+    width: 104px;
   }
   .events-table th:nth-child(11),
   .events-table td:nth-child(11) {
-    width: 180px;
+    width: 88px;
   }
   .events-table th:nth-child(12),
   .events-table td:nth-child(12) {
-    width: 100px;
+    width: 96px;
   }
   .events-table th:nth-child(13),
   .events-table td:nth-child(13) {
-    width: 320px;
+    width: 172px;
   }
   .events-table th:nth-child(14),
   .events-table td:nth-child(14) {
+    width: 104px;
+  }
+  .events-table th:nth-child(15),
+  .events-table td:nth-child(15) {
     width: 348px;
+  }
+  .events-table th:nth-child(16),
+  .events-table td:nth-child(16) {
+    width: 128px;
   }
   .events-table thead {
     clip: auto;

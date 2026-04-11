@@ -255,6 +255,7 @@ class UserRow(BaseModel):
     local: Optional[str]
     checkin: bool
     time: datetime
+    assiduidade: Literal["Normal", "Retroativo"]
 
 
 class AdminUserListRow(BaseModel):
@@ -277,6 +278,7 @@ class EventRow(BaseModel):
     id: int
     source: str
     rfid: Optional[str]
+    chave: Optional[str]
     device_id: Optional[str]
     local: Optional[str]
     action: str

@@ -67,6 +67,66 @@ from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+EVENT_KEY_FIELDS = ("approved_by", "rejected_by", "revoked_by", "updated_by", "chave")
+
+
+def format_assiduidade_label(ontime: bool | None) -> str:
+    return "Retroativo" if ontime is False else "Normal"
+
+
+def format_quantity(value: int, singular: str, plural: str) -> str:
+    return f"{value} {singular if value == 1 else plural}"
+
+
+def parse_event_details(details: str | None) -> dict[str, str]:
+    if not details:
+        return {}
+
+    parsed: dict[str, str] = {}
+    for part in str(details).split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        normalized_key = key.strip()
+        normalized_value = value.strip()
+        if normalized_key and normalized_value:
+            parsed[normalized_key] = normalized_value
+    return parsed
+
+
+def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -> str | None:
+    details_map = parse_event_details(event.details)
+    for field_name in EVENT_KEY_FIELDS:
+        field_value = details_map.get(field_name)
+        if field_value:
+            return field_value.upper()
+    if event.rfid:
+        return user_keys_by_rfid.get(event.rfid)
+    return None
+
+
+def build_location_settings_log_message(
+    *,
+    previous_interval_seconds: int,
+    current_interval_seconds: int,
+    previous_accuracy_threshold_meters: int,
+    current_accuracy_threshold_meters: int,
+) -> str:
+    changes: list[str] = []
+    if previous_interval_seconds != current_interval_seconds:
+        changes.append(
+            "O valor do tempo para atualização da localização foi ajustado para "
+            f"{format_quantity(current_interval_seconds, 'segundo', 'segundos')}."
+        )
+    if previous_accuracy_threshold_meters != current_accuracy_threshold_meters:
+        changes.append(
+            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para "
+            f"{format_quantity(current_accuracy_threshold_meters, 'metro', 'metros')}."
+        )
+    if changes:
+        return " ".join(changes)
+    return "As configurações de localização foram salvas sem alterações."
+
 
 def build_presence_rows(db: Session, *, action: str, reference_time=None) -> list[UserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
@@ -90,6 +150,7 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
                 local=latest_activity.local if latest_activity.local is not None else user.local,
                 checkin=action == "checkin",
                 time=latest_activity.event_time,
+                assiduidade=format_assiduidade_label(latest_activity.ontime),
             )
         )
 
@@ -121,6 +182,7 @@ def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[Use
                 local=latest_activity.local if latest_activity.local is not None else user.local,
                 checkin=True,
                 time=latest_activity.event_time,
+                assiduidade=format_assiduidade_label(latest_activity.ontime),
             )
         )
 
@@ -748,7 +810,11 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
 
 
 @router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
-def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db)) -> AdminActionResponse:
+def upsert_location(
+    payload: AdminLocationUpsert,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
     location = db.get(ManagedLocation, payload.location_id) if payload.location_id is not None else None
     if payload.location_id is not None and location is None:
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
@@ -801,7 +867,10 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
         local=payload.local,
         request_path="/api/admin/locations",
         http_status=200,
-        details=f"coordinates={coordinates_details}; tolerance_meters={payload.tolerance_meters}",
+        details=(
+            f"updated_by={current_admin.chave}; coordinates={coordinates_details}; "
+            f"tolerance_meters={payload.tolerance_meters}"
+        ),
     )
     db.commit()
     notify_admin_views("location", "event")
@@ -809,22 +878,37 @@ def upsert_location(payload: AdminLocationUpsert, db: Session = Depends(get_db))
 
 
 @router.post("/locations/settings", response_model=AdminLocationSettingsResponse, dependencies=[Depends(require_admin_session)])
-def update_location_settings(payload: AdminLocationSettingsUpdate, db: Session = Depends(get_db)) -> AdminLocationSettingsResponse:
+def update_location_settings(
+    payload: AdminLocationSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminLocationSettingsResponse:
+    previous_interval_seconds = get_location_update_interval_seconds(db)
+    previous_accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
     settings = upsert_location_settings(
         db,
         seconds=payload.location_update_interval_seconds,
         accuracy_threshold_meters=payload.location_accuracy_threshold_meters,
     )
+    log_message = build_location_settings_log_message(
+        previous_interval_seconds=previous_interval_seconds,
+        current_interval_seconds=settings.location_update_interval_seconds,
+        previous_accuracy_threshold_meters=previous_accuracy_threshold_meters,
+        current_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
+    )
     log_event(
         db,
         source="admin",
-        action="location_settings",
+        action="location_config",
         status="updated",
-        message="Location settings saved via admin",
+        message=log_message,
         request_path="/api/admin/locations/settings",
         http_status=200,
         details=(
+            f"updated_by={current_admin.chave}; "
+            f"previous_location_update_interval_seconds={previous_interval_seconds}; "
             f"location_update_interval_seconds={settings.location_update_interval_seconds}; "
+            f"previous_location_accuracy_threshold_meters={previous_accuracy_threshold_meters}; "
             f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}"
         ),
     )
@@ -839,7 +923,11 @@ def update_location_settings(payload: AdminLocationSettingsUpdate, db: Session =
 
 
 @router.delete("/locations/{location_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
-def remove_location(location_id: int, db: Session = Depends(get_db)) -> AdminActionResponse:
+def remove_location(
+    location_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
     location = db.get(ManagedLocation, location_id)
     if location is None:
         log_event(
@@ -850,7 +938,7 @@ def remove_location(location_id: int, db: Session = Depends(get_db)) -> AdminAct
             message="Location not found for removal",
             request_path=f"/api/admin/locations/{location_id}",
             http_status=404,
-            details=f"location_id={location_id}",
+            details=f"updated_by={current_admin.chave}; location_id={location_id}",
             commit=True,
         )
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
@@ -866,7 +954,7 @@ def remove_location(location_id: int, db: Session = Depends(get_db)) -> AdminAct
         local=location_name,
         request_path=f"/api/admin/locations/{location_id}",
         http_status=200,
-        details=f"location_id={location_id}",
+        details=f"updated_by={current_admin.chave}; location_id={location_id}",
     )
     db.commit()
     notify_admin_views("location", "event")
@@ -889,7 +977,11 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
 
 
 @router.post("/users", dependencies=[Depends(require_admin_session)])
-def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict:
+def upsert_user(
+    payload: AdminUserUpsert,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> dict:
     user = None
     linked_existing_user = False
     if payload.user_id is not None:
@@ -951,7 +1043,10 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
         request_path="/api/admin/users",
         http_status=200,
         submitted_at=now_sgt(),
-        details=f"nome={payload.nome}",
+        details=(
+            f"updated_by={current_admin.chave}; chave={payload.chave}; "
+            f"nome={payload.nome}; linked_existing_user={linked_existing_user}"
+        ),
     )
     db.commit()
     notify_admin_views("register", "event")
@@ -965,7 +1060,11 @@ def upsert_user(payload: AdminUserUpsert, db: Session = Depends(get_db)) -> dict
 
 
 @router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_session)])
-def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
+def remove_pending(
+    pending_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> dict:
     pending = db.get(PendingRegistration, pending_id)
     if pending is None:
         log_event(
@@ -976,7 +1075,7 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
             message="Pending registration not found for removal",
             request_path=f"/api/admin/pending/{pending_id}",
             http_status=404,
-            details=f"pending_id={pending_id}",
+            details=f"updated_by={current_admin.chave}; pending_id={pending_id}",
             commit=True,
         )
         raise HTTPException(status_code=404, detail="Pending registration not found")
@@ -992,7 +1091,7 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
         rfid=pending_rfid,
         request_path=f"/api/admin/pending/{pending_id}",
         http_status=200,
-        details=f"pending_id={pending_id}",
+        details=f"updated_by={current_admin.chave}; pending_id={pending_id}",
     )
     db.commit()
     notify_admin_views("pending", "event")
@@ -1000,7 +1099,11 @@ def remove_pending(pending_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.delete("/users/{user_id}", dependencies=[Depends(require_admin_session)])
-def remove_user(user_id: int, db: Session = Depends(get_db)) -> dict:
+def remove_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> dict:
     user = db.get(User, user_id)
     if user is None:
         log_event(
@@ -1011,14 +1114,16 @@ def remove_user(user_id: int, db: Session = Depends(get_db)) -> dict:
             message="User not found for removal",
             request_path=f"/api/admin/users/{user_id}",
             http_status=404,
-            details=f"user_id={user_id}",
+            details=f"updated_by={current_admin.chave}; user_id={user_id}",
             commit=True,
         )
         raise HTTPException(status_code=404, detail="User not found")
 
+    user_rfid = user.rfid
+    user_key = user.chave
     pending = None
-    if user.rfid is not None:
-        pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == user.rfid)).scalar_one_or_none()
+    if user_rfid is not None:
+        pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == user_rfid)).scalar_one_or_none()
     if pending is not None:
         db.delete(pending)
 
@@ -1030,10 +1135,13 @@ def remove_user(user_id: int, db: Session = Depends(get_db)) -> dict:
         action="register",
         status="removed",
         message="User removed via admin",
-        rfid=user.rfid,
+        rfid=user_rfid,
         request_path=f"/api/admin/users/{user_id}",
         http_status=200,
-        details=f"user_id={user_id}; pending_removed={pending is not None}",
+        details=(
+            f"updated_by={current_admin.chave}; chave={user_key}; user_id={user_id}; "
+            f"pending_removed={pending is not None}"
+        ),
     )
     db.commit()
     notify_admin_views("register", "event")
@@ -1048,11 +1156,20 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
         .order_by(desc(CheckEvent.id))
         .limit(200)
     ).scalars().all()
+    rfids = sorted({row.rfid for row in rows if row.rfid})
+    user_keys_by_rfid: dict[str, str] = {}
+    if rfids:
+        user_keys_by_rfid = {
+            rfid: chave
+            for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
+            if rfid is not None
+        }
     return [
         EventRow(
             id=r.id,
             source=r.source,
             rfid=r.rfid,
+            chave=resolve_event_key(r, user_keys_by_rfid=user_keys_by_rfid),
             device_id=r.device_id,
             local=r.local,
             action=r.action,

@@ -259,6 +259,15 @@ def test_explicit_checkin_and_checkout_flow(monkeypatch):
         assert checkin_rows_after.status_code == 200
         assert all(row["rfid"] != "CARD1000" for row in checkin_rows_after.json())
 
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        assert any(
+            event["rfid"] == "CARD1000"
+            and event["chave"] == "AB12"
+            and event["request_path"] == "/api/scan"
+            for event in events.json()
+        )
+
 
 def test_checkout_without_checkin_returns_red_2s(monkeypatch):
     monkeypatch.setattr(
@@ -1344,6 +1353,54 @@ def test_admin_presence_lists_follow_latest_activity_even_when_current_state_is_
         assert all(row["chave"] != "LT03" for row in checkout_payload)
 
 
+def test_admin_presence_lists_include_assiduidade_labels():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "ASSI01", "nome": "Usuario RFID", "chave": "AQ11", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200
+
+        rfid_checkin = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "ASSI01",
+                "action": "checkin",
+                "device_id": "ESP32-ASSI",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert rfid_checkin.status_code == 200
+
+        retroativo_checkout = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AQ22",
+                "projeto": "P82",
+                "action": "checkout",
+                "informe": "Retroativo",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-forms-assiduidade-{uuid.uuid4().hex}",
+            },
+        )
+        assert retroativo_checkout.status_code == 200
+
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200
+        checkin_match = next(row for row in checkin_rows.json() if row["chave"] == "AQ11")
+        assert checkin_match["assiduidade"] == "Normal"
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200
+        checkout_match = next(row for row in checkout_rows.json() if row["chave"] == "AQ22")
+        assert checkout_match["assiduidade"] == "Retroativo"
+
+
 def test_mobile_sync_autocreates_user_and_updates_state():
     with TestClient(app) as client:
         event_time = now_sgt().isoformat()
@@ -1850,10 +1907,14 @@ def test_mobile_forms_submit_accepts_retroativo_and_persists_ontime_false(monkey
             event["request_path"] == "/api/mobile/events/forms-submit"
             and event["ontime"] is False
             and event["status"] == "queued"
+            and event["chave"] == "RT11"
             for event in events.json()
         )
         assert any(
-            event["source"] == "forms" and event["ontime"] is False and event["status"] == "success"
+            event["source"] == "forms"
+            and event["ontime"] is False
+            and event["status"] == "success"
+            and event["chave"] == "RT11"
             for event in events.json()
         )
 
@@ -2456,6 +2517,19 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert update_location_settings.json()["ok"] is True
         assert update_location_settings.json()["location_update_interval_seconds"] == 75
         assert update_location_settings.json()["location_accuracy_threshold_meters"] == 45
+
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        location_settings_event = next(
+            event
+            for event in events.json()
+            if event["action"] == "location_config" and event["request_path"] == "/api/admin/locations/settings"
+        )
+        assert location_settings_event["chave"] == ADMIN_LOGIN_CHAVE
+        assert location_settings_event["message"] == (
+            "O valor do tempo para atualização da localização foi ajustado para 75 segundos. "
+            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para 45 metros."
+        )
 
         update_location = client.post(
             "/api/admin/locations",

@@ -8,6 +8,7 @@ const sessionUserLabel = document.getElementById("sessionUserLabel");
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
 const ARCHIVE_PAGE_SIZE = 8;
+const LOCATION_SETTINGS_LOG_DEBOUNCE_MS = 5000;
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -27,6 +28,8 @@ let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let locationUpdateIntervalSeconds = 60;
 let locationAccuracyThresholdMeters = 30;
+let locationSettingsSaveTimer = null;
+let locationSettingsDirty = false;
 
 function setAuthStatus(message, kind = "info") {
   authStatus.textContent = message || "";
@@ -45,6 +48,8 @@ function clearStatus() {
 
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
+  clearLocationSettingsSaveTimer();
+  locationSettingsDirty = false;
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
   sessionBar.classList.add("hidden");
@@ -173,6 +178,12 @@ function formatAction(action) {
   }
   if (action === "password") {
     return "Senha";
+  }
+  if (action === "location") {
+    return "Localização";
+  }
+  if (action === "location_config" || action === "location_setting") {
+    return "Configuração de Localização";
   }
   if (action === "event_archive") {
     return "Arquivo Eventos";
@@ -406,7 +417,7 @@ function buildPresenceRow(row, options = {}) {
     tr.classList.add("attention-user-row");
   }
 
-  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -553,7 +564,9 @@ function getLocationAccuracyThresholdInput() {
 function isLocationUpdateIntervalEditing() {
   const intervalInput = getLocationUpdateIntervalInput();
   const accuracyInput = getLocationAccuracyThresholdInput();
-  return Boolean(intervalInput && document.activeElement === intervalInput)
+  return locationSettingsDirty
+    || locationSettingsSaveTimer !== null
+    || Boolean(intervalInput && document.activeElement === intervalInput)
     || Boolean(accuracyInput && document.activeElement === accuracyInput);
 }
 
@@ -694,6 +707,40 @@ function renderLocationUpdateInterval() {
     accuracyInput.value = normalizedAccuracy;
     accuracyInput.dataset.persistedValue = normalizedAccuracy;
   }
+}
+
+function clearLocationSettingsSaveTimer() {
+  if (locationSettingsSaveTimer !== null) {
+    window.clearTimeout(locationSettingsSaveTimer);
+    locationSettingsSaveTimer = null;
+  }
+}
+
+function scheduleLocationSettingsSave() {
+  const intervalInput = getLocationUpdateIntervalInput();
+  const accuracyInput = getLocationAccuracyThresholdInput();
+  if (!intervalInput || !accuracyInput) {
+    return;
+  }
+
+  locationSettingsDirty = true;
+  clearLocationSettingsSaveTimer();
+  locationSettingsSaveTimer = window.setTimeout(() => {
+    locationSettingsSaveTimer = null;
+    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
+  }, LOCATION_SETTINGS_LOG_DEBOUNCE_MS);
+  setStatus("As configurações de localização serão salvas 5 segundos após a última alteração.", true);
+}
+
+function cancelLocationSettingsSave() {
+  clearLocationSettingsSaveTimer();
+  locationSettingsDirty = false;
+  renderLocationUpdateInterval();
+}
+
+function flushLocationSettingsSave() {
+  clearLocationSettingsSaveTimer();
+  return saveLocationUpdateInterval();
 }
 
 function focusLocationRow(rowId, coordinateId = null) {
@@ -842,6 +889,7 @@ async function saveLocationUpdateInterval() {
   const intervalInput = getLocationUpdateIntervalInput();
   const accuracyInput = getLocationAccuracyThresholdInput();
   if (!intervalInput || !accuracyInput) {
+    locationSettingsDirty = false;
     return;
   }
 
@@ -853,6 +901,7 @@ async function saveLocationUpdateInterval() {
   ) {
     intervalInput.value = normalizedInterval;
     accuracyInput.value = normalizedAccuracy;
+    locationSettingsDirty = false;
     return;
   }
 
@@ -865,9 +914,11 @@ async function saveLocationUpdateInterval() {
     });
     locationUpdateIntervalSeconds = response.location_update_interval_seconds;
     locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
+    locationSettingsDirty = false;
     renderLocationUpdateInterval();
     setStatus(response.message, true);
   } catch (error) {
+    locationSettingsDirty = false;
     renderLocationUpdateInterval();
     throw error;
   } finally {
@@ -1093,7 +1144,7 @@ async function loadEvents() {
   rows.forEach((row) => {
     const tr = document.createElement("tr");
     const formattedDetails = formatEventDetails(row.details);
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(formattedDetails));
     body.appendChild(tr);
   });
@@ -1502,6 +1553,29 @@ async function bootstrapAdmin() {
   setStatus("Painel administrativo carregado.", true);
 }
 
+function bindLocationSettingsInput(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) {
+    return;
+  }
+
+  input.addEventListener("input", scheduleLocationSettingsSave);
+  input.addEventListener("change", scheduleLocationSettingsSave);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      flushLocationSettingsSave().catch((error) => setStatus(error.message, false));
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelLocationSettingsSave();
+      event.currentTarget.blur();
+    }
+  });
+}
+
 function bindActions() {
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
@@ -1616,36 +1690,8 @@ function bindActions() {
   });
 
   document.getElementById("addLocationButton").addEventListener("click", addLocationRow);
-  document.getElementById("locationUpdateIntervalSeconds").addEventListener("change", () => {
-    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
-  });
-  document.getElementById("locationUpdateIntervalSeconds").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.currentTarget.blur();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      renderLocationUpdateInterval();
-      event.currentTarget.blur();
-    }
-  });
-  document.getElementById("locationAccuracyThresholdMeters").addEventListener("change", () => {
-    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
-  });
-  document.getElementById("locationAccuracyThresholdMeters").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.currentTarget.blur();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      renderLocationUpdateInterval();
-      event.currentTarget.blur();
-    }
-  });
+  bindLocationSettingsInput("locationUpdateIntervalSeconds");
+  bindLocationSettingsInput("locationAccuracyThresholdMeters");
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const target = event.target;
