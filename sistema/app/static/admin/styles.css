@@ -480,6 +480,119 @@ input.inline, select.inline {
   width: 100%;
   padding: 4px;
 }
+
+.cadastro-table {
+  width: max-content;
+  min-width: 0;
+  table-layout: auto;
+}
+
+.cadastro-table th,
+.cadastro-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.cadastro-table th:last-child,
+.cadastro-table td:last-child {
+  width: 1%;
+}
+
+.cadastro-table input.inline,
+.cadastro-table select.inline {
+  width: auto;
+}
+
+.cadastro-table .pending-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.cadastro-table .pending-actions button {
+  white-space: nowrap;
+}
+
+.cadastro-pending-table th:nth-child(1),
+.cadastro-pending-table td:nth-child(1),
+.cadastro-users-table th:nth-child(1),
+.cadastro-users-table td:nth-child(1) {
+  min-width: 124px;
+}
+
+.cadastro-pending-table td:nth-child(2) .inline,
+.cadastro-users-table td:nth-child(2) .inline {
+  min-width: 220px;
+}
+
+.cadastro-pending-table td:nth-child(3) .inline,
+.cadastro-users-table td:nth-child(3) .inline {
+  min-width: 76px;
+}
+
+.cadastro-pending-table td:nth-child(4) .inline,
+.cadastro-users-table td:nth-child(4) .inline {
+  min-width: 82px;
+}
+
+.cadastro-locations-table td:nth-child(1) .inline {
+  min-width: 220px;
+}
+
+.cadastro-locations-table td:nth-child(3) .inline {
+  min-width: 78px;
+}
+
+.cadastro-locations-table .location-coordinates-cell {
+  min-width: 360px;
+}
+
+.cadastro-locations-table .location-coordinate-line {
+  flex-wrap: nowrap;
+}
+
+.cadastro-locations-table .location-coordinate-input {
+  min-width: 220px;
+}
+
+.cadastro-admin-table th:nth-child(1),
+.cadastro-admin-table td:nth-child(1) {
+  min-width: 76px;
+}
+
+.cadastro-admin-table th:nth-child(2),
+.cadastro-admin-table td:nth-child(2) {
+  min-width: 240px;
+}
+
+.cadastro-admin-table th:nth-child(3),
+.cadastro-admin-table td:nth-child(3) {
+  min-width: 216px;
+}
+
+.cadastro-admin-table .admin-password-editor {
+  flex-wrap: nowrap;
+}
+
+.cadastro-coordinate-frequency-table {
+  min-width: 0;
+}
+
+.cadastro-coordinate-frequency-table th,
+.cadastro-coordinate-frequency-table td {
+  white-space: nowrap;
+}
+
+.cadastro-coordinate-frequency-table th:first-child,
+.cadastro-coordinate-frequency-table td:first-child {
+  width: 1%;
+}
+
+.cadastro-coordinate-frequency-table .coordinate-frequency-cell-button,
+.cadastro-coordinate-frequency-table .coordinate-frequency-cell-input {
+  min-width: 76px;
+  white-space: nowrap;
+}
+
 .location-row td {
   vertical-align: top;
 }
@@ -558,7 +671,7 @@ input.inline, select.inline {
 }
 
 .coordinate-frequency-table {
-  min-width: 960px;
+  min-width: 0;
 }
 
 .coordinate-frequency-period-cell {
@@ -584,6 +697,8 @@ input.inline, select.inline {
 }
 
 .coordinate-frequency-cell-input {
+  min-width: 76px;
+  width: 100%;
   text-align: center;
 }
 
@@ -731,6 +846,19 @@ input.inline, select.inline {
   .responsive-table td select.inline,
   .responsive-table td button {
     width: 100%;
+  }
+  .cadastro-table {
+    width: 100%;
+    min-width: 0;
+  }
+  .cadastro-table th,
+  .cadastro-table td {
+    white-space: normal;
+  }
+  .cadastro-table .pending-actions,
+  .cadastro-admin-table .admin-password-editor,
+  .cadastro-locations-table .location-coordinate-line {
+    flex-wrap: wrap;
   }
   .location-coordinate-line {
     flex-direction: column;
