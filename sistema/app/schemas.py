@@ -24,6 +24,15 @@ def _normalize_required_local(value: str) -> str:
     return normalized
 
 
+def _normalize_required_label(value: str, field_name: str, *, max_length: int = 80) -> str:
+    normalized = " ".join(str(value).strip().split())
+    if len(normalized) < 2:
+        raise ValueError(f"{field_name} deve ter ao menos 2 caracteres")
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} deve ter no maximo {max_length} caracteres")
+    return normalized
+
+
 def _validate_latitude(value: float) -> float:
     if value < -90 or value > 90:
         raise ValueError("A latitude deve estar entre -90 e 90")
@@ -106,10 +115,17 @@ class LocationRow(BaseModel):
     tolerance_meters: int
 
 
+class CoordinateUpdateFrequencyRow(BaseModel):
+    period: str
+    values: dict[str, int]
+
+
 class AdminLocationsResponse(BaseModel):
     items: list[LocationRow]
     location_update_interval_seconds: int = Field(ge=1, le=86400)
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    coordinate_update_frequency_headers: list[str]
+    coordinate_update_frequency_rows: list[CoordinateUpdateFrequencyRow]
 
 
 class AdminLocationUpsert(BaseModel):
@@ -166,6 +182,22 @@ class AdminLocationUpsert(BaseModel):
 class AdminLocationSettingsUpdate(BaseModel):
     location_update_interval_seconds: int = Field(ge=1, le=86400)
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+
+
+class AdminCoordinateUpdateFrequencyCellUpdate(BaseModel):
+    day_label: str = Field(min_length=2, max_length=40)
+    period_label: str = Field(min_length=2, max_length=40)
+    value_seconds: int = Field(ge=1, le=86400)
+
+    @field_validator("day_label", mode="before")
+    @classmethod
+    def validate_day_label(cls, value: str) -> str:
+        return _normalize_required_label(value, "Dia da semana", max_length=40)
+
+    @field_validator("period_label", mode="before")
+    @classmethod
+    def validate_period_label(cls, value: str) -> str:
+        return _normalize_required_label(value, "Periodo", max_length=40)
 
 
 class AdminLoginRequest(BaseModel):
@@ -244,6 +276,13 @@ class AdminActionResponse(BaseModel):
 class AdminLocationSettingsResponse(AdminActionResponse):
     location_update_interval_seconds: int = Field(ge=1, le=86400)
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+
+
+class AdminCoordinateUpdateFrequencyCellResponse(AdminActionResponse):
+    day_label: str
+    period_label: str
+    value_seconds: int = Field(ge=1, le=86400)
+    location_update_interval_seconds: int = Field(ge=1, le=86400)
 
 
 class UserRow(BaseModel):
@@ -444,5 +483,6 @@ class MobileLocationRow(BaseModel):
 class MobileLocationsResponse(BaseModel):
     items: list[MobileLocationRow]
     synced_at: datetime
-    location_update_interval_seconds: int = Field(ge=1, le=86400)
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    coordinate_update_frequency_headers: list[str]
+    coordinate_update_frequency_rows: list[CoordinateUpdateFrequencyRow]

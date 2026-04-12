@@ -162,20 +162,25 @@
         <div class="locations-actions-bar">
           <button id="addLocationButton" type="button">Adicionar Localização</button>
         </div>
+        <div class="section-header coordinate-frequency-section-header">
+          <h2>Frequência de Atualização de Coordenadas</h2>
+        </div>
+        <div class="table-wrap coordinate-frequency-wrap">
+          <table class="responsive-table coordinate-frequency-table">
+            <thead id="coordinateUpdateFrequencyHead"></thead>
+            <tbody id="coordinateUpdateFrequencyBody"></tbody>
+          </table>
+        </div>
         <div class="locations-settings-panel">
-          <div class="locations-settings-row">
-            <label for="locationUpdateIntervalSeconds">Tempo para atualização da localização:</label>
-            <div class="locations-settings-input-group">
-              <input id="locationUpdateIntervalSeconds" type="number" min="1" max="86400" inputmode="numeric" value="60" />
-              <span>segundos</span>
-            </div>
-          </div>
           <div class="locations-settings-row">
             <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
             <div class="locations-settings-input-group">
               <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
               <span>metros</span>
             </div>
+          </div>
+          <div class="locations-settings-actions">
+            <button id="saveLocationSettingsButton" type="button" disabled>Salvar</button>
           </div>
         </div>
 
@@ -212,7 +217,7 @@
         <div class="table-wrap events-wrap">
           <table class="responsive-table events-table">
             <thead>
-              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Ontime</th><th>HTTP</th><th>Rota</th><th>Tentativas</th><th>Mensagem</th><th>Detalhes</th></tr>
+              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>
@@ -225,7 +230,16 @@
             <h2 id="eventDetailsTitle">Detalhes do Evento</h2>
             <button id="closeEventDetails" type="button">Fechar</button>
           </div>
-          <textarea id="eventDetailsText" class="event-details-text" readonly></textarea>
+          <div class="event-details-fields">
+            <label class="event-details-field" for="eventMessageText">
+              <span class="event-details-field-label">Mensagem</span>
+              <textarea id="eventMessageText" class="event-details-text event-message-text" readonly></textarea>
+            </label>
+            <label class="event-details-field" for="eventDetailsText">
+              <span class="event-details-field-label">Detalhes</span>
+              <textarea id="eventDetailsText" class="event-details-text" readonly></textarea>
+            </label>
+          </div>
         </div>
       </div>
 

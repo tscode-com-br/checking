@@ -8,7 +8,6 @@ const sessionUserLabel = document.getElementById("sessionUserLabel");
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
 const ARCHIVE_PAGE_SIZE = 8;
-const LOCATION_SETTINGS_LOG_DEBOUNCE_MS = 5000;
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -28,7 +27,10 @@ let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let locationUpdateIntervalSeconds = 60;
 let locationAccuracyThresholdMeters = 30;
-let locationSettingsSaveTimer = null;
+let coordinateUpdateFrequencyHeaders = [];
+let coordinateUpdateFrequencyRows = [];
+let coordinateFrequencyEditingCell = null;
+let coordinateFrequencySavingCellKey = null;
 let locationSettingsDirty = false;
 
 function setAuthStatus(message, kind = "info") {
@@ -48,7 +50,10 @@ function clearStatus() {
 
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
-  clearLocationSettingsSaveTimer();
+  coordinateUpdateFrequencyHeaders = [];
+  coordinateUpdateFrequencyRows = [];
+  coordinateFrequencyEditingCell = null;
+  coordinateFrequencySavingCellKey = null;
   locationSettingsDirty = false;
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
@@ -116,6 +121,19 @@ function formatDateTime(value) {
     second: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function formatDateTimeLines(value) {
+  const formatted = formatDateTime(value);
+  if (formatted === "-") {
+    return { date: "-", time: "" };
+  }
+
+  const [datePart, timePart, ...rest] = String(formatted).split(" ");
+  return {
+    date: datePart || formatted,
+    time: [timePart, ...rest].filter(Boolean).join(" "),
+  };
 }
 
 function getSingaporeDayKey(value) {
@@ -204,8 +222,19 @@ function formatEventDetails(details) {
   return cleanedParts.length > 0 ? cleanedParts.join("; ") : "-";
 }
 
-function makeEventCell(value) {
-  return `<span class="event-cell">${escapeHtml(value ?? "-")}</span>`;
+function makeEventCell(value, extraClass = "") {
+  const className = extraClass ? `event-cell ${extraClass}` : "event-cell";
+  return `<span class="${className}">${escapeHtml(value ?? "-")}</span>`;
+}
+
+function makeEventDateTimeCell(value) {
+  const { date, time } = formatDateTimeLines(value);
+  return `
+    <span class="event-cell event-datetime-cell">
+      <span class="event-datetime-line">${escapeHtml(date)}</span>
+      ${time ? `<span class="event-datetime-line">${escapeHtml(time)}</span>` : ""}
+    </span>
+  `;
 }
 
 function makeEventDetailsButton() {
@@ -311,8 +340,9 @@ function switchTab(tab) {
   refreshActiveTab().catch((error) => setStatus(error.message, false));
 }
 
-function openEventDetails(details) {
+function openEventDetails({ message, details }) {
   const modal = document.getElementById("eventDetailsModal");
+  document.getElementById("eventMessageText").value = message || "-";
   document.getElementById("eventDetailsText").value = details || "-";
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
@@ -553,32 +583,48 @@ function hasBlankLocationRow() {
   return locationRows.some((row) => isBlankLocationRow(row));
 }
 
-function getLocationUpdateIntervalInput() {
-  return document.getElementById("locationUpdateIntervalSeconds");
-}
-
 function getLocationAccuracyThresholdInput() {
   return document.getElementById("locationAccuracyThresholdMeters");
 }
 
-function isLocationUpdateIntervalEditing() {
-  const intervalInput = getLocationUpdateIntervalInput();
-  const accuracyInput = getLocationAccuracyThresholdInput();
-  return locationSettingsDirty
-    || locationSettingsSaveTimer !== null
-    || Boolean(intervalInput && document.activeElement === intervalInput)
-    || Boolean(accuracyInput && document.activeElement === accuracyInput);
+function getLocationSettingsSaveButton() {
+  return document.getElementById("saveLocationSettingsButton");
 }
 
-function normalizeLocationUpdateInterval(value) {
+function getCoordinateUpdateFrequencyHead() {
+  return document.getElementById("coordinateUpdateFrequencyHead");
+}
+
+function getCoordinateUpdateFrequencyBody() {
+  return document.getElementById("coordinateUpdateFrequencyBody");
+}
+
+function getCoordinateUpdateFrequencyCellKey(periodLabel, dayLabel) {
+  return `${periodLabel}::${dayLabel}`;
+}
+
+function findCoordinateUpdateFrequencyRow(periodLabel) {
+  return coordinateUpdateFrequencyRows.find((row) => row.period === periodLabel) ?? null;
+}
+
+function getCoordinateUpdateFrequencyValue(periodLabel, dayLabel) {
+  const row = findCoordinateUpdateFrequencyRow(periodLabel);
+  return row ? row.values?.[dayLabel] : null;
+}
+
+function isCoordinateUpdateFrequencyEditing() {
+  return Boolean(coordinateFrequencyEditingCell || coordinateFrequencySavingCellKey);
+}
+
+function normalizeCoordinateUpdateFrequencyValue(value) {
   const normalized = String(value ?? "").trim();
   if (!/^\d+$/.test(normalized)) {
-    throw new Error("O tempo para atualização da localização deve ser um inteiro em segundos.");
+    throw new Error("A frequência de atualização de coordenadas deve ser um inteiro em segundos.");
   }
 
   const seconds = Number(normalized);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
-    throw new Error("O tempo para atualização da localização deve ser um inteiro entre 1 e 86400 segundos.");
+    throw new Error("A frequência de atualização de coordenadas deve ser um inteiro entre 1 e 86400 segundos.");
   }
   return String(seconds);
 }
@@ -694,53 +740,240 @@ function renderLocations() {
   addButton.disabled = hasBlankLocationRow();
 }
 
-function renderLocationUpdateInterval() {
-  const intervalInput = getLocationUpdateIntervalInput();
-  const accuracyInput = getLocationAccuracyThresholdInput();
-  if (intervalInput) {
-    const normalizedInterval = String(locationUpdateIntervalSeconds);
-    intervalInput.value = normalizedInterval;
-    intervalInput.dataset.persistedValue = normalizedInterval;
+function makeCoordinateUpdateFrequencyRow(row) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td class="coordinate-frequency-period-cell">${escapeHtml(row.period)}</td>
+    ${coordinateUpdateFrequencyHeaders.map((dayLabel) => {
+      const cellKey = getCoordinateUpdateFrequencyCellKey(row.period, dayLabel);
+      const isEditing = coordinateFrequencyEditingCell
+        && getCoordinateUpdateFrequencyCellKey(
+          coordinateFrequencyEditingCell.periodLabel,
+          coordinateFrequencyEditingCell.dayLabel,
+        ) === cellKey;
+      const isSaving = coordinateFrequencySavingCellKey === cellKey;
+      const value = row.values?.[dayLabel] ?? "";
+      if (isEditing) {
+        return `
+          <td>
+            <input
+              class="inline coordinate-frequency-cell-input"
+              data-coordinate-frequency-input="true"
+              data-coordinate-frequency-period="${escapeHtml(row.period)}"
+              data-coordinate-frequency-day="${escapeHtml(dayLabel)}"
+              inputmode="numeric"
+              autocomplete="off"
+              value="${escapeHtml(coordinateFrequencyEditingCell.draftValue)}"
+            />
+          </td>
+        `;
+      }
+      return `
+        <td>
+          <button
+            type="button"
+            class="coordinate-frequency-cell-button${isSaving ? " is-saving" : ""}"
+            data-coordinate-frequency-edit="true"
+            data-coordinate-frequency-period="${escapeHtml(row.period)}"
+            data-coordinate-frequency-day="${escapeHtml(dayLabel)}"
+            ${isSaving ? "disabled" : ""}
+          >${isSaving ? "Salvando..." : escapeHtml(String(value))}</button>
+        </td>
+      `;
+    }).join("")}
+  `;
+  return tr;
+}
+
+function renderCoordinateUpdateFrequencyTable() {
+  const head = getCoordinateUpdateFrequencyHead();
+  const body = getCoordinateUpdateFrequencyBody();
+  if (!head || !body) {
+    return;
   }
+
+  if (!coordinateUpdateFrequencyHeaders.length || !coordinateUpdateFrequencyRows.length) {
+    head.innerHTML = "";
+    body.innerHTML = "";
+    return;
+  }
+
+  head.innerHTML = `
+    <tr>
+      <th>Período</th>
+      ${coordinateUpdateFrequencyHeaders.map((dayLabel) => `<th>${escapeHtml(dayLabel)}</th>`).join("")}
+    </tr>
+  `;
+  body.innerHTML = "";
+  coordinateUpdateFrequencyRows.forEach((row) => body.appendChild(makeCoordinateUpdateFrequencyRow(row)));
+  applyResponsiveLabels("coordinateUpdateFrequencyBody");
+  if (coordinateFrequencyEditingCell) {
+    focusCoordinateUpdateFrequencyInput();
+  }
+}
+
+function focusCoordinateUpdateFrequencyInput() {
+  window.requestAnimationFrame(() => {
+    document.querySelector('[data-coordinate-frequency-input="true"]')?.focus();
+  });
+}
+
+function startCoordinateUpdateFrequencyEdit(periodLabel, dayLabel) {
+  const cellKey = getCoordinateUpdateFrequencyCellKey(periodLabel, dayLabel);
+  if (coordinateFrequencySavingCellKey) {
+    return;
+  }
+  if (
+    coordinateFrequencyEditingCell
+    && getCoordinateUpdateFrequencyCellKey(
+      coordinateFrequencyEditingCell.periodLabel,
+      coordinateFrequencyEditingCell.dayLabel,
+    ) !== cellKey
+  ) {
+    return;
+  }
+  const currentValue = getCoordinateUpdateFrequencyValue(periodLabel, dayLabel);
+  if (currentValue === null || currentValue === undefined) {
+    return;
+  }
+  coordinateFrequencyEditingCell = {
+    periodLabel,
+    dayLabel,
+    originalValue: String(currentValue),
+    draftValue: "",
+  };
+  renderCoordinateUpdateFrequencyTable();
+}
+
+function updateCoordinateUpdateFrequencyDraft(value) {
+  if (!coordinateFrequencyEditingCell) {
+    return;
+  }
+  coordinateFrequencyEditingCell.draftValue = String(value ?? "");
+}
+
+function cancelCoordinateUpdateFrequencyEdit() {
+  if (!coordinateFrequencyEditingCell) {
+    return;
+  }
+  coordinateFrequencyEditingCell = null;
+  renderCoordinateUpdateFrequencyTable();
+}
+
+function applyCoordinateUpdateFrequencyCellUpdate(periodLabel, dayLabel, valueSeconds) {
+  const row = findCoordinateUpdateFrequencyRow(periodLabel);
+  if (!row) {
+    return;
+  }
+  row.values = {
+    ...row.values,
+    [dayLabel]: valueSeconds,
+  };
+}
+
+async function commitCoordinateUpdateFrequencyEdit() {
+  const editingCell = coordinateFrequencyEditingCell;
+  if (!editingCell) {
+    return;
+  }
+
+  const cellKey = getCoordinateUpdateFrequencyCellKey(editingCell.periodLabel, editingCell.dayLabel);
+  if (coordinateFrequencySavingCellKey === cellKey) {
+    return;
+  }
+
+  if (!String(editingCell.draftValue ?? "").trim()) {
+    coordinateFrequencyEditingCell = null;
+    renderCoordinateUpdateFrequencyTable();
+    return;
+  }
+
+  const normalizedValue = normalizeCoordinateUpdateFrequencyValue(editingCell.draftValue);
+  if (normalizedValue === editingCell.originalValue) {
+    coordinateFrequencyEditingCell = null;
+    renderCoordinateUpdateFrequencyTable();
+    return;
+  }
+
+  coordinateFrequencySavingCellKey = cellKey;
+  renderCoordinateUpdateFrequencyTable();
+  try {
+    const response = await postJson("/api/admin/locations/coordinate-frequency", {
+      day_label: editingCell.dayLabel,
+      period_label: editingCell.periodLabel,
+      value_seconds: Number(normalizedValue),
+    });
+    applyCoordinateUpdateFrequencyCellUpdate(
+      response.period_label,
+      response.day_label,
+      response.value_seconds,
+    );
+    coordinateFrequencyEditingCell = null;
+    setStatus(response.message, true);
+  } catch (error) {
+    coordinateFrequencyEditingCell = editingCell;
+    throw error;
+  } finally {
+    coordinateFrequencySavingCellKey = null;
+    renderCoordinateUpdateFrequencyTable();
+  }
+}
+
+function handleCoordinateUpdateFrequencyCommit() {
+  commitCoordinateUpdateFrequencyEdit().catch((error) => {
+    setStatus(error.message, false);
+    focusCoordinateUpdateFrequencyInput();
+  });
+}
+
+function renderLocationUpdateInterval() {
+  const accuracyInput = getLocationAccuracyThresholdInput();
   if (accuracyInput) {
     const normalizedAccuracy = String(locationAccuracyThresholdMeters);
     accuracyInput.value = normalizedAccuracy;
     accuracyInput.dataset.persistedValue = normalizedAccuracy;
   }
-}
-
-function clearLocationSettingsSaveTimer() {
-  if (locationSettingsSaveTimer !== null) {
-    window.clearTimeout(locationSettingsSaveTimer);
-    locationSettingsSaveTimer = null;
-  }
-}
-
-function scheduleLocationSettingsSave() {
-  const intervalInput = getLocationUpdateIntervalInput();
-  const accuracyInput = getLocationAccuracyThresholdInput();
-  if (!intervalInput || !accuracyInput) {
-    return;
-  }
-
-  locationSettingsDirty = true;
-  clearLocationSettingsSaveTimer();
-  locationSettingsSaveTimer = window.setTimeout(() => {
-    locationSettingsSaveTimer = null;
-    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
-  }, LOCATION_SETTINGS_LOG_DEBOUNCE_MS);
-  setStatus("As configurações de localização serão salvas 5 segundos após a última alteração.", true);
-}
-
-function cancelLocationSettingsSave() {
-  clearLocationSettingsSaveTimer();
   locationSettingsDirty = false;
-  renderLocationUpdateInterval();
+  updateLocationSettingsSaveButton();
 }
 
-function flushLocationSettingsSave() {
-  clearLocationSettingsSaveTimer();
-  return saveLocationUpdateInterval();
+function updateLocationSettingsSaveButton() {
+  const saveButton = getLocationSettingsSaveButton();
+  if (saveButton) {
+    saveButton.disabled = !locationSettingsDirty;
+  }
+}
+
+function haveLocationSettingsChanged() {
+  const accuracyInput = getLocationAccuracyThresholdInput();
+  if (!accuracyInput) {
+    return false;
+  }
+
+  const persistedAccuracy = accuracyInput.dataset.persistedValue ?? String(locationAccuracyThresholdMeters);
+
+  try {
+    return normalizeLocationAccuracyThreshold(accuracyInput.value) !== persistedAccuracy;
+  } catch {
+    return String(accuracyInput.value ?? "").trim() !== persistedAccuracy;
+  }
+}
+
+function refreshLocationSettingsDirtyState() {
+  locationSettingsDirty = haveLocationSettingsChanged();
+  updateLocationSettingsSaveButton();
+}
+
+function handleLocationSettingsInputChange() {
+  refreshLocationSettingsDirtyState();
+  if (locationSettingsDirty) {
+    setStatus("Alterações pendentes nas configurações de localização. Clique em Salvar para registrar.", true);
+  }
+}
+
+function discardLocationSettingsDraft() {
+  renderLocationUpdateInterval();
+  setStatus("Alterações nas configurações de localização descartadas.", true);
 }
 
 function focusLocationRow(rowId, coordinateId = null) {
@@ -886,27 +1119,26 @@ async function removeLocationRow(rowId) {
 }
 
 async function saveLocationUpdateInterval() {
-  const intervalInput = getLocationUpdateIntervalInput();
   const accuracyInput = getLocationAccuracyThresholdInput();
-  if (!intervalInput || !accuracyInput) {
+  const saveButton = getLocationSettingsSaveButton();
+  if (!accuracyInput) {
     locationSettingsDirty = false;
+    updateLocationSettingsSaveButton();
     return;
   }
 
-  const normalizedInterval = normalizeLocationUpdateInterval(intervalInput.value);
   const normalizedAccuracy = normalizeLocationAccuracyThreshold(accuracyInput.value);
-  if (
-    normalizedInterval === String(locationUpdateIntervalSeconds)
-    && normalizedAccuracy === String(locationAccuracyThresholdMeters)
-  ) {
-    intervalInput.value = normalizedInterval;
-    accuracyInput.value = normalizedAccuracy;
+  accuracyInput.value = normalizedAccuracy;
+  if (normalizedAccuracy === String(locationAccuracyThresholdMeters)) {
     locationSettingsDirty = false;
+    updateLocationSettingsSaveButton();
     return;
   }
 
-  intervalInput.disabled = true;
   accuracyInput.disabled = true;
+  if (saveButton) {
+    saveButton.disabled = true;
+  }
   try {
     const response = await postJson("/api/admin/locations/settings", {
       location_update_interval_seconds: Number(normalizedInterval),
@@ -914,16 +1146,14 @@ async function saveLocationUpdateInterval() {
     });
     locationUpdateIntervalSeconds = response.location_update_interval_seconds;
     locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
-    locationSettingsDirty = false;
     renderLocationUpdateInterval();
     setStatus(response.message, true);
   } catch (error) {
-    locationSettingsDirty = false;
-    renderLocationUpdateInterval();
+    refreshLocationSettingsDirtyState();
     throw error;
   } finally {
-    intervalInput.disabled = false;
     accuracyInput.disabled = false;
+    updateLocationSettingsSaveButton();
   }
 }
 
@@ -931,6 +1161,17 @@ async function loadLocations() {
   const response = await fetchJson("/api/admin/locations");
   locationUpdateIntervalSeconds = response.location_update_interval_seconds;
   locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
+  coordinateUpdateFrequencyHeaders = Array.isArray(response.coordinate_update_frequency_headers)
+    ? [...response.coordinate_update_frequency_headers]
+    : [];
+  coordinateUpdateFrequencyRows = Array.isArray(response.coordinate_update_frequency_rows)
+    ? response.coordinate_update_frequency_rows.map((row) => ({
+      period: row.period,
+      values: { ...row.values },
+    }))
+    : [];
+  coordinateFrequencyEditingCell = null;
+  coordinateFrequencySavingCellKey = null;
   locationRows = response.items.map((row) =>
     createLocationRow({
       id: row.id,
@@ -944,6 +1185,7 @@ async function loadLocations() {
     })
   );
   renderLocations();
+  renderCoordinateUpdateFrequencyTable();
   renderLocationUpdateInterval();
 }
 
@@ -1028,7 +1270,7 @@ function makeAdministratorRow(row) {
 
 function hasPendingEditInProgress() {
   return locationRows.some((row) => row.isEditing)
-    || isLocationUpdateIntervalEditing()
+    || isCoordinateUpdateFrequencyEditing()
     || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
 }
 
@@ -1143,9 +1385,12 @@ async function loadEvents() {
   body.innerHTML = "";
   rows.forEach((row) => {
     const tr = document.createElement("tr");
-    const formattedDetails = formatEventDetails(row.details);
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventCell(formatDateTime(row.event_time))}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.request_path ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventCell(row.message)}</td><td>${makeEventDetailsButton()}</td>`;
-    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(formattedDetails));
+    const eventDetails = {
+      message: row.message ?? "-",
+      details: formatEventDetails(row.details),
+    };
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
     body.appendChild(tr);
   });
   applyResponsiveLabels("eventsBody");
@@ -1559,18 +1804,12 @@ function bindLocationSettingsInput(inputId) {
     return;
   }
 
-  input.addEventListener("input", scheduleLocationSettingsSave);
-  input.addEventListener("change", scheduleLocationSettingsSave);
+  input.addEventListener("input", handleLocationSettingsInputChange);
+  input.addEventListener("change", handleLocationSettingsInputChange);
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      flushLocationSettingsSave().catch((error) => setStatus(error.message, false));
-      event.currentTarget.blur();
-      return;
-    }
     if (event.key === "Escape") {
       event.preventDefault();
-      cancelLocationSettingsSave();
+      discardLocationSettingsDraft();
       event.currentTarget.blur();
     }
   });
@@ -1690,8 +1929,47 @@ function bindActions() {
   });
 
   document.getElementById("addLocationButton").addEventListener("click", addLocationRow);
-  bindLocationSettingsInput("locationUpdateIntervalSeconds");
+  document.getElementById("saveLocationSettingsButton").addEventListener("click", () => {
+    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
+  });
   bindLocationSettingsInput("locationAccuracyThresholdMeters");
+
+  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.coordinateFrequencyEdit) {
+      startCoordinateUpdateFrequencyEdit(
+        target.dataset.coordinateFrequencyPeriod,
+        target.dataset.coordinateFrequencyDay,
+      );
+    }
+  });
+  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("input", (event) => {
+    const target = event.target;
+    if (target.dataset.coordinateFrequencyInput === "true") {
+      updateCoordinateUpdateFrequencyDraft(target.value);
+    }
+  });
+  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target.dataset.coordinateFrequencyInput !== "true") {
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handleCoordinateUpdateFrequencyCommit();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelCoordinateUpdateFrequencyEdit();
+    }
+  });
+  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (target.dataset.coordinateFrequencyInput === "true") {
+      handleCoordinateUpdateFrequencyCommit();
+    }
+  });
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const target = event.target;

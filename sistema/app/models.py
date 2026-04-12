@@ -105,6 +105,7 @@ class MobileAppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    coordinate_update_frequency_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

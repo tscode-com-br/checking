@@ -12,6 +12,8 @@ from ..models import AdminAccessRequest, AdminUser, CheckEvent, ManagedLocation,
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
+    AdminCoordinateUpdateFrequencyCellResponse,
+    AdminCoordinateUpdateFrequencyCellUpdate,
     AdminIdentity,
     AdminLocationsResponse,
     AdminLocationSettingsResponse,
@@ -52,8 +54,11 @@ from ..services.event_archives import (
 from ..services.event_logger import log_event
 from ..services.managed_locations import dump_location_coordinates, extract_location_coordinates
 from ..services.location_settings import (
+    get_coordinate_update_frequency_headers,
+    get_coordinate_update_frequency_rows,
     get_location_accuracy_threshold_meters,
     get_location_update_interval_seconds,
+    update_coordinate_update_frequency_value,
     upsert_location_settings,
 )
 from ..services.time_utils import now_sgt
@@ -126,6 +131,20 @@ def build_location_settings_log_message(
     if changes:
         return " ".join(changes)
     return "As configurações de localização foram salvas sem alterações."
+
+
+def build_coordinate_update_frequency_change_details(
+    *,
+    admin_name: str,
+    day_label: str,
+    period_label: str,
+    previous_value_seconds: int,
+    current_value_seconds: int,
+) -> str:
+    return (
+        f"O administrador {admin_name} alterou a frequência de atualização de coordenadas para {day_label}, "
+        f"no período de {period_label} de {previous_value_seconds} para {current_value_seconds}."
+    )
 
 
 def build_presence_rows(db: Session, *, action: str, reference_time=None) -> list[UserRow]:
@@ -806,6 +825,8 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
         items=[build_location_row(row) for row in rows],
         location_update_interval_seconds=get_location_update_interval_seconds(db),
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+        coordinate_update_frequency_headers=get_coordinate_update_frequency_headers(),
+        coordinate_update_frequency_rows=get_coordinate_update_frequency_rows(db),
     )
 
 
@@ -919,6 +940,59 @@ def update_location_settings(
         message="Configuracoes de localizacao salvas com sucesso.",
         location_update_interval_seconds=settings.location_update_interval_seconds,
         location_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
+    )
+
+
+@router.post(
+    "/locations/coordinate-frequency",
+    response_model=AdminCoordinateUpdateFrequencyCellResponse,
+    dependencies=[Depends(require_admin_session)],
+)
+def update_coordinate_update_frequency_cell(
+    payload: AdminCoordinateUpdateFrequencyCellUpdate,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminCoordinateUpdateFrequencyCellResponse:
+    try:
+        result = update_coordinate_update_frequency_value(
+            db,
+            day_label=payload.day_label,
+            period_label=payload.period_label,
+            value_seconds=payload.value_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if result["changed"]:
+        log_event(
+            db,
+            source="admin",
+            action="coord_freq",
+            status="updated",
+            message="Coordinate update frequency changed via admin",
+            request_path="/api/admin/locations/coordinate-frequency",
+            http_status=200,
+            details=build_coordinate_update_frequency_change_details(
+                admin_name=current_admin.nome_completo,
+                day_label=payload.day_label,
+                period_label=payload.period_label,
+                previous_value_seconds=int(result["previous_value_seconds"]),
+                current_value_seconds=int(result["current_value_seconds"]),
+            ),
+        )
+        db.commit()
+        notify_admin_views("location", "event")
+        message = "Frequência de atualização de coordenadas atualizada com sucesso."
+    else:
+        message = "Nenhuma alteração foi realizada na frequência de atualização de coordenadas."
+
+    return AdminCoordinateUpdateFrequencyCellResponse(
+        ok=True,
+        message=message,
+        day_label=payload.day_label,
+        period_label=payload.period_label,
+        value_seconds=int(result["current_value_seconds"]),
+        location_update_interval_seconds=get_location_update_interval_seconds(db),
     )
 
 
