@@ -1944,7 +1944,10 @@ def test_mobile_check_page_is_served_on_user_path():
         assert response.status_code == 200
         assert "Registrar" in response.text
         assert "Chave Petrobras" in response.text
+        assert "Último Check-In" in response.text
+        assert "Último Check-Out" in response.text
         assert "/api/web/check" in response.text
+        assert "/api/web/check/state" in response.text
 
 
 def test_admin_page_is_served_on_admin_path():
@@ -2038,6 +2041,61 @@ def test_web_check_reuses_flutter_like_hidden_project_for_checkout():
             assert len(sync_events) == 2
             assert any(event.ontime is False and event.action == "checkout" for event in sync_events)
             assert any(event.action == "checkout" and event.status == "queued" for event in request_events)
+
+
+def test_web_check_state_returns_latest_public_history():
+    checkin_at = now_sgt() - timedelta(hours=1)
+    checkout_at = now_sgt()
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB13",
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": checkin_at.isoformat(),
+                "client_event_id": f"web-history-1-{uuid.uuid4().hex}",
+            },
+        )
+        second = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB13",
+                "projeto": "P80",
+                "action": "checkout",
+                "informe": "normal",
+                "event_time": checkout_at.isoformat(),
+                "client_event_id": f"web-history-2-{uuid.uuid4().hex}",
+            },
+        )
+        history = client.get("/api/web/check/state", params={"chave": "WB13"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert history.status_code == 200
+
+        payload = history.json()
+        assert payload == {
+            "found": True,
+            "chave": "WB13",
+            "last_checkin_at": checkin_at.replace(tzinfo=None).isoformat(),
+            "last_checkout_at": checkout_at.replace(tzinfo=None).isoformat(),
+        }
+
+
+def test_web_check_state_returns_not_found_for_unknown_key():
+    with TestClient(app) as client:
+        response = client.get("/api/web/check/state", params={"chave": "ZZ99"})
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "found": False,
+            "chave": "ZZ99",
+            "last_checkin_at": None,
+            "last_checkout_at": None,
+        }
 
 
 def test_mobile_sync_accepts_project_p82():

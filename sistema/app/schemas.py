@@ -414,6 +414,13 @@ class WebCheckSubmitRequest(MobileFormsSubmitRequest):
     pass
 
 
+class WebCheckHistoryResponse(BaseModel):
+    found: bool
+    chave: str
+    last_checkin_at: datetime | None = None
+    last_checkout_at: datetime | None = None
+
+
 class MobileSyncStateResponse(BaseModel):
     found: bool
     chave: str

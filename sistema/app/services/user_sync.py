@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..models import CheckEvent, User, UserSyncEvent
-from ..schemas import MobileSyncStateResponse
+from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .time_utils import now_sgt
 from .user_activity import mark_user_active
 
@@ -320,4 +320,14 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
             if latest_checkout is not None
             else (fallback_checkout.event_time if fallback_checkout is not None else (user.time if user.checkin is False else None))
         ),
+    )
+
+
+def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistoryResponse:
+    state = build_mobile_sync_state(db, chave=normalize_user_key(chave))
+    return WebCheckHistoryResponse(
+        found=state.found,
+        chave=state.chave,
+        last_checkin_at=state.last_checkin_at,
+        last_checkout_at=state.last_checkout_at,
     )

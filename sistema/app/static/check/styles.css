@@ -94,6 +94,62 @@ header {
   line-height: 1.5;
 }
 
+.history-card {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.history-item {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+
+.history-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.history-value {
+  min-height: 2.8em;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-line;
+  color: #0f172a;
+}
+
+.history-state {
+  min-height: 22px;
+  margin: 12px 0 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-align: center;
+  color: #475569;
+}
+
+.history-state.is-success {
+  color: #0f766e;
+}
+
+.history-state.is-error {
+  color: #b42318;
+}
+
 .check-form {
   display: grid;
   gap: 16px;

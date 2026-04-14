@@ -38,7 +38,29 @@
           Página otimizada para dispositivos móveis, usando o mesmo fluxo operacional do aplicativo.
         </p>
 
-        <form id="checkForm" class="check-form" novalidate data-submit-endpoint="/api/web/check">
+        <section class="history-card" aria-labelledby="historyTitle">
+          <div class="history-grid">
+            <div class="history-item">
+              <p id="historyTitle" class="history-label">Último Check-In</p>
+              <p id="lastCheckinValue" class="history-value">--</p>
+            </div>
+            <div class="history-item">
+              <p class="history-label">Último Check-Out</p>
+              <p id="lastCheckoutValue" class="history-value">--</p>
+            </div>
+          </div>
+          <p id="historyState" class="history-state" role="status" aria-live="polite">
+            Digite sua chave Petrobras para visualizar seu histórico.
+          </p>
+        </section>
+
+        <form
+          id="checkForm"
+          class="check-form"
+          novalidate
+          data-submit-endpoint="/api/web/check"
+          data-state-endpoint="/api/web/check/state"
+        >
           <label class="check-field" for="chaveInput">
             <span>Chave Petrobras</span>
             <input
