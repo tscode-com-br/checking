@@ -2,128 +2,128 @@
 
 ## 1. Objetivo deste documento
 
-Este documento consolida o contexto tecnico da API FastAPI e do website administrativo do projeto Checking.
+Este documento consolida o contexto técnico da API FastAPI e do website administrativo do projeto Checking.
 
 Ele serve para:
 
 - onboarding de novos desenvolvedores;
-- manutencao do backend e do painel admin;
-- entendimento rapido dos contratos entre frontend, backend, app Android e ESP32;
-- depuracao de problemas operacionais e de autenticacao.
+- manutenção do backend e do painel admin;
+- entendimento rápido dos contratos entre frontend, backend, app Android e ESP32;
+- depuração de problemas operacionais e de autenticação.
 
-## 2. Visao geral da arquitetura
+## 2. Visão geral da arquitetura
 
-O projeto possui um unico backend FastAPI que acumula tres responsabilidades principais:
+O projeto possui um único backend FastAPI que acumula três responsabilidades principais:
 
 1. expor a API operacional usada pela ESP32 e pelo aplicativo Android;
-2. servir o website administrativo estatico;
-3. coordenar persistencia, auditoria, fila de envio ao Microsoft Forms e atualizacao em tempo real do painel admin.
+2. servir o website administrativo estático;
+3. coordenar persistência, auditoria, fila de envio ao Microsoft Forms e atualização em tempo real do painel admin.
 
-Na pratica, a API e o site administrativo nao sao sistemas separados. Ambos rodam no mesmo servico Python.
+Na prática, a API e o site administrativo não são sistemas separados. Ambos rodam no mesmo serviço Python.
 
 Arquivos-chave:
 
-- `sistema/app/main.py`: bootstrap da aplicacao, middlewares, routers e montagem dos arquivos estaticos;
+- `sistema/app/main.py`: bootstrap da aplicação, middlewares, routers e montagem dos arquivos estáticos;
 - `sistema/app/routers/device.py`: endpoints consumidos pela ESP32;
 - `sistema/app/routers/mobile.py`: endpoints consumidos pelo app Android;
-- `sistema/app/routers/admin.py`: autenticacao admin, listagens, CRUD e logs;
+- `sistema/app/routers/admin.py`: autenticação admin, listagens, CRUD e logs;
 - `sistema/app/static/admin/index.html`: casca HTML da SPA administrativa;
-- `sistema/app/static/admin/app.js`: logica do frontend admin em JavaScript puro;
+- `sistema/app/static/admin/app.js`: lógica do frontend admin em JavaScript puro;
 - `sistema/app/static/admin/styles.css`: estilos do painel.
 
-## 3. Ciclo de vida da aplicacao
+## 3. Ciclo de vida da aplicação
 
-No startup da aplicacao, o backend executa estes passos:
+No startup da aplicação, o backend executa estes passos:
 
-1. garante a existencia do diretorio de arquivos CSV arquivados de eventos;
+1. garante a existência do diretório de arquivos CSV arquivados de eventos;
 2. cria as tabelas automaticamente apenas em ambiente `development`;
 3. faz seed idempotente do administrador bootstrap;
 4. inicia o worker da fila do Microsoft Forms quando `FORMS_QUEUE_ENABLED=true`.
 
-No shutdown, o worker da fila e encerrado.
+No shutdown, o worker da fila é encerrado.
 
-Esse comportamento esta centralizado no lifespan definido em `sistema/app/main.py`.
+Esse comportamento está centralizado no lifespan definido em `sistema/app/main.py`.
 
-## 4. Configuracao central
+## 4. Configuração central
 
-As configuracoes ficam em `sistema/app/core/config.py`, carregadas por `pydantic-settings` a partir do arquivo `.env`.
+As configurações ficam em `sistema/app/core/config.py`, carregadas por `pydantic-settings` a partir do arquivo `.env`.
 
-Configuracoes mais relevantes para API e admin:
+Configurações mais relevantes para API e admin:
 
-- `DATABASE_URL`: banco local ou de producao;
+- `DATABASE_URL`: banco local ou de produção;
 - `DEVICE_SHARED_KEY`: segredo compartilhado da ESP32;
 - `MOBILE_APP_SHARED_KEY`: segredo compartilhado do app Android;
-- `ADMIN_SESSION_SECRET`: segredo usado para assinar a sessao administrativa;
-- `ADMIN_SESSION_MAX_AGE_SECONDS`: duracao da sessao admin;
+- `ADMIN_SESSION_SECRET`: segredo usado para assinar a sessão administrativa;
+- `ADMIN_SESSION_MAX_AGE_SECONDS`: duração da sessão admin;
 - `BOOTSTRAP_ADMIN_KEY`, `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_PASSWORD`: credenciais seed do primeiro administrador;
-- `FORMS_QUEUE_ENABLED`: liga ou desliga o processamento assincrono da fila do Microsoft Forms;
-- `EVENT_ARCHIVES_DIR`: diretorio onde os CSV de eventos arquivados sao armazenados.
+- `FORMS_QUEUE_ENABLED`: liga ou desliga o processamento assíncrono da fila do Microsoft Forms;
+- `EVENT_ARCHIVES_DIR`: diretório onde os CSV de eventos arquivados são armazenados.
 
-Padroes atuais importantes:
+Padrões atuais importantes:
 
-- banco local padrao: SQLite em `./checking.db`;
+- banco local padrão: SQLite em `./checking.db`;
 - timezone operacional: `Asia/Singapore`;
-- diretorio padrao de arquivos arquivados: `/app/data/event_archives`.
+- diretório padrão de arquivos arquivados: `/app/data/event_archives`.
 
-## 5. Estrutura de exposicao HTTP
+## 5. Estrutura de exposição HTTP
 
-### 5.1 API publica e sem sessao admin
+### 5.1 API pública e sem sessão admin
 
-Rotas publicas disponiveis sem autenticacao por sessao:
+Rotas públicas disponíveis sem autenticação por sessão:
 
-- `GET /api/health`: health check da aplicacao;
-- `POST /api/device/heartbeat`: presenca da ESP32;
+- `GET /api/health`: health check da aplicação;
+- `POST /api/device/heartbeat`: presença da ESP32;
 - `POST /api/scan`: eventos RFID de check-in e check-out;
-- `GET /api/mobile/state`: consulta de estado consolidado do usuario pelo app Android;
-- `POST /api/mobile/events/sync`: sincronizacao de eventos mobile com o backend.
+- `GET /api/mobile/state`: consulta de estado consolidado do usuário pelo app Android;
+- `POST /api/mobile/events/sync`: sincronização de eventos mobile com o backend.
 
-Observacao: essas rotas publicas continuam protegidas por segredos especificos do dispositivo ou do app mobile quando aplicavel.
+Observação: essas rotas públicas continuam protegidas por segredos específicos do dispositivo ou do app mobile, quando aplicável.
 
-### 5.2 Website admin e area autenticada
+### 5.2 Website admin e área autenticada
 
-O website administrativo e servido pelo proprio FastAPI:
+O website administrativo é servido pelo próprio FastAPI:
 
 - `/`: entrega a SPA administrativa;
 - `/admin`: redireciona para `/` por compatibilidade legada;
 - `/assets/*`: arquivos compartilhados montados a partir da pasta `assets`.
 
-Rotas protegidas por sessao cookie ficam sob o prefixo `/api/admin`.
+Rotas protegidas por sessão cookie ficam sob o prefixo `/api/admin`.
 
-## 6. Modelo de autenticacao administrativa
+## 6. Modelo de autenticação administrativa
 
-### 6.1 Estrategia atual
+### 6.1 Estratégia atual
 
-O admin usa autenticacao por sessao baseada em cookie assinada por `SessionMiddleware` do Starlette.
+O admin usa autenticação por sessão baseada em cookie, assinada por `SessionMiddleware` do Starlette.
 
-Caracteristicas:
+Características:
 
-- o frontend nao envia `x-admin-key`;
-- o backend guarda `admin_user_id` em `request.session` apos login bem-sucedido;
+- o frontend não envia `x-admin-key`;
+- o backend guarda `admin_user_id` em `request.session` após login bem-sucedido;
 - as rotas admin dependem de `require_admin_session()`;
-- o stream SSE tambem exige sessao valida via `require_admin_stream_session()`;
+- o stream SSE também exige sessão válida via `require_admin_stream_session()`;
 - o frontend usa `fetch(..., { credentials: "same-origin" })` em todas as chamadas autenticadas.
 
-### 6.2 Tabelas de autenticacao admin
+### 6.2 Tabelas de autenticação admin
 
-As entidades administrativas sao separadas do cadastro operacional de funcionarios:
+As entidades administrativas são separadas do cadastro operacional de funcionários:
 
 - `admin_users`: administradores ativos ou com recadastro de senha pendente;
-- `admin_access_requests`: solicitacoes pendentes para se tornar administrador.
+- `admin_access_requests`: solicitações pendentes para se tornar administrador.
 
 Isso evita misturar identidade administrativa com a tabela operacional `users`.
 
 ### 6.3 Bootstrap admin
 
-Ao subir a aplicacao, o backend garante um administrador bootstrap com base nas variaveis de ambiente.
+Ao subir a aplicação, o backend garante um administrador bootstrap com base nas variáveis de ambiente.
 
-Esse seed e idempotente:
+Esse seed é idempotente:
 
-- se a `chave` bootstrap ja existir em `admin_users`, nada novo e criado;
-- se nao existir, o registro e criado com senha hash PBKDF2-SHA256.
+- se a `chave` bootstrap já existir em `admin_users`, nada novo é criado;
+- se não existir, o registro é criado com senha hash PBKDF2-SHA256.
 
-### 6.4 Fluxos de autenticacao admin
+### 6.4 Fluxos de autenticação admin
 
-Rotas de autenticacao:
+Rotas de autenticação:
 
 - `POST /api/admin/auth/login`
 - `POST /api/admin/auth/logout`
@@ -136,22 +136,22 @@ Fluxos implementados:
 1. Login normal:
    - valida `chave` e `senha`;
    - rejeita admin inexistente;
-   - rejeita senha invalida;
+   - rejeita senha inválida;
    - bloqueia login se houver recadastro pendente de senha;
-   - grava `admin_user_id` na sessao.
+   - grava `admin_user_id` na sessão.
 
-2. Solicitacao de acesso admin:
+2. Solicitação de acesso admin:
    - qualquer pessoa com `chave`, `nome_completo` e `senha` pode gerar pedido pendente;
    - o pedido fica em `admin_access_requests`;
    - outro administrador aprova ou rejeita pelo painel.
 
 3. Recadastro de senha:
-   - o proprio administrador informa a chave;
-   - a senha atual e apagada;
+   - o próprio administrador informa a chave;
+   - a senha atual é apagada;
    - `requires_password_reset` passa para `true`;
    - outro administrador deve cadastrar nova senha.
 
-4. Sessao expirada:
+4. Sessão expirada:
    - o frontend trata `401` de forma centralizada;
    - o painel volta para a tela de login.
 
@@ -159,78 +159,78 @@ Fluxos implementados:
 
 ### 7.1 `users`
 
-Representa o cadastro operacional e o estado atual de presenca do funcionario.
+Representa o cadastro operacional e o estado atual de presença do funcionário.
 
 Campos relevantes:
 
 - `id`: inteiro autoincremental;
-- `rfid`: unico, pode ser `NULL`;
-- `chave`: unica, 4 caracteres alfanumericos;
+- `rfid`: único, pode ser `NULL`;
+- `chave`: única, 4 caracteres alfanuméricos;
 - `nome`;
 - `projeto`: hoje limitado a `P80`, `P82`, `P83` nos schemas;
-- `local`: ultimo local conhecido;
+- `local`: último local conhecido;
 - `checkin`: `true`, `false` ou `NULL`;
-- `time`: timestamp do ultimo evento aplicado ao estado atual;
+- `time`: timestamp do último evento aplicado ao estado atual;
 - `last_active_at` e `inactivity_days`: base para o controle de inatividade no backend.
 
-Ponto importante: `rfid` pode ser `NULL` para suportar usuarios criados primeiro pelo app Android e vinculados ao cartao somente depois.
+Ponto importante: `rfid` pode ser `NULL` para suportar usuários criados primeiro pelo app Android e vinculados ao cartão somente depois.
 
 ### 7.2 `pending_registrations`
 
-Armazena RFIDs ainda nao reconhecidos pelo sistema.
+Armazena RFIDs ainda não reconhecidos pelo sistema.
 
 Campos:
 
 - `id`
-- `rfid` unico
+- `rfid` único
 - `first_seen_at`
 - `last_seen_at`
 - `attempts`
 
-Essa tabela alimenta a area de cadastro do admin.
+Essa tabela alimenta a área de cadastro do admin.
 
 ### 7.3 `check_events`
 
-E a trilha de auditoria operacional do sistema.
+É a trilha de auditoria operacional do sistema.
 
 Registra:
 
 - recebimento de scan;
 - bloqueios e duplicidades;
-- operacoes administrativas;
-- login/logout e gestao de admins;
-- sincronizacao mobile;
-- criacao/download/exclusao de arquivos de eventos.
+- operações administrativas;
+- login/logout e gestão de admins;
+- sincronização mobile;
+- criação/download/exclusão de arquivos de eventos.
 
-Possui `idempotency_key` unica para evitar duplicidade de alguns fluxos.
+Possui `idempotency_key` única para evitar duplicidade de alguns fluxos.
 
 ### 7.4 `forms_submissions`
 
-Fila persistida para envio assincrono ao Microsoft Forms.
+Fila persistida para envio assíncrono ao Microsoft Forms.
 
 Ela desacopla a resposta ao ESP32 do processamento do Forms.
 
 ### 7.5 `user_sync_events`
 
-Historico canonico dos eventos aplicados ao usuario, vindos de RFID ou Android.
+Histórico canônico dos eventos aplicados ao usuário, vindos de RFID ou Android.
 
-Restricao importante:
+Restrição importante:
 
 - unicidade por `source` + `source_request_id`.
 
-Isso permite idempotencia do canal mobile e rastreabilidade entre fontes.
+Isso permite idempotência do canal mobile e rastreabilidade entre fontes.
 
 ### 7.6 `admin_users` e `admin_access_requests`
 
-Suportam governanca do acesso administrativo sem reaproveitar a tabela operacional de usuarios.
+Suportam governança do acesso administrativo sem reaproveitar a tabela operacional de usuários.
 
-## 8. Contratos da API por dominio
+## 8. Contratos da API por domínio
 
 ### 8.1 Health
 
 `GET /api/health`
 
-Retorna estado simples da aplicacao para monitoramento e para a pipeline de deploy.
+Retorna estado simples da aplicação para monitoramento e para a pipeline de deploy.
 
 ### 8.2 Canal do dispositivo ESP32
 
@@ -249,7 +249,7 @@ Comportamento:
 
 - valida `DEVICE_SHARED_KEY`;
 - grava sinal de vida em `device_heartbeats`;
-- em caso de chave invalida, registra evento de falha e devolve resposta simples ao dispositivo.
+- em caso de chave inválida, registra evento de falha e devolve resposta simples ao dispositivo.
 
 #### `POST /api/scan`
 
@@ -269,44 +269,44 @@ Payload esperado:
 Resposta tipada (`ScanResponse`):
 
 - `outcome`: `submitted`, `pending_registration`, `invalid_key`, `duplicate`, `failed`, `local_updated`;
-- `led`: instrucoes de padrao visual para a ESP32;
+- `led`: instruções de padrão visual para a ESP32;
 - `message`: mensagem operacional.
 
 Ordem de processamento:
 
 1. valida a `shared_key` do dispositivo;
-2. verifica idempotencia por `request_id` em `check_events`;
+2. verifica idempotência por `request_id` em `check_events`;
 3. registra recebimento do scan em auditoria;
-4. tenta localizar usuario por RFID;
-5. se o RFID for desconhecido, cria ou atualiza pendencia;
-6. se o usuario ja estiver em check-in e ocorrer novo `checkin`, atualiza apenas o `local` e o timestamp, sem enfileirar Forms;
-7. se ocorrer `checkout` sem check-in ativo, bloqueia a operacao;
-8. para operacao valida, atualiza o estado atual do usuario;
+4. tenta localizar usuário por RFID;
+5. se o RFID for desconhecido, cria ou atualiza pendência;
+6. se o usuário já estiver em check-in e ocorrer novo `checkin`, atualiza apenas o `local` e o timestamp, sem enfileirar Forms;
+7. se ocorrer `checkout` sem check-in ativo, bloqueia a operação;
+8. para operação válida, atualiza o estado atual do usuário;
 9. enfileira envio ao Forms em `forms_submissions`;
 10. grava `user_sync_events` como fonte `rfid`;
-11. publica atualizacao para o painel admin.
+11. publica atualização para o painel admin.
 
-Regras de negocio importantes:
+Regras de negócio importantes:
 
-- RFID desconhecido nao cria usuario automaticamente; cria pendencia;
-- `checkin` repetido com usuario ja ativo vira apenas atualizacao de local;
-- `checkout` sem `checkin` ativo retorna erro de negocio;
-- a resposta ao dispositivo sai antes da conclusao do Forms.
+- RFID desconhecido não cria usuário automaticamente; cria pendência;
+- `checkin` repetido com usuário já ativo vira apenas atualização de local;
+- `checkout` sem `checkin` ativo retorna erro de negócio;
+- a resposta ao dispositivo sai antes da conclusão do Forms.
 
 ### 8.3 Canal mobile Android
 
-O canal mobile usa header `x-mobile-shared-key`.
+O canal mobile usa o header `x-mobile-shared-key`.
 
 #### `GET /api/mobile/state?chave=...`
 
-Retorna estado consolidado do usuario:
+Retorna estado consolidado do usuário:
 
-- se existe ou nao;
+- se existe ou não;
 - nome e projeto;
-- acao atual;
-- horario do estado atual;
-- ultimo check-in;
-- ultimo check-out.
+- ação atual;
+- horário do estado atual;
+- último check-in;
+- último check-out.
 
 #### `POST /api/mobile/events/sync`
 
@@ -324,22 +324,22 @@ Payload:
 
 Comportamento:
 
-- exige `x-mobile-shared-key` valido;
-- e idempotente por `client_event_id`;
-- pode criar usuario placeholder se a `chave` ainda nao existir;
-- normaliza o horario do evento;
+- exige `x-mobile-shared-key` válido;
+- é idempotente por `client_event_id`;
+- pode criar usuário placeholder se a `chave` ainda não existir;
+- normaliza o horário do evento;
 - aplica o estado atual em `users`;
 - grava `user_sync_events` com `source="android"`;
-- publica atualizacao para o painel admin.
+- publica atualização para o painel admin.
 
-Diferenca importante em relacao ao canal RFID:
+Diferença importante em relação ao canal RFID:
 
-- o mobile nao passa pela fila do Microsoft Forms dentro desta API;
-- ele sincroniza apenas o estado consolidado no backend apos o fluxo do app.
+- o mobile não passa pela fila do Microsoft Forms dentro desta API;
+- ele sincroniza apenas o estado consolidado no backend após o fluxo do app.
 
 ## 9. Rotas protegidas do admin
 
-### 9.1 Sessao e autenticacao
+### 9.1 Sessão e autenticação
 
 - `POST /api/admin/auth/login`
 - `POST /api/admin/auth/logout`
@@ -347,7 +347,7 @@ Diferenca importante em relacao ao canal RFID:
 - `POST /api/admin/auth/request-access`
 - `POST /api/admin/auth/request-password-reset`
 
-### 9.2 Atualizacao em tempo real
+### 9.2 Atualização em tempo real
 
 - `GET /api/admin/stream`
 
@@ -358,7 +358,7 @@ Entrega Server-Sent Events com payload JSON contendo pelo menos:
 
 O broker interno usa filas por assinante e descarta o item mais antigo quando a fila lota.
 
-Razoes publicadas com mais frequencia:
+Razões publicadas com mais frequência:
 
 - `checkin`
 - `checkout`
@@ -367,7 +367,7 @@ Razoes publicadas com mais frequencia:
 - `admin`
 - `event`
 
-### 9.3 Gestao de administradores
+### 9.3 Gestão de administradores
 
 - `GET /api/admin/administrators`
 - `POST /api/admin/administrators/requests/{request_id}/approve`
@@ -375,11 +375,11 @@ Razoes publicadas com mais frequencia:
 - `POST /api/admin/administrators/{admin_id}/revoke`
 - `POST /api/admin/administrators/{admin_id}/set-password`
 
-Regras de negocio importantes:
+Regras de negócio importantes:
 
-- nao permite revogar o proprio acesso;
-- nao permite remover o ultimo administrador ativo;
-- cadastro de nova senha so e permitido quando ha recadastro pendente.
+- não permite revogar o próprio acesso;
+- não permite remover o último administrador ativo;
+- cadastro de nova senha só é permitido quando há recadastro pendente.
 
 ### 9.4 Listagens operacionais
 
@@ -390,26 +390,26 @@ Regras de negocio importantes:
 - `GET /api/admin/users`
 - `GET /api/admin/events`
 
-Caracteristicas:
+Características:
 
-- `checkin` e `checkout` exibem usuarios com estado atual definido, inclusive aqueles sem atividade ha mais de 24 horas;
+- `checkin` e `checkout` exibem usuários com estado atual definido, inclusive aqueles sem atividade há mais de 24 horas;
 - `inactive` devolve `id`, `rfid`, `nome`, `chave`, `projeto`, `inactivity_days`;
-- `events` retorna ate 200 eventos correntes, ordenados do mais recente para o mais antigo, ocultando os logs internos de `event_archive` da tabela principal.
+- `events` retorna até 200 eventos correntes, ordenados do mais recente para o mais antigo, ocultando os logs internos de `event_archive` da tabela principal.
 
 ### 9.5 CRUD operacional do admin
 
-- `POST /api/admin/users`: cria ou atualiza usuario;
-- `DELETE /api/admin/pending/{pending_id}`: remove pendencia RFID;
-- `DELETE /api/admin/users/{user_id}`: remove usuario e apaga `user_sync_events` vinculados.
+- `POST /api/admin/users`: cria ou atualiza usuário;
+- `DELETE /api/admin/pending/{pending_id}`: remove pendência RFID;
+- `DELETE /api/admin/users/{user_id}`: remove usuário e apaga `user_sync_events` vinculados.
 
 Regras importantes do `POST /api/admin/users`:
 
-- pode criar usuario novo por `rfid`;
-- pode editar usuario existente por `user_id`;
-- pode vincular um RFID novo a um usuario ja criado pelo mobile quando a `chave` coincide e `rfid` ainda e `NULL`;
-- bloqueia conflito de `chave` ja cadastrada;
-- bloqueia substituicao arbitraria de RFID quando o usuario ja tem outro cartao vinculado;
-- remove pendencia correspondente ao RFID apos cadastro.
+- pode criar usuário novo por `rfid`;
+- pode editar usuário existente por `user_id`;
+- pode vincular um RFID novo a um usuário já criado pelo mobile quando a `chave` coincide e `rfid` ainda é `NULL`;
+- bloqueia conflito de `chave` já cadastrada;
+- bloqueia substituição arbitrária de RFID quando o usuário já tem outro cartão vinculado;
+- remove pendência correspondente ao RFID após cadastro.
 
 ### 9.6 Arquivamento de eventos
 
@@ -421,30 +421,30 @@ Regras importantes do `POST /api/admin/users`:
 
 Fluxo:
 
-1. seleciona os eventos correntes visiveis para arquivamento em CSV;
-2. gera CSV com periodo no nome do arquivo;
-3. limpa toda a tabela ativa de eventos, inclusive residuos antigos de auditoria de arquivamento;
-4. registra o proprio ato de arquivamento em auditoria tecnica;
-5. mantem os arquivos salvos disponiveis para download individual, download em lote zipado e exclusao.
+1. seleciona os eventos correntes visíveis para arquivamento em CSV;
+2. gera CSV com período no nome do arquivo;
+3. limpa toda a tabela ativa de eventos, inclusive resíduos antigos de auditoria de arquivamento;
+4. registra o próprio ato de arquivamento em auditoria técnica;
+5. mantém os arquivos salvos disponíveis para download individual, download em lote zipado e exclusão.
 
 ## 10. Website administrativo: arquitetura e comportamento
 
 ### 10.1 Stack do frontend
 
-O painel admin e uma SPA minimalista sem framework, composta por:
+O painel admin é uma SPA minimalista sem framework, composta por:
 
-- HTML estatico em `index.html`;
+- HTML estático em `index.html`;
 - CSS puro em `styles.css`;
 - JavaScript puro em `app.js`.
 
-Nao existe React, Vue, build step frontend, bundler ou roteamento client-side complexo.
+Não existe React, Vue, build step frontend, bundler ou roteamento client-side complexo.
 
 ### 10.2 Estrutura visual
 
 O HTML separa dois shells principais:
 
-- `authShell`: tela de login e acoes de solicitacao admin/recadastro de senha;
-- `adminShell`: painel principal exibido apenas quando ha sessao valida.
+- `authShell`: tela de login e ações de solicitação admin/recadastro de senha;
+- `adminShell`: painel principal exibido apenas quando há sessão válida.
 
 Abas do painel:
 
@@ -453,34 +453,34 @@ Abas do painel:
 - Cadastro
 - Eventos
 
-A aba Cadastro agrega tres blocos:
+A aba Cadastro agrega três blocos:
 
-- pendencias RFID;
+- pendências RFID;
 - administradores;
-- usuarios cadastrados.
+- usuários cadastrados.
 
 Modais existentes:
 
 - detalhes de evento;
 - logs salvos/arquivos de eventos;
-- solicitacao de administrador.
+- solicitação de administrador.
 
 ### 10.3 Bootstrap da SPA
 
-Ao carregar a pagina, o frontend executa `bootstrapAdmin()`.
+Ao carregar a página, o frontend executa `bootstrapAdmin()`.
 
 Fluxo:
 
 1. consulta `GET /api/admin/auth/session`;
-2. se nao houver sessao, exibe o `authShell`;
-3. se houver sessao, exibe o `adminShell`;
-4. inicia atualizacao periodica por polling;
+2. se não houver sessão, exibe o `authShell`;
+3. se houver sessão, exibe o `adminShell`;
+4. inicia atualização periódica por polling;
 5. inicia SSE em `/api/admin/stream`;
 6. carrega todas as tabelas.
 
-### 10.4 Atualizacao de dados
+### 10.4 Atualização de dados
 
-O frontend combina duas estrategias:
+O frontend combina duas estratégias:
 
 1. SSE em tempo real como caminho preferencial;
 2. polling a cada 5 segundos como fallback.
@@ -489,7 +489,7 @@ Detalhes:
 
 - `AUTO_REFRESH_MS = 5000`;
 - `REALTIME_DEBOUNCE_MS = 250` para reduzir recargas em rajadas de eventos;
-- se a aba do navegador estiver oculta, o comportamento reduz atualizacoes desnecessarias;
+- se a aba do navegador estiver oculta, o comportamento reduz atualizações desnecessárias;
 - quando o SSE falha, o polling continua cobrindo o refresh.
 
 ### 10.5 Mapeamento das abas para a API
@@ -497,39 +497,39 @@ Detalhes:
 #### Check-In
 
 - fonte: `GET /api/admin/checkin`
-- colunas: horario, nome, chave, projeto, local, acoes
-- quando o ultimo evento ultrapassa 24 horas, a data recebe sufixo `ha X dias`, a linha fica vermelha/negrito e o admin pode remover o usuario diretamente dessa tabela
+- colunas: horário, nome, chave, projeto, local, ações
+- quando o último evento ultrapassa 24 horas, a data recebe sufixo `há X dias`, a linha fica vermelha/negrito e o admin pode remover o usuário diretamente dessa tabela
 
 #### Check-Out
 
 - fonte: `GET /api/admin/checkout`
-- colunas: horario, nome, chave, projeto, local, acoes
-- quando o ultimo evento ultrapassa 24 horas, a data recebe sufixo `ha X dias`, a linha fica vermelha/negrito e o admin pode remover o usuario diretamente dessa tabela
+- colunas: horário, nome, chave, projeto, local, ações
+- quando o último evento ultrapassa 24 horas, a data recebe sufixo `há X dias`, a linha fica vermelha/negrito e o admin pode remover o usuário diretamente dessa tabela
 
-#### Cadastro / Pendencias
+#### Cadastro / Pendências
 
 - fonte: `GET /api/admin/pending`
-- acoes: editar, remover, salvar cadastro
-- persistencia: `POST /api/admin/users` e `DELETE /api/admin/pending/{id}`
+- ações: editar, remover, salvar cadastro
+- persistência: `POST /api/admin/users` e `DELETE /api/admin/pending/{id}`
 
 #### Cadastro / Administradores
 
 - fonte: `GET /api/admin/administrators`
-- acoes condicionais por linha:
+- ações condicionais por linha:
   - aprovar pedido;
   - rejeitar pedido;
   - revogar acesso;
   - cadastrar nova senha.
 
-#### Cadastro / Usuarios cadastrados
+#### Cadastro / Usuários cadastrados
 
 - fonte: `GET /api/admin/users`
-- acoes: editar, salvar, remover
+- ações: editar, salvar, remover
 
 #### Eventos
 
 - fonte: `GET /api/admin/events`
-- acao principal: `Limpar`, que arquiva os eventos correntes em CSV, limpa a tabela exibida e nao mostra os logs internos de `event_archive`
+- ação principal: `Limpar`, que arquiva os eventos correntes em CSV, limpa a tabela exibida e não mostra os logs internos de `event_archive`
 
 ### 10.6 Tratamento de erros no frontend
 
@@ -537,107 +537,107 @@ O frontend centraliza chamadas em helpers como `fetchJson`, `postJson` e `delete
 
 Comportamentos importantes:
 
-- erros `401` redirecionam o usuario de volta para o login;
-- erros de validacao do backend sao convertidos em mensagens legiveis;
-- algumas acoes confirmatorias usam `window.confirm()` antes de revogar, apagar ou excluir arquivos.
+- erros `401` redirecionam o usuário de volta para o login;
+- erros de validação do backend são convertidos em mensagens legíveis;
+- algumas ações confirmatórias usam `window.confirm()` antes de revogar, apagar ou excluir arquivos.
 
-### 10.7 Convencoes do frontend
+### 10.7 Convenções do frontend
 
-Algumas convencoes relevantes observadas em `app.js`:
+Algumas convenções relevantes observadas em `app.js`:
 
-- datas sao formatadas em timezone `Asia/Singapore`;
-- `local` recebe labels amigaveis como `Escritorio Principal` e `A bordo da P83`;
-- IDs usados para remocao sao validados como inteiros antes de chamadas destrutivas;
-- quando ha edicao em andamento no cadastro, o frontend evita refresh automatico dessas tabelas para nao sobrescrever o formulario em uso.
+- datas são formatadas no timezone `Asia/Singapore`;
+- `local` recebe labels amigáveis como `Escritorio Principal` e `A bordo da P83`;
+- IDs usados para remoção são validados como inteiros antes de chamadas destrutivas;
+- quando há edição em andamento no cadastro, o frontend evita refresh automático dessas tabelas para não sobrescrever o formulário em uso.
 
 ## 11. Fluxos ponta a ponta mais importantes
 
 ### 11.1 RFID desconhecido
 
 1. ESP32 envia `POST /api/scan`.
-2. Backend nao encontra `users.rfid`.
-3. Backend cria ou atualiza `pending_registrations`.
-4. Backend registra evento de auditoria.
-5. Painel admin recebe atualizacao e mostra a nova pendencia.
-6. Um administrador cadastra o usuario a partir da aba Cadastro.
+2. O backend não encontra `users.rfid`.
+3. O backend cria ou atualiza `pending_registrations`.
+4. O backend registra evento de auditoria.
+5. O painel admin recebe atualização e mostra a nova pendência.
+6. Um administrador cadastra o usuário a partir da aba Cadastro.
 
-### 11.2 Check-in RFID valido
+### 11.2 Check-in RFID válido
 
 1. ESP32 envia scan com `action=checkin`.
-2. Backend valida segredo e idempotencia.
+2. O backend valida segredo e idempotência.
 3. Atualiza `users.checkin=true`, `time`, `local` e atividade.
 4. Enfileira `forms_submissions`.
 5. Registra `user_sync_events` como fonte `rfid`.
 6. Notifica o painel admin.
-7. Worker do Forms processa a fila fora do caminho sincrono.
+7. O worker do Forms processa a fila fora do caminho síncrono.
 
-### 11.3 Check-in repetido com usuario ja ativo
+### 11.3 Check-in repetido com usuário já ativo
 
-1. Novo `checkin` chega para usuario ja em check-in.
-2. Backend atualiza apenas `local` e `time`.
-3. Nao reenfileira o Forms.
+1. Novo `checkin` chega para um usuário já em check-in.
+2. O backend atualiza apenas `local` e `time`.
+3. Não reenfileira o Forms.
 4. Registra evento de `local_updated`.
 
 ### 11.4 Checkout sem check-in ativo
 
 1. ESP32 envia `action=checkout`.
-2. Backend detecta ausencia de check-in ativo.
-3. Responde falha de negocio ao dispositivo.
+2. O backend detecta ausência de check-in ativo.
+3. Responde falha de negócio ao dispositivo.
 4. Registra auditoria com status `blocked`.
 
-### 11.5 Usuario criado pelo app antes do RFID
+### 11.5 Usuário criado pelo app antes do RFID
 
 1. Android sincroniza evento com `POST /api/mobile/events/sync`.
-2. Backend cria ou reaproveita usuario por `chave`, com `rfid=NULL` se necessario.
-3. Mais tarde, no painel admin, um cadastro RFID pode ser vinculado ao mesmo usuario usando a mesma `chave`.
+2. O backend cria ou reaproveita usuário por `chave`, com `rfid=NULL` se necessário.
+3. Mais tarde, no painel admin, um cadastro RFID pode ser vinculado ao mesmo usuário usando a mesma `chave`.
 
-## 12. Auditoria, observabilidade e retencao
+## 12. Auditoria, observabilidade e retenção
 
 ### 12.1 Trilhas de auditoria
 
-`check_events` e a fonte principal para investigar:
+`check_events` é a fonte principal para investigar:
 
 - tentativas de login e logout;
-- pedidos de admin e alteracoes administrativas;
+- pedidos de admin e alterações administrativas;
 - scans RFID recebidos, bloqueados ou duplicados;
-- sincronizacao mobile;
-- operacoes de arquivamento de logs.
+- sincronização mobile;
+- operações de arquivamento de logs.
 
-### 12.2 Atualizacao em tempo real
+### 12.2 Atualização em tempo real
 
-O painel depende do broker de atualizacoes administrativas para refletir mudancas rapidamente.
+O painel depende do broker de atualizações administrativas para refletir mudanças rapidamente.
 
-Quando uma operacao relevante acontece, o backend chama `notify_admin_data_changed(reason)`.
+Quando uma operação relevante acontece, o backend chama `notify_admin_data_changed(reason)`.
 
 ### 12.3 Arquivos de eventos
 
-Os eventos podem ser exportados para CSV e retirados da tabela ativa, reduzindo o tamanho da lista corrente sem perder historico operacional.
+Os eventos podem ser exportados para CSV e retirados da tabela ativa, reduzindo o tamanho da lista corrente sem perder histórico operacional.
 
-## 13. Riscos e pontos de atencao para manutencao
+## 13. Riscos e pontos de atenção para manutenção
 
-### 13.1 API e frontend estao fortemente acoplados por contrato JSON
+### 13.1 API e frontend estão fortemente acoplados por contrato JSON
 
-O painel e simples, mas depende bastante do formato exato das respostas. Mudancas de schema nos endpoints admin tendem a quebrar a UI imediatamente.
+O painel é simples, mas depende bastante do formato exato das respostas. Mudanças de schema nos endpoints admin tendem a quebrar a UI imediatamente.
 
-### 13.2 Sessao admin depende de segredo estavel
+### 13.2 Sessão admin depende de segredo estável
 
-Alterar `ADMIN_SESSION_SECRET` invalida todas as sessoes existentes.
+Alterar `ADMIN_SESSION_SECRET` invalida todas as sessões existentes.
 
-### 13.3 Bootstrap admin deve ser tratado com cuidado em producao
+### 13.3 Bootstrap admin deve ser tratado com cuidado em produção
 
-As credenciais bootstrap sao uteis para seed e troubleshooting controlado, mas exigem gestao cuidadosa de ambiente e segredos.
+As credenciais bootstrap são úteis para seed e troubleshooting controlado, mas exigem gestão cuidadosa de ambiente e segredos.
 
-### 13.4 Remocao de usuarios e destrutiva
+### 13.4 Remoção de usuários é destrutiva
 
-`DELETE /api/admin/users/{user_id}` remove o usuario operacional e tambem apaga os `user_sync_events` associados. Isso tem impacto direto no historico disponivel para reconciliacao.
+`DELETE /api/admin/users/{user_id}` remove o usuário operacional e também apaga os `user_sync_events` associados. Isso tem impacto direto no histórico disponível para reconciliação.
 
-### 13.5 Fila do Forms pode divergir do estado sincrono
+### 13.5 Fila do Forms pode divergir do estado síncrono
 
-O scan pode ter sido aceito e refletido no admin enquanto o processamento posterior do Forms falha. Nesses casos, a depuracao deve olhar tambem para `forms_submissions`, worker e eventos de origem `forms`.
+O scan pode ter sido aceito e refletido no admin enquanto o processamento posterior do Forms falha. Nesses casos, a depuração deve olhar também para `forms_submissions`, o worker e os eventos de origem `forms`.
 
-## 14. Guia rapido de leitura do codigo
+## 14. Guia rápido de leitura do código
 
-Se a necessidade for entender rapidamente o sistema, a ordem mais produtiva e:
+Se a necessidade for entender rapidamente o sistema, a ordem mais produtiva é:
 
 1. `sistema/app/main.py`
 2. `sistema/app/core/config.py`
@@ -651,15 +651,15 @@ Se a necessidade for entender rapidamente o sistema, a ordem mais produtiva e:
 
 ## 15. Resumo executivo
 
-Hoje, a API e o website administrativo do Checking formam um unico sistema coeso com estas caracteristicas:
+Hoje, a API e o website administrativo do Checking formam um único sistema coeso com estas características:
 
 - backend FastAPI servindo API e SPA admin no mesmo processo;
-- autenticacao admin por sessao cookie, sem header legado no runtime;
+- autenticação admin por sessão cookie, sem header legado no runtime;
 - painel administrativo em JavaScript puro, com SSE e polling;
-- fluxos separados para ESP32 e Android, mas convergindo no mesmo estado de usuario;
+- fluxos separados para ESP32 e Android, mas convergindo no mesmo estado de usuário;
 - auditoria centralizada em `check_events`;
 - fila persistida para o Microsoft Forms;
 - suporte a arquivamento de logs em CSV;
 - deploy orientado a container e health check.
 
-Esse e o contexto tecnico essencial para evoluir o backend, ajustar contratos do admin ou investigar comportamento operacional do sistema.
+Esse é o contexto técnico essencial para evoluir o backend, ajustar contratos do admin ou investigar o comportamento operacional do sistema.

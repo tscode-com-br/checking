@@ -1,34 +1,34 @@
 # Troubleshooting do Firmware ESP32
 
 ## 1. Objetivo
-Este documento centraliza diagnostico rapido para problemas operacionais do firmware da ESP32-S3 usado no sistema Checking.
+Este documento centraliza diagnóstico rápido para problemas operacionais do firmware da ESP32-S3 usado no sistema Checking.
 
 Ele cobre principalmente:
 - conectividade com Wi-Fi e API
-- interpretacao dos estados do LED interno
+- interpretação dos estados do LED interno
 - leituras RFID repetidas ou ausentes
 - comportamento dos dois leitores RC522
-- validacao basica via serial e upload
+- validação básica via serial e upload
 
-## 2. Referencias relacionadas
-- Estados oficiais do LED interno: `docs/descritivo_sistema.md`, secao `6.1.2 Tabela oficial de estados do LED interno`
-- Esquematico de montagem: `docs/esquematico_esp32_rc522_duplo.md`
-- Identificacao da placa conectada na COM5: `docs/esp32-com5-specs.md`
+## 2. Referências relacionadas
+- Estados oficiais do LED interno: `docs/context/descritivo_sistema.md`, seção `6.1.2 Tabela oficial de estados do LED interno`
+- Esquemático de montagem: `docs/context/esquematico_esp32_rc522_duplo.md`
+- Identificação da placa conectada na COM5: `docs/context/esp32-com5-specs.md`
 - Firmware principal: `firmware/esp32_checking/esp32_checking.ino`
 
-## 3. Leitura rapida por sintoma
+## 3. Leitura rápida por sintoma
 
-### 3.1 LED azul piscando durante a inicializacao por muito tempo
+### 3.1 LED azul piscando durante a inicialização por muito tempo
 Significa:
-- a placa esta inicializando
+- a placa está inicializando
 - ou tentando conectar no Wi-Fi
 - ou tentando validar a API
-- o estado visual esperado agora e azul com 3 piscadas dentro de 1500 ms
+- o estado visual esperado agora é azul com 3 piscadas dentro de 1500 ms
 
-Causas provaveis:
+Causas prováveis:
 - SSID ou senha incorretos no firmware
-- Wi-Fi indisponivel
-- API inacessivel nas portas `8000` ou `8001`
+- Wi-Fi indisponível
+- API inacessível nas portas `8000` ou `8001`
 - instabilidade de energia na placa
 
 Como verificar:
@@ -42,12 +42,12 @@ Como verificar:
 ### 3.2 LED vermelho piscando lentamente no offline
 Significa:
 - a placa entrou no estado offline
-- a leitura de cartoes esta bloqueada
+- a leitura de cartões está bloqueada
 
-Observacao:
-- o estado visual esperado agora e uma piscada vermelha de 40 ms a cada 2 segundos
+Observação:
+- o estado visual esperado agora é uma piscada vermelha de 40 ms a cada 2 segundos
 
-Causas provaveis:
+Causas prováveis:
 - perda de Wi-Fi apos entrar online
 - falha no heartbeat
 - API fora do ar
@@ -57,29 +57,29 @@ Como verificar:
    - `[NET] Wi-Fi lost while online.`
    - `[NET] Heartbeat failed.`
 2. Validar rede local e disponibilidade do host configurado em `API_HOST`.
-3. Aguardar ate 30 segundos e confirmar se a placa reinicia sozinha.
+3. Aguardar até 30 segundos e confirmar se a placa reinicia sozinha.
 
-### 3.3 LED laranja em cartao nao cadastrado
-Significa na especificacao atual:
+### 3.3 LED laranja em cartão não cadastrado
+Significa na especificação atual:
 - o firmware executa o estado `LED-07`, com 3 piscadas de 40 ms dentro de 1500 ms
 
-Causas provaveis quando parecer diferente do esperado:
-- o mesmo UID esta sendo relido repetidamente
-- o cartao esta muito tempo apoiado sobre a antena
-- o observador percebe as piscadas como luz quase continua por persistencia visual
+Causas prováveis quando parecer diferente do esperado:
+- o mesmo UID está sendo relido repetidamente
+- o cartão está muito tempo apoiado sobre a antena
+- o observador percebe as piscadas como luz quase contínua por persistência visual
 
 Como verificar:
-1. Aproximar o cartao nao cadastrado e remover rapidamente.
+1. Aproximar o cartão não cadastrado e removê-lo rapidamente.
 2. Observar na serial se aparece:
    - `[SCAN] UID=...`
    - `[SCAN] parsed_outcome=pending_registration`
-3. Confirmar no painel administrativo que a pendencia foi criada ou atualizada.
+3. Confirmar no painel administrativo que a pendência foi criada ou atualizada.
 
-### 3.4 Cartao nao gera resposta visivel
+### 3.4 Cartão não gera resposta visível
 Possiveis causas:
-- leitor RC522 nao inicializado
+- leitor RC522 não inicializado
 - falha no barramento SPI
-- cartao nao esta sendo detectado
+- cartão não está sendo detectado
 - nuvem offline bloqueando processamento
 
 Como verificar:
@@ -88,14 +88,14 @@ Como verificar:
    - `[RC522] sensor-2 sem resposta no barramento SPI`
    - `[RC522] initialized=partial-or-failed`
 2. Confirmar alimentacao, GND comum e ligacoes de `SCK`, `MISO`, `MOSI`, `RST` e `SS`.
-3. Confirmar que o LED nao esta em offline vermelho antes do teste.
+3. Confirmar que o LED não está em offline vermelho antes do teste.
 
 ### 3.5 Apenas um dos leitores funciona
-Possiveis causas:
+Possíveis causas:
 - falha no pino `SS` de um dos leitores
 - solda ruim
-- leitor sem resposta na inicializacao
-- interferencia fisica ou energia insuficiente
+- leitor sem resposta na inicialização
+- interferência física ou energia insuficiente
 
 Como verificar:
 1. Conferir logs por sensor:
@@ -105,43 +105,43 @@ Como verificar:
    - `sensor-1 SS = GPIO 10`
    - `sensor-2 SS = GPIO 15`
    - `RST = GPIO 9`
-3. Testar cada leitor isoladamente se necessario.
+3. Testar cada leitor isoladamente, se necessário.
 
 ### 3.6 LED azul fica ativo e demora a sair
 Significa:
-- a placa esta processando a leitura e aguardando a resposta da API
+- a placa está processando a leitura e aguardando a resposta da API
 
-Causas provaveis:
-- latencia de rede
+Causas prováveis:
+- latência de rede
 - backend lento
 - timeout alto no lado HTTP da ESP32
 
 Como verificar:
 1. Observar intervalo entre `showProcessingLed()` e o log de resposta `[SCAN] response=...`.
 
-### 3.7 ESP32 reinicia apos falha de leitura
+### 3.7 ESP32 reinicia após falha de leitura
 Significa:
-- a leitura do cartao terminou em falha de regra de negocio, erro operacional do backend ou resposta nao reconhecida
-- o firmware foi configurado para manter o `RST` compartilhado dos RC522 em nivel baixo por 2 segundos e depois reiniciar a placa apos concluir o padrao vermelho correspondente
+- a leitura do cartão terminou em falha de regra de negócio, erro operacional do backend ou resposta não reconhecida
+- o firmware foi configurado para manter o `RST` compartilhado dos RC522 em nível baixo por 2 segundos e depois reiniciar a placa após concluir o padrão vermelho correspondente
 
 Como verificar:
 1. Observar na serial se aparece uma das respostas de falha no scan:
    - `parsed_led=red_2s`
    - `parsed_led=red_blink_5x_1s`
-   - resposta nao reconhecida seguida de fallback vermelho
+   - resposta não reconhecida seguida de fallback vermelho
 2. Confirmar o log imediatamente antes do reboot:
    - `[SYS] Restarting after scan failure: ...`
-3. Se o reboot ocorrer com frequencia, revisar a causa da falha na API ou no fluxo de negocio, porque o reinicio e consequencia e nao causa raiz.
-2. Validar se a API esta respondendo com rapidez.
-3. Revisar disponibilidade do servidor e do banco.
+3. Se o reboot ocorrer com frequência, revise a causa da falha na API ou no fluxo de negócio, porque o reinício é consequência e não causa raiz.
+4. Validar se a API está respondendo com rapidez.
+5. Revisar disponibilidade do servidor e do banco.
 
-### 3.7 LED vermelho de fallback aparece sem motivo claro
+### 3.8 LED vermelho de fallback aparece sem motivo claro
 Significa:
-- a resposta da API nao foi reconhecida pelo firmware como um dos estados esperados
+- a resposta da API não foi reconhecida pelo firmware como um dos estados esperados
 
-Causas provaveis:
+Causas prováveis:
 - backend respondeu payload diferente do contrato atual
-- corpo da resposta nao contem `led` ou `outcome` esperados
+- corpo da resposta não contém `led` ou `outcome` esperados
 - erro HTTP ou corpo truncado
 
 Como verificar:
@@ -154,20 +154,20 @@ Como verificar:
 
 ## 4. Estados de LED e o que observar
 
-| ID | Interpretacao pratica | O que verificar |
+| ID | Interpretação prática | O que verificar |
 |---|---|---|
 | LED-01 | Boot ou handshake | Wi-Fi, SSID, reachability da API; 3 piscadas azuis em 1500 ms |
-| LED-02 | Sistema pronto | Estado normal de prontidao; 1 piscada verde de 20 ms a cada 2 s |
-| LED-04 | Leitura em processamento | Latencia da API ou fila de rede |
-| LED-07 | RFID nao cadastrado | Pendencia criada com 3 piscadas laranja de 40 ms |
-| LED-08 | Checkout invalido | Usuario sem check-in ativo; 3 piscadas vermelhas de 40 ms |
-| LED-09 | Falha operacional | Contrato da API, timeout de automacao ou erro backend; vermelho fixo por 1500 ms |
+| LED-02 | Sistema pronto | Estado normal de prontidão; 1 piscada verde de 20 ms a cada 2 s |
+| LED-04 | Leitura em processamento | Latência da API ou fila de rede |
+| LED-07 | RFID não cadastrado | Pendência criada com 3 piscadas laranja de 40 ms |
+| LED-08 | Checkout inválido | Usuário sem check-in ativo; 3 piscadas vermelhas de 40 ms |
+| LED-09 | Falha operacional | Contrato da API, timeout de automação ou erro backend; vermelho fixo por 1500 ms |
 | LED-10 | Offline | Wi-Fi, heartbeat, host, portas `8000/8001`; 1 piscada vermelha de 40 ms a cada 2 s |
-| LED-11 | Resposta inesperada | Divergencia entre backend e firmware |
+| LED-11 | Resposta inesperada | Divergência entre backend e firmware |
 
 ## 5. Logs seriais importantes
 
-Procure por estas mensagens durante o diagnostico:
+Procure por estas mensagens durante o diagnóstico:
 - `[NET] Connecting Wi-Fi SSID=...`
 - `[NET] Wi-Fi connected. IP: ...`
 - `[NET] Wi-Fi connect failed. status=...`
@@ -183,15 +183,15 @@ Procure por estas mensagens durante o diagnostico:
 - `[SCAN] parsed_outcome=...`
 - `[SCAN] Suppressed repeated UID=...`
 
-## 6. Procedimento minimo de diagnostico
+## 6. Procedimento mínimo de diagnóstico
 
-1. Confirmar alimentacao da placa e dos dois RC522.
-2. Observar o LED logo apos o boot.
+1. Confirmar alimentação da placa e dos dois RC522.
+2. Observar o LED logo após o boot.
 3. Abrir o monitor serial em `115200`.
 4. Confirmar Wi-Fi conectado e heartbeat aceito.
-5. Aproximar um cartao conhecido e um cartao nao cadastrado.
+5. Aproximar um cartão conhecido e um cartão não cadastrado.
 6. Verificar se o `outcome` recebido na serial combina com o LED exibido.
-7. Se houver divergencia, comparar o corpo da resposta de `/api/scan` com os estados documentados.
+7. Se houver divergência, comparar o corpo da resposta de `/api/scan` com os estados documentados.
 
 ## 7. Upload e monitoramento
 
@@ -199,14 +199,14 @@ Comandos usuais no workspace:
 - Upload: task `Upload ESP32 Firmware`
 - Monitor serial: task `Monitor ESP32 Serial`
 
-Observacoes:
+Observações:
 - O upload atual usa `COM5`.
 - O monitor serial atual usa `115200 baud`.
-- A placa identificada neste ambiente e uma `ESP32-S3`.
+- A placa identificada neste ambiente é uma `ESP32-S3`.
 
 ## 8. Quando revisar o backend junto com o firmware
 Revise backend e firmware ao mesmo tempo quando houver:
 - resposta da API diferente do contrato esperado
 - novos valores de `led` ou `outcome`
-- mudanca no fluxo de check-in ou checkout
-- alteracao de timeout, fila ou comportamento do Forms
+- mudança no fluxo de check-in ou checkout
+- alteração de timeout, fila ou comportamento do Forms

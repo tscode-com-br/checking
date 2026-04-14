@@ -40,6 +40,8 @@ extern WiFiIntellisenseShim WiFi;
 
 const char* WIFI_SSID = "P80_WiFi";
 const char* WIFI_PASSWORD = "Petrobras@80";
+const char* WIFI_SSID_2 = "TS 14 PRO";
+const char* WIFI_PASSWORD_2 = "00000000";
 const char* API_HOST = "157.230.35.21";
 const char* DEVICE_ID = "ESP32-S3-01";
 const char* SHARED_KEY = "gyb2YCkwhDFkhhYQQC6W80BafOf9YsTr";

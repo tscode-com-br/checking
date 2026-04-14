@@ -28,7 +28,7 @@ sudo usermod -aG docker $USER
 
 Saia e entre novamente no SSH para aplicar o grupo docker.
 
-## 2) Preparar variaveis de producao no projeto local
+## 2) Preparar variáveis de produção no projeto local
 No Windows, no projeto:
 
 1. Copie `deploy/.env.production.example` para `.env`.
@@ -63,29 +63,29 @@ Resposta esperada:
 ## 5) Expor API publicamente (opcional)
 Recomendado usar Nginx + HTTPS (Let's Encrypt) na frente da API em `:8000`.
 
-## 6) Deploy automatico a cada push (GitHub Actions)
+## 6) Deploy automático a cada push (GitHub Actions)
 O workflow `deploy-oceandrive.yml` foi adicionado em `.github/workflows/`.
 
 Para ativar:
 
-1. Use o repositorio `git@github.com:tscode-com-br/checking.git` como `origin` local.
-2. No repositorio GitHub, abra `Settings > Secrets and variables > Actions`.
+1. Use o repositório `git@github.com:tscode-com-br/checking.git` como `origin` local.
+2. No repositório GitHub, abra `Settings > Secrets and variables > Actions`.
 3. Crie os secrets abaixo:
   - `OCEAN_HOST`: IP do droplet (ex.: `157.230.35.21`)
-  - `OCEAN_USER`: usuario SSH (ex.: `root`)
+  - `OCEAN_USER`: usuário SSH (ex.: `root`)
   - `OCEAN_SSH_KEY`: chave privada SSH usada no acesso ao servidor
-  - `OCEAN_APP_DIR`: diretorio do app no servidor (atual: `/root/checkcheck`)
+  - `OCEAN_APP_DIR`: diretório do app no servidor (atual: `/root/checkcheck`)
   - `OCEAN_PORT`: porta SSH (normalmente `22`)
-4. Garanta que o arquivo `.env` ja exista no servidor em `OCEAN_APP_DIR`.
+4. Garanta que o arquivo `.env` já exista no servidor em `OCEAN_APP_DIR`.
 5. Dê push na branch `main`.
 
 Com isso, todo push na branch `main`:
 
-1. Faz checkout do codigo mais recente no GitHub Actions.
-2. Cria o diretorio remoto caso ele ainda nao exista.
-3. Sincroniza o codigo no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
-4. Sobe primeiro o servico `db` e depois executa `docker compose up -d --build --remove-orphans` para atualizar os servicos.
-5. Valida `http://127.0.0.1:8000/api/health` no servidor, registra o commit implantado em `.deploy-release` e falha o workflow se a aplicacao nao subir.
+1. Faz checkout do código mais recente no GitHub Actions.
+2. Cria o diretório remoto caso ele ainda não exista.
+3. Sincroniza o código no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
+4. Sobe primeiro o serviço `db` e depois executa `docker compose up -d --build --remove-orphans` para atualizar os serviços.
+5. Valida `http://127.0.0.1:8000/api/health` no servidor, registra o commit implantado em `.deploy-release` e falha o workflow se a aplicação não subir.
 
 ## 7) Remoto Git recomendado
 No clone local, padronize o remoto principal:
@@ -96,4 +96,4 @@ git remote set-url origin https://github.com/tscode-com-br/checking.git
 git push -u origin main
 ```
 
-Se a maquina local tiver chave SSH autorizada no GitHub, voce pode usar `git@github.com:tscode-com-br/checking.git` no lugar da URL HTTPS.
+Se a máquina local tiver chave SSH autorizada no GitHub, você pode usar `git@github.com:tscode-com-br/checking.git` no lugar da URL HTTPS.

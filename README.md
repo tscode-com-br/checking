@@ -22,6 +22,7 @@ Implementacao inicial do sistema de check-in/check-out com:
 - docs/esquematico_esp32_rc522_duplo.md: guia de montagem eletrica para 2x RC522
 - docs/esp32-com5-specs.md: identificacao tecnica da placa conectada na COM5
 - firmware/esp32_checking/esp32_checking.ino: firmware da ESP32
+- checking_android_new: aplicativo Android em Flutter
 - alembic: migracoes de banco
 - tests/test_api_flow.py: testes E2E basicos
 
@@ -71,24 +72,27 @@ Observacao:
 - GET /api/admin/events
 
 ## Integracao mobile
-- O aplicativo Android continua preenchendo o Microsoft Forms localmente.
-- O app Android carrega defaults embutidos em `checking_android/src/app-config.js`, evitando configuracao manual pelo usuario final para URL da API e chave compartilhada movel.
-- Apos retorno confirmado do Forms (`forms=submitted`), o app sincroniza o evento com a API usando `POST /api/mobile/events/sync`.
+- O aplicativo Android atual fica em `checking_android_new` e usa Flutter.
+- O app Android carrega defaults embutidos em `checking_android_new/lib/src/features/checking/checking_preset_config.dart`, evitando configuracao manual pelo usuario final para URL da API e chave compartilhada movel.
+- O app sincroniza historico com `GET /api/mobile/state`, localizacoes com `GET /api/mobile/locations` e envia eventos por `POST /api/mobile/events/forms-submit`.
+- O envio ao Microsoft Forms foi centralizado na API; o app nao executa mais automacao local do Forms.
 - A API autentica o canal mobile via header `x-mobile-shared-key`, controlado pela configuracao `MOBILE_APP_SHARED_KEY`.
 - Se a `chave` ainda nao existir em `users`, a API cria automaticamente o usuario com nome `Oriundo do Aplicativo`.
 - O app consulta `GET /api/mobile/state?chave=...` para manter `Ultimo Check-In` e `Ultimo Check-Out` alinhados com eventos vindos tanto do app quanto da ESP32.
 
-Antes de gerar uma release mobile, garanta que `checking_android/src/app-config.js` e `MOBILE_APP_SHARED_KEY` no backend estejam alinhados com o ambiente real.
+Antes de gerar uma release mobile, garanta que `checking_android_new/lib/src/features/checking/checking_preset_config.dart` e `MOBILE_APP_SHARED_KEY` no backend estejam alinhados com o ambiente real.
 
-Exemplo de sincronizacao mobile:
+Exemplo de envio mobile:
 
 ```json
 {
    "chave": "SRG1",
    "projeto": "P82",
    "action": "checkin",
-   "event_time": "2026-04-06T08:00:00+08:00",
-   "client_event_id": "android-1234567890"
+   "informe": "normal",
+   "event_time": "2026-04-06T00:00:00Z",
+   "client_event_id": "flutter-1234567890",
+   "local": "Aplicativo"
 }
 ```
 

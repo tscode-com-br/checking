@@ -17,3 +17,12 @@ Thumbs.db
 
 # Deployment secrets
 deploy/keys/
+
+# Separate Flutter repository and local artifacts
+checking_android_new/
+package-lock.json
+tmp_*.png
+assets/img/app_icon.png
+assets/img/app_icon_3x.png
+assets/img/google_play_graphic_1024x500.png
+assets/img/google_play_icon_512x512.png

@@ -65,27 +65,24 @@ Monitoramento em tempo real:
 3. Contadores do banco (heartbeats, eventos, pendencias):
 	.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('checking.db'); cur=c.cursor(); print('heartbeats',cur.execute('select count(*) from device_heartbeats').fetchone()[0]); print('events',cur.execute('select count(*) from check_events').fetchone()[0]); print('pending',cur.execute('select count(*) from pending_registrations').fetchone()[0]); c.close()"
 
-Projeto Android (Tauri) em checking_android:
-1. O projeto mobile clonado fica em .\checking_android.
-2. A estrutura Android gerada pelo Tauri fica em .\checking_android\src-tauri\gen\android.
-3. O emulador configurado neste computador e o Pixel_7_API_35.
+Projeto Android atual em Flutter (checking_android_new):
+1. O projeto mobile atual fica em .\checking_android_new.
+2. O emulador configurado neste computador e o Pixel_7_API_35.
 
 Rodar o app Android com um clique no VS Code:
 1. Abrir Terminal > Run Task.
 2. Selecionar a task Run Checking Android App.
 3. A task abre o emulador Pixel_7_API_35 se ele ainda nao estiver aberto.
-4. Depois a task entra em .\checking_android e executa npx tauri android dev.
+4. Depois a task entra em .\checking_android_new e executa flutter run no emulador ativo.
 5. Para parar a execucao, usar Ctrl+C no terminal da task ou Terminal > Kill Task.
 
 Rodar o app Android manualmente por terminal:
 1. Definir variaveis do Android SDK:
 	$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 	$env:ANDROID_SDK_ROOT="$env:LOCALAPPDATA\Android\Sdk"
-	$env:Path="$env:USERPROFILE\.cargo\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
+	$env:Path="$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
 2. Entrar na pasta do projeto Android:
-	cd .\checking_android
+	cd .\checking_android_new
 3. Rodar o app no emulador:
-	npx tauri android dev
-
-
+	flutter run -d emulator-5554
 
