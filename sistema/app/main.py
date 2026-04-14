@@ -3,13 +3,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from .core.config import settings
 from .database import Base, engine
-from .routers import admin, device, health, mobile
+from .routers import admin, device, health, mobile, web_check
 from .services.admin_auth import seed_default_admin
 from .services.event_archives import ensure_event_archives_dir
 from .services.forms_queue import forms_submission_worker
@@ -50,11 +50,14 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(device.router)
 app.include_router(mobile.router)
+app.include_router(web_check.router)
 app.include_router(admin.router)
 
 static_dir = Path(__file__).resolve().parent / "static"
 assets_dir = Path(__file__).resolve().parents[2] / "assets"
 if static_dir.exists():
+    check_dir = static_dir / "check"
+
     @app.get("/admin", include_in_schema=False)
     def legacy_admin_redirect_root() -> RedirectResponse:
         return RedirectResponse(url="./", status_code=307)
@@ -65,5 +68,16 @@ if static_dir.exists():
 
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    if check_dir.exists():
+        @app.get("/check", include_in_schema=False)
+        def check_page() -> FileResponse:
+            return FileResponse(check_dir / "index.html")
+
+        @app.get("/check/", include_in_schema=False)
+        def check_page_trailing_slash() -> RedirectResponse:
+            return RedirectResponse(url="/check", status_code=307)
+
+        app.mount("/check/assets", StaticFiles(directory=check_dir), name="check-assets")
 
     app.mount("/", StaticFiles(directory=static_dir / "admin", html=True), name="admin")

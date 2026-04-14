@@ -1938,6 +1938,100 @@ def test_mobile_forms_submit_is_idempotent_for_same_event_id():
         assert second.json()["duplicate"] is True
 
 
+def test_mobile_check_page_is_served_on_check_path():
+    with TestClient(app) as client:
+        response = client.get("/check")
+        assert response.status_code == 200
+        assert "Registrar" in response.text
+        assert "Chave Petrobras" in response.text
+        assert "/api/web/check" in response.text
+
+
+def test_web_check_autocreates_user_with_web_origin_name():
+    client_event_id = f"web-check-create-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB11",
+                "projeto": "P82",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["duplicate"] is False
+        assert payload["queued_forms"] is True
+        assert payload["state"]["found"] is True
+        assert payload["state"]["projeto"] == "P82"
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WB11")
+            assert user.nome == "Oriundo da Web"
+            assert user.rfid is None
+            assert user.projeto == "P82"
+
+
+def test_web_check_reuses_flutter_like_hidden_project_for_checkout():
+    first_event_time = now_sgt()
+    second_event_time = first_event_time + timedelta(minutes=4)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB12",
+                "projeto": "P83",
+                "action": "checkout",
+                "informe": "retroativo",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"web-check-1-{uuid.uuid4().hex}",
+            },
+        )
+        second = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB12",
+                "projeto": "P83",
+                "action": "checkout",
+                "informe": "retroativo",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"web-check-2-{uuid.uuid4().hex}",
+            },
+        )
+
+        assert first.status_code == 200
+        assert first.json()["queued_forms"] is True
+        assert second.status_code == 200
+        assert second.json()["queued_forms"] is False
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WB12")
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.chave == "WB12")).scalars().all()
+            sync_events = db.execute(
+                select(UserSyncEvent).where(
+                    UserSyncEvent.source == "web_forms",
+                    UserSyncEvent.chave == "WB12",
+                )
+            ).scalars().all()
+            request_events = db.execute(
+                select(CheckEvent).where(CheckEvent.request_path == "/api/web/check", CheckEvent.rfid.is_(None))
+            ).scalars().all()
+
+            assert user.nome == "Oriundo da Web"
+            assert user.projeto == "P83"
+            assert user.checkin is False
+            assert len(queued) == 1
+            assert len(sync_events) == 2
+            assert any(event.ontime is False and event.action == "checkout" for event in sync_events)
+            assert any(event.action == "checkout" and event.status == "queued" for event in request_events)
+
+
 def test_mobile_sync_accepts_project_p82():
     with TestClient(app) as client:
         response = client.post(

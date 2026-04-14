@@ -410,6 +410,10 @@ class MobileFormsSubmitRequest(BaseModel):
         return _normalize_optional_local(value)
 
 
+class WebCheckSubmitRequest(MobileFormsSubmitRequest):
+    pass
+
+
 class MobileSyncStateResponse(BaseModel):
     found: bool
     chave: str
@@ -435,6 +439,10 @@ class MobileSubmitResponse(BaseModel):
     queued_forms: bool = True
     message: str
     state: MobileSyncStateResponse
+
+
+class WebCheckSubmitResponse(MobileSubmitResponse):
+    pass
 
 
 class MobileLocationRow(BaseModel):

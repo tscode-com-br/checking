@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Checking Mobile Web</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/site_icon.png?v=1" />
+    <link rel="shortcut icon" type="image/png" href="/assets/img/site_icon.png?v=1" />
+    <link rel="apple-touch-icon" href="/assets/img/site_icon.png?v=1" />
+    <link rel="stylesheet" href="/check/assets/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="header-brand" role="img" aria-label="Checking">
+        <svg class="header-logo-icon" viewBox="0 0 220 170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+          <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+            <g transform="translate(18 16) rotate(-12 74 70)">
+              <rect x="12" y="8" width="120" height="120" rx="18" stroke-width="10" />
+              <rect x="28" y="30" width="34" height="28" rx="4" fill="#ffffff" stroke="none" />
+              <path d="M28 74H64" stroke-width="10" />
+              <path d="M28 96H56" stroke-width="10" />
+              <path d="M92 78L118 104L162 44" stroke-width="20" />
+              <path d="M154 30C167 34 176 43 180 56" stroke-width="8" />
+              <path d="M166 18C184 24 197 38 202 56" stroke-width="8" />
+            </g>
+          </g>
+        </svg>
+        <span class="header-logo-text">Checking</span>
+      </div>
+    </header>
+
+    <main class="check-shell">
+      <section class="check-card" aria-labelledby="checkTitle">
+        <p class="check-eyebrow">Acesso Rápido</p>
+        <h1 id="checkTitle">Registrar Check-In ou Check-Out</h1>
+        <p class="check-copy">
+          Página otimizada para dispositivos móveis, usando o mesmo fluxo operacional do aplicativo.
+        </p>
+
+        <form id="checkForm" class="check-form" novalidate data-submit-endpoint="/api/web/check">
+          <label class="check-field" for="chaveInput">
+            <span>Chave Petrobras</span>
+            <input
+              id="chaveInput"
+              name="chave"
+              type="text"
+              inputmode="text"
+              autocomplete="username"
+              maxlength="4"
+              placeholder="Ex.: HR70"
+              required
+            />
+          </label>
+
+          <fieldset class="check-group">
+            <legend>Registro</legend>
+            <div class="choice-grid two-columns">
+              <label class="choice-card">
+                <input type="radio" name="action" value="checkin" checked />
+                <span>Check-In</span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="action" value="checkout" />
+                <span>Check-Out</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="check-group">
+            <legend>Informe</legend>
+            <div class="choice-grid two-columns">
+              <label class="choice-card">
+                <input type="radio" name="informe" value="normal" checked />
+                <span>Normal</span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="informe" value="retroativo" />
+                <span>Retroativo</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <label id="projectField" class="check-field" for="projectSelect">
+            <span>Projeto</span>
+            <select id="projectSelect" name="projeto">
+              <option value="P80">P80</option>
+              <option value="P82">P82</option>
+              <option value="P83">P83</option>
+            </select>
+          </label>
+
+          <button id="submitButton" type="submit" class="submit-button">Registrar</button>
+        </form>
+
+        <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <script src="/check/assets/app.js"></script>
+  </body>
+</html>

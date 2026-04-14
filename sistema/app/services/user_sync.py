@@ -14,6 +14,7 @@ from .time_utils import now_sgt
 from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
+WEB_IMPORTED_USER_NAME = "Oriundo da Web"
 SYNC_EVENT_FALLBACK_STATUSES = ("queued", "updated", "success", "synced", "created", "submitted")
 
 
@@ -61,7 +62,13 @@ def find_user_by_chave(db: Session, chave: str) -> User | None:
     return db.execute(select(User).where(User.chave == normalized_key)).scalar_one_or_none()
 
 
-def ensure_mobile_user(db: Session, *, chave: str, projeto: str) -> tuple[User, bool]:
+def ensure_placeholder_user(
+    db: Session,
+    *,
+    chave: str,
+    projeto: str,
+    nome: str,
+) -> tuple[User, bool]:
     normalized_key = normalize_user_key(chave)
     user = find_user_by_chave(db, normalized_key)
     if user is not None:
@@ -71,7 +78,7 @@ def ensure_mobile_user(db: Session, *, chave: str, projeto: str) -> tuple[User, 
     user = User(
         rfid=None,
         chave=normalized_key,
-        nome=APP_IMPORTED_USER_NAME,
+        nome=nome,
         projeto=projeto,
         local=None,
         checkin=None,
@@ -82,6 +89,24 @@ def ensure_mobile_user(db: Session, *, chave: str, projeto: str) -> tuple[User, 
     db.add(user)
     db.flush()
     return user, True
+
+
+def ensure_mobile_user(db: Session, *, chave: str, projeto: str) -> tuple[User, bool]:
+    return ensure_placeholder_user(
+        db,
+        chave=chave,
+        projeto=projeto,
+        nome=APP_IMPORTED_USER_NAME,
+    )
+
+
+def ensure_web_user(db: Session, *, chave: str, projeto: str) -> tuple[User, bool]:
+    return ensure_placeholder_user(
+        db,
+        chave=chave,
+        projeto=projeto,
+        nome=WEB_IMPORTED_USER_NAME,
+    )
 
 
 def apply_user_state(
