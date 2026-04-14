@@ -175,6 +175,91 @@ main {
   overflow-x: auto;
 }
 
+.presence-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+}
+
+.presence-controls-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+}
+
+.presence-control-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.presence-control-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.presence-control-field input,
+.presence-control-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font: inherit;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.presence-controls-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.empty-state-cell {
+  padding: 18px;
+  text-align: center;
+  color: #475569;
+  font-style: italic;
+}
+
+.sortable-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: #0f172a;
+  border-radius: 0;
+  font: inherit;
+  font-weight: 700;
+}
+
+.sortable-header:hover {
+  color: #0f766e;
+}
+
+.sortable-header.is-active {
+  color: #0f766e;
+}
+
+.sort-indicator {
+  min-width: 18px;
+  text-align: right;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.sortable-header.is-active .sort-indicator {
+  color: #0f766e;
+}
+
 .events-wrap {
   padding-bottom: 8px;
 }
@@ -487,6 +572,51 @@ input.inline, select.inline {
   table-layout: auto;
 }
 
+.cadastro-grid-wrap {
+  margin-top: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+}
+
+.cadastro-grid-wrap > .cadastro-table {
+  margin-top: 0;
+}
+
+.cadastro-grid-wrap > .cadastro-users-table,
+.cadastro-grid-wrap > .cadastro-locations-table {
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.cadastro-grid-wrap > .cadastro-users-table th,
+.cadastro-grid-wrap > .cadastro-users-table td,
+.cadastro-grid-wrap > .cadastro-locations-table th,
+.cadastro-grid-wrap > .cadastro-locations-table td {
+  border: 0;
+  border-right: 1px solid #dbe2ea;
+  border-bottom: 1px solid #dbe2ea;
+}
+
+.cadastro-grid-wrap > .cadastro-users-table th,
+.cadastro-grid-wrap > .cadastro-locations-table th {
+  background: #f8fafc;
+}
+
+.cadastro-grid-wrap > .cadastro-users-table th:last-child,
+.cadastro-grid-wrap > .cadastro-users-table td:last-child,
+.cadastro-grid-wrap > .cadastro-locations-table th:last-child,
+.cadastro-grid-wrap > .cadastro-locations-table td:last-child {
+  border-right: 0;
+}
+
+.cadastro-grid-wrap > .cadastro-users-table tbody tr:last-child td,
+.cadastro-grid-wrap > .cadastro-locations-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .cadastro-table th,
 .cadastro-table td {
   white-space: nowrap;
@@ -573,26 +703,6 @@ input.inline, select.inline {
   flex-wrap: nowrap;
 }
 
-.cadastro-coordinate-frequency-table {
-  min-width: 0;
-}
-
-.cadastro-coordinate-frequency-table th,
-.cadastro-coordinate-frequency-table td {
-  white-space: nowrap;
-}
-
-.cadastro-coordinate-frequency-table th:first-child,
-.cadastro-coordinate-frequency-table td:first-child {
-  width: 1%;
-}
-
-.cadastro-coordinate-frequency-table .coordinate-frequency-cell-button,
-.cadastro-coordinate-frequency-table .coordinate-frequency-cell-input {
-  min-width: 76px;
-  white-space: nowrap;
-}
-
 .location-row td {
   vertical-align: top;
 }
@@ -660,46 +770,6 @@ input.inline, select.inline {
 
 .locations-settings-panel {
   margin-bottom: 26px;
-}
-
-.coordinate-frequency-section-header {
-  margin-top: 18px;
-}
-
-.coordinate-frequency-wrap {
-  margin-bottom: 18px;
-}
-
-.coordinate-frequency-table {
-  min-width: 0;
-}
-
-.coordinate-frequency-period-cell {
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.coordinate-frequency-cell-button {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #f8fafc;
-  color: #0f172a;
-  font: inherit;
-  text-align: center;
-  cursor: text;
-}
-
-.coordinate-frequency-cell-button.is-saving {
-  cursor: progress;
-  opacity: 0.72;
-}
-
-.coordinate-frequency-cell-input {
-  min-width: 76px;
-  width: 100%;
-  text-align: center;
 }
 
 .locations-settings-actions {
@@ -787,8 +857,14 @@ input.inline, select.inline {
   .locations-actions-bar {
     justify-content: stretch;
   }
+  .presence-controls-actions {
+    justify-content: stretch;
+  }
   .locations-settings-actions {
     justify-content: stretch;
+  }
+  .presence-controls-actions button {
+    width: 100%;
   }
   .locations-actions-bar button {
     width: 100%;
@@ -847,9 +923,23 @@ input.inline, select.inline {
   .responsive-table td button {
     width: 100%;
   }
+  .empty-state-cell {
+    text-align: left;
+    padding-left: 12px;
+  }
+  .empty-state-cell::before {
+    content: none;
+  }
   .cadastro-table {
     width: 100%;
     min-width: 0;
+  }
+  .cadastro-grid-wrap {
+    margin-top: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
   }
   .cadastro-table th,
   .cadastro-table td {

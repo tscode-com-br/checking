@@ -2501,8 +2501,6 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
-        initial_interval = locations.json()["location_update_interval_seconds"]
-        assert initial_interval >= 1
         assert locations.json()["location_accuracy_threshold_meters"] == 30
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["coordinates"] == [{"latitude": 1.255936, "longitude": 103.611066}]
@@ -2510,14 +2508,10 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         update_location_settings = client.post(
             "/api/admin/locations/settings",
-            json={
-                "location_update_interval_seconds": 75,
-                "location_accuracy_threshold_meters": 45,
-            },
+            json={"location_accuracy_threshold_meters": 45},
         )
         assert update_location_settings.status_code == 200
         assert update_location_settings.json()["ok"] is True
-        assert update_location_settings.json()["location_update_interval_seconds"] == initial_interval
         assert update_location_settings.json()["location_accuracy_threshold_meters"] == 45
 
         events = client.get("/api/admin/events")
@@ -2560,21 +2554,8 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
         assert mobile_catalog.status_code == 200
         assert mobile_catalog.json()["location_accuracy_threshold_meters"] == 45
-        assert mobile_catalog.json()["coordinate_update_frequency_headers"] == [
-            "Segunda-Feira",
-            "Terça-Feira",
-            "Quarta-Feira",
-            "Quinta-Feira",
-            "Sexta-Feira",
-            "Sábado",
-            "Domingo",
-        ]
-        default_frequency_row = next(
-            row
-            for row in mobile_catalog.json()["coordinate_update_frequency_rows"]
-            if row["period"] == "08:01 a 09:00"
-        )
-        assert default_frequency_row["values"]["Segunda-Feira"] == 240
+        assert "coordinate_update_frequency_headers" not in mobile_catalog.json()
+        assert "coordinate_update_frequency_rows" not in mobile_catalog.json()
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
         assert synced_row["tolerance_meters"] == 250
         assert synced_row["coordinates"] == [
@@ -2587,60 +2568,6 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
         assert remove_location.status_code == 200
         assert remove_location.json()["ok"] is True
-
-
-def test_coordinate_update_frequency_controls_effective_location_interval(monkeypatch):
-    fixed_now = datetime(2025, 1, 6, 8, 30, tzinfo=ZoneInfo("Asia/Singapore"))
-    monkeypatch.setattr(location_settings_module, "now_sgt", lambda: fixed_now)
-
-    with TestClient(app) as client:
-        ensure_admin_session(client)
-
-        locations = client.get("/api/admin/locations")
-        assert locations.status_code == 200
-        assert locations.json()["location_update_interval_seconds"] == 240
-
-        update_frequency = client.post(
-            "/api/admin/locations/coordinate-frequency",
-            json={
-                "day_label": "Segunda-Feira",
-                "period_label": "08:01 a 09:00",
-                "value_seconds": 75,
-            },
-        )
-        assert update_frequency.status_code == 200
-        assert update_frequency.json()["ok"] is True
-        assert update_frequency.json()["value_seconds"] == 75
-        assert update_frequency.json()["location_update_interval_seconds"] == 75
-
-        updated_locations = client.get("/api/admin/locations")
-        assert updated_locations.status_code == 200
-        assert updated_locations.json()["location_update_interval_seconds"] == 75
-
-        mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
-        assert mobile_catalog.status_code == 200
-        updated_frequency_row = next(
-            row
-            for row in mobile_catalog.json()["coordinate_update_frequency_rows"]
-            if row["period"] == "08:01 a 09:00"
-        )
-        assert updated_frequency_row["values"]["Segunda-Feira"] == 75
-
-        events = client.get("/api/admin/events")
-        assert events.status_code == 200
-        location_settings_event = next(
-            event
-            for event in events.json()
-            if event["action"] == "coord_freq" and event["request_path"] == "/api/admin/locations/coordinate-frequency"
-        )
-        assert location_settings_event["details"] == (
-            "O administrador Tamer Salmem alterou a frequência de atualização de coordenadas para Segunda-Feira, "
-            "no período de 08:01 a 09:00 de 240 para 75."
-        )
-
-        locations_after = client.get("/api/admin/locations")
-        assert locations_after.status_code == 200
-        assert all(row["id"] != base_p80["id"] for row in locations_after.json()["items"])
 
 
 def test_mobile_forms_submit_uses_default_and_custom_local():

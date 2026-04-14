@@ -21,8 +21,6 @@ from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
 from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import (
-    get_coordinate_update_frequency_headers,
-    get_coordinate_update_frequency_rows,
     get_location_accuracy_threshold_meters,
 )
 from ..services.user_sync import (
@@ -86,8 +84,6 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
         ],
         synced_at=now_sgt(),
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
-        coordinate_update_frequency_headers=get_coordinate_update_frequency_headers(),
-        coordinate_update_frequency_rows=get_coordinate_update_frequency_rows(db),
     )
 
 

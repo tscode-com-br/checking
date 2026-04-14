@@ -83,10 +83,48 @@
         <div class="section-header">
           <h2 id="checkinTitle">Usuários em Check-In (0/0)</h2>
         </div>
+        <div class="presence-controls" data-presence-table="checkin">
+          <div class="presence-controls-grid">
+            <label class="presence-control-field">
+              <span>Filtrar Horário</span>
+              <input type="search" placeholder="Ex.: 2026-04-14" data-presence-filter="time" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Nome</span>
+              <input type="search" placeholder="Ex.: João" data-presence-filter="nome" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Chave</span>
+              <input type="search" placeholder="Ex.: HR70" data-presence-filter="chave" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Projeto</span>
+              <input type="search" placeholder="Ex.: P82" data-presence-filter="projeto" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Assiduidade</span>
+              <input type="search" placeholder="Ex.: Normal" data-presence-filter="assiduidade" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Local</span>
+              <input type="search" placeholder="Ex.: Escritório" data-presence-filter="local" />
+            </label>
+          </div>
+          <div class="presence-controls-actions">
+            <button type="button" class="secondary-button" data-presence-clear>Limpar Filtros</button>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Assiduidade</th><th>Local</th></tr>
+              <tr>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="assiduidade"><span>Assiduidade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="local"><span>Local</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+              </tr>
             </thead>
             <tbody id="checkinBody"></tbody>
           </table>
@@ -97,10 +135,48 @@
         <div class="section-header">
           <h2 id="checkoutTitle">Usuários em Check-Out (0/0)</h2>
         </div>
+        <div class="presence-controls" data-presence-table="checkout">
+          <div class="presence-controls-grid">
+            <label class="presence-control-field">
+              <span>Filtrar Horário</span>
+              <input type="search" placeholder="Ex.: 2026-04-14" data-presence-filter="time" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Nome</span>
+              <input type="search" placeholder="Ex.: Maria" data-presence-filter="nome" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Chave</span>
+              <input type="search" placeholder="Ex.: AB12" data-presence-filter="chave" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Projeto</span>
+              <input type="search" placeholder="Ex.: P80" data-presence-filter="projeto" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Assiduidade</span>
+              <input type="search" placeholder="Ex.: Retroativo" data-presence-filter="assiduidade" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Local</span>
+              <input type="search" placeholder="Ex.: A bordo" data-presence-filter="local" />
+            </label>
+          </div>
+          <div class="presence-controls-actions">
+            <button type="button" class="secondary-button" data-presence-clear>Limpar Filtros</button>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Horário</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Assiduidade</th><th>Local</th></tr>
+              <tr>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="assiduidade"><span>Assiduidade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="local"><span>Local</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+              </tr>
             </thead>
             <tbody id="checkoutBody"></tbody>
           </table>
@@ -110,10 +186,34 @@
           <div class="section-header">
             <h2 id="missingCheckoutTitle">Usuários com Check-in e sem Check-Out (0)</h2>
           </div>
+          <div class="presence-controls" data-presence-table="missingCheckout">
+            <div class="presence-controls-grid">
+              <label class="presence-control-field">
+                <span>Filtrar Nome</span>
+                <input type="search" placeholder="Ex.: João" data-presence-filter="nome" />
+              </label>
+              <label class="presence-control-field">
+                <span>Filtrar Chave</span>
+                <input type="search" placeholder="Ex.: AB12" data-presence-filter="chave" />
+              </label>
+              <label class="presence-control-field">
+                <span>Filtrar Última Atividade</span>
+                <input type="search" placeholder="Ex.: 2026-04-14" data-presence-filter="time" />
+              </label>
+            </div>
+            <div class="presence-controls-actions">
+              <button type="button" class="secondary-button" data-presence-clear>Limpar Filtros</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table class="responsive-table">
               <thead>
-                <tr><th>Nome</th><th>Chave</th><th>Última Atividade</th><th>Ações</th></tr>
+                <tr>
+                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="time"><span>Última Atividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                  <th>Ações</th>
+                </tr>
               </thead>
               <tbody id="missingCheckoutBody"></tbody>
             </table>
@@ -125,10 +225,44 @@
         <div class="section-header">
           <h2 id="inactiveTitle">Usuários Inativos (0)</h2>
         </div>
+        <div class="presence-controls" data-presence-table="inactive">
+          <div class="presence-controls-grid">
+            <label class="presence-control-field">
+              <span>Filtrar Nome</span>
+              <input type="search" placeholder="Ex.: Maria" data-presence-filter="nome" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Chave</span>
+              <input type="search" placeholder="Ex.: HR70" data-presence-filter="chave" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Projeto</span>
+              <input type="search" placeholder="Ex.: P83" data-presence-filter="projeto" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Última Atividade</span>
+              <input type="search" placeholder="Ex.: Check-Out" data-presence-filter="latest_time" />
+            </label>
+            <label class="presence-control-field">
+              <span>Filtrar Inatividade</span>
+              <input type="search" placeholder="Ex.: 3 dias" data-presence-filter="inactivity_days" />
+            </label>
+          </div>
+          <div class="presence-controls-actions">
+            <button type="button" class="secondary-button" data-presence-clear>Limpar Filtros</button>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="responsive-table">
             <thead>
-              <tr><th>Nome</th><th>Chave</th><th>Projeto</th><th>Última Atividade</th><th>Inatividade</th><th>Ações</th></tr>
+              <tr>
+                <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="latest_time"><span>Última Atividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="inactivity_days"><span>Inatividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th>Ações</th>
+              </tr>
             </thead>
             <tbody id="inactiveBody"></tbody>
           </table>
@@ -151,7 +285,7 @@
         <div class="section-header">
           <h2>Localizações</h2>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap cadastro-grid-wrap">
           <table class="responsive-table cadastro-table cadastro-locations-table">
             <thead>
               <tr><th>Local</th><th>Coordenadas</th><th>Tolerância</th><th>Ações</th></tr>
@@ -161,15 +295,6 @@
         </div>
         <div class="locations-actions-bar">
           <button id="addLocationButton" type="button">Adicionar Localização</button>
-        </div>
-        <div class="section-header coordinate-frequency-section-header">
-          <h2>Frequência de Atualização de Coordenadas</h2>
-        </div>
-        <div class="table-wrap coordinate-frequency-wrap">
-          <table class="responsive-table cadastro-table coordinate-frequency-table cadastro-coordinate-frequency-table">
-            <thead id="coordinateUpdateFrequencyHead"></thead>
-            <tbody id="coordinateUpdateFrequencyBody"></tbody>
-          </table>
         </div>
         <div class="locations-settings-panel">
           <div class="locations-settings-row">
@@ -199,7 +324,7 @@
         <div class="section-header">
           <h2>Usuários Cadastrados</h2>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap cadastro-grid-wrap">
           <table class="responsive-table cadastro-table cadastro-users-table">
             <thead>
               <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Ações</th></tr>

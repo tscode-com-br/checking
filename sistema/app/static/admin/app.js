@@ -25,13 +25,64 @@ let eventArchivesTotalSizeBytes = 0;
 let nextLocationDraftId = 1;
 let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
-let locationUpdateIntervalSeconds = 60;
 let locationAccuracyThresholdMeters = 30;
-let coordinateUpdateFrequencyHeaders = [];
-let coordinateUpdateFrequencyRows = [];
-let coordinateFrequencyEditingCell = null;
-let coordinateFrequencySavingCellKey = null;
 let locationSettingsDirty = false;
+
+const PRESENCE_TABLE_CONFIGS = {
+  checkin: {
+    bodyId: "checkinBody",
+    filterColumns: ["time", "nome", "chave", "projeto", "assiduidade", "local"],
+    defaultSortKey: "time",
+    defaultSortDirection: "desc",
+    renderOptions: { highlightMissingCheckout: true, includeElapsedDays: true },
+  },
+  checkout: {
+    bodyId: "checkoutBody",
+    filterColumns: ["time", "nome", "chave", "projeto", "assiduidade", "local"],
+    defaultSortKey: "time",
+    defaultSortDirection: "desc",
+    renderOptions: {},
+  },
+  inactive: {
+    bodyId: "inactiveBody",
+    filterColumns: ["nome", "chave", "projeto", "latest_time", "inactivity_days"],
+    defaultSortKey: "inactivity_days",
+    defaultSortDirection: "desc",
+    renderOptions: {},
+  },
+  missingCheckout: {
+    bodyId: "missingCheckoutBody",
+    filterColumns: ["nome", "chave", "time"],
+    defaultSortKey: "time",
+    defaultSortDirection: "desc",
+    renderOptions: {},
+  },
+};
+const presenceTableStates = Object.fromEntries(
+  Object.entries(PRESENCE_TABLE_CONFIGS).map(([tableKey, config]) => [
+    tableKey,
+    createPresenceTableState(tableKey, config),
+  ]),
+);
+
+function createPresenceFilterState(filterColumns) {
+  return Object.fromEntries(filterColumns.map((key) => [key, ""]));
+}
+
+function createPresenceTableState(tableKey, config) {
+  return {
+    tableKey,
+    bodyId: config.bodyId,
+    renderOptions: config.renderOptions || {},
+    filterColumns: config.filterColumns || [],
+    defaultSortKey: config.defaultSortKey,
+    defaultSortDirection: config.defaultSortDirection,
+    rawRows: [],
+    filters: createPresenceFilterState(config.filterColumns || []),
+    sortKey: config.defaultSortKey,
+    sortDirection: config.defaultSortDirection,
+  };
+}
 
 function setAuthStatus(message, kind = "info") {
   authStatus.textContent = message || "";
@@ -50,10 +101,6 @@ function clearStatus() {
 
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
-  coordinateUpdateFrequencyHeaders = [];
-  coordinateUpdateFrequencyRows = [];
-  coordinateFrequencyEditingCell = null;
-  coordinateFrequencySavingCellKey = null;
   locationSettingsDirty = false;
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
@@ -397,9 +444,13 @@ function updateMissingCheckoutTitle(totalRows) {
   document.getElementById("missingCheckoutTitle").textContent = `Usuários com Check-in e sem Check-Out (${totalRows})`;
 }
 
+function countRenderedDataRows(bodyId) {
+  return document.querySelectorAll(`#${bodyId} tr:not(.empty-state-row)`).length;
+}
+
 function syncUserTitles() {
-  updateUserTitle("checkinBody", document.querySelectorAll("#checkinBody tr").length, registeredUsersTotal);
-  updateUserTitle("checkoutBody", document.querySelectorAll("#checkoutBody tr").length, registeredUsersTotal);
+  updateUserTitle("checkinBody", countRenderedDataRows("checkinBody"), registeredUsersTotal);
+  updateUserTitle("checkoutBody", countRenderedDataRows("checkoutBody"), registeredUsersTotal);
 }
 
 function getSingaporeCalendarDayDiff(value) {
@@ -451,7 +502,236 @@ function buildPresenceRow(row, options = {}) {
   return tr;
 }
 
+function renderEmptyStateRow(bodyId, columnCount, message) {
+  const body = document.getElementById(bodyId);
+  body.innerHTML = "";
+  const emptyRow = document.createElement("tr");
+  emptyRow.className = "empty-state-row";
+  emptyRow.innerHTML = `<td colspan="${columnCount}" class="empty-state-cell">${escapeHtml(message || "Nenhum registro encontrado.")}</td>`;
+  body.appendChild(emptyRow);
+  applyResponsiveLabels(bodyId);
+}
+
+function getPresenceTableState(tableKey) {
+  return presenceTableStates[tableKey] || null;
+}
+
+function getPresenceDefaultSortDirection(sortKey) {
+  if (["time", "latest_time", "inactivity_days"].includes(sortKey)) {
+    return "desc";
+  }
+  return "asc";
+}
+
+function getPresenceRowDisplayValue(tableKey, row, key) {
+  if (tableKey === "inactive") {
+    if (key === "nome") {
+      return row.nome || "";
+    }
+    if (key === "chave") {
+      return row.chave || "";
+    }
+    if (key === "projeto") {
+      return row.projeto || "";
+    }
+    if (key === "latest_time") {
+      return `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time)}`;
+    }
+    if (key === "inactivity_days") {
+      return formatInactivityDays(row.inactivity_days);
+    }
+    return "";
+  }
+
+  if (tableKey === "missingCheckout") {
+    if (key === "time") {
+      return formatUserTableTime(row.time).formatted;
+    }
+    if (key === "nome") {
+      return row.nome || "";
+    }
+    if (key === "chave") {
+      return row.chave || "";
+    }
+    return "";
+  }
+
+  if (key === "time") {
+    return formatDateTime(row.time);
+  }
+  if (key === "nome") {
+    return row.nome || "";
+  }
+  if (key === "chave") {
+    return row.chave || "";
+  }
+  if (key === "projeto") {
+    return row.projeto || "";
+  }
+  if (key === "assiduidade") {
+    return row.assiduidade || "Normal";
+  }
+  if (key === "local") {
+    return formatLocal(row.local);
+  }
+  return "";
+}
+
+function getPresenceRowSortValue(tableKey, row, key) {
+  if (tableKey === "inactive") {
+    if (key === "latest_time") {
+      const parsedTime = Date.parse(row.latest_time || "");
+      return Number.isNaN(parsedTime) ? 0 : parsedTime;
+    }
+    if (key === "inactivity_days") {
+      return Number(row.inactivity_days || 0);
+    }
+    return getPresenceRowDisplayValue(tableKey, row, key);
+  }
+
+  if (key === "time") {
+    const parsedTime = Date.parse(row.time || "");
+    return Number.isNaN(parsedTime) ? 0 : parsedTime;
+  }
+  return getPresenceRowDisplayValue(tableKey, row, key);
+}
+
+function hasActivePresenceFilters(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return false;
+  }
+  return Object.values(state.filters).some((value) => String(value || "").trim());
+}
+
+function getPresenceEmptyMessage(tableKey) {
+  if (hasActivePresenceFilters(tableKey)) {
+    return "Nenhum registro encontrado com os filtros atuais.";
+  }
+  if (tableKey === "inactive") {
+    return "Nenhum usuário inativo no momento.";
+  }
+  if (tableKey === "missingCheckout") {
+    return "Nenhum usuário com check-in pendente de check-out no momento.";
+  }
+  return tableKey === "checkin"
+    ? "Nenhum usuário em check-in no momento."
+    : "Nenhum usuário em check-out no momento.";
+}
+
+function filterPresenceRows(tableKey, rows, filters) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return rows;
+  }
+  return rows.filter((row) => state.filterColumns.every((key) => {
+    const rawFilterValue = String(filters[key] || "").trim();
+    if (!rawFilterValue) {
+      return true;
+    }
+    const tokens = rawFilterValue
+      .toLocaleLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    const searchableValue = String(getPresenceRowDisplayValue(tableKey, row, key) || "").toLocaleLowerCase();
+    return tokens.every((token) => searchableValue.includes(token));
+  }));
+}
+
+function sortPresenceRows(tableKey, rows, sortKey, sortDirection) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+  return [...rows].sort((rowA, rowB) => {
+    if (["time", "latest_time", "inactivity_days"].includes(sortKey)) {
+      const timeDifference = getPresenceRowSortValue(tableKey, rowA, sortKey) - getPresenceRowSortValue(tableKey, rowB, sortKey);
+      if (timeDifference !== 0) {
+        return timeDifference * direction;
+      }
+      return String(rowA.nome || "").localeCompare(String(rowB.nome || ""), "pt-BR", {
+        sensitivity: "base",
+        numeric: true,
+      }) * direction;
+    }
+
+    return String(getPresenceRowSortValue(tableKey, rowA, sortKey)).localeCompare(
+      String(getPresenceRowSortValue(tableKey, rowB, sortKey)),
+      "pt-BR",
+      { sensitivity: "base", numeric: true },
+    ) * direction;
+  });
+}
+
+function syncPresenceControls(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  const container = document.querySelector(`.presence-controls[data-presence-table="${tableKey}"]`);
+  if (!state || !container) {
+    return;
+  }
+
+  container.querySelectorAll("[data-presence-filter]").forEach((input) => {
+    const key = input.dataset.presenceFilter;
+    input.value = state.filters[key] || "";
+  });
+}
+
+function syncPresenceSortHeaders(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return;
+  }
+
+  document.querySelectorAll(`.sortable-header[data-sort-table="${tableKey}"]`).forEach((button) => {
+    const isActive = button.dataset.sortKey === state.sortKey;
+    button.classList.toggle("is-active", isActive);
+    const indicator = button.querySelector(".sort-indicator");
+    if (indicator) {
+      indicator.textContent = isActive ? (state.sortDirection === "asc" ? "↑" : "↓") : "↕";
+    }
+    const parentHeader = button.closest("th");
+    if (parentHeader) {
+      parentHeader.setAttribute("aria-sort", isActive ? (state.sortDirection === "asc" ? "ascending" : "descending") : "none");
+    }
+  });
+}
+
+function resetPresenceControls(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return;
+  }
+  state.filters = createPresenceFilterState(state.filterColumns);
+  state.sortKey = state.defaultSortKey;
+  state.sortDirection = state.defaultSortDirection;
+  syncPresenceControls(tableKey);
+  syncPresenceSortHeaders(tableKey);
+}
+
+function applyPresenceTableState(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return;
+  }
+
+  const filteredRows = filterPresenceRows(tableKey, state.rawRows, state.filters);
+  const sortedRows = sortPresenceRows(tableKey, filteredRows, state.sortKey, state.sortDirection);
+  if (tableKey === "inactive") {
+    renderInactiveTable(sortedRows, { emptyMessage: getPresenceEmptyMessage(tableKey) });
+  } else if (tableKey === "missingCheckout") {
+    renderMissingCheckoutTable(sortedRows, { emptyMessage: getPresenceEmptyMessage(tableKey) });
+  } else {
+    renderPresenceTable(state.bodyId, sortedRows, {
+      ...state.renderOptions,
+      emptyMessage: getPresenceEmptyMessage(tableKey),
+    });
+  }
+  syncPresenceSortHeaders(tableKey);
+}
+
 function renderPresenceTable(bodyId, rows, options = {}) {
+  if (!rows.length) {
+    renderEmptyStateRow(bodyId, 6, options.emptyMessage || "Nenhum registro encontrado.");
+    updateUserTitle(bodyId, 0, registeredUsersTotal);
+    return;
+  }
   const body = document.getElementById(bodyId);
   body.innerHTML = "";
   rows.forEach((row) => body.appendChild(buildPresenceRow(row, options)));
@@ -478,7 +758,13 @@ function buildInactiveRow(row) {
   return tr;
 }
 
-function renderInactiveTable(rows) {
+function renderInactiveTable(rows, options = {}) {
+  if (!rows.length) {
+    renderEmptyStateRow("inactiveBody", 6, options.emptyMessage || "Nenhum registro encontrado.");
+    updateInactiveTitle(0);
+    return;
+  }
+
   const body = document.getElementById("inactiveBody");
   body.innerHTML = "";
   rows.forEach((row) => body.appendChild(buildInactiveRow(row)));
@@ -499,7 +785,13 @@ function buildMissingCheckoutRow(row) {
   return tr;
 }
 
-function renderMissingCheckoutTable(rows) {
+function renderMissingCheckoutTable(rows, options = {}) {
+  if (!rows.length) {
+    renderEmptyStateRow("missingCheckoutBody", 4, options.emptyMessage || "Nenhum registro encontrado.");
+    updateMissingCheckoutTitle(0);
+    return;
+  }
+
   const body = document.getElementById("missingCheckoutBody");
   body.innerHTML = "";
   rows.forEach((row) => body.appendChild(buildMissingCheckoutRow(row)));
@@ -589,44 +881,6 @@ function getLocationAccuracyThresholdInput() {
 
 function getLocationSettingsSaveButton() {
   return document.getElementById("saveLocationSettingsButton");
-}
-
-function getCoordinateUpdateFrequencyHead() {
-  return document.getElementById("coordinateUpdateFrequencyHead");
-}
-
-function getCoordinateUpdateFrequencyBody() {
-  return document.getElementById("coordinateUpdateFrequencyBody");
-}
-
-function getCoordinateUpdateFrequencyCellKey(periodLabel, dayLabel) {
-  return `${periodLabel}::${dayLabel}`;
-}
-
-function findCoordinateUpdateFrequencyRow(periodLabel) {
-  return coordinateUpdateFrequencyRows.find((row) => row.period === periodLabel) ?? null;
-}
-
-function getCoordinateUpdateFrequencyValue(periodLabel, dayLabel) {
-  const row = findCoordinateUpdateFrequencyRow(periodLabel);
-  return row ? row.values?.[dayLabel] : null;
-}
-
-function isCoordinateUpdateFrequencyEditing() {
-  return Boolean(coordinateFrequencyEditingCell || coordinateFrequencySavingCellKey);
-}
-
-function normalizeCoordinateUpdateFrequencyValue(value) {
-  const normalized = String(value ?? "").trim();
-  if (!/^\d+$/.test(normalized)) {
-    throw new Error("A frequência de atualização de coordenadas deve ser um inteiro em segundos.");
-  }
-
-  const seconds = Number(normalized);
-  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
-    throw new Error("A frequência de atualização de coordenadas deve ser um inteiro entre 1 e 86400 segundos.");
-  }
-  return String(seconds);
 }
 
 function normalizeLocationAccuracyThreshold(value) {
@@ -739,194 +993,7 @@ function renderLocations() {
   applyResponsiveLabels("locationsBody");
   addButton.disabled = hasBlankLocationRow();
 }
-
-function makeCoordinateUpdateFrequencyRow(row) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td class="coordinate-frequency-period-cell">${escapeHtml(row.period)}</td>
-    ${coordinateUpdateFrequencyHeaders.map((dayLabel) => {
-      const cellKey = getCoordinateUpdateFrequencyCellKey(row.period, dayLabel);
-      const isEditing = coordinateFrequencyEditingCell
-        && getCoordinateUpdateFrequencyCellKey(
-          coordinateFrequencyEditingCell.periodLabel,
-          coordinateFrequencyEditingCell.dayLabel,
-        ) === cellKey;
-      const isSaving = coordinateFrequencySavingCellKey === cellKey;
-      const value = row.values?.[dayLabel] ?? "";
-      if (isEditing) {
-        return `
-          <td>
-            <input
-              class="inline coordinate-frequency-cell-input"
-              data-coordinate-frequency-input="true"
-              data-coordinate-frequency-period="${escapeHtml(row.period)}"
-              data-coordinate-frequency-day="${escapeHtml(dayLabel)}"
-              inputmode="numeric"
-              autocomplete="off"
-              value="${escapeHtml(coordinateFrequencyEditingCell.draftValue)}"
-            />
-          </td>
-        `;
-      }
-      return `
-        <td>
-          <button
-            type="button"
-            class="coordinate-frequency-cell-button${isSaving ? " is-saving" : ""}"
-            data-coordinate-frequency-edit="true"
-            data-coordinate-frequency-period="${escapeHtml(row.period)}"
-            data-coordinate-frequency-day="${escapeHtml(dayLabel)}"
-            ${isSaving ? "disabled" : ""}
-          >${isSaving ? "Salvando..." : escapeHtml(String(value))}</button>
-        </td>
-      `;
-    }).join("")}
-  `;
-  return tr;
-}
-
-function renderCoordinateUpdateFrequencyTable() {
-  const head = getCoordinateUpdateFrequencyHead();
-  const body = getCoordinateUpdateFrequencyBody();
-  if (!head || !body) {
-    return;
-  }
-
-  if (!coordinateUpdateFrequencyHeaders.length || !coordinateUpdateFrequencyRows.length) {
-    head.innerHTML = "";
-    body.innerHTML = "";
-    return;
-  }
-
-  head.innerHTML = `
-    <tr>
-      <th>Período</th>
-      ${coordinateUpdateFrequencyHeaders.map((dayLabel) => `<th>${escapeHtml(dayLabel)}</th>`).join("")}
-    </tr>
-  `;
-  body.innerHTML = "";
-  coordinateUpdateFrequencyRows.forEach((row) => body.appendChild(makeCoordinateUpdateFrequencyRow(row)));
-  applyResponsiveLabels("coordinateUpdateFrequencyBody");
-  if (coordinateFrequencyEditingCell) {
-    focusCoordinateUpdateFrequencyInput();
-  }
-}
-
-function focusCoordinateUpdateFrequencyInput() {
-  window.requestAnimationFrame(() => {
-    document.querySelector('[data-coordinate-frequency-input="true"]')?.focus();
-  });
-}
-
-function startCoordinateUpdateFrequencyEdit(periodLabel, dayLabel) {
-  const cellKey = getCoordinateUpdateFrequencyCellKey(periodLabel, dayLabel);
-  if (coordinateFrequencySavingCellKey) {
-    return;
-  }
-  if (
-    coordinateFrequencyEditingCell
-    && getCoordinateUpdateFrequencyCellKey(
-      coordinateFrequencyEditingCell.periodLabel,
-      coordinateFrequencyEditingCell.dayLabel,
-    ) !== cellKey
-  ) {
-    return;
-  }
-  const currentValue = getCoordinateUpdateFrequencyValue(periodLabel, dayLabel);
-  if (currentValue === null || currentValue === undefined) {
-    return;
-  }
-  coordinateFrequencyEditingCell = {
-    periodLabel,
-    dayLabel,
-    originalValue: String(currentValue),
-    draftValue: "",
-  };
-  renderCoordinateUpdateFrequencyTable();
-}
-
-function updateCoordinateUpdateFrequencyDraft(value) {
-  if (!coordinateFrequencyEditingCell) {
-    return;
-  }
-  coordinateFrequencyEditingCell.draftValue = String(value ?? "");
-}
-
-function cancelCoordinateUpdateFrequencyEdit() {
-  if (!coordinateFrequencyEditingCell) {
-    return;
-  }
-  coordinateFrequencyEditingCell = null;
-  renderCoordinateUpdateFrequencyTable();
-}
-
-function applyCoordinateUpdateFrequencyCellUpdate(periodLabel, dayLabel, valueSeconds) {
-  const row = findCoordinateUpdateFrequencyRow(periodLabel);
-  if (!row) {
-    return;
-  }
-  row.values = {
-    ...row.values,
-    [dayLabel]: valueSeconds,
-  };
-}
-
-async function commitCoordinateUpdateFrequencyEdit() {
-  const editingCell = coordinateFrequencyEditingCell;
-  if (!editingCell) {
-    return;
-  }
-
-  const cellKey = getCoordinateUpdateFrequencyCellKey(editingCell.periodLabel, editingCell.dayLabel);
-  if (coordinateFrequencySavingCellKey === cellKey) {
-    return;
-  }
-
-  if (!String(editingCell.draftValue ?? "").trim()) {
-    coordinateFrequencyEditingCell = null;
-    renderCoordinateUpdateFrequencyTable();
-    return;
-  }
-
-  const normalizedValue = normalizeCoordinateUpdateFrequencyValue(editingCell.draftValue);
-  if (normalizedValue === editingCell.originalValue) {
-    coordinateFrequencyEditingCell = null;
-    renderCoordinateUpdateFrequencyTable();
-    return;
-  }
-
-  coordinateFrequencySavingCellKey = cellKey;
-  renderCoordinateUpdateFrequencyTable();
-  try {
-    const response = await postJson("/api/admin/locations/coordinate-frequency", {
-      day_label: editingCell.dayLabel,
-      period_label: editingCell.periodLabel,
-      value_seconds: Number(normalizedValue),
-    });
-    applyCoordinateUpdateFrequencyCellUpdate(
-      response.period_label,
-      response.day_label,
-      response.value_seconds,
-    );
-    coordinateFrequencyEditingCell = null;
-    setStatus(response.message, true);
-  } catch (error) {
-    coordinateFrequencyEditingCell = editingCell;
-    throw error;
-  } finally {
-    coordinateFrequencySavingCellKey = null;
-    renderCoordinateUpdateFrequencyTable();
-  }
-}
-
-function handleCoordinateUpdateFrequencyCommit() {
-  commitCoordinateUpdateFrequencyEdit().catch((error) => {
-    setStatus(error.message, false);
-    focusCoordinateUpdateFrequencyInput();
-  });
-}
-
-function renderLocationUpdateInterval() {
+function renderLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
   if (accuracyInput) {
     const normalizedAccuracy = String(locationAccuracyThresholdMeters);
@@ -972,7 +1039,7 @@ function handleLocationSettingsInputChange() {
 }
 
 function discardLocationSettingsDraft() {
-  renderLocationUpdateInterval();
+  renderLocationSettings();
   setStatus("Alterações nas configurações de localização descartadas.", true);
 }
 
@@ -1118,7 +1185,7 @@ async function removeLocationRow(rowId) {
   setStatus(response.message, true);
 }
 
-async function saveLocationUpdateInterval() {
+async function saveLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
   const saveButton = getLocationSettingsSaveButton();
   if (!accuracyInput) {
@@ -1141,12 +1208,10 @@ async function saveLocationUpdateInterval() {
   }
   try {
     const response = await postJson("/api/admin/locations/settings", {
-      location_update_interval_seconds: Number(normalizedInterval),
       location_accuracy_threshold_meters: Number(normalizedAccuracy),
     });
-    locationUpdateIntervalSeconds = response.location_update_interval_seconds;
     locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
-    renderLocationUpdateInterval();
+    renderLocationSettings();
     setStatus(response.message, true);
   } catch (error) {
     refreshLocationSettingsDirtyState();
@@ -1159,19 +1224,7 @@ async function saveLocationUpdateInterval() {
 
 async function loadLocations() {
   const response = await fetchJson("/api/admin/locations");
-  locationUpdateIntervalSeconds = response.location_update_interval_seconds;
   locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
-  coordinateUpdateFrequencyHeaders = Array.isArray(response.coordinate_update_frequency_headers)
-    ? [...response.coordinate_update_frequency_headers]
-    : [];
-  coordinateUpdateFrequencyRows = Array.isArray(response.coordinate_update_frequency_rows)
-    ? response.coordinate_update_frequency_rows.map((row) => ({
-      period: row.period,
-      values: { ...row.values },
-    }))
-    : [];
-  coordinateFrequencyEditingCell = null;
-  coordinateFrequencySavingCellKey = null;
   locationRows = response.items.map((row) =>
     createLocationRow({
       id: row.id,
@@ -1185,8 +1238,7 @@ async function loadLocations() {
     })
   );
   renderLocations();
-  renderCoordinateUpdateFrequencyTable();
-  renderLocationUpdateInterval();
+  renderLocationSettings();
 }
 
 function makePendingRow(row) {
@@ -1270,7 +1322,7 @@ function makeAdministratorRow(row) {
 
 function hasPendingEditInProgress() {
   return locationRows.some((row) => row.isEditing)
-    || isCoordinateUpdateFrequencyEditing()
+    || locationSettingsDirty
     || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
 }
 
@@ -1336,7 +1388,8 @@ function toggleAdminPasswordEditor(id, active) {
 
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
-  renderPresenceTable("checkinBody", rows, { highlightMissingCheckout: true, includeElapsedDays: true });
+  presenceTableStates.checkin.rawRows = Array.isArray(rows) ? rows : [];
+  applyPresenceTableState("checkin");
 }
 
 async function loadCheckout() {
@@ -1344,13 +1397,16 @@ async function loadCheckout() {
     fetchJson("/api/admin/checkout"),
     fetchJson("/api/admin/missing-checkout"),
   ]);
-  renderPresenceTable("checkoutBody", rows);
-  renderMissingCheckoutTable(missingCheckoutRows);
+  presenceTableStates.checkout.rawRows = Array.isArray(rows) ? rows : [];
+  presenceTableStates.missingCheckout.rawRows = Array.isArray(missingCheckoutRows) ? missingCheckoutRows : [];
+  applyPresenceTableState("checkout");
+  applyPresenceTableState("missingCheckout");
 }
 
 async function loadInactive() {
   const rows = await fetchJson("/api/admin/inactive");
-  renderInactiveTable(rows);
+  presenceTableStates.inactive.rawRows = Array.isArray(rows) ? rows : [];
+  applyPresenceTableState("inactive");
 }
 
 async function loadPending() {
@@ -1820,6 +1876,57 @@ function bindActions() {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
+  document.querySelectorAll(".presence-controls").forEach((container) => {
+    const tableKey = container.dataset.presenceTable;
+
+    container.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || !target.dataset.presenceFilter) {
+        return;
+      }
+      const state = getPresenceTableState(tableKey);
+      if (!state) {
+        return;
+      }
+      state.filters[target.dataset.presenceFilter] = target.value;
+      applyPresenceTableState(tableKey);
+    });
+
+    container.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLButtonElement) || target.dataset.presenceClear === undefined) {
+        return;
+      }
+      resetPresenceControls(tableKey);
+      applyPresenceTableState(tableKey);
+      setStatus("Filtros limpos com sucesso.", true);
+    });
+  });
+
+  document.querySelector("main").addEventListener("click", (event) => {
+    const target = event.target;
+    const sortButton = target instanceof Element ? target.closest(".sortable-header") : null;
+    if (!sortButton) {
+      return;
+    }
+
+    const tableKey = sortButton.dataset.sortTable;
+    const sortKey = sortButton.dataset.sortKey;
+    const state = getPresenceTableState(tableKey);
+    if (!state || !sortKey) {
+      return;
+    }
+
+    if (state.sortKey === sortKey) {
+      state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+    } else {
+      state.sortKey = sortKey;
+      state.sortDirection = getPresenceDefaultSortDirection(sortKey);
+    }
+
+    applyPresenceTableState(tableKey);
+  });
+
   document.getElementById("loginButton").addEventListener("click", () => {
     submitLogin().catch((error) => setAuthStatus(error.message, "error"));
   });
@@ -1930,46 +2037,9 @@ function bindActions() {
 
   document.getElementById("addLocationButton").addEventListener("click", addLocationRow);
   document.getElementById("saveLocationSettingsButton").addEventListener("click", () => {
-    saveLocationUpdateInterval().catch((error) => setStatus(error.message, false));
+    saveLocationSettings().catch((error) => setStatus(error.message, false));
   });
   bindLocationSettingsInput("locationAccuracyThresholdMeters");
-
-  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.coordinateFrequencyEdit) {
-      startCoordinateUpdateFrequencyEdit(
-        target.dataset.coordinateFrequencyPeriod,
-        target.dataset.coordinateFrequencyDay,
-      );
-    }
-  });
-  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("input", (event) => {
-    const target = event.target;
-    if (target.dataset.coordinateFrequencyInput === "true") {
-      updateCoordinateUpdateFrequencyDraft(target.value);
-    }
-  });
-  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("keydown", (event) => {
-    const target = event.target;
-    if (target.dataset.coordinateFrequencyInput !== "true") {
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      handleCoordinateUpdateFrequencyCommit();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      cancelCoordinateUpdateFrequencyEdit();
-    }
-  });
-  document.getElementById("coordinateUpdateFrequencyBody").addEventListener("focusout", (event) => {
-    const target = event.target;
-    if (target.dataset.coordinateFrequencyInput === "true") {
-      handleCoordinateUpdateFrequencyCommit();
-    }
-  });
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const target = event.target;
@@ -2061,6 +2131,11 @@ function bindActions() {
     if (target.dataset.adminSavePassword) {
       saveAdministratorPassword(target.dataset.adminSavePassword).catch((error) => setStatus(error.message, false));
     }
+  });
+
+  Object.keys(presenceTableStates).forEach((tableKey) => {
+    syncPresenceControls(tableKey);
+    syncPresenceSortHeaders(tableKey);
   });
 }
 
