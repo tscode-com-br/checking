@@ -56,28 +56,30 @@ app.include_router(admin.router)
 static_dir = Path(__file__).resolve().parent / "static"
 assets_dir = Path(__file__).resolve().parents[2] / "assets"
 if static_dir.exists():
+    admin_dir = static_dir / "admin"
     check_dir = static_dir / "check"
-
-    @app.get("/admin", include_in_schema=False)
-    def legacy_admin_redirect_root() -> RedirectResponse:
-        return RedirectResponse(url="./", status_code=307)
-
-    @app.get("/admin/{path:path}", include_in_schema=False)
-    def legacy_admin_redirect(path: str = "") -> RedirectResponse:
-        return RedirectResponse(url="../", status_code=307)
 
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    if admin_dir.exists():
+        @app.get("/admin", include_in_schema=False)
+        def admin_page() -> FileResponse:
+            return FileResponse(admin_dir / "index.html")
+
+        @app.get("/admin/", include_in_schema=False)
+        def admin_page_trailing_slash() -> RedirectResponse:
+            return RedirectResponse(url="../admin", status_code=307)
+
+        app.mount("/admin", StaticFiles(directory=admin_dir), name="admin")
+
     if check_dir.exists():
-        @app.get("/check", include_in_schema=False)
-        def check_page() -> FileResponse:
+        @app.get("/user", include_in_schema=False)
+        def user_page() -> FileResponse:
             return FileResponse(check_dir / "index.html")
 
-        @app.get("/check/", include_in_schema=False)
-        def check_page_trailing_slash() -> RedirectResponse:
-            return RedirectResponse(url="/check", status_code=307)
+        @app.get("/user/", include_in_schema=False)
+        def user_page_trailing_slash() -> RedirectResponse:
+            return RedirectResponse(url="../user", status_code=307)
 
-        app.mount("/check/assets", StaticFiles(directory=check_dir), name="check-assets")
-
-    app.mount("/", StaticFiles(directory=static_dir / "admin", html=True), name="admin")
+        app.mount("/user", StaticFiles(directory=check_dir), name="user")

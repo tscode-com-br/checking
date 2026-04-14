@@ -1938,13 +1938,21 @@ def test_mobile_forms_submit_is_idempotent_for_same_event_id():
         assert second.json()["duplicate"] is True
 
 
-def test_mobile_check_page_is_served_on_check_path():
+def test_mobile_check_page_is_served_on_user_path():
     with TestClient(app) as client:
-        response = client.get("/check")
+        response = client.get("/user")
         assert response.status_code == 200
         assert "Registrar" in response.text
         assert "Chave Petrobras" in response.text
         assert "/api/web/check" in response.text
+
+
+def test_admin_page_is_served_on_admin_path():
+    with TestClient(app) as client:
+        response = client.get("/admin")
+        assert response.status_code == 200
+        assert "Checking Admin" in response.text
+        assert "Acesso Administrativo" in response.text
 
 
 def test_web_check_autocreates_user_with_web_origin_name():
