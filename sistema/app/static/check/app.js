@@ -5,6 +5,7 @@
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
   const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
   const automaticActivities = window.CheckingWebAutomaticActivities;
+  const clientState = window.CheckingWebClientState;
   const chaveInput = document.getElementById('chaveInput');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
@@ -23,10 +24,12 @@
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
   const storageKey = 'checking.web.user.chave';
+  const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
-  const automaticActivitiesEnabledKey = 'checking.web.user.automatic-activities-enabled';
   const defaultManualLocationLabel = 'Escritório Principal';
+  const allowedProjectValues = Array.from(projectSelect.options).map((option) => option.value);
+  const defaultProjectValue = projectSelect.value;
   const lifecycleTriggerCooldownMs = 1200;
   const automaticCheckoutLocation = automaticActivities.AUTOMATIC_CHECKOUT_LOCATION;
   const geolocationOptions = {
@@ -58,10 +61,9 @@
   let availableLocations = [];
   let gpsLocationPermissionGranted = false;
   let lifecycleRefreshInProgress = false;
-  const notificationMessages = {
-    form: { message: '', tone: null },
-    location: { message: '', tone: null },
-    history: { message: '', tone: null },
+  const notificationState = {
+    message: '',
+    tone: null,
   };
 
   function isStandaloneShortcutMode() {
@@ -90,44 +92,39 @@
     }
   }
 
-  function applyNotificationLine(element, messageEntry) {
-    element.textContent = messageEntry ? messageEntry.message : '';
+  function applyNotificationLine(element, message, tone) {
+    element.textContent = message || '';
     element.classList.remove('is-success', 'is-error', 'is-warning', 'is-info');
 
-    if (messageEntry && messageEntry.tone) {
-      element.classList.add(`is-${messageEntry.tone}`);
+    if (tone) {
+      element.classList.add(`is-${tone}`);
     }
   }
 
   function renderNotifications() {
-    const orderedEntries = ['form', 'location', 'history']
-      .map((key) => notificationMessages[key])
-      .filter((entry) => entry && entry.message);
-
-    applyNotificationLine(notificationLinePrimary, orderedEntries[0] || null);
-    applyNotificationLine(notificationLineSecondary, orderedEntries[1] || null);
+    const splitMessage = clientState.splitNotificationMessage(notificationState.message);
+    applyNotificationLine(notificationLinePrimary, splitMessage.primary, notificationState.tone);
+    applyNotificationLine(notificationLineSecondary, splitMessage.secondary, notificationState.tone);
   }
 
-  function setNotificationMessage(channel, message, tone) {
-    notificationMessages[channel] = {
-      message: message || '',
-      tone: message ? (tone || 'info') : null,
-    };
+  function setNotificationMessage(_channel, message, tone) {
+    if (!message) {
+      return;
+    }
+
+    notificationState.message = message;
+    notificationState.tone = tone || 'info';
     renderNotifications();
   }
 
-  function clearNotificationMessages(exceptChannel) {
-    Object.keys(notificationMessages).forEach((channel) => {
-      if (channel !== exceptChannel) {
-        notificationMessages[channel] = { message: '', tone: null };
-      }
-    });
+  function clearNotification() {
+    notificationState.message = '';
+    notificationState.tone = null;
     renderNotifications();
   }
 
   function setSequenceStatus(message) {
     setNotificationMessage('form', message || '', 'info');
-    clearNotificationMessages('form');
   }
 
   function preventViewportScroll(event) {
@@ -192,6 +189,74 @@
     } catch {
       // Ignore browsers with unavailable storage.
     }
+  }
+
+  function readPersistedUserSettingsMap() {
+    try {
+      const rawValue = window.localStorage.getItem(userSettingsStorageKey);
+      if (!rawValue) {
+        return {};
+      }
+
+      const parsedValue = JSON.parse(rawValue);
+      return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writePersistedUserSettingsMap(settingsMap) {
+    try {
+      window.localStorage.setItem(userSettingsStorageKey, JSON.stringify(settingsMap));
+    } catch {
+      // Ignore browsers with unavailable storage.
+    }
+  }
+
+  function resolveCurrentUserSettingsDefaults() {
+    return {
+      project: defaultProjectValue,
+      automaticActivitiesEnabled: false,
+      allowedProjects: allowedProjectValues,
+    };
+  }
+
+  function applyPersistedUserSettings(chave) {
+    const resolvedSettings = clientState.resolvePersistedUserSettings(
+      readPersistedUserSettingsMap(),
+      chave,
+      resolveCurrentUserSettingsDefaults()
+    );
+
+    projectSelect.value = resolvedSettings.project;
+    if (automaticActivitiesToggle) {
+      automaticActivitiesToggle.checked = resolvedSettings.automaticActivitiesEnabled;
+    }
+  }
+
+  function restorePersistedUserSettingsForChave(chave) {
+    applyPersistedUserSettings(chave);
+    syncProjectVisibility();
+  }
+
+  function persistCurrentUserSettings() {
+    const normalizedChave = sanitizeChave(chaveInput.value);
+    if (normalizedChave.length !== 4) {
+      return;
+    }
+
+    const nextSettingsMap = clientState.withPersistedUserSettings(
+      readPersistedUserSettingsMap(),
+      normalizedChave,
+      {
+        project: projectSelect.value,
+        automaticActivitiesEnabled: Boolean(
+          automaticActivitiesToggle && automaticActivitiesToggle.checked
+        ),
+      },
+      resolveCurrentUserSettingsDefaults()
+    );
+    writePersistedUserSettingsMap(nextSettingsMap);
   }
 
   function setLocationPresentation(label, message, tone, accuracyText, options) {
@@ -634,8 +699,10 @@
     }
 
     const permissionState = await queryLocationPermissionState();
-    const hasGrantedPermission = permissionState === 'granted'
-      || (permissionState === null && readStorageFlag(locationPermissionGrantedKey));
+    const hasGrantedPermission = clientState.shouldAttemptSilentLocationLookup(
+      permissionState,
+      readStorageFlag(locationPermissionGrantedKey)
+    );
 
     if (!hasGrantedPermission) {
       setLocationWithoutPermission();
@@ -665,7 +732,12 @@
     }
 
     const permissionState = await queryLocationPermissionState();
-    if (permissionState === 'granted' || (permissionState === null && readStorageFlag(locationPermissionGrantedKey))) {
+    if (
+      clientState.shouldAttemptSilentLocationLookup(
+        permissionState,
+        readStorageFlag(locationPermissionGrantedKey)
+      )
+    ) {
       await captureAndResolveLocation({ interactive: false, forceRefresh: true });
     }
   }
@@ -915,6 +987,7 @@
         await runAutomaticActivitiesIfNeeded(locationPayload, { suppressStatus: true });
       }
 
+      restorePersistedUserSettingsForChave(normalized);
       setNotificationMessage('history', '', null);
       setNotificationMessage('location', '', null);
       setStatus('Aplicação atualizada com sucesso.', 'success');
@@ -941,11 +1014,7 @@
   }
 
   function syncAutomaticActivitiesToggle() {
-    if (!automaticActivitiesToggle) {
-      return;
-    }
-
-    automaticActivitiesToggle.checked = readStorageFlag(automaticActivitiesEnabledKey);
+    restorePersistedUserSettingsForChave(chaveInput.value);
   }
 
   chaveInput.addEventListener('input', () => {
@@ -956,6 +1025,7 @@
     writePersistedChave(sanitized);
 
     if (sanitized.length === 4) {
+      restorePersistedUserSettingsForChave(sanitized);
       void runLifecycleUpdateSequence({ ignoreCooldown: true });
       return;
     }
@@ -969,9 +1039,13 @@
     input.addEventListener('change', syncProjectVisibility);
   });
 
+  projectSelect.addEventListener('change', () => {
+    persistCurrentUserSettings();
+  });
+
   if (automaticActivitiesToggle) {
     automaticActivitiesToggle.addEventListener('change', () => {
-      writeStorageFlag(automaticActivitiesEnabledKey, automaticActivitiesToggle.checked);
+      persistCurrentUserSettings();
       if (automaticActivitiesToggle.checked) {
         setStatus(
           gpsLocationPermissionGranted
@@ -1077,6 +1151,7 @@
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
+    restorePersistedUserSettingsForChave(persistedChave);
     void runLifecycleUpdateSequence({ ignoreCooldown: true });
   } else {
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
