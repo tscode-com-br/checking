@@ -24,7 +24,7 @@
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
-  const historyRefreshIntervalMs = 10000;
+  const historyRefreshCooldownMs = 1200;
   const geolocationOptions = {
     enableHighAccuracy: true,
     maximumAge: 0,
@@ -47,7 +47,7 @@
 
   let historyRequestToken = 0;
   let historyAbortController = null;
-  let historyRefreshIntervalId = null;
+  let lastHistoryRefreshAt = 0;
   let locationRequestPromise = null;
   let currentLocationMatch = null;
   let availableLocations = [];
@@ -647,27 +647,21 @@
     applySuggestedActionFromHistory(state);
   }
 
-  function stopHistoryAutoRefresh() {
-    if (historyRefreshIntervalId !== null) {
-      window.clearInterval(historyRefreshIntervalId);
-      historyRefreshIntervalId = null;
-    }
-  }
-
-  function ensureHistoryAutoRefresh() {
-    if (historyRefreshIntervalId !== null) {
-      return;
+  function refreshHistoryIfReady(options) {
+    const settings = options || {};
+    const normalized = sanitizeChave(chaveInput.value);
+    if (normalized.length !== 4) {
+      return false;
     }
 
-    historyRefreshIntervalId = window.setInterval(() => {
-      const normalized = sanitizeChave(chaveInput.value);
-      if (normalized.length !== 4) {
-        stopHistoryAutoRefresh();
-        return;
-      }
+    const now = Date.now();
+    if (!settings.force && now - lastHistoryRefreshAt < historyRefreshCooldownMs) {
+      return false;
+    }
 
-      void refreshHistory(normalized, { silentSuccessMessage: true });
-    }, historyRefreshIntervalMs);
+    lastHistoryRefreshAt = now;
+    void refreshHistory(normalized, settings);
+    return true;
   }
 
   function resetHistory(message) {
@@ -685,17 +679,16 @@
     }
 
     if (normalized.length !== 4) {
-      stopHistoryAutoRefresh();
       resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
       return;
     }
 
-    ensureHistoryAutoRefresh();
-
     const requestToken = ++historyRequestToken;
     const controller = new AbortController();
     historyAbortController = controller;
-    setHistoryMessage('Consultando histórico...');
+    if (settings.showLoadingMessage !== false) {
+      setHistoryMessage('Consultando histórico...', 'warning');
+    }
 
     try {
       const response = await fetch(`${stateEndpoint}?chave=${encodeURIComponent(normalized)}`, {
@@ -765,12 +758,29 @@
       return;
     }
 
-    stopHistoryAutoRefresh();
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   });
 
   actionInputs.forEach((input) => {
     input.addEventListener('change', syncProjectVisibility);
+  });
+
+  function handleForegroundHistoryRefresh() {
+    refreshHistoryIfReady({
+      silentSuccessMessage: true,
+      showLoadingMessage: false,
+    });
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      handleForegroundHistoryRefresh();
+    }
+  });
+
+  window.addEventListener('focus', handleForegroundHistoryRefresh);
+  window.addEventListener('pageshow', () => {
+    handleForegroundHistoryRefresh();
   });
 
   refreshLocationButton.addEventListener('click', () => {
@@ -851,10 +861,12 @@
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
-    ensureHistoryAutoRefresh();
-    void refreshHistory(persistedChave, { silentSuccessMessage: true });
+    refreshHistoryIfReady({
+      silentSuccessMessage: true,
+      showLoadingMessage: false,
+      force: true,
+    });
   } else {
-    stopHistoryAutoRefresh();
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   }
 })();

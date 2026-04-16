@@ -145,6 +145,7 @@ header {
 
 .notification-card {
   display: grid;
+  grid-template-rows: repeat(2, minmax(1.15em, 1.15em));
   gap: 4px;
   padding: clamp(8px, 1.4vw, 10px) 12px;
   border: 1px solid rgba(15, 118, 110, 0.16);
@@ -158,6 +159,9 @@ header {
   font-size: clamp(0.74rem, 0.9vw, 0.84rem);
   font-weight: 700;
   line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #92400e;
 }
 
@@ -289,7 +293,7 @@ header {
 .history-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
   text-align: center;
 }
@@ -307,7 +311,9 @@ header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
+  gap: 3px;
+  min-height: calc(3 * 1.08em + 6px);
   margin: 0;
   font-size: clamp(0.8rem, 0.95vw, 0.9rem);
   font-weight: 700;
