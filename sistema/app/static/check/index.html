@@ -2,7 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Checking Mobile Web</title>
     <base href="./user/" />
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/site_icon.png?v=1" />
@@ -32,11 +32,7 @@
 
     <main class="check-shell">
       <section class="check-card" aria-labelledby="checkTitle">
-        <p class="check-eyebrow">Acesso Rápido</p>
-        <h1 id="checkTitle">Registrar Check-In ou Check-Out</h1>
-        <p class="check-copy">
-          Página otimizada para dispositivos móveis, usando o mesmo fluxo operacional do aplicativo.
-        </p>
+        <h1 id="checkTitle">Checking</h1>
 
         <section class="history-card" aria-labelledby="historyTitle">
           <div class="history-grid">
@@ -77,7 +73,9 @@
 
           <fieldset class="check-group">
             <legend>Registro</legend>
-            <div class="choice-grid two-columns">
+            <div class="choice-grid four-columns">
+              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Reunião</button>
+              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Transporte</button>
               <label class="choice-card">
                 <input type="radio" name="action" value="checkin" checked />
                 <span>Check-In</span>
