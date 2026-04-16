@@ -16,10 +16,9 @@
 
 html {
   width: 100%;
-  height: 100%;
   min-height: 100%;
-  overflow: hidden;
-  overflow: clip;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: none;
 }
 
@@ -28,25 +27,22 @@ html {
 }
 
 body {
-  position: fixed;
-  inset: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100vh;
-  height: 100svh;
-  height: 100dvh;
-  min-height: 100%;
-  max-height: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
   margin: 0;
-  overflow: hidden;
-  overflow: clip;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   background: linear-gradient(135deg, #f7f8fa, #eef2f7);
   color: #1f2937;
   isolation: isolate;
   overscroll-behavior: none;
-  touch-action: none;
+  touch-action: manipulation;
 }
 
 body::before {
@@ -98,19 +94,14 @@ header {
   position: relative;
   z-index: 1;
   flex: 1 1 auto;
-  min-height: 0;
-  height: calc(100vh - var(--header-height));
-  height: calc(100svh - var(--header-height));
-  height: calc(100dvh - var(--header-height));
-  max-height: calc(100vh - var(--header-height));
-  max-height: calc(100svh - var(--header-height));
-  max-height: calc(100dvh - var(--header-height));
+  min-height: calc(100vh - var(--header-height));
+  min-height: calc(100svh - var(--header-height));
+  min-height: calc(100dvh - var(--header-height));
   padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  overflow: clip;
+  overflow: visible;
 }
 
 .check-card {
@@ -118,7 +109,6 @@ header {
   gap: var(--section-gap);
   width: min(100%, var(--card-max-width));
   max-width: 100%;
-  max-height: 100%;
   margin: auto;
   padding: var(--card-padding);
   background: rgba(255, 255, 255, 0.94);
@@ -145,7 +135,7 @@ header {
 
 .notification-card {
   display: grid;
-  grid-template-rows: repeat(2, minmax(1.15em, 1.15em));
+  grid-template-rows: repeat(2, minmax(1.15em, auto));
   gap: 4px;
   padding: clamp(8px, 1.4vw, 10px) 12px;
   border: 1px solid rgba(15, 118, 110, 0.16);
@@ -159,9 +149,10 @@ header {
   font-size: clamp(0.74rem, 0.9vw, 0.84rem);
   font-weight: 700;
   line-height: 1.15;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: #92400e;
 }
 
@@ -605,13 +596,15 @@ header {
   }
 
   .form-row {
+    flex-direction: column;
+    align-items: stretch;
     gap: 6px;
   }
 
   .check-field-compact {
-    flex-basis: 84px;
-    width: 84px;
-    min-width: 84px;
+    flex-basis: auto;
+    width: 100%;
+    min-width: 0;
   }
 }
 

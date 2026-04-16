@@ -55,10 +55,11 @@ test('withPersistedUserSettings stores settings by sanitized chave', () => {
   });
 });
 
-test('shouldAttemptSilentLocationLookup reuses persisted granted permission', () => {
+test('shouldAttemptSilentLocationLookup only blocks explicit denial', () => {
   assert.equal(clientState.shouldAttemptSilentLocationLookup('granted', false), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup('prompt', true), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup(null, true), true);
-  assert.equal(clientState.shouldAttemptSilentLocationLookup('prompt', false), false);
+  assert.equal(clientState.shouldAttemptSilentLocationLookup('prompt', false), true);
+  assert.equal(clientState.shouldAttemptSilentLocationLookup(null, false), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup('denied', true), false);
 });

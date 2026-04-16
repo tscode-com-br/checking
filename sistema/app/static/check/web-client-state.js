@@ -62,15 +62,13 @@
   }
 
   function shouldAttemptSilentLocationLookup(permissionState, hasPersistedGrant) {
+    void hasPersistedGrant;
+
     if (permissionState === 'denied') {
       return false;
     }
 
-    if (permissionState === 'granted') {
-      return true;
-    }
-
-    return Boolean(hasPersistedGrant);
+    return true;
   }
 
   function resolvePersistedUserSettings(settingsByChave, chave, defaults) {

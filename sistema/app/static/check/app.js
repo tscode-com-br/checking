@@ -85,10 +85,10 @@
     refreshLocationButton.disabled = isLoading;
     refreshLocationButton.classList.toggle('is-loading', isLoading);
     refreshLocationButton.setAttribute('aria-busy', String(isLoading));
-    refreshLocationButton.setAttribute('aria-label', isLoading ? 'Atualizando local' : 'Atualizar local');
-    refreshLocationButton.setAttribute('title', isLoading ? 'Atualizando local' : 'Atualizar local');
+    refreshLocationButton.setAttribute('aria-label', isLoading ? 'Atualizando localização' : 'Atualizar localização');
+    refreshLocationButton.setAttribute('title', isLoading ? 'Atualizando localização' : 'Atualizar localização');
     if (refreshLocationButtonLabel) {
-      refreshLocationButtonLabel.textContent = isLoading ? 'Atualizando local' : 'Atualizar local';
+      refreshLocationButtonLabel.textContent = isLoading ? 'Atualizando localização' : 'Atualizar localização';
     }
   }
 
@@ -101,8 +101,22 @@
     }
   }
 
+  function getNotificationSplitLimit() {
+    const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0);
+    if (viewportWidth && viewportWidth <= 360) {
+      return 34;
+    }
+    if (viewportWidth && viewportWidth <= 420) {
+      return 40;
+    }
+    return 52;
+  }
+
   function renderNotifications() {
-    const splitMessage = clientState.splitNotificationMessage(notificationState.message);
+    const splitMessage = clientState.splitNotificationMessage(
+      notificationState.message,
+      getNotificationSplitLimit()
+    );
     applyNotificationLine(notificationLinePrimary, splitMessage.primary, notificationState.tone);
     applyNotificationLine(notificationLineSecondary, splitMessage.secondary, notificationState.tone);
   }
@@ -127,12 +141,28 @@
     setNotificationMessage('form', message || '', 'info');
   }
 
-  function preventViewportScroll(event) {
-    if (!event.cancelable) {
-      return;
+  function buildLocationCompletionMessage(payload) {
+    const detailMessage = payload && typeof payload.message === 'string'
+      ? payload.message.trim()
+      : '';
+
+    if (!detailMessage) {
+      return 'Atualização da localização concluída.';
     }
 
-    event.preventDefault();
+    return `Atualização da localização concluída. ${detailMessage}`;
+  }
+
+  function resolveLocationCompletionTone(payload) {
+    const toneByStatus = {
+      matched: 'success',
+      accuracy_too_low: 'warning',
+      not_in_known_location: 'info',
+      outside_workplace: 'warning',
+      no_known_locations: 'error',
+    };
+
+    return toneByStatus[payload && payload.status] || 'success';
   }
 
   function sanitizeChave(value) {
@@ -358,11 +388,11 @@
     if (!suppressStatus) {
       setStatus(
         action === 'checkin'
-          ? `Check-In automático enviado para ${local}.`
+          ? 'Check-In automático concluído.'
           : (
               isCheckoutZoneLocationName(local)
-                ? `Check-Out automático enviado para ${local}.`
-                : 'Check-Out automático enviado por afastamento das áreas monitoradas.'
+                ? 'Check-Out automático concluído.'
+                : 'Check-Out automático concluído.'
             ),
         'success'
       );
@@ -589,8 +619,8 @@
 
     if (!error || typeof error.code !== 'number') {
       setLocationPresentation(
-        'Localizacao indisponivel',
-        'Nao foi possivel consultar a localizacao neste momento.',
+        'Localização indisponível',
+        'Não foi possível consultar a localização neste momento.',
         'error',
         '--',
         options
@@ -605,8 +635,8 @@
 
     if (error.code === 2) {
       setLocationPresentation(
-        'Localizacao indisponivel',
-        'Nao foi possivel obter uma posicao valida do aparelho.',
+        'Localização indisponível',
+        'Não foi possível obter uma posição válida do aparelho.',
         'error',
         '--',
         options
@@ -617,7 +647,7 @@
     if (error.code === 3) {
       setLocationPresentation(
         'Tempo esgotado',
-        'A busca pela localizacao demorou mais do que o esperado.',
+        'A busca pela localização demorou mais do que o esperado.',
         'warning',
         '--',
         options
@@ -626,8 +656,8 @@
     }
 
     setLocationPresentation(
-      'Localizacao indisponivel',
-      'Nao foi possivel consultar a localizacao neste momento.',
+      'Localização indisponível',
+      'Não foi possível consultar a localização neste momento.',
       'error',
       '--',
       options
@@ -639,8 +669,8 @@
     if (!window.isSecureContext || !navigator.geolocation) {
       setResolvedLocation(null);
       setLocationPresentation(
-        'Indisponivel',
-        'A captura de localizacao requer HTTPS e suporte do navegador.',
+        'Indisponível',
+        'A captura de localização requer HTTPS e suporte do navegador.',
         'error',
         '--'
       );
@@ -660,8 +690,8 @@
       setLocationPresentation(
         'Detectando...',
         settings.interactive
-          ? `Aguardando a confirmacao da localizacao exata ${getLocationPromptSourceLabel()}.`
-          : 'Atualizando a localizacao atual do aparelho.',
+          ? `Aguardando a confirmação da localização exata ${getLocationPromptSourceLabel()}.`
+          : 'Atualizando a localização atual do aparelho.',
         null,
         '--'
       );
@@ -672,6 +702,12 @@
         setGpsLocationPermissionGranted(true);
         const matchPayload = await matchCurrentPosition(position);
         applyLocationMatch(matchPayload);
+        if (settings.showCompletionStatus) {
+          setStatus(
+            buildLocationCompletionMessage(matchPayload),
+            resolveLocationCompletionTone(matchPayload)
+          );
+        }
         return matchPayload;
       } catch (error) {
         applyLocationBrowserError(error);
@@ -1041,22 +1077,18 @@
 
   projectSelect.addEventListener('change', () => {
     persistCurrentUserSettings();
+    setStatus('Atualização do projeto concluída.', 'success');
   });
 
   if (automaticActivitiesToggle) {
     automaticActivitiesToggle.addEventListener('change', () => {
       persistCurrentUserSettings();
       if (automaticActivitiesToggle.checked) {
-        setStatus(
-          gpsLocationPermissionGranted
-            ? 'Atividades automáticas ativadas. A automação será verificada ao abrir ou retornar ao site.'
-            : 'Atividades automáticas ativadas. Permita a localização para que a automação possa agir.',
-          gpsLocationPermissionGranted ? 'success' : 'info'
-        );
+        setStatus('Atividades automáticas habilitadas.', 'success');
         return;
       }
 
-      setStatus('Atividades automáticas desativadas.', 'info');
+      setStatus('Atividades automáticas desabilitadas.', 'success');
     });
   }
 
@@ -1074,16 +1106,18 @@
   });
 
   refreshLocationButton.addEventListener('click', () => {
-    void captureAndResolveLocation({ interactive: true, forceRefresh: true });
+    void captureAndResolveLocation({
+      interactive: true,
+      forceRefresh: true,
+      showCompletionStatus: true,
+    });
   });
-
-  document.addEventListener('touchmove', preventViewportScroll, { passive: false });
-  document.addEventListener('wheel', preventViewportScroll, { passive: false });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
 
     const chave = sanitizeChave(chaveInput.value);
+    const selectedAction = getSelectedValue('action');
     chaveInput.value = chave;
 
     if (chave.length !== 4) {
@@ -1112,7 +1146,7 @@
         body: JSON.stringify({
           chave,
           projeto: projectSelect.value,
-          action: getSelectedValue('action'),
+          action: selectedAction,
           local: gpsLocationPermissionGranted
             ? (currentLocationMatch ? currentLocationMatch.resolved_local : null)
             : manualLocationSelect.value,
@@ -1130,11 +1164,11 @@
       writePersistedChave(chave);
       if (payload && payload.state) {
         applyHistoryState(payload.state);
-        if (payload.state.last_checkin_at || payload.state.last_checkout_at) {
-          setHistoryMessage('Histórico atualizado com base no último envio.', 'success');
-        }
       }
-      setStatus(payload.message || 'Operação registrada com sucesso.', 'success');
+      setStatus(
+        selectedAction === 'checkout' ? 'Check-Out concluído.' : 'Check-In concluído.',
+        'success'
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Falha de comunicação com a API.';
       setStatus(message, 'error');
