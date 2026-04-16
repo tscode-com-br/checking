@@ -43,6 +43,21 @@
   let locationRequestPromise = null;
   let currentLocationMatch = null;
 
+  function isStandaloneShortcutMode() {
+    return Boolean(
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true
+    );
+  }
+
+  function getLocationPermissionContainerLabel() {
+    return isStandaloneShortcutMode() ? 'neste atalho/app' : 'neste navegador';
+  }
+
+  function getLocationPromptSourceLabel() {
+    return isStandaloneShortcutMode() ? 'pelo atalho/app' : 'pelo navegador';
+  }
+
   function setLocationRefreshLoading(isLoading) {
     refreshLocationButton.disabled = isLoading;
     refreshLocationButton.classList.toggle('is-loading', isLoading);
@@ -222,7 +237,7 @@
       writeStorageFlag(locationPermissionGrantedKey, false);
       setLocationPresentation(
         'Permissao negada',
-        'A localizacao automatica so sera reutilizada se voce liberar novamente no navegador.',
+        `A localizacao automatica so sera reutilizada se voce liberar novamente a permissao ${getLocationPermissionContainerLabel()}.`,
         'error',
         '--'
       );
@@ -283,7 +298,7 @@
       setLocationPresentation(
         'Detectando...',
         settings.interactive
-          ? 'Aguardando a confirmacao da localizacao exata pelo navegador.'
+          ? `Aguardando a confirmacao da localizacao exata ${getLocationPromptSourceLabel()}.`
           : 'Atualizando a localizacao atual do aparelho.',
         null,
         '--'
@@ -333,7 +348,7 @@
       writeStorageFlag(locationPermissionGrantedKey, false);
       setLocationPresentation(
         'Permissao negada',
-        'A localizacao automatica foi bloqueada neste navegador.',
+        `A localizacao automatica foi bloqueada ${getLocationPermissionContainerLabel()}.`,
         'error',
         '--'
       );
