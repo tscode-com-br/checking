@@ -143,6 +143,36 @@ header {
   background: rgba(248, 250, 252, 0.9);
 }
 
+.notification-card {
+  display: grid;
+  gap: 4px;
+  padding: clamp(8px, 1.4vw, 10px) 12px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: calc(var(--control-radius) + 2px);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.notification-line {
+  min-height: 1.05em;
+  margin: 0;
+  font-size: clamp(0.74rem, 0.9vw, 0.84rem);
+  font-weight: 700;
+  line-height: 1.15;
+  color: #92400e;
+}
+
+.notification-line.is-success {
+  color: #166534;
+}
+
+.notification-line.is-error {
+  color: #ff0000;
+}
+
+.notification-line.is-warning {
+  color: #92400e;
+}
+
 .location-card {
   display: grid;
   gap: 8px;
@@ -259,7 +289,7 @@ header {
 .history-item {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 4px;
   align-items: center;
   text-align: center;
 }
@@ -277,11 +307,11 @@ header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   margin: 0;
   font-size: clamp(0.8rem, 0.95vw, 0.9rem);
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.08;
   white-space: normal;
   color: #0f172a;
 }
@@ -297,7 +327,7 @@ header {
 .history-weekday {
   font-size: clamp(0.64rem, 0.8vw, 0.72rem);
   font-weight: 700;
-  color: #475569;
+  color: #0f172a;
   text-transform: capitalize;
 }
 
@@ -309,27 +339,6 @@ header {
 .history-time {
   font-size: clamp(0.74rem, 0.9vw, 0.84rem);
   font-weight: 700;
-}
-
-.history-state {
-  min-height: 0;
-  margin: 6px 0 0;
-  font-size: clamp(0.74rem, 0.9vw, 0.84rem);
-  font-weight: 700;
-  text-align: center;
-  color: #475569;
-}
-
-.history-state:empty {
-  display: none;
-}
-
-.history-state.is-success {
-  color: #0f766e;
-}
-
-.history-state.is-error {
-  color: #b42318;
 }
 
 .check-form {
@@ -481,21 +490,6 @@ header {
 .submit-button:disabled {
   cursor: wait;
   opacity: 0.72;
-}
-
-.form-status {
-  min-height: 18px;
-  font-size: clamp(0.74rem, 0.9vw, 0.84rem);
-  font-weight: 700;
-  color: #334155;
-}
-
-.form-status.is-success {
-  color: #0f766e;
-}
-
-.form-status.is-error {
-  color: #b42318;
 }
 
 .is-hidden {

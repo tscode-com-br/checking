@@ -7,16 +7,16 @@
   const chaveInput = document.getElementById('chaveInput');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
+  const locationSelectField = document.getElementById('locationSelectField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
   const submitButton = document.getElementById('submitButton');
   const refreshLocationButton = document.getElementById('refreshLocationButton');
   const refreshLocationButtonLabel = refreshLocationButton.querySelector('.visually-hidden');
-  const formStatus = document.getElementById('formStatus');
-  const historyStatus = document.getElementById('historyState');
+  const notificationLinePrimary = document.getElementById('notificationLinePrimary');
+  const notificationLineSecondary = document.getElementById('notificationLineSecondary');
   const lastCheckinValue = document.getElementById('lastCheckinValue');
   const lastCheckoutValue = document.getElementById('lastCheckoutValue');
   const locationValue = document.getElementById('locationValue');
-  const locationState = document.getElementById('locationState');
   const locationAccuracy = document.getElementById('locationAccuracy');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
@@ -52,6 +52,11 @@
   let currentLocationMatch = null;
   let availableLocations = [];
   let gpsLocationPermissionGranted = false;
+  const notificationMessages = {
+    form: { message: '', tone: null },
+    location: { message: '', tone: null },
+    history: { message: '', tone: null },
+  };
 
   function isStandaloneShortcutMode() {
     return Boolean(
@@ -77,6 +82,32 @@
     if (refreshLocationButtonLabel) {
       refreshLocationButtonLabel.textContent = isLoading ? 'Atualizando local' : 'Atualizar local';
     }
+  }
+
+  function applyNotificationLine(element, messageEntry) {
+    element.textContent = messageEntry ? messageEntry.message : '';
+    element.classList.remove('is-success', 'is-error', 'is-warning');
+
+    if (messageEntry && messageEntry.tone) {
+      element.classList.add(`is-${messageEntry.tone}`);
+    }
+  }
+
+  function renderNotifications() {
+    const orderedEntries = ['form', 'location', 'history']
+      .map((key) => notificationMessages[key])
+      .filter((entry) => entry && entry.message);
+
+    applyNotificationLine(notificationLinePrimary, orderedEntries[0] || null);
+    applyNotificationLine(notificationLineSecondary, orderedEntries[1] || null);
+  }
+
+  function setNotificationMessage(channel, message, tone) {
+    notificationMessages[channel] = {
+      message: message || '',
+      tone: message ? (tone || 'warning') : null,
+    };
+    renderNotifications();
   }
 
   function preventViewportScroll(event) {
@@ -145,15 +176,14 @@
 
   function setLocationPresentation(label, message, tone, accuracyText) {
     locationValue.textContent = label || '--';
-    locationState.textContent = message || '';
     locationAccuracy.textContent = accuracyText || '--';
     locationValue.classList.remove('is-error', 'is-success', 'is-warning');
-    locationState.classList.remove('is-error', 'is-success', 'is-warning');
 
     if (tone) {
       locationValue.classList.add(`is-${tone}`);
-      locationState.classList.add(`is-${tone}`);
     }
+
+    setNotificationMessage('location', message || '', tone || 'warning');
 
     syncManualLocationControl();
   }
@@ -524,14 +554,7 @@
   }
 
   function setStatus(message, tone) {
-    formStatus.textContent = message || '';
-    formStatus.classList.remove('is-error', 'is-success');
-    if (tone === 'error') {
-      formStatus.classList.add('is-error');
-    }
-    if (tone === 'success') {
-      formStatus.classList.add('is-success');
-    }
+    setNotificationMessage('form', message || '', tone || 'warning');
   }
 
   function setSubmitting(isSubmitting) {
@@ -540,14 +563,7 @@
   }
 
   function setHistoryMessage(message, tone) {
-    historyStatus.textContent = message || '';
-    historyStatus.classList.remove('is-error', 'is-success');
-    if (tone === 'error') {
-      historyStatus.classList.add('is-error');
-    }
-    if (tone === 'success') {
-      historyStatus.classList.add('is-success');
-    }
+    setNotificationMessage('history', message || '', tone || 'warning');
   }
 
   function formatHistoryValue(value) {
@@ -733,6 +749,8 @@
     const isCheckIn = getSelectedValue('action') === 'checkin';
     projectField.classList.toggle('is-hidden', !isCheckIn);
     projectField.setAttribute('aria-hidden', String(!isCheckIn));
+    locationSelectField.classList.toggle('is-hidden', !isCheckIn);
+    locationSelectField.setAttribute('aria-hidden', String(!isCheckIn));
   }
 
   chaveInput.addEventListener('input', () => {

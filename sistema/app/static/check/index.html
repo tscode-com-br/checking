@@ -33,22 +33,6 @@
     <main class="check-shell">
       <section class="check-card" aria-label="Formulario de registro de check-in e check-out">
 
-        <section class="history-card" aria-labelledby="historyTitle">
-          <div class="history-grid">
-            <div class="history-item">
-              <p id="historyTitle" class="history-label">Último Check-In</p>
-              <p id="lastCheckinValue" class="history-value">--</p>
-            </div>
-            <div class="history-item">
-              <p class="history-label">Último Check-Out</p>
-              <p id="lastCheckoutValue" class="history-value">--</p>
-            </div>
-          </div>
-          <p id="historyState" class="history-state" role="status" aria-live="polite">
-            Digite sua chave Petrobras para visualizar seu histórico.
-          </p>
-        </section>
-
         <form
           id="checkForm"
           class="check-form"
@@ -71,6 +55,24 @@
               required
             />
           </label>
+
+          <section class="notification-card" aria-live="polite" aria-atomic="true">
+            <p id="notificationLinePrimary" class="notification-line"></p>
+            <p id="notificationLineSecondary" class="notification-line"></p>
+          </section>
+
+          <section class="history-card" aria-labelledby="historyTitle">
+            <div class="history-grid">
+              <div class="history-item">
+                <p id="historyTitle" class="history-label">Último Check-In</p>
+                <p id="lastCheckinValue" class="history-value">--</p>
+              </div>
+              <div class="history-item">
+                <p class="history-label">Último Check-Out</p>
+                <p id="lastCheckoutValue" class="history-value">--</p>
+              </div>
+            </div>
+          </section>
 
           <section class="location-card" aria-labelledby="locationTitle">
             <div class="location-card-header">
@@ -107,9 +109,6 @@
                 <span class="visually-hidden">Atualizar local</span>
               </button>
             </div>
-            <p id="locationState" class="location-state" role="status" aria-live="polite">
-              O compartilhamento automatico da localizacao sera solicitado somente na primeira abertura deste link.
-            </p>
           </section>
 
           <fieldset class="check-group">
@@ -161,8 +160,6 @@
 
           <button id="submitButton" type="submit" class="submit-button">Registrar</button>
         </form>
-
-        <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
       </section>
     </main>
 
