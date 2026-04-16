@@ -2085,8 +2085,20 @@ def test_web_check_updates_user_local_when_location_is_provided():
                 "client_event_id": client_event_id,
             },
         )
+        history = client.get("/api/web/check/state", params={"chave": "WB14"})
+
         assert response.status_code == 200
         assert response.json()["ok"] is True
+        assert history.status_code == 200
+        assert history.json() == {
+            "found": True,
+            "chave": "WB14",
+            "projeto": "P80",
+            "current_action": "checkin",
+            "current_local": "Web Match P80",
+            "last_checkin_at": response.json()["state"]["last_checkin_at"],
+            "last_checkout_at": None,
+        }
 
         with SessionLocal() as db:
             user = get_user_by_chave(db, "WB14")
@@ -2185,6 +2197,9 @@ def test_web_check_state_returns_latest_public_history():
         assert payload == {
             "found": True,
             "chave": "WB13",
+            "projeto": "P80",
+            "current_action": "checkout",
+            "current_local": "Web",
             "last_checkin_at": checkin_at.replace(tzinfo=None).isoformat(),
             "last_checkout_at": checkout_at.replace(tzinfo=None).isoformat(),
         }
@@ -2198,6 +2213,9 @@ def test_web_check_state_returns_not_found_for_unknown_key():
         assert response.json() == {
             "found": False,
             "chave": "ZZ99",
+            "projeto": None,
+            "current_action": None,
+            "current_local": None,
             "last_checkin_at": None,
             "last_checkout_at": None,
         }

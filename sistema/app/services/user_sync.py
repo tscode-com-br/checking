@@ -328,6 +328,9 @@ def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistory
     return WebCheckHistoryResponse(
         found=state.found,
         chave=state.chave,
+        projeto=state.projeto,
+        current_action=state.current_action,
+        current_local=state.current_local,
         last_checkin_at=state.last_checkin_at,
         last_checkout_at=state.last_checkout_at,
     )

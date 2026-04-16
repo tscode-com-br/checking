@@ -418,6 +418,40 @@ header {
   border: none;
 }
 
+.check-group-legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+}
+
+.legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.legend-toggle-label {
+  font-size: var(--label-size);
+  font-weight: 800;
+  color: #0f172a;
+  text-align: right;
+}
+
+.legend-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+
 .choice-grid {
   display: grid;
   gap: 8px;

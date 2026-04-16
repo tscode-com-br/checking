@@ -450,6 +450,9 @@ class WebLocationMatchResponse(BaseModel):
 class WebCheckHistoryResponse(BaseModel):
     found: bool
     chave: str
+    projeto: str | None = None
+    current_action: Literal["checkin", "checkout"] | None = None
+    current_local: str | None = None
     last_checkin_at: datetime | None = None
     last_checkout_at: datetime | None = None
 

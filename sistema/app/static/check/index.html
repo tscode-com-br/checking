@@ -42,25 +42,6 @@
           data-locations-endpoint="/api/web/check/locations"
           data-location-endpoint="/api/web/check/location"
         >
-          <label class="check-field" for="chaveInput">
-            <span>Chave Petrobras</span>
-            <input
-              id="chaveInput"
-              name="chave"
-              type="text"
-              inputmode="text"
-              autocomplete="username"
-              maxlength="4"
-              placeholder="Ex.: HR70"
-              required
-            />
-          </label>
-
-          <section class="notification-card" aria-live="polite" aria-atomic="true">
-            <p id="notificationLinePrimary" class="notification-line"></p>
-            <p id="notificationLineSecondary" class="notification-line"></p>
-          </section>
-
           <section class="history-card" aria-labelledby="historyTitle">
             <div class="history-grid">
               <div class="history-item">
@@ -72,6 +53,11 @@
                 <p id="lastCheckoutValue" class="history-value">--</p>
               </div>
             </div>
+          </section>
+
+          <section class="notification-card" aria-live="polite" aria-atomic="true">
+            <p id="notificationLinePrimary" class="notification-line"></p>
+            <p id="notificationLineSecondary" class="notification-line"></p>
           </section>
 
           <section class="location-card" aria-labelledby="locationTitle">
@@ -111,8 +97,28 @@
             </div>
           </section>
 
+          <label class="check-field" for="chaveInput">
+            <span>Chave Petrobras</span>
+            <input
+              id="chaveInput"
+              name="chave"
+              type="text"
+              inputmode="text"
+              autocomplete="username"
+              maxlength="4"
+              placeholder="Ex.: HR70"
+              required
+            />
+          </label>
+
           <fieldset class="check-group">
-            <legend>Registro</legend>
+            <legend class="check-group-legend-row">
+              <span>Registro</span>
+              <label class="legend-toggle" for="automaticActivitiesToggle">
+                <span class="legend-toggle-label">Atividades Automáticas</span>
+                <input id="automaticActivitiesToggle" type="checkbox" />
+              </label>
+            </legend>
             <div class="choice-grid three-columns">
               <label class="choice-card">
                 <input type="radio" name="action" value="checkin" checked />
@@ -151,7 +157,7 @@
             </label>
 
             <label id="locationSelectField" class="check-field check-field-grow" for="manualLocationSelect">
-              <span>Localização</span>
+              <span>Local</span>
               <select id="manualLocationSelect" name="localizacao" disabled>
                 <option value="">Carregando locais...</option>
               </select>
@@ -163,6 +169,7 @@
       </section>
     </main>
 
+    <script src="automatic-activities.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

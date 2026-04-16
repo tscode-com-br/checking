@@ -4,11 +4,13 @@
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
   const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
+  const automaticActivities = window.CheckingWebAutomaticActivities;
   const chaveInput = document.getElementById('chaveInput');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
   const locationSelectField = document.getElementById('locationSelectField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
+  const automaticActivitiesToggle = document.getElementById('automaticActivitiesToggle');
   const submitButton = document.getElementById('submitButton');
   const refreshLocationButton = document.getElementById('refreshLocationButton');
   const refreshLocationButtonLabel = refreshLocationButton.querySelector('.visually-hidden');
@@ -23,8 +25,10 @@
   const storageKey = 'checking.web.user.chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
+  const automaticActivitiesEnabledKey = 'checking.web.user.automatic-activities-enabled';
   const defaultManualLocationLabel = 'Escritório Principal';
   const historyRefreshCooldownMs = 1200;
+  const automaticCheckoutLocation = automaticActivities.AUTOMATIC_CHECKOUT_LOCATION;
   const geolocationOptions = {
     enableHighAccuracy: true,
     maximumAge: 0,
@@ -50,8 +54,10 @@
   let lastHistoryRefreshAt = 0;
   let locationRequestPromise = null;
   let currentLocationMatch = null;
+  let latestHistoryState = null;
   let availableLocations = [];
   let gpsLocationPermissionGranted = false;
+  let lifecycleRefreshInProgress = false;
   const notificationMessages = {
     form: { message: '', tone: null },
     location: { message: '', tone: null },
@@ -190,6 +196,124 @@
 
   function setResolvedLocation(matchPayload) {
     currentLocationMatch = matchPayload && matchPayload.matched ? matchPayload : null;
+  }
+
+  function isAutomaticActivitiesEnabled() {
+    return Boolean(automaticActivitiesToggle && automaticActivitiesToggle.checked);
+  }
+
+  function isCheckoutZoneLocationName(value) {
+    return automaticActivities.isCheckoutZoneLocationName(value);
+  }
+
+  function resolveLastRecordedAction(state) {
+    return automaticActivities.resolveLastRecordedAction(state);
+  }
+
+  function resolveRecordedCheckInLocation(state) {
+    return automaticActivities.resolveRecordedCheckInLocation(state);
+  }
+
+  function fetchWebState(chave) {
+    return fetch(`${stateEndpoint}?chave=${encodeURIComponent(chave)}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    }).then(async (response) => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(parseErrorMessage(payload));
+      }
+      return payload;
+    });
+  }
+
+  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
+    return automaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState);
+  }
+
+  function shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState) {
+    return automaticActivities.shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState);
+  }
+
+  async function submitAutomaticActivity({ action, local }) {
+    const chave = sanitizeChave(chaveInput.value);
+    const response = await fetch(submitEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        chave,
+        projeto: projectSelect.value,
+        action,
+        local,
+        informe: getSelectedValue('informe'),
+        event_time: new Date().toISOString(),
+        client_event_id: buildClientEventId(),
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(parseErrorMessage(payload));
+    }
+
+    if (payload && payload.state) {
+      latestHistoryState = payload.state;
+      applyHistoryState(payload.state);
+    }
+
+    setStatus(
+      action === 'checkin'
+        ? `Check-In automático enviado para ${local}.`
+        : (
+            isCheckoutZoneLocationName(local)
+              ? `Check-Out automático enviado para ${local}.`
+              : 'Check-Out automático enviado por afastamento das áreas monitoradas.'
+          ),
+      'success'
+    );
+
+    return payload;
+  }
+
+  async function runAutomaticActivitiesIfNeeded(locationPayload) {
+    if (!isAutomaticActivitiesEnabled() || !gpsLocationPermissionGranted) {
+      return false;
+    }
+
+    const chave = sanitizeChave(chaveInput.value);
+    if (chave.length !== 4) {
+      return false;
+    }
+
+    const remoteState = await fetchWebState(chave);
+    latestHistoryState = remoteState;
+    applyHistoryState(remoteState);
+
+    if (locationPayload && locationPayload.matched && shouldAttemptAutomaticLocationEvent(locationPayload, remoteState)) {
+      await submitAutomaticActivity({
+        action: isCheckoutZoneLocationName(locationPayload.resolved_local) ? 'checkout' : 'checkin',
+        local: locationPayload.resolved_local,
+      });
+      return true;
+    }
+
+    if (
+      locationPayload
+      && !locationPayload.matched
+      && shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState)
+    ) {
+      await submitAutomaticActivity({
+        action: 'checkout',
+        local: automaticCheckoutLocation,
+      });
+      return true;
+    }
+
+    return false;
   }
 
   function buildAccuracyText(accuracyMeters, thresholdMeters) {
@@ -642,6 +766,7 @@
   }
 
   function applyHistoryState(state) {
+    latestHistoryState = state;
     renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
     renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
     applySuggestedActionFromHistory(state);
@@ -746,6 +871,14 @@
     locationSelectField.setAttribute('aria-hidden', String(!isCheckIn));
   }
 
+  function syncAutomaticActivitiesToggle() {
+    if (!automaticActivitiesToggle) {
+      return;
+    }
+
+    automaticActivitiesToggle.checked = readStorageFlag(automaticActivitiesEnabledKey);
+  }
+
   chaveInput.addEventListener('input', () => {
     const sanitized = sanitizeChave(chaveInput.value);
     if (sanitized !== chaveInput.value) {
@@ -765,22 +898,69 @@
     input.addEventListener('change', syncProjectVisibility);
   });
 
-  function handleForegroundHistoryRefresh() {
-    refreshHistoryIfReady({
-      silentSuccessMessage: true,
-      showLoadingMessage: false,
+  if (automaticActivitiesToggle) {
+    automaticActivitiesToggle.addEventListener('change', () => {
+      writeStorageFlag(automaticActivitiesEnabledKey, automaticActivitiesToggle.checked);
+      if (automaticActivitiesToggle.checked) {
+        setStatus(
+          gpsLocationPermissionGranted
+            ? 'Atividades automáticas ativadas. A automação será verificada ao abrir ou retornar ao site.'
+            : 'Atividades automáticas ativadas. Permita a localização para que a automação possa agir.',
+          gpsLocationPermissionGranted ? 'success' : 'warning'
+        );
+        return;
+      }
+
+      setStatus('Atividades automáticas desativadas.', 'warning');
     });
+  }
+
+  async function handleForegroundRefresh() {
+    if (lifecycleRefreshInProgress) {
+      return;
+    }
+
+    lifecycleRefreshInProgress = true;
+    try {
+      refreshHistoryIfReady({
+        silentSuccessMessage: true,
+        showLoadingMessage: false,
+        force: true,
+      });
+
+      if (!isAutomaticActivitiesEnabled()) {
+        return;
+      }
+
+      const permissionState = await queryLocationPermissionState();
+      if (permissionState !== 'granted' && !(permissionState === null && readStorageFlag(locationPermissionGrantedKey))) {
+        setGpsLocationPermissionGranted(false);
+        setStatus('Atividades automáticas exigem localização habilitada.', 'warning');
+        return;
+      }
+
+      const locationPayload = await captureAndResolveLocation({ interactive: false });
+      if (!locationPayload) {
+        return;
+      }
+
+      await runAutomaticActivitiesIfNeeded(locationPayload);
+    } finally {
+      lifecycleRefreshInProgress = false;
+    }
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      handleForegroundHistoryRefresh();
+      void handleForegroundRefresh();
     }
   });
 
-  window.addEventListener('focus', handleForegroundHistoryRefresh);
+  window.addEventListener('focus', () => {
+    void handleForegroundRefresh();
+  });
   window.addEventListener('pageshow', () => {
-    handleForegroundHistoryRefresh();
+    void handleForegroundRefresh();
   });
 
   refreshLocationButton.addEventListener('click', () => {
@@ -854,6 +1034,7 @@
   });
 
   syncProjectVisibility();
+  syncAutomaticActivitiesToggle();
   syncManualLocationControl();
   void loadManualLocations();
   void initializeLocationCapture();
@@ -861,11 +1042,7 @@
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
-    refreshHistoryIfReady({
-      silentSuccessMessage: true,
-      showLoadingMessage: false,
-      force: true,
-    });
+    void handleForegroundRefresh();
   } else {
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   }
