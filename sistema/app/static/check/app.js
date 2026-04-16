@@ -2,17 +2,29 @@
   const form = document.getElementById('checkForm');
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
+  const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
   const chaveInput = document.getElementById('chaveInput');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
   const submitButton = document.getElementById('submitButton');
+  const refreshLocationButton = document.getElementById('refreshLocationButton');
   const formStatus = document.getElementById('formStatus');
   const historyStatus = document.getElementById('historyState');
   const lastCheckinValue = document.getElementById('lastCheckinValue');
   const lastCheckoutValue = document.getElementById('lastCheckoutValue');
+  const locationValue = document.getElementById('locationValue');
+  const locationState = document.getElementById('locationState');
+  const locationAccuracy = document.getElementById('locationAccuracy');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
   const storageKey = 'checking.web.user.chave';
+  const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
+  const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
+  const geolocationOptions = {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: 20000,
+  };
   const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: '2-digit',
@@ -27,6 +39,13 @@
 
   let historyRequestToken = 0;
   let historyAbortController = null;
+  let locationRequestPromise = null;
+  let currentLocationMatch = null;
+
+  function setLocationRefreshLoading(isLoading) {
+    refreshLocationButton.disabled = isLoading;
+    refreshLocationButton.textContent = isLoading ? 'Atualizando...' : 'Atualizar local';
+  }
 
   function preventViewportScroll(event) {
     if (!event.cancelable) {
@@ -63,6 +82,285 @@
   function buildClientEventId() {
     const randomPart = Math.random().toString(36).slice(2, 10);
     return `web-check-${Date.now()}-${randomPart}`;
+  }
+
+  function formatMeters(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return '--';
+    }
+    return `${Math.round(value)} m`;
+  }
+
+  function readStorageFlag(key) {
+    try {
+      return window.localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function writeStorageFlag(key, value) {
+    try {
+      if (value) {
+        window.localStorage.setItem(key, '1');
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // Ignore browsers with unavailable storage.
+    }
+  }
+
+  function setLocationPresentation(label, message, tone, accuracyText) {
+    locationValue.textContent = label || '--';
+    locationState.textContent = message || '';
+    locationAccuracy.textContent = accuracyText || '--';
+    locationValue.classList.remove('is-error', 'is-success', 'is-warning');
+    locationState.classList.remove('is-error', 'is-success', 'is-warning');
+
+    if (tone) {
+      locationValue.classList.add(`is-${tone}`);
+      locationState.classList.add(`is-${tone}`);
+    }
+  }
+
+  function setResolvedLocation(matchPayload) {
+    currentLocationMatch = matchPayload && matchPayload.matched ? matchPayload : null;
+  }
+
+  function buildAccuracyText(accuracyMeters, thresholdMeters) {
+    if (typeof accuracyMeters !== 'number' || !Number.isFinite(accuracyMeters)) {
+      return thresholdMeters ? `Max. ${Math.round(thresholdMeters)} m` : '--';
+    }
+    if (typeof thresholdMeters !== 'number' || !Number.isFinite(thresholdMeters)) {
+      return `Precisao ${formatMeters(accuracyMeters)}`;
+    }
+    return `Precisao ${formatMeters(accuracyMeters)} / Max. ${Math.round(thresholdMeters)} m`;
+  }
+
+  async function queryLocationPermissionState() {
+    if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+      return null;
+    }
+
+    try {
+      const permissionStatus = await navigator.permissions.query({ name: 'geolocation' });
+      return permissionStatus && typeof permissionStatus.state === 'string'
+        ? permissionStatus.state
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function requestCurrentPosition() {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, geolocationOptions);
+    });
+  }
+
+  async function matchCurrentPosition(position) {
+    const response = await fetch(locationEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy_meters:
+          typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
+            ? position.coords.accuracy
+            : null,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(parseErrorMessage(payload));
+    }
+
+    return payload;
+  }
+
+  function applyLocationMatch(payload) {
+    const toneByStatus = {
+      matched: 'success',
+      accuracy_too_low: 'warning',
+      not_in_known_location: 'warning',
+      outside_workplace: 'warning',
+      no_known_locations: 'error',
+    };
+    const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
+    setResolvedLocation(payload);
+    setLocationPresentation(payload.label, payload.message, toneByStatus[payload.status] || null, accuracyText);
+  }
+
+  function applyLocationBrowserError(error) {
+    setResolvedLocation(null);
+
+    if (!error || typeof error.code !== 'number') {
+      setLocationPresentation(
+        'Localizacao indisponivel',
+        'Nao foi possivel consultar a localizacao neste momento.',
+        'error',
+        '--'
+      );
+      return;
+    }
+
+    if (error.code === 1) {
+      writeStorageFlag(locationPermissionGrantedKey, false);
+      setLocationPresentation(
+        'Permissao negada',
+        'A localizacao automatica so sera reutilizada se voce liberar novamente no navegador.',
+        'error',
+        '--'
+      );
+      return;
+    }
+
+    if (error.code === 2) {
+      setLocationPresentation(
+        'Localizacao indisponivel',
+        'Nao foi possivel obter uma posicao valida do aparelho.',
+        'error',
+        '--'
+      );
+      return;
+    }
+
+    if (error.code === 3) {
+      setLocationPresentation(
+        'Tempo esgotado',
+        'A busca pela localizacao demorou mais do que o esperado.',
+        'warning',
+        '--'
+      );
+      return;
+    }
+
+    setLocationPresentation(
+      'Localizacao indisponivel',
+      'Nao foi possivel consultar a localizacao neste momento.',
+      'error',
+      '--'
+    );
+  }
+
+  async function captureAndResolveLocation(options) {
+    const settings = options || {};
+    if (!window.isSecureContext || !navigator.geolocation) {
+      setResolvedLocation(null);
+      setLocationPresentation(
+        'Indisponivel',
+        'A captura de localizacao requer HTTPS e suporte do navegador.',
+        'error',
+        '--'
+      );
+      return null;
+    }
+
+    if (locationRequestPromise && !settings.forceRefresh) {
+      return locationRequestPromise;
+    }
+
+    if (settings.interactive) {
+      writeStorageFlag(locationPromptAttemptedKey, true);
+    }
+
+    const pendingRequest = (async () => {
+      setLocationRefreshLoading(true);
+      setLocationPresentation(
+        'Detectando...',
+        settings.interactive
+          ? 'Aguardando a confirmacao da localizacao exata pelo navegador.'
+          : 'Atualizando a localizacao atual do aparelho.',
+        null,
+        '--'
+      );
+
+      try {
+        const position = await requestCurrentPosition();
+        writeStorageFlag(locationPermissionGrantedKey, true);
+        const matchPayload = await matchCurrentPosition(position);
+        applyLocationMatch(matchPayload);
+        return matchPayload;
+      } catch (error) {
+        applyLocationBrowserError(error);
+        return null;
+      }
+    })();
+
+    locationRequestPromise = pendingRequest;
+    try {
+      return await pendingRequest;
+    } finally {
+      if (locationRequestPromise === pendingRequest) {
+        locationRequestPromise = null;
+      }
+      setLocationRefreshLoading(false);
+    }
+  }
+
+  async function initializeLocationCapture() {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      setLocationPresentation(
+        'Indisponivel',
+        'A captura de localizacao requer HTTPS e suporte do navegador.',
+        'error',
+        '--'
+      );
+      return;
+    }
+
+    const permissionState = await queryLocationPermissionState();
+    if (permissionState === 'granted') {
+      await captureAndResolveLocation({ interactive: false });
+      return;
+    }
+
+    if (permissionState === 'denied') {
+      writeStorageFlag(locationPermissionGrantedKey, false);
+      setLocationPresentation(
+        'Permissao negada',
+        'A localizacao automatica foi bloqueada neste navegador.',
+        'error',
+        '--'
+      );
+      return;
+    }
+
+    if (!readStorageFlag(locationPromptAttemptedKey)) {
+      await captureAndResolveLocation({ interactive: true });
+      return;
+    }
+
+    if (readStorageFlag(locationPermissionGrantedKey)) {
+      await captureAndResolveLocation({ interactive: false });
+      return;
+    }
+
+    setResolvedLocation(null);
+    setLocationPresentation(
+      'Nao confirmado',
+      'O pedido automatico de localizacao acontece somente na primeira abertura deste link.',
+      'warning',
+      '--'
+    );
+  }
+
+  async function ensureLocationReadyForSubmit() {
+    if (locationRequestPromise) {
+      await locationRequestPromise;
+      return;
+    }
+
+    const permissionState = await queryLocationPermissionState();
+    if (permissionState === 'granted' || (permissionState === null && readStorageFlag(locationPermissionGrantedKey))) {
+      await captureAndResolveLocation({ interactive: false, forceRefresh: true });
+    }
   }
 
   function readPersistedChave() {
@@ -228,6 +526,10 @@
     input.addEventListener('change', syncProjectVisibility);
   });
 
+  refreshLocationButton.addEventListener('click', () => {
+    void captureAndResolveLocation({ interactive: true, forceRefresh: true });
+  });
+
   document.addEventListener('touchmove', preventViewportScroll, { passive: false });
   document.addEventListener('wheel', preventViewportScroll, { passive: false });
 
@@ -247,6 +549,8 @@
     setStatus('');
 
     try {
+      await ensureLocationReadyForSubmit();
+
       const response = await fetch(submitEndpoint, {
         method: 'POST',
         headers: {
@@ -256,6 +560,7 @@
           chave,
           projeto: projectSelect.value,
           action: getSelectedValue('action'),
+          local: currentLocationMatch ? currentLocationMatch.resolved_local : null,
           informe: getSelectedValue('informe'),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),
@@ -284,6 +589,7 @@
   });
 
   syncProjectVisibility();
+  void initializeLocationCapture();
 
   const persistedChave = readPersistedChave();
   if (persistedChave) {

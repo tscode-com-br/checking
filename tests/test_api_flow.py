@@ -1943,11 +1943,14 @@ def test_mobile_check_page_is_served_on_user_path():
         response = client.get("/user")
         assert response.status_code == 200
         assert "Registrar" in response.text
+        assert "Local" in response.text
+        assert "Atualizar local" in response.text
         assert "Chave Petrobras" in response.text
         assert "Último Check-In" in response.text
         assert "Último Check-Out" in response.text
         assert "/api/web/check" in response.text
         assert "/api/web/check/state" in response.text
+        assert "/api/web/check/location" in response.text
 
 
 def test_admin_page_is_served_on_admin_path():
@@ -1986,6 +1989,108 @@ def test_web_check_autocreates_user_with_web_origin_name():
             assert user.nome == "Oriundo da Web"
             assert user.rfid is None
             assert user.projeto == "P82"
+
+
+def test_web_location_match_returns_known_location_when_accuracy_is_good():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Match P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is True
+        assert payload["resolved_local"] == "Web Match P80"
+        assert payload["label"] == "Web Match P80"
+        assert payload["status"] == "matched"
+        assert payload["accuracy_threshold_meters"] == 25
+
+
+def test_web_location_match_blocks_low_accuracy_before_matching():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Accuracy P80",
+                "latitude": 1.300001,
+                "longitude": 103.800001,
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 15},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.300001,
+                "longitude": 103.800001,
+                "accuracy_meters": 44,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is False
+        assert payload["resolved_local"] is None
+        assert payload["label"] == "Precisao insuficiente"
+        assert payload["status"] == "accuracy_too_low"
+        assert payload["accuracy_threshold_meters"] == 15
+
+
+def test_web_check_updates_user_local_when_location_is_provided():
+    client_event_id = f"web-check-local-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB14",
+                "projeto": "P80",
+                "action": "checkin",
+                "local": "Web Match P80",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WB14")
+            assert user.local == "Web Match P80"
 
 
 def test_web_check_reuses_flutter_like_hidden_project_for_checkout():

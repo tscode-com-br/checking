@@ -31,8 +31,7 @@
     </header>
 
     <main class="check-shell">
-      <section class="check-card" aria-labelledby="checkTitle">
-        <h1 id="checkTitle">Checking</h1>
+      <section class="check-card" aria-label="Formulario de registro de check-in e check-out">
 
         <section class="history-card" aria-labelledby="historyTitle">
           <div class="history-grid">
@@ -56,6 +55,7 @@
           novalidate
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
+          data-location-endpoint="/api/web/check/location"
         >
           <label class="check-field" for="chaveInput">
             <span>Chave Petrobras</span>
@@ -70,6 +70,20 @@
               required
             />
           </label>
+
+          <section class="location-card" aria-labelledby="locationTitle">
+            <div class="location-card-header">
+              <p id="locationTitle" class="history-label">Local</p>
+              <p id="locationAccuracy" class="location-accuracy">--</p>
+            </div>
+            <p id="locationValue" class="location-value">Aguardando localizacao.</p>
+            <p id="locationState" class="location-state" role="status" aria-live="polite">
+              O compartilhamento automatico da localizacao sera solicitado somente na primeira abertura deste link.
+            </p>
+            <button id="refreshLocationButton" type="button" class="location-refresh-button">
+              Atualizar local
+            </button>
+          </section>
 
           <fieldset class="check-group">
             <legend>Registro</legend>

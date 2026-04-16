@@ -143,6 +143,88 @@ header {
   background: rgba(248, 250, 252, 0.9);
 }
 
+.location-card {
+  display: grid;
+  gap: 8px;
+  padding: clamp(10px, 1.8vw, 14px);
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: calc(var(--control-radius) + 2px);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.location-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.location-accuracy {
+  margin: 0;
+  font-size: clamp(0.66rem, 0.82vw, 0.76rem);
+  font-weight: 700;
+  color: #64748b;
+}
+
+.location-value {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: clamp(0.86rem, 1.02vw, 0.96rem);
+  font-weight: 800;
+  text-align: center;
+  color: #0f172a;
+}
+
+.location-value.is-success {
+  color: #0f766e;
+}
+
+.location-value.is-error {
+  color: #b42318;
+}
+
+.location-value.is-warning {
+  color: #9a3412;
+}
+
+.location-state {
+  min-height: 18px;
+  margin: 0;
+  font-size: clamp(0.72rem, 0.88vw, 0.82rem);
+  font-weight: 600;
+  text-align: center;
+  color: #475569;
+}
+
+.location-state.is-success {
+  color: #0f766e;
+}
+
+.location-state.is-error {
+  color: #b42318;
+}
+
+.location-state.is-warning {
+  color: #9a3412;
+}
+
+.location-refresh-button {
+  min-height: var(--control-height);
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  border-radius: var(--control-radius);
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  font: inherit;
+  font-size: clamp(0.78rem, 0.95vw, 0.88rem);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.location-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .history-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -211,6 +293,7 @@ header {
 .check-field input,
 .check-field select,
 .submit-button,
+.location-refresh-button,
 .choice-card,
 .choice-card input,
 .choice-card-static {

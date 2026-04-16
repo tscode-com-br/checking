@@ -414,6 +414,39 @@ class WebCheckSubmitRequest(MobileFormsSubmitRequest):
     pass
 
 
+class WebLocationMatchRequest(BaseModel):
+    latitude: float
+    longitude: float
+    accuracy_meters: float | None = Field(default=None, ge=0)
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_web_location_latitude(cls, value: float) -> float:
+        return _validate_latitude(value)
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_web_location_longitude(cls, value: float) -> float:
+        return _validate_longitude(value)
+
+
+class WebLocationMatchResponse(BaseModel):
+    matched: bool
+    resolved_local: str | None = None
+    label: str
+    status: Literal[
+        "matched",
+        "accuracy_too_low",
+        "not_in_known_location",
+        "outside_workplace",
+        "no_known_locations",
+    ]
+    message: str
+    accuracy_meters: float | None = Field(default=None, ge=0)
+    accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    nearest_workplace_distance_meters: float | None = Field(default=None, ge=0)
+
+
 class WebCheckHistoryResponse(BaseModel):
     found: bool
     chave: str
