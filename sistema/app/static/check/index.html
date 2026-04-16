@@ -55,6 +55,7 @@
           novalidate
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
+          data-locations-endpoint="/api/web/check/locations"
           data-location-endpoint="/api/web/check/location"
         >
           <label class="check-field" for="chaveInput">
@@ -140,14 +141,23 @@
             </div>
           </fieldset>
 
-          <label id="projectField" class="check-field" for="projectSelect">
-            <span>Projeto</span>
-            <select id="projectSelect" name="projeto">
-              <option value="P80">P80</option>
-              <option value="P82">P82</option>
-              <option value="P83">P83</option>
-            </select>
-          </label>
+          <div class="form-row">
+            <label id="projectField" class="check-field check-field-compact" for="projectSelect">
+              <span>Projeto</span>
+              <select id="projectSelect" name="projeto">
+                <option value="P80">P80</option>
+                <option value="P82">P82</option>
+                <option value="P83">P83</option>
+              </select>
+            </label>
+
+            <label id="locationSelectField" class="check-field check-field-grow" for="manualLocationSelect">
+              <span>Localização</span>
+              <select id="manualLocationSelect" name="localizacao" disabled>
+                <option value="">Carregando locais...</option>
+              </select>
+            </label>
+          </div>
 
           <button id="submitButton" type="submit" class="submit-button">Registrar</button>
         </form>

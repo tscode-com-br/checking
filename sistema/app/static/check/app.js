@@ -2,10 +2,12 @@
   const form = document.getElementById('checkForm');
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
+  const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
   const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
   const chaveInput = document.getElementById('chaveInput');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
+  const manualLocationSelect = document.getElementById('manualLocationSelect');
   const submitButton = document.getElementById('submitButton');
   const refreshLocationButton = document.getElementById('refreshLocationButton');
   const refreshLocationButtonLabel = refreshLocationButton.querySelector('.visually-hidden');
@@ -21,11 +23,16 @@
   const storageKey = 'checking.web.user.chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
+  const defaultManualLocationLabel = 'Escritório Principal';
+  const historyRefreshIntervalMs = 10000;
   const geolocationOptions = {
     enableHighAccuracy: true,
     maximumAge: 0,
     timeout: 20000,
   };
+  const weekdayFormatter = new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'long',
+  });
   const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: '2-digit',
@@ -40,8 +47,11 @@
 
   let historyRequestToken = 0;
   let historyAbortController = null;
+  let historyRefreshIntervalId = null;
   let locationRequestPromise = null;
   let currentLocationMatch = null;
+  let availableLocations = [];
+  let gpsLocationPermissionGranted = false;
 
   function isStandaloneShortcutMode() {
     return Boolean(
@@ -144,6 +154,8 @@
       locationValue.classList.add(`is-${tone}`);
       locationState.classList.add(`is-${tone}`);
     }
+
+    syncManualLocationControl();
   }
 
   function setResolvedLocation(matchPayload) {
@@ -158,6 +170,102 @@
       return `Precisao ${formatMeters(accuracyMeters)}`;
     }
     return `Precisao ${formatMeters(accuracyMeters)} / Max. ${Math.round(thresholdMeters)} m`;
+  }
+
+  function setGpsLocationPermissionGranted(value) {
+    gpsLocationPermissionGranted = Boolean(value);
+    syncManualLocationControl();
+  }
+
+  function getDefaultManualLocation() {
+    if (availableLocations.includes(defaultManualLocationLabel)) {
+      return defaultManualLocationLabel;
+    }
+
+    return availableLocations[0] || '';
+  }
+
+  function setLocationSelectOptions(values, selectedValue, options) {
+    const settings = options || {};
+    const nextValues = Array.from(values || []);
+    if (settings.allowTemporaryValue && selectedValue && !nextValues.includes(selectedValue)) {
+      nextValues.unshift(selectedValue);
+    }
+
+    const placeholder = settings.placeholder || '';
+    manualLocationSelect.replaceChildren();
+
+    if (!nextValues.length) {
+      const emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = placeholder || 'Sem localizações cadastradas';
+      manualLocationSelect.append(emptyOption);
+      manualLocationSelect.value = '';
+      return;
+    }
+
+    nextValues.forEach((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      manualLocationSelect.append(option);
+    });
+
+    if (selectedValue && nextValues.includes(selectedValue)) {
+      manualLocationSelect.value = selectedValue;
+      return;
+    }
+
+    manualLocationSelect.value = nextValues[0];
+  }
+
+  function syncManualLocationControl() {
+    const displayedLocation = (locationValue.textContent || '').trim();
+
+    if (gpsLocationPermissionGranted) {
+      manualLocationSelect.disabled = true;
+      setLocationSelectOptions(availableLocations, displayedLocation || getDefaultManualLocation(), {
+        allowTemporaryValue: true,
+        placeholder: displayedLocation || 'Aguardando localização.',
+      });
+      return;
+    }
+
+    const nextManualValue = availableLocations.includes(manualLocationSelect.value)
+      ? manualLocationSelect.value
+      : getDefaultManualLocation();
+    manualLocationSelect.disabled = availableLocations.length === 0;
+    setLocationSelectOptions(availableLocations, nextManualValue, {
+      placeholder: 'Sem localizações cadastradas',
+    });
+  }
+
+  async function loadManualLocations() {
+    try {
+      const response = await fetch(locationsEndpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(parseErrorMessage(payload));
+      }
+
+      availableLocations = Array.from(
+        new Set(
+          Array.isArray(payload.items)
+            ? payload.items.filter((item) => typeof item === 'string' && item.trim())
+            : []
+        )
+      );
+    } catch {
+      availableLocations = [];
+    }
+
+    syncManualLocationControl();
   }
 
   async function queryLocationPermissionState() {
@@ -235,6 +343,7 @@
 
     if (error.code === 1) {
       writeStorageFlag(locationPermissionGrantedKey, false);
+      setGpsLocationPermissionGranted(false);
       setLocationPresentation(
         'Permissao negada',
         `A localizacao automatica so sera reutilizada se voce liberar novamente a permissao ${getLocationPermissionContainerLabel()}.`,
@@ -307,6 +416,7 @@
       try {
         const position = await requestCurrentPosition();
         writeStorageFlag(locationPermissionGrantedKey, true);
+        setGpsLocationPermissionGranted(true);
         const matchPayload = await matchCurrentPosition(position);
         applyLocationMatch(matchPayload);
         return matchPayload;
@@ -329,6 +439,7 @@
 
   async function initializeLocationCapture() {
     if (!window.isSecureContext || !navigator.geolocation) {
+      setGpsLocationPermissionGranted(false);
       setLocationPresentation(
         'Indisponivel',
         'A captura de localizacao requer HTTPS e suporte do navegador.',
@@ -340,12 +451,14 @@
 
     const permissionState = await queryLocationPermissionState();
     if (permissionState === 'granted') {
+      setGpsLocationPermissionGranted(true);
       await captureAndResolveLocation({ interactive: false });
       return;
     }
 
     if (permissionState === 'denied') {
       writeStorageFlag(locationPermissionGrantedKey, false);
+      setGpsLocationPermissionGranted(false);
       setLocationPresentation(
         'Permissao negada',
         `A localizacao automatica foi bloqueada ${getLocationPermissionContainerLabel()}.`,
@@ -356,15 +469,18 @@
     }
 
     if (!readStorageFlag(locationPromptAttemptedKey)) {
+      setGpsLocationPermissionGranted(false);
       await captureAndResolveLocation({ interactive: true });
       return;
     }
 
     if (readStorageFlag(locationPermissionGrantedKey)) {
+      setGpsLocationPermissionGranted(true);
       await captureAndResolveLocation({ interactive: false });
       return;
     }
 
+    setGpsLocationPermissionGranted(false);
     setResolvedLocation(null);
     setLocationPresentation(
       'Nao confirmado',
@@ -435,16 +551,16 @@
   }
 
   function formatHistoryValue(value) {
-    if (!value) {
-      return '--';
+    const parsed = parseHistoryTimestamp(value);
+    if (!parsed) {
+      return null;
     }
 
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      return '--';
-    }
-
-    return `${dateFormatter.format(parsed)}\n${timeFormatter.format(parsed)}`;
+    return {
+      weekday: weekdayFormatter.format(parsed),
+      date: dateFormatter.format(parsed),
+      time: timeFormatter.format(parsed),
+    };
   }
 
   function parseHistoryTimestamp(value) {
@@ -488,10 +604,54 @@
     setSelectedAction('checkin');
   }
 
+  function renderHistoryValue(element, value) {
+    const formatted = formatHistoryValue(value);
+    element.replaceChildren();
+
+    if (!formatted) {
+      element.textContent = '--';
+      return;
+    }
+
+    [
+      ['history-weekday', formatted.weekday],
+      ['history-date', formatted.date],
+      ['history-time', formatted.time],
+    ].forEach(([className, text]) => {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = text;
+      element.append(span);
+    });
+  }
+
   function applyHistoryState(state) {
-    lastCheckinValue.textContent = formatHistoryValue(state && state.last_checkin_at);
-    lastCheckoutValue.textContent = formatHistoryValue(state && state.last_checkout_at);
+    renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
+    renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
     applySuggestedActionFromHistory(state);
+  }
+
+  function stopHistoryAutoRefresh() {
+    if (historyRefreshIntervalId !== null) {
+      window.clearInterval(historyRefreshIntervalId);
+      historyRefreshIntervalId = null;
+    }
+  }
+
+  function ensureHistoryAutoRefresh() {
+    if (historyRefreshIntervalId !== null) {
+      return;
+    }
+
+    historyRefreshIntervalId = window.setInterval(() => {
+      const normalized = sanitizeChave(chaveInput.value);
+      if (normalized.length !== 4) {
+        stopHistoryAutoRefresh();
+        return;
+      }
+
+      void refreshHistory(normalized, { silentSuccessMessage: true });
+    }, historyRefreshIntervalMs);
   }
 
   function resetHistory(message) {
@@ -509,9 +669,12 @@
     }
 
     if (normalized.length !== 4) {
+      stopHistoryAutoRefresh();
       resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
       return;
     }
+
+    ensureHistoryAutoRefresh();
 
     const requestToken = ++historyRequestToken;
     const controller = new AbortController();
@@ -584,6 +747,7 @@
       return;
     }
 
+    stopHistoryAutoRefresh();
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   });
 
@@ -610,6 +774,12 @@
       return;
     }
 
+    if (!gpsLocationPermissionGranted && !manualLocationSelect.value) {
+      setStatus('Selecione uma localização antes de registrar.', 'error');
+      manualLocationSelect.focus();
+      return;
+    }
+
     setSubmitting(true);
     setStatus('');
 
@@ -625,7 +795,9 @@
           chave,
           projeto: projectSelect.value,
           action: getSelectedValue('action'),
-          local: currentLocationMatch ? currentLocationMatch.resolved_local : null,
+          local: gpsLocationPermissionGranted
+            ? (currentLocationMatch ? currentLocationMatch.resolved_local : null)
+            : manualLocationSelect.value,
           informe: getSelectedValue('informe'),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),
@@ -654,13 +826,17 @@
   });
 
   syncProjectVisibility();
+  syncManualLocationControl();
+  void loadManualLocations();
   void initializeLocationCapture();
 
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
+    ensureHistoryAutoRefresh();
     void refreshHistory(persistedChave, { silentSuccessMessage: true });
   } else {
+    stopHistoryAutoRefresh();
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   }
 })();

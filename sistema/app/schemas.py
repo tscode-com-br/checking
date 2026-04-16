@@ -454,6 +454,10 @@ class WebCheckHistoryResponse(BaseModel):
     last_checkout_at: datetime | None = None
 
 
+class WebLocationOptionsResponse(BaseModel):
+    items: list[str]
+
+
 class MobileSyncStateResponse(BaseModel):
     found: bool
     chave: str

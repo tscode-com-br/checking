@@ -137,7 +137,7 @@ header {
 }
 
 .history-card {
-  padding: clamp(10px, 1.8vw, 14px);
+  padding: clamp(8px, 1.4vw, 10px);
   border: 1px solid rgba(15, 118, 110, 0.16);
   border-radius: calc(var(--control-radius) + 2px);
   background: rgba(248, 250, 252, 0.9);
@@ -253,12 +253,14 @@ header {
 .history-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .history-item {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: center;
   text-align: center;
 }
 
@@ -272,22 +274,54 @@ header {
 }
 
 .history-value {
-  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
   margin: 0;
   font-size: clamp(0.8rem, 0.95vw, 0.9rem);
   font-weight: 700;
-  line-height: 1.08;
-  white-space: pre-line;
+  line-height: 1;
+  white-space: normal;
   color: #0f172a;
 }
 
+.history-weekday,
+.history-date,
+.history-time {
+  display: block;
+  margin: 0;
+  line-height: 1.05;
+}
+
+.history-weekday {
+  font-size: clamp(0.64rem, 0.8vw, 0.72rem);
+  font-weight: 700;
+  color: #475569;
+  text-transform: capitalize;
+}
+
+.history-date {
+  font-size: clamp(0.76rem, 0.92vw, 0.86rem);
+  font-weight: 800;
+}
+
+.history-time {
+  font-size: clamp(0.74rem, 0.9vw, 0.84rem);
+  font-weight: 700;
+}
+
 .history-state {
-  min-height: 18px;
-  margin: 8px 0 0;
+  min-height: 0;
+  margin: 6px 0 0;
   font-size: clamp(0.74rem, 0.9vw, 0.84rem);
   font-weight: 700;
   text-align: center;
   color: #475569;
+}
+
+.history-state:empty {
+  display: none;
 }
 
 .history-state.is-success {
@@ -306,6 +340,23 @@ header {
 .check-field {
   display: grid;
   gap: 6px;
+}
+
+.form-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.check-field-compact {
+  flex: 0 0 clamp(86px, 18vw, 98px);
+  width: clamp(86px, 18vw, 98px);
+  min-width: clamp(86px, 18vw, 98px);
+}
+
+.check-field-grow {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .check-field span,
@@ -335,6 +386,8 @@ header {
   background: #ffffff;
   font: inherit;
   font-size: var(--body-size);
+  text-align: left;
+  text-align-last: left;
   color: #0f172a;
 }
 
@@ -495,6 +548,16 @@ header {
 
   .choice-grid.two-columns {
     grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    gap: 6px;
+  }
+
+  .check-field-compact {
+    flex-basis: 84px;
+    width: 84px;
+    min-width: 84px;
   }
 }
 

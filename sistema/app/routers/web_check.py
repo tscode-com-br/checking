@@ -6,6 +6,7 @@ from ..database import get_db
 from ..models import ManagedLocation
 from ..schemas import (
     WebCheckHistoryResponse,
+    WebLocationOptionsResponse,
     WebCheckSubmitRequest,
     WebCheckSubmitResponse,
     WebLocationMatchRequest,
@@ -45,6 +46,14 @@ def get_web_check_state(
     db: Session = Depends(get_db),
 ) -> WebCheckHistoryResponse:
     return build_web_check_history_state(db, chave=_validate_public_chave(chave))
+
+
+@router.get("/check/locations", response_model=WebLocationOptionsResponse)
+def get_web_check_locations(db: Session = Depends(get_db)) -> WebLocationOptionsResponse:
+    items = db.execute(
+        select(ManagedLocation.local).order_by(ManagedLocation.local, ManagedLocation.id)
+    ).scalars().all()
+    return WebLocationOptionsResponse(items=items)
 
 
 @router.post("/check/location", response_model=WebLocationMatchResponse)
