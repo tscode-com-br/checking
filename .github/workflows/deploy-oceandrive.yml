@@ -76,7 +76,7 @@ jobs:
           chmod 600 "$known_hosts_path"
           echo "fingerprint=$OCEAN_HOST_FINGERPRINT" >> "$GITHUB_OUTPUT"
           echo "strict_hostkeys_checking=false" >> "$GITHUB_OUTPUT"
-          echo "rsh=ssh -o UserKnownHostsFile=/github/workspace/.github/ocean_known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_OUTPUT"
+          echo "rsh=-o UserKnownHostsFile=/github/workspace/.github/ocean_known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_OUTPUT"
 
       - name: Ensure remote app directory exists
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
