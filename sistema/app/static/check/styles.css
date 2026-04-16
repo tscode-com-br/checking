@@ -238,6 +238,10 @@ header {
   color: #0f766e;
 }
 
+.location-value.is-muted {
+  color: #94a3b8;
+}
+
 .location-state {
   margin: 0;
   font-size: clamp(0.72rem, 0.88vw, 0.82rem);
@@ -264,6 +268,10 @@ header {
 
 .location-state.is-info {
   color: #0f766e;
+}
+
+.location-state.is-muted {
+  color: #94a3b8;
 }
 
 .location-refresh-button {

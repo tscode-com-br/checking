@@ -2069,6 +2069,86 @@ def test_web_location_match_blocks_low_accuracy_before_matching():
         assert payload["accuracy_threshold_meters"] == 15
 
 
+def test_web_location_match_returns_unknown_location_without_message_within_two_km():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Nearby P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.260936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is False
+        assert payload["resolved_local"] is None
+        assert payload["label"] == "Localização Desconhecida"
+        assert payload["status"] == "not_in_known_location"
+        assert payload["message"] == ""
+        assert payload["nearest_workplace_distance_meters"] < 2000
+
+
+def test_web_location_match_returns_outside_workplace_without_message():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Far P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.285936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is False
+        assert payload["resolved_local"] is None
+        assert payload["label"] == "Fora do Ambiente de Trabalho"
+        assert payload["status"] == "outside_workplace"
+        assert payload["message"] == ""
+        assert payload["nearest_workplace_distance_meters"] > 2000
+
+
 def test_web_check_updates_user_local_when_location_is_provided():
     client_event_id = f"web-check-local-{uuid.uuid4().hex}"
 

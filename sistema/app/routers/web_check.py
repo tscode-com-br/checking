@@ -113,18 +113,13 @@ def match_web_check_location(
             if captured_label is not None
             else "not_in_known_location"
         )
-        label = captured_label or "Nao encontrado"
-        message = (
-            "A localizacao atual nao foi identificada dentro de uma area conhecida."
-            if status == "not_in_known_location"
-            else "A localizacao atual indica que o usuario esta fora do ambiente de trabalho conhecido."
-        )
+        label = captured_label or "Localização Desconhecida"
         return WebLocationMatchResponse(
             matched=False,
             resolved_local=None,
             label=label,
             status=status,
-            message=message,
+            message="",
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
             nearest_workplace_distance_meters=match_result.nearest_workplace_distance_meters,

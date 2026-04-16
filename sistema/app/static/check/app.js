@@ -199,7 +199,7 @@
 
     locationValue.textContent = label || '--';
     locationAccuracy.textContent = accuracyText || '--';
-    locationValue.classList.remove('is-error', 'is-success', 'is-warning', 'is-info');
+    locationValue.classList.remove('is-error', 'is-success', 'is-warning', 'is-info', 'is-muted');
 
     if (tone) {
       locationValue.classList.add(`is-${tone}`);
@@ -503,7 +503,7 @@
     const toneByStatus = {
       matched: 'success',
       accuracy_too_low: 'warning',
-      not_in_known_location: 'warning',
+      not_in_known_location: 'muted',
       outside_workplace: 'warning',
       no_known_locations: 'error',
     };
