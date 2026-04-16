@@ -1,4 +1,5 @@
 :root {
+  --header-height: 64px;
   --page-padding-inline: clamp(12px, 3vw, 28px);
   --page-padding-block: clamp(12px, 2.8vh, 24px);
   --card-max-width: 520px;
@@ -15,8 +16,11 @@
 
 html {
   width: 100%;
+  height: 100%;
   min-height: 100%;
   overflow: hidden;
+  overflow: clip;
+  overscroll-behavior: none;
 }
 
 * {
@@ -24,21 +28,25 @@ html {
 }
 
 body {
-  position: relative;
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: 100vh;
-  min-height: 100svh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  min-height: 100%;
+  max-height: 100%;
   margin: 0;
   overflow: hidden;
+  overflow: clip;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   background: linear-gradient(135deg, #f7f8fa, #eef2f7);
   color: #1f2937;
   isolation: isolate;
   overscroll-behavior: none;
-  touch-action: manipulation;
+  touch-action: none;
 }
 
 body::before {
@@ -62,7 +70,7 @@ header {
   justify-content: center;
   flex: 0 0 auto;
   padding: calc(env(safe-area-inset-top) + 10px) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
-  min-height: 64px;
+  min-height: var(--header-height);
   background: #0f766e;
   color: #ffffff;
 }
@@ -91,18 +99,26 @@ header {
   z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
+  height: calc(100vh - var(--header-height));
+  height: calc(100svh - var(--header-height));
+  height: calc(100dvh - var(--header-height));
+  max-height: calc(100vh - var(--header-height));
+  max-height: calc(100svh - var(--header-height));
+  max-height: calc(100dvh - var(--header-height));
   padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
+  overflow: clip;
 }
 
 .check-card {
   display: grid;
   gap: var(--section-gap);
   width: min(100%, var(--card-max-width));
+  max-width: 100%;
+  max-height: 100%;
   margin: auto;
   padding: var(--card-padding);
   background: rgba(255, 255, 255, 0.94);
@@ -190,6 +206,15 @@ header {
   font-size: var(--label-size);
   font-weight: 800;
   color: #0f172a;
+}
+
+.check-field input,
+.check-field select,
+.submit-button,
+.choice-card,
+.choice-card input,
+.choice-card-static {
+  touch-action: manipulation;
 }
 
 .check-field input,
@@ -351,6 +376,7 @@ header {
 
 @media (orientation: landscape) and (max-height: 540px) {
   :root {
+    --header-height: 56px;
     --page-padding-block: 10px;
     --card-padding: 12px;
     --section-gap: 8px;
@@ -358,7 +384,6 @@ header {
   }
 
   header {
-    min-height: 56px;
     padding-top: calc(env(safe-area-inset-top) + 8px);
     padding-bottom: 8px;
   }

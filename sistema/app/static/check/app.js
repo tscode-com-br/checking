@@ -28,6 +28,14 @@
   let historyRequestToken = 0;
   let historyAbortController = null;
 
+  function preventViewportScroll(event) {
+    if (!event.cancelable) {
+      return;
+    }
+
+    event.preventDefault();
+  }
+
   function sanitizeChave(value) {
     return String(value || '')
       .toUpperCase()
@@ -219,6 +227,9 @@
   actionInputs.forEach((input) => {
     input.addEventListener('change', syncProjectVisibility);
   });
+
+  document.addEventListener('touchmove', preventViewportScroll, { passive: false });
+  document.addEventListener('wheel', preventViewportScroll, { passive: false });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
