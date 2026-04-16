@@ -173,8 +173,12 @@ header {
   color: #ff0000;
 }
 
+.notification-line.is-info {
+  color: #0f766e;
+}
+
 .notification-line.is-warning {
-  color: #92400e;
+  color: #0f766e;
 }
 
 .location-card {
@@ -227,7 +231,11 @@ header {
 }
 
 .location-value.is-warning {
-  color: #9a3412;
+  color: #0f766e;
+}
+
+.location-value.is-info {
+  color: #0f766e;
 }
 
 .location-state {
@@ -251,7 +259,11 @@ header {
 }
 
 .location-state.is-warning {
-  color: #9a3412;
+  color: #0f766e;
+}
+
+.location-state.is-info {
+  color: #0f766e;
 }
 
 .location-refresh-button {

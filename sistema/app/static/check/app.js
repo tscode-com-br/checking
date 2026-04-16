@@ -27,7 +27,7 @@
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const automaticActivitiesEnabledKey = 'checking.web.user.automatic-activities-enabled';
   const defaultManualLocationLabel = 'Escritório Principal';
-  const historyRefreshCooldownMs = 1200;
+  const lifecycleTriggerCooldownMs = 1200;
   const automaticCheckoutLocation = automaticActivities.AUTOMATIC_CHECKOUT_LOCATION;
   const geolocationOptions = {
     enableHighAccuracy: true,
@@ -51,7 +51,7 @@
 
   let historyRequestToken = 0;
   let historyAbortController = null;
-  let lastHistoryRefreshAt = 0;
+  let lastLifecycleTriggerAt = 0;
   let locationRequestPromise = null;
   let currentLocationMatch = null;
   let latestHistoryState = null;
@@ -92,7 +92,7 @@
 
   function applyNotificationLine(element, messageEntry) {
     element.textContent = messageEntry ? messageEntry.message : '';
-    element.classList.remove('is-success', 'is-error', 'is-warning');
+    element.classList.remove('is-success', 'is-error', 'is-warning', 'is-info');
 
     if (messageEntry && messageEntry.tone) {
       element.classList.add(`is-${messageEntry.tone}`);
@@ -111,9 +111,23 @@
   function setNotificationMessage(channel, message, tone) {
     notificationMessages[channel] = {
       message: message || '',
-      tone: message ? (tone || 'warning') : null,
+      tone: message ? (tone || 'info') : null,
     };
     renderNotifications();
+  }
+
+  function clearNotificationMessages(exceptChannel) {
+    Object.keys(notificationMessages).forEach((channel) => {
+      if (channel !== exceptChannel) {
+        notificationMessages[channel] = { message: '', tone: null };
+      }
+    });
+    renderNotifications();
+  }
+
+  function setSequenceStatus(message) {
+    setNotificationMessage('form', message || '', 'info');
+    clearNotificationMessages('form');
   }
 
   function preventViewportScroll(event) {
@@ -180,22 +194,33 @@
     }
   }
 
-  function setLocationPresentation(label, message, tone, accuracyText) {
+  function setLocationPresentation(label, message, tone, accuracyText, options) {
+    const settings = options || {};
+
     locationValue.textContent = label || '--';
     locationAccuracy.textContent = accuracyText || '--';
-    locationValue.classList.remove('is-error', 'is-success', 'is-warning');
+    locationValue.classList.remove('is-error', 'is-success', 'is-warning', 'is-info');
 
     if (tone) {
       locationValue.classList.add(`is-${tone}`);
     }
 
-    setNotificationMessage('location', message || '', tone || 'warning');
+    if (!settings.suppressNotification) {
+      setNotificationMessage('location', message || '', tone || 'info');
+    }
 
     syncManualLocationControl();
   }
 
   function setResolvedLocation(matchPayload) {
     currentLocationMatch = matchPayload && matchPayload.matched ? matchPayload : null;
+  }
+
+  function setLocationWithoutPermission() {
+    writeStorageFlag(locationPermissionGrantedKey, false);
+    setResolvedLocation(null);
+    setGpsLocationPermissionGranted(false);
+    setLocationPresentation('Sem Permissão', '', null, '--', { suppressNotification: true });
   }
 
   function isAutomaticActivitiesEnabled() {
@@ -237,7 +262,7 @@
     return automaticActivities.shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState);
   }
 
-  async function submitAutomaticActivity({ action, local }) {
+  async function submitAutomaticActivity({ action, local, suppressStatus }) {
     const chave = sanitizeChave(chaveInput.value);
     const response = await fetch(submitEndpoint, {
       method: 'POST',
@@ -265,21 +290,25 @@
       applyHistoryState(payload.state);
     }
 
-    setStatus(
-      action === 'checkin'
-        ? `Check-In automático enviado para ${local}.`
-        : (
-            isCheckoutZoneLocationName(local)
-              ? `Check-Out automático enviado para ${local}.`
-              : 'Check-Out automático enviado por afastamento das áreas monitoradas.'
-          ),
-      'success'
-    );
+    if (!suppressStatus) {
+      setStatus(
+        action === 'checkin'
+          ? `Check-In automático enviado para ${local}.`
+          : (
+              isCheckoutZoneLocationName(local)
+                ? `Check-Out automático enviado para ${local}.`
+                : 'Check-Out automático enviado por afastamento das áreas monitoradas.'
+            ),
+        'success'
+      );
+    }
 
     return payload;
   }
 
-  async function runAutomaticActivitiesIfNeeded(locationPayload) {
+  async function runAutomaticActivitiesIfNeeded(locationPayload, options) {
+    const settings = options || {};
+
     if (!isAutomaticActivitiesEnabled() || !gpsLocationPermissionGranted) {
       return false;
     }
@@ -297,6 +326,7 @@
       await submitAutomaticActivity({
         action: isCheckoutZoneLocationName(locationPayload.resolved_local) ? 'checkout' : 'checkin',
         local: locationPayload.resolved_local,
+        suppressStatus: settings.suppressStatus,
       });
       return true;
     }
@@ -309,6 +339,7 @@
       await submitAutomaticActivity({
         action: 'checkout',
         local: automaticCheckoutLocation,
+        suppressStatus: settings.suppressStatus,
       });
       return true;
     }
@@ -318,12 +349,12 @@
 
   function buildAccuracyText(accuracyMeters, thresholdMeters) {
     if (typeof accuracyMeters !== 'number' || !Number.isFinite(accuracyMeters)) {
-      return thresholdMeters ? `Max. ${Math.round(thresholdMeters)} m` : '--';
+      return thresholdMeters ? `Limite ${Math.round(thresholdMeters)} m` : '--';
     }
     if (typeof thresholdMeters !== 'number' || !Number.isFinite(thresholdMeters)) {
-      return `Precisao ${formatMeters(accuracyMeters)}`;
+      return `Precisão ${formatMeters(accuracyMeters)}`;
     }
-    return `Precisao ${formatMeters(accuracyMeters)} / Max. ${Math.round(thresholdMeters)} m`;
+    return `Precisão ${formatMeters(accuracyMeters)} / Limite ${Math.round(thresholdMeters)} m`;
   }
 
   function setGpsLocationPermissionGranted(value) {
@@ -468,7 +499,7 @@
     return payload;
   }
 
-  function applyLocationMatch(payload) {
+  function applyLocationMatch(payload, options) {
     const toneByStatus = {
       matched: 'success',
       accuracy_too_low: 'warning',
@@ -479,10 +510,16 @@
     const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
     const locationMessage = payload.status === 'matched' ? '' : payload.message;
     setResolvedLocation(payload);
-    setLocationPresentation(payload.label, locationMessage, toneByStatus[payload.status] || null, accuracyText);
+    setLocationPresentation(
+      payload.label,
+      locationMessage,
+      toneByStatus[payload.status] || null,
+      accuracyText,
+      options
+    );
   }
 
-  function applyLocationBrowserError(error) {
+  function applyLocationBrowserError(error, options) {
     setResolvedLocation(null);
 
     if (!error || typeof error.code !== 'number') {
@@ -490,20 +527,14 @@
         'Localizacao indisponivel',
         'Nao foi possivel consultar a localizacao neste momento.',
         'error',
-        '--'
+        '--',
+        options
       );
       return;
     }
 
     if (error.code === 1) {
-      writeStorageFlag(locationPermissionGrantedKey, false);
-      setGpsLocationPermissionGranted(false);
-      setLocationPresentation(
-        'Permissao negada',
-        `A localizacao automatica so sera reutilizada se voce liberar novamente a permissao ${getLocationPermissionContainerLabel()}.`,
-        'error',
-        '--'
-      );
+      setLocationWithoutPermission();
       return;
     }
 
@@ -512,7 +543,8 @@
         'Localizacao indisponivel',
         'Nao foi possivel obter uma posicao valida do aparelho.',
         'error',
-        '--'
+        '--',
+        options
       );
       return;
     }
@@ -522,7 +554,8 @@
         'Tempo esgotado',
         'A busca pela localizacao demorou mais do que o esperado.',
         'warning',
-        '--'
+        '--',
+        options
       );
       return;
     }
@@ -531,7 +564,8 @@
       'Localizacao indisponivel',
       'Nao foi possivel consultar a localizacao neste momento.',
       'error',
-      '--'
+      '--',
+      options
     );
   }
 
@@ -591,57 +625,37 @@
     }
   }
 
-  async function initializeLocationCapture() {
+  async function updateLocationForLifecycleSequence() {
     if (!window.isSecureContext || !navigator.geolocation) {
       setGpsLocationPermissionGranted(false);
-      setLocationPresentation(
-        'Indisponivel',
-        'A captura de localizacao requer HTTPS e suporte do navegador.',
-        'error',
-        '--'
-      );
-      return;
+      setResolvedLocation(null);
+      setLocationPresentation('Indisponível', '', 'error', '--', { suppressNotification: true });
+      return null;
     }
 
     const permissionState = await queryLocationPermissionState();
-    if (permissionState === 'granted') {
+    const hasGrantedPermission = permissionState === 'granted'
+      || (permissionState === null && readStorageFlag(locationPermissionGrantedKey));
+
+    if (!hasGrantedPermission) {
+      setLocationWithoutPermission();
+      return null;
+    }
+
+    setLocationRefreshLoading(true);
+    try {
+      const position = await requestCurrentPosition();
+      writeStorageFlag(locationPermissionGrantedKey, true);
       setGpsLocationPermissionGranted(true);
-      await captureAndResolveLocation({ interactive: false });
-      return;
+      const matchPayload = await matchCurrentPosition(position);
+      applyLocationMatch(matchPayload, { suppressNotification: true });
+      return matchPayload;
+    } catch (error) {
+      applyLocationBrowserError(error, { suppressNotification: true });
+      return null;
+    } finally {
+      setLocationRefreshLoading(false);
     }
-
-    if (permissionState === 'denied') {
-      writeStorageFlag(locationPermissionGrantedKey, false);
-      setGpsLocationPermissionGranted(false);
-      setLocationPresentation(
-        'Permissao negada',
-        `A localizacao automatica foi bloqueada ${getLocationPermissionContainerLabel()}.`,
-        'error',
-        '--'
-      );
-      return;
-    }
-
-    if (!readStorageFlag(locationPromptAttemptedKey)) {
-      setGpsLocationPermissionGranted(false);
-      await captureAndResolveLocation({ interactive: true });
-      return;
-    }
-
-    if (readStorageFlag(locationPermissionGrantedKey)) {
-      setGpsLocationPermissionGranted(true);
-      await captureAndResolveLocation({ interactive: false });
-      return;
-    }
-
-    setGpsLocationPermissionGranted(false);
-    setResolvedLocation(null);
-    setLocationPresentation(
-      'Nao confirmado',
-      'O pedido automatico de localizacao acontece somente na primeira abertura deste link.',
-      'warning',
-      '--'
-    );
   }
 
   async function ensureLocationReadyForSubmit() {
@@ -678,7 +692,7 @@
   }
 
   function setStatus(message, tone) {
-    setNotificationMessage('form', message || '', tone || 'warning');
+    setNotificationMessage('form', message || '', tone || 'info');
   }
 
   function setSubmitting(isSubmitting) {
@@ -687,7 +701,7 @@
   }
 
   function setHistoryMessage(message, tone) {
-    setNotificationMessage('history', message || '', tone || 'warning');
+    setNotificationMessage('history', message || '', tone || 'info');
   }
 
   function formatHistoryValue(value) {
@@ -772,23 +786,6 @@
     applySuggestedActionFromHistory(state);
   }
 
-  function refreshHistoryIfReady(options) {
-    const settings = options || {};
-    const normalized = sanitizeChave(chaveInput.value);
-    if (normalized.length !== 4) {
-      return false;
-    }
-
-    const now = Date.now();
-    if (!settings.force && now - lastHistoryRefreshAt < historyRefreshCooldownMs) {
-      return false;
-    }
-
-    lastHistoryRefreshAt = now;
-    void refreshHistory(normalized, settings);
-    return true;
-  }
-
   function resetHistory(message) {
     applyHistoryState(null);
     setHistoryMessage(message || 'Digite sua chave Petrobras para visualizar seu histórico.');
@@ -811,8 +808,8 @@
     const requestToken = ++historyRequestToken;
     const controller = new AbortController();
     historyAbortController = controller;
-    if (settings.showLoadingMessage !== false) {
-      setHistoryMessage('Consultando histórico...', 'warning');
+    if (settings.showLoadingMessage !== false && !settings.suppressMessages) {
+      setHistoryMessage('Consultando histórico...', 'info');
     }
 
     try {
@@ -835,31 +832,103 @@
 
       applyHistoryState(payload);
       if (!payload.found) {
-        setHistoryMessage('Nenhum registro encontrado para esta chave.');
-        return;
+        if (!settings.suppressMessages) {
+          setHistoryMessage('Nenhum registro encontrado para esta chave.');
+        } else {
+          setHistoryMessage('');
+        }
+        return payload;
       }
 
       if (!payload.last_checkin_at && !payload.last_checkout_at) {
-        setHistoryMessage('Nenhum check-in ou check-out registrado para esta chave.');
-        return;
+        if (!settings.suppressMessages) {
+          setHistoryMessage('Nenhum check-in ou check-out registrado para esta chave.');
+        } else {
+          setHistoryMessage('');
+        }
+        return payload;
       }
 
-      if (!settings.silentSuccessMessage) {
+      if (!settings.silentSuccessMessage && !settings.suppressMessages) {
         setHistoryMessage('Histórico atualizado para a chave informada.', 'success');
       } else {
         setHistoryMessage('');
       }
+      return payload;
     } catch (error) {
       if (controller.signal.aborted) {
-        return;
+        return null;
       }
 
       applyHistoryState(null);
-      setHistoryMessage('Não foi possível consultar o histórico desta chave.', 'error');
+      if (!settings.suppressMessages) {
+        setHistoryMessage('Não foi possível consultar o histórico desta chave.', 'error');
+      } else {
+        setHistoryMessage('');
+      }
+
+      if (settings.rethrowErrors) {
+        throw error;
+      }
+
+      return null;
     } finally {
       if (historyAbortController === controller) {
         historyAbortController = null;
       }
+    }
+  }
+
+  async function runLifecycleUpdateSequence(options) {
+    const settings = options || {};
+    const normalized = sanitizeChave(chaveInput.value);
+    if (normalized.length !== 4) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (!settings.ignoreCooldown && now - lastLifecycleTriggerAt < lifecycleTriggerCooldownMs) {
+      return false;
+    }
+
+    if (lifecycleRefreshInProgress) {
+      return false;
+    }
+
+    lastLifecycleTriggerAt = now;
+    lifecycleRefreshInProgress = true;
+
+    try {
+      setSequenceStatus('Atualizando as atividades.....');
+      await refreshHistory(normalized, {
+        showLoadingMessage: false,
+        silentSuccessMessage: true,
+        suppressMessages: true,
+        rethrowErrors: true,
+      });
+
+      setSequenceStatus('Atualizando a localização.....');
+      const locationPayload = await updateLocationForLifecycleSequence();
+
+      if (isAutomaticActivitiesEnabled()) {
+        setSequenceStatus('Realizando check-in ou check-out, se aplicável.....');
+        await runAutomaticActivitiesIfNeeded(locationPayload, { suppressStatus: true });
+      }
+
+      setNotificationMessage('history', '', null);
+      setNotificationMessage('location', '', null);
+      setStatus('Aplicação atualizada com sucesso.', 'success');
+      return true;
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Não foi possível atualizar a aplicação neste momento.';
+      setNotificationMessage('history', '', null);
+      setNotificationMessage('location', '', null);
+      setStatus(message, 'error');
+      return false;
+    } finally {
+      lifecycleRefreshInProgress = false;
     }
   }
 
@@ -887,10 +956,12 @@
     writePersistedChave(sanitized);
 
     if (sanitized.length === 4) {
-      void refreshHistory(sanitized, { silentSuccessMessage: true });
+      void runLifecycleUpdateSequence({ ignoreCooldown: true });
       return;
     }
 
+    setNotificationMessage('form', '', null);
+    setNotificationMessage('location', '', null);
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   });
 
@@ -906,61 +977,26 @@
           gpsLocationPermissionGranted
             ? 'Atividades automáticas ativadas. A automação será verificada ao abrir ou retornar ao site.'
             : 'Atividades automáticas ativadas. Permita a localização para que a automação possa agir.',
-          gpsLocationPermissionGranted ? 'success' : 'warning'
+          gpsLocationPermissionGranted ? 'success' : 'info'
         );
         return;
       }
 
-      setStatus('Atividades automáticas desativadas.', 'warning');
+      setStatus('Atividades automáticas desativadas.', 'info');
     });
-  }
-
-  async function handleForegroundRefresh() {
-    if (lifecycleRefreshInProgress) {
-      return;
-    }
-
-    lifecycleRefreshInProgress = true;
-    try {
-      refreshHistoryIfReady({
-        silentSuccessMessage: true,
-        showLoadingMessage: false,
-        force: true,
-      });
-
-      if (!isAutomaticActivitiesEnabled()) {
-        return;
-      }
-
-      const permissionState = await queryLocationPermissionState();
-      if (permissionState !== 'granted' && !(permissionState === null && readStorageFlag(locationPermissionGrantedKey))) {
-        setGpsLocationPermissionGranted(false);
-        setStatus('Atividades automáticas exigem localização habilitada.', 'warning');
-        return;
-      }
-
-      const locationPayload = await captureAndResolveLocation({ interactive: false });
-      if (!locationPayload) {
-        return;
-      }
-
-      await runAutomaticActivitiesIfNeeded(locationPayload);
-    } finally {
-      lifecycleRefreshInProgress = false;
-    }
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      void handleForegroundRefresh();
+      void runLifecycleUpdateSequence();
     }
   });
 
   window.addEventListener('focus', () => {
-    void handleForegroundRefresh();
+    void runLifecycleUpdateSequence();
   });
   window.addEventListener('pageshow', () => {
-    void handleForegroundRefresh();
+    void runLifecycleUpdateSequence();
   });
 
   refreshLocationButton.addEventListener('click', () => {
@@ -1037,12 +1073,11 @@
   syncAutomaticActivitiesToggle();
   syncManualLocationControl();
   void loadManualLocations();
-  void initializeLocationCapture();
 
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
-    void handleForegroundRefresh();
+    void runLifecycleUpdateSequence({ ignoreCooldown: true });
   } else {
     resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
   }
