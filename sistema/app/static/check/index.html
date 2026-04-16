@@ -76,20 +76,44 @@
               <p id="locationTitle" class="history-label">Local</p>
               <p id="locationAccuracy" class="location-accuracy">--</p>
             </div>
-            <p id="locationValue" class="location-value">Aguardando localizacao.</p>
+            <div class="location-main-row">
+              <p id="locationValue" class="location-value">Aguardando localizacao.</p>
+              <button
+                id="refreshLocationButton"
+                type="button"
+                class="location-refresh-button"
+                aria-label="Atualizar local"
+                title="Atualizar local"
+              >
+                <svg class="location-refresh-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M20 11a8 8 0 1 0 2 5.29"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                  />
+                  <path
+                    d="M20 4v7h-7"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                  />
+                </svg>
+                <span class="visually-hidden">Atualizar local</span>
+              </button>
+            </div>
             <p id="locationState" class="location-state" role="status" aria-live="polite">
               O compartilhamento automatico da localizacao sera solicitado somente na primeira abertura deste link.
             </p>
-            <button id="refreshLocationButton" type="button" class="location-refresh-button">
-              Atualizar local
-            </button>
           </section>
 
           <fieldset class="check-group">
             <legend>Registro</legend>
-            <div class="choice-grid four-columns">
-              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Reunião</button>
-              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Transporte</button>
+            <div class="choice-grid three-columns">
               <label class="choice-card">
                 <input type="radio" name="action" value="checkin" checked />
                 <span>Check-In</span>
@@ -98,6 +122,7 @@
                 <input type="radio" name="action" value="checkout" />
                 <span>Check-Out</span>
               </label>
+              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Transporte</button>
             </div>
           </fieldset>
 

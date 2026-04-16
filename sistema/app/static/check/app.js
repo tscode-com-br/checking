@@ -8,6 +8,7 @@
   const projectSelect = document.getElementById('projectSelect');
   const submitButton = document.getElementById('submitButton');
   const refreshLocationButton = document.getElementById('refreshLocationButton');
+  const refreshLocationButtonLabel = refreshLocationButton.querySelector('.visually-hidden');
   const formStatus = document.getElementById('formStatus');
   const historyStatus = document.getElementById('historyState');
   const lastCheckinValue = document.getElementById('lastCheckinValue');
@@ -44,7 +45,13 @@
 
   function setLocationRefreshLoading(isLoading) {
     refreshLocationButton.disabled = isLoading;
-    refreshLocationButton.textContent = isLoading ? 'Atualizando...' : 'Atualizar local';
+    refreshLocationButton.classList.toggle('is-loading', isLoading);
+    refreshLocationButton.setAttribute('aria-busy', String(isLoading));
+    refreshLocationButton.setAttribute('aria-label', isLoading ? 'Atualizando local' : 'Atualizar local');
+    refreshLocationButton.setAttribute('title', isLoading ? 'Atualizando local' : 'Atualizar local');
+    if (refreshLocationButtonLabel) {
+      refreshLocationButtonLabel.textContent = isLoading ? 'Atualizando local' : 'Atualizar local';
+    }
   }
 
   function preventViewportScroll(event) {
@@ -193,8 +200,9 @@
       no_known_locations: 'error',
     };
     const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
+    const locationMessage = payload.status === 'matched' ? '' : payload.message;
     setResolvedLocation(payload);
-    setLocationPresentation(payload.label, payload.message, toneByStatus[payload.status] || null, accuracyText);
+    setLocationPresentation(payload.label, locationMessage, toneByStatus[payload.status] || null, accuracyText);
   }
 
   function applyLocationBrowserError(error) {
