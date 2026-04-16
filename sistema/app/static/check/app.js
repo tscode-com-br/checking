@@ -447,9 +447,51 @@
     return `${dateFormatter.format(parsed)}\n${timeFormatter.format(parsed)}`;
   }
 
+  function parseHistoryTimestamp(value) {
+    if (!value) {
+      return null;
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  function setSelectedAction(action) {
+    const selectedInput = actionInputs.find((input) => input.value === action);
+    if (!selectedInput) {
+      return;
+    }
+
+    selectedInput.checked = true;
+    syncProjectVisibility();
+  }
+
+  function applySuggestedActionFromHistory(state) {
+    const lastCheckinAt = parseHistoryTimestamp(state && state.last_checkin_at);
+    const lastCheckoutAt = parseHistoryTimestamp(state && state.last_checkout_at);
+
+    if (lastCheckinAt && lastCheckoutAt) {
+      setSelectedAction(lastCheckinAt >= lastCheckoutAt ? 'checkout' : 'checkin');
+      return;
+    }
+
+    if (lastCheckinAt) {
+      setSelectedAction('checkout');
+      return;
+    }
+
+    if (lastCheckoutAt) {
+      setSelectedAction('checkin');
+      return;
+    }
+
+    setSelectedAction('checkin');
+  }
+
   function applyHistoryState(state) {
     lastCheckinValue.textContent = formatHistoryValue(state && state.last_checkin_at);
     lastCheckoutValue.textContent = formatHistoryValue(state && state.last_checkout_at);
+    applySuggestedActionFromHistory(state);
   }
 
   function resetHistory(message) {
