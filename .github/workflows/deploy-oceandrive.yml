@@ -8,17 +8,21 @@ on:
 
 concurrency:
   group: deploy-oceandrive-main
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       OCEAN_PORT: ${{ secrets.OCEAN_PORT != '' && secrets.OCEAN_PORT || '22' }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate deploy secrets
         env:
@@ -26,6 +30,7 @@ jobs:
           OCEAN_USER: ${{ secrets.OCEAN_USER }}
           OCEAN_APP_DIR: ${{ secrets.OCEAN_APP_DIR }}
           OCEAN_SSH_KEY: ${{ secrets.OCEAN_SSH_KEY }}
+          OCEAN_HOST_FINGERPRINT: ${{ secrets.OCEAN_HOST_FINGERPRINT }}
         run: |
           set -e
           test -n "$OCEAN_HOST"
@@ -33,20 +38,62 @@ jobs:
           test -n "$OCEAN_APP_DIR"
           test -n "$OCEAN_SSH_KEY"
 
+      - name: Resolve SSH verification settings
+        id: ssh_verification
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_HOST_FINGERPRINT: ${{ secrets.OCEAN_HOST_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OCEAN_HOST_FINGERPRINT" ] || [ "$OCEAN_HOST_FINGERPRINT" = "__UNSET__" ]; then
+            scanned_fingerprints="$(ssh-keyscan -T 10 -p "$OCEAN_PORT" "$OCEAN_HOST" 2>/dev/null | sed '/^#/d' | ssh-keygen -lf - -E sha256 2>/dev/null | awk '{print $2}' || true)"
+            echo "::warning::OCEAN_HOST_FINGERPRINT nao configurado; o ssh-action nao fara validacao por fingerprint e o rsync usara host key scan em tempo de execucao."
+            if [ -n "$scanned_fingerprints" ]; then
+              echo "Fingerprints SSH observados para $OCEAN_HOST:$OCEAN_PORT:"
+              printf '%s\n' "$scanned_fingerprints"
+            fi
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"
+            echo "strict_hostkeys_checking=true" >> "$GITHUB_OUTPUT"
+            echo "rsh=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          key="$(ssh-keyscan -T 10 -p "$OCEAN_PORT" "$OCEAN_HOST" 2>/dev/null | sed '/^#/d')"
+          if [ -z "$key" ]; then
+            echo "Nao foi possivel obter a host key SSH de $OCEAN_HOST:$OCEAN_PORT"
+            exit 1
+          fi
+
+          fingerprints="$(printf '%s\n' "$key" | ssh-keygen -lf - -E sha256 | awk '{print $2}')"
+          if ! printf '%s\n' "$fingerprints" | grep -Fxq "$OCEAN_HOST_FINGERPRINT"; then
+            echo "Fingerprint SSH inesperado para $OCEAN_HOST:$OCEAN_PORT"
+            printf '%s\n' "$fingerprints"
+            exit 1
+          fi
+
+          known_hosts_path="$GITHUB_WORKSPACE/.github/ocean_known_hosts"
+          printf '%s\n' "$key" > "$known_hosts_path"
+          chmod 600 "$known_hosts_path"
+          echo "fingerprint=$OCEAN_HOST_FINGERPRINT" >> "$GITHUB_OUTPUT"
+          echo "strict_hostkeys_checking=false" >> "$GITHUB_OUTPUT"
+          echo "rsh=ssh -o UserKnownHostsFile=/github/workspace/.github/ocean_known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_OUTPUT"
+
       - name: Ensure remote app directory exists
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
           port: ${{ env.OCEAN_PORT }}
-          script_stop: true
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
             mkdir -p ${{ secrets.OCEAN_APP_DIR }}
 
       - name: Sync project to server
-        uses: burnett01/rsync-deployments@7.0.2
+        uses: burnett01/rsync-deployments@dc0d5d44c4728aad3f02154a87309809e62a960f # 8.0.4
         with:
           switches: >-
             -avzr --delete
@@ -63,15 +110,19 @@ jobs:
           remote_user: ${{ secrets.OCEAN_USER }}
           remote_key: ${{ secrets.OCEAN_SSH_KEY }}
           remote_port: ${{ env.OCEAN_PORT }}
+          strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
+          rsh: ${{ steps.ssh_verification.outputs.rsh }}
 
       - name: Rebuild and restart services
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
           port: ${{ env.OCEAN_PORT }}
-          script_stop: true
+          timeout: 60s
+          command_timeout: 15m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
             cd ${{ secrets.OCEAN_APP_DIR }}
@@ -84,13 +135,15 @@ jobs:
             docker compose up -d --build --remove-orphans
 
       - name: Validate application health
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
           port: ${{ env.OCEAN_PORT }}
-          script_stop: true
+          timeout: 60s
+          command_timeout: 3m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
             cd ${{ secrets.OCEAN_APP_DIR }}
@@ -108,13 +161,15 @@ jobs:
             exit 1
 
       - name: Prune unused Docker artifacts
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
           username: ${{ secrets.OCEAN_USER }}
           key: ${{ secrets.OCEAN_SSH_KEY }}
           port: ${{ env.OCEAN_PORT }}
-          script_stop: true
+          timeout: 60s
+          command_timeout: 5m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
             docker image prune -af || true
