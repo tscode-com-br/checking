@@ -1953,6 +1953,18 @@ def test_mobile_check_page_is_served_on_user_path():
         assert "/api/web/check/location" in response.text
 
 
+def test_transport_page_is_served_on_transport_path():
+    with TestClient(app) as client:
+        response = client.get("/transport")
+        assert response.status_code == 200
+        assert "User List" in response.text
+        assert "Regular Car List" in response.text
+        assert "Extra Car List" in response.text
+        assert "Today" in response.text
+        assert 'id="tela01menu"' in response.text
+        assert 'id="tela01main_dir_down"' in response.text
+
+
 def test_admin_page_is_served_on_admin_path():
     with TestClient(app) as client:
         response = client.get("/admin")

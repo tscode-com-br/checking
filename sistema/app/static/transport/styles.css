@@ -1,0 +1,224 @@
+:root {
+  --transport-bg: #000000;
+  --transport-surface: #121212;
+  --transport-border: #000000;
+  --transport-text: #ffffff;
+  --transport-text-muted: #dddddd;
+  --transport-button-bg: #1d1d1d;
+  --transport-button-border: #303030;
+  --transport-button-hover: #262626;
+  --transport-button-active: #323232;
+  --transport-shadow: 0 28px 72px rgba(0, 0, 0, 0.46);
+  --transport-radius: 28px;
+  --transport-panel-padding: clamp(20px, 2vw, 30px);
+  --transport-divider-size: 5px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--transport-bg);
+  color: var(--transport-text);
+  font-family: Bahnschrift, "Segoe UI Variable Display", "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.tela00 {
+  min-height: 100dvh;
+  padding: 20px;
+  background: var(--transport-bg);
+}
+
+.tela01 {
+  min-height: calc(100dvh - 40px);
+  background: var(--transport-surface);
+  border-radius: var(--transport-radius);
+  box-shadow: var(--transport-shadow);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 200px var(--transport-divider-size) minmax(0, 1fr);
+}
+
+.tela01menu {
+  min-height: 200px;
+}
+
+.transport-divider {
+  background: var(--transport-border);
+}
+
+.transport-divider-horizontal {
+  width: 100%;
+  min-height: var(--transport-divider-size);
+}
+
+.transport-divider-vertical {
+  min-width: var(--transport-divider-size);
+  height: 100%;
+}
+
+.tela01main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--transport-divider-size) minmax(0, 1fr);
+}
+
+.tela01main_dir {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--transport-divider-size) minmax(0, 1fr);
+}
+
+.transport-pane {
+  min-height: 0;
+  padding: var(--transport-panel-padding);
+  display: flex;
+  flex-direction: column;
+}
+
+.transport-pane-single {
+  justify-content: flex-start;
+}
+
+.transport-pane-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  max-width: 100%;
+}
+
+.transport-pane-title {
+  margin: 0;
+  color: var(--transport-text);
+  font-size: clamp(1.4rem, 2vw, 2rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.transport-date-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.transport-date-label {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: clamp(1rem, 1.5vw, 1.125rem);
+  line-height: 1.35;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.transport-nav-button,
+.transport-today-button {
+  appearance: none;
+  border: 1px solid var(--transport-button-border);
+  background: var(--transport-button-bg);
+  color: var(--transport-text);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+  cursor: pointer;
+}
+
+.transport-nav-button:hover,
+.transport-today-button:hover {
+  background: var(--transport-button-hover);
+}
+
+.transport-nav-button:active,
+.transport-today-button:active {
+  background: var(--transport-button-active);
+  transform: translateY(1px);
+}
+
+.transport-nav-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.transport-nav-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+}
+
+.transport-today-button {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .transport-pane {
+    padding: 20px;
+  }
+
+  .transport-date-row {
+    gap: 12px;
+  }
+
+  .transport-nav-button {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (max-width: 640px) {
+  .tela00 {
+    padding: 14px;
+  }
+
+  .tela01 {
+    min-height: calc(100dvh - 28px);
+    border-radius: 22px;
+  }
+
+  .transport-pane-title {
+    font-size: 1.15rem;
+  }
+
+  .transport-date-label {
+    font-size: 0.9rem;
+  }
+
+  .transport-date-row {
+    gap: 10px;
+  }
+}
