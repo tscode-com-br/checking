@@ -10,6 +10,7 @@
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
   const locationSelectField = document.getElementById('locationSelectField');
+  const informeField = document.getElementById('informeField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
   const automaticActivitiesToggle = document.getElementById('automaticActivitiesToggle');
   const submitButton = document.getElementById('submitButton');
@@ -236,6 +237,19 @@
     return selected ? selected.value : '';
   }
 
+  function setSelectedValue(name, value) {
+    const selectedInput = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (!selectedInput) {
+      return;
+    }
+
+    selectedInput.checked = true;
+  }
+
+  function getSelectedInformeValue() {
+    return isAutomaticActivitiesEnabled() ? 'normal' : getSelectedValue('informe');
+  }
+
   function parseErrorMessage(payload) {
     if (!payload) return 'Não foi possível concluir a operação.';
     if (typeof payload.detail === 'string') return payload.detail;
@@ -428,7 +442,7 @@
         projeto: projectSelect.value,
         action,
         local,
-        informe: getSelectedValue('informe'),
+        informe: getSelectedInformeValue(),
         event_time: new Date().toISOString(),
         client_event_id: buildClientEventId(),
       }),
@@ -1186,6 +1200,15 @@
     projectField.setAttribute('aria-hidden', String(!isCheckIn));
     locationSelectField.classList.toggle('is-hidden', !isCheckIn);
     locationSelectField.setAttribute('aria-hidden', String(!isCheckIn));
+
+    if (informeField) {
+      const hideInforme = isAutomaticActivitiesEnabled();
+      informeField.classList.toggle('is-hidden', hideInforme);
+      informeField.setAttribute('aria-hidden', String(hideInforme));
+      if (hideInforme) {
+        setSelectedValue('informe', 'normal');
+      }
+    }
   }
 
   function syncAutomaticActivitiesToggle() {
@@ -1222,6 +1245,7 @@
   if (automaticActivitiesToggle) {
     automaticActivitiesToggle.addEventListener('change', () => {
       persistCurrentUserSettings();
+      syncProjectVisibility();
       if (automaticActivitiesToggle.checked) {
         void runAutomaticActivitiesEnableSequence();
         return;
@@ -1285,7 +1309,7 @@
           local: gpsLocationPermissionGranted
             ? (currentLocationMatch ? currentLocationMatch.resolved_local : null)
             : manualLocationSelect.value,
-          informe: getSelectedValue('informe'),
+          informe: getSelectedInformeValue(),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),
         }),
