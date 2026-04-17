@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -14,11 +14,28 @@ class User(Base):
     chave: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    placa: Mapped[str | None] = mapped_column(String(9), ForeignKey("vehicles.placa"), nullable=True)
+    end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    zip: Mapped[str | None] = mapped_column(String(10), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     checkin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     inactivity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class Vehicle(Base):
+    __tablename__ = "vehicles"
+    __table_args__ = (
+        UniqueConstraint("placa", name="uq_vehicles_placa"),
+        CheckConstraint("tipo IN ('carro', 'minivan', 'van', 'onibus')", name="ck_vehicles_tipo_allowed"),
+        CheckConstraint("lugares >= 1 AND lugares <= 99", name="ck_vehicles_lugares_range"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    placa: Mapped[str] = mapped_column(String(9), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(16), nullable=False)
+    lugares: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class PendingRegistration(Base):

@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import SessionLocal
-from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User, UserSyncEvent
+from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User, UserSyncEvent, Vehicle
 from sistema.app.routers import admin as admin_router
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
@@ -76,6 +76,40 @@ def test_health():
         res = client.get("/api/health")
         assert res.status_code == 200
         assert res.json()["status"] == "ok"
+
+
+def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="SGX1234A", tipo="van", lugares=18)
+        db.add(vehicle)
+        db.flush()
+
+        user = User(
+            rfid=None,
+            nome="Usuario Transporte",
+            chave="TR01",
+            projeto="P80",
+            placa="SGX1234A",
+            end_rua="123 Harbour Road",
+            zip="0012345678",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        persisted_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "SGX1234A")).scalar_one()
+        persisted_user = db.execute(select(User).where(User.chave == "TR01")).scalar_one()
+
+        assert persisted_vehicle.tipo == "van"
+        assert persisted_vehicle.lugares == 18
+        assert persisted_user.placa == "SGX1234A"
+        assert persisted_user.end_rua == "123 Harbour Road"
+        assert persisted_user.zip == "0012345678"
 
 
 def test_admin_stream_requires_valid_session():
@@ -2861,6 +2895,11 @@ def test_admin_event_audit_covers_new_auth_lifecycle():
 def test_admin_locations_crud_and_mobile_catalog_sync():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        reset_location_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 30},
+        )
+        assert reset_location_settings.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
