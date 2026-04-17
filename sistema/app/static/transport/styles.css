@@ -92,7 +92,7 @@ textarea {
 .tela01main {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--transport-divider-size) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--transport-divider-size) minmax(0, 3fr);
 }
 
 .tela01main_dir {
