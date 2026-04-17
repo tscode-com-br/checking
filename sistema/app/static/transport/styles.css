@@ -12,6 +12,8 @@
   --transport-radius: 28px;
   --transport-panel-padding: clamp(20px, 2vw, 30px);
   --transport-divider-size: 5px;
+  --transport-title-date-size: clamp(0.95rem, 1vw, 1rem);
+  --transport-small-text-size: clamp(0.475rem, 0.5vw, 0.5rem);
 }
 
 *,
@@ -52,11 +54,11 @@ textarea {
   box-shadow: var(--transport-shadow);
   overflow: hidden;
   display: grid;
-  grid-template-rows: 200px var(--transport-divider-size) minmax(0, 1fr);
+  grid-template-rows: 50px var(--transport-divider-size) minmax(0, 1fr);
 }
 
 .tela01menu {
-  min-height: 200px;
+  min-height: 50px;
 }
 
 .transport-divider {
@@ -100,31 +102,38 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 18px;
+  gap: 10px;
   max-width: 100%;
 }
 
 .transport-pane-title {
   margin: 0;
   color: var(--transport-text);
-  font-size: clamp(1.4rem, 2vw, 2rem);
+  font-size: var(--transport-title-date-size);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.transport-date-row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.transport-date-stack {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
+}
+
+.transport-date-row {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .transport-date-label {
   margin: 0;
   color: var(--transport-text-muted);
-  font-size: clamp(1rem, 1.5vw, 1.125rem);
+  font-size: var(--transport-title-date-size);
   line-height: 1.35;
   text-align: center;
   letter-spacing: 0.02em;
@@ -155,8 +164,8 @@ textarea {
 }
 
 .transport-nav-button {
-  width: 44px;
-  height: 44px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -166,8 +175,8 @@ textarea {
 }
 
 .transport-nav-button svg {
-  width: 20px;
-  height: 20px;
+  width: 10px;
+  height: 10px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -176,13 +185,14 @@ textarea {
 }
 
 .transport-today-button {
-  min-height: 44px;
-  padding: 0 18px;
+  min-height: 22px;
+  padding: 0 9px;
   border-radius: 999px;
-  font-size: 0.95rem;
+  font-size: var(--transport-small-text-size);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  align-self: center;
 }
 
 @media (max-width: 900px) {
@@ -191,12 +201,12 @@ textarea {
   }
 
   .transport-date-row {
-    gap: 12px;
+    gap: 5px;
   }
 
   .transport-nav-button {
-    width: 40px;
-    height: 40px;
+    width: 26px;
+    height: 26px;
   }
 }
 
@@ -211,7 +221,7 @@ textarea {
   }
 
   .transport-pane-title {
-    font-size: 1.15rem;
+    font-size: 0.9rem;
   }
 
   .transport-date-label {
@@ -219,6 +229,6 @@ textarea {
   }
 
   .transport-date-row {
-    gap: 10px;
+    gap: 4px;
   }
 }
