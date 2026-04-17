@@ -1,19 +1,19 @@
 :root {
   --transport-bg: #000000;
-  --transport-surface: #121212;
+  --transport-surface: #2a2a2a;
   --transport-border: #000000;
   --transport-text: #ffffff;
   --transport-text-muted: #dddddd;
-  --transport-button-bg: #1d1d1d;
-  --transport-button-border: #303030;
-  --transport-button-hover: #262626;
-  --transport-button-active: #323232;
+  --transport-button-bg: #262626;
+  --transport-button-border: #3a3a3a;
+  --transport-button-hover: #303030;
+  --transport-button-active: #3c3c3c;
   --transport-shadow: 0 28px 72px rgba(0, 0, 0, 0.46);
   --transport-radius: 28px;
   --transport-panel-padding: clamp(20px, 2vw, 30px);
   --transport-divider-size: 5px;
-  --transport-title-date-size: clamp(0.95rem, 1vw, 1rem);
-  --transport-small-text-size: clamp(0.475rem, 0.5vw, 0.5rem);
+  --transport-title-date-size: clamp(0.7125rem, 0.75vw, 0.75rem);
+  --transport-small-text-size: clamp(0.356rem, 0.375vw, 0.375rem);
 }
 
 *,
@@ -59,6 +59,7 @@ textarea {
 
 .tela01menu {
   min-height: 50px;
+  background: var(--transport-surface);
 }
 
 .transport-divider {
@@ -84,12 +85,13 @@ textarea {
 .tela01main_dir {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) var(--transport-divider-size) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 3fr) var(--transport-divider-size) minmax(0, 1fr);
 }
 
 .transport-pane {
   min-height: 0;
   padding: var(--transport-panel-padding);
+  background: var(--transport-surface);
   display: flex;
   flex-direction: column;
 }
@@ -101,9 +103,11 @@ textarea {
 .transport-pane-head {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   max-width: 100%;
+  width: 100%;
+  text-align: center;
 }
 
 .transport-pane-title {
@@ -120,13 +124,14 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  width: 100%;
 }
 
 .transport-date-row {
   width: auto;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 6px;
 }
 
@@ -221,11 +226,11 @@ textarea {
   }
 
   .transport-pane-title {
-    font-size: 0.9rem;
+    font-size: 0.675rem;
   }
 
   .transport-date-label {
-    font-size: 0.9rem;
+    font-size: 0.675rem;
   }
 
   .transport-date-row {
