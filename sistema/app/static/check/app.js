@@ -23,6 +23,7 @@
   const locationAccuracy = document.getElementById('locationAccuracy');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
+  const formControls = Array.from(form.querySelectorAll('input, select, button:not(.choice-card-static)'));
   const storageKey = 'checking.web.user.chave';
   const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
@@ -61,6 +62,9 @@
   let availableLocations = [];
   let gpsLocationPermissionGranted = false;
   let lifecycleRefreshInProgress = false;
+  let locationRefreshLoading = false;
+  let submitInProgress = false;
+  let userInteractionLockCount = 0;
   const notificationState = {
     message: '',
     tone: null,
@@ -81,15 +85,66 @@
     return isStandaloneShortcutMode() ? 'pelo atalho/app' : 'pelo navegador';
   }
 
-  function setLocationRefreshLoading(isLoading) {
-    refreshLocationButton.disabled = isLoading;
-    refreshLocationButton.classList.toggle('is-loading', isLoading);
-    refreshLocationButton.setAttribute('aria-busy', String(isLoading));
-    refreshLocationButton.setAttribute('aria-label', isLoading ? 'Atualizando localização' : 'Atualizar localização');
-    refreshLocationButton.setAttribute('title', isLoading ? 'Atualizando localização' : 'Atualizar localização');
-    if (refreshLocationButtonLabel) {
-      refreshLocationButtonLabel.textContent = isLoading ? 'Atualizando localização' : 'Atualizar localização';
+  function isUserInteractionLocked() {
+    return userInteractionLockCount > 0;
+  }
+
+  function syncFormControlStates() {
+    const lockActive = isUserInteractionLocked();
+
+    formControls.forEach((control) => {
+      if (control === manualLocationSelect) {
+        control.disabled = lockActive || gpsLocationPermissionGranted || availableLocations.length === 0;
+        return;
+      }
+
+      if (control === refreshLocationButton) {
+        control.disabled = lockActive || locationRefreshLoading;
+        return;
+      }
+
+      if (control === submitButton) {
+        control.disabled = lockActive || submitInProgress;
+        return;
+      }
+
+      control.disabled = lockActive;
+    });
+
+    const isBusy = lockActive || locationRefreshLoading || submitInProgress;
+    form.classList.toggle('is-busy', isBusy);
+    form.setAttribute('aria-busy', String(isBusy));
+  }
+
+  function lockUserInteraction() {
+    userInteractionLockCount += 1;
+    syncFormControlStates();
+  }
+
+  function unlockUserInteraction() {
+    userInteractionLockCount = Math.max(0, userInteractionLockCount - 1);
+    syncFormControlStates();
+  }
+
+  async function runWithLockedUserInteraction(callback) {
+    lockUserInteraction();
+    try {
+      return await callback();
+    } finally {
+      unlockUserInteraction();
     }
+  }
+
+  function setLocationRefreshLoading(isLoading) {
+    locationRefreshLoading = Boolean(isLoading);
+    refreshLocationButton.classList.toggle('is-loading', locationRefreshLoading);
+    refreshLocationButton.setAttribute('aria-busy', String(locationRefreshLoading));
+    refreshLocationButton.setAttribute('aria-label', locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização');
+    refreshLocationButton.setAttribute('title', locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização');
+    if (refreshLocationButtonLabel) {
+      refreshLocationButtonLabel.textContent = locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização';
+    }
+    syncFormControlStates();
   }
 
   function applyNotificationLine(element, message, tone) {
@@ -139,6 +194,10 @@
 
   function setSequenceStatus(message) {
     setNotificationMessage('form', message || '', 'info');
+  }
+
+  function describeAutomaticActivity(action) {
+    return action === 'checkout' ? 'check-out' : 'check-in';
   }
 
   function buildLocationCompletionMessage(payload) {
@@ -403,14 +462,19 @@
 
   async function runAutomaticActivitiesIfNeeded(locationPayload, options) {
     const settings = options || {};
+    const noActivityResult = {
+      performed: false,
+      action: null,
+      local: null,
+    };
 
     if (!isAutomaticActivitiesEnabled() || !gpsLocationPermissionGranted) {
-      return false;
+      return noActivityResult;
     }
 
     const chave = sanitizeChave(chaveInput.value);
     if (chave.length !== 4) {
-      return false;
+      return noActivityResult;
     }
 
     const remoteState = await fetchWebState(chave);
@@ -418,12 +482,17 @@
     applyHistoryState(remoteState);
 
     if (locationPayload && locationPayload.matched && shouldAttemptAutomaticLocationEvent(locationPayload, remoteState)) {
+      const automaticAction = isCheckoutZoneLocationName(locationPayload.resolved_local) ? 'checkout' : 'checkin';
       await submitAutomaticActivity({
-        action: isCheckoutZoneLocationName(locationPayload.resolved_local) ? 'checkout' : 'checkin',
+        action: automaticAction,
         local: locationPayload.resolved_local,
         suppressStatus: settings.suppressStatus,
       });
-      return true;
+      return {
+        performed: true,
+        action: automaticAction,
+        local: locationPayload.resolved_local,
+      };
     }
 
     if (
@@ -436,10 +505,14 @@
         local: automaticCheckoutLocation,
         suppressStatus: settings.suppressStatus,
       });
-      return true;
+      return {
+        performed: true,
+        action: 'checkout',
+        local: automaticCheckoutLocation,
+      };
     }
 
-    return false;
+    return noActivityResult;
   }
 
   function buildAccuracyText(accuracyMeters, thresholdMeters) {
@@ -503,21 +576,21 @@
     const displayedLocation = (locationValue.textContent || '').trim();
 
     if (gpsLocationPermissionGranted) {
-      manualLocationSelect.disabled = true;
       setLocationSelectOptions(availableLocations, displayedLocation || getDefaultManualLocation(), {
         allowTemporaryValue: true,
         placeholder: displayedLocation || 'Aguardando localização.',
       });
+      syncFormControlStates();
       return;
     }
 
     const nextManualValue = availableLocations.includes(manualLocationSelect.value)
       ? manualLocationSelect.value
       : getDefaultManualLocation();
-    manualLocationSelect.disabled = availableLocations.length === 0;
     setLocationSelectOptions(availableLocations, nextManualValue, {
       placeholder: 'Sem localizações cadastradas',
     });
+    syncFormControlStates();
   }
 
   async function loadManualLocations() {
@@ -664,15 +737,19 @@
     );
   }
 
-  async function captureAndResolveLocation(options) {
+  async function resolveCurrentLocation(options) {
     const settings = options || {};
+    const suppressNotification = Boolean(settings.suppressNotification);
     if (!window.isSecureContext || !navigator.geolocation) {
       setResolvedLocation(null);
       setLocationPresentation(
         'Indisponível',
-        'A captura de localização requer HTTPS e suporte do navegador.',
+        suppressNotification
+          ? ''
+          : 'A captura de localização requer HTTPS e suporte do navegador.',
         'error',
-        '--'
+        '--',
+        { suppressNotification }
       );
       return null;
     }
@@ -687,21 +764,36 @@
 
     const pendingRequest = (async () => {
       setLocationRefreshLoading(true);
-      setLocationPresentation(
-        'Detectando...',
-        settings.interactive
-          ? `Aguardando a confirmação da localização exata ${getLocationPromptSourceLabel()}.`
-          : 'Atualizando a localização atual do aparelho.',
-        null,
-        '--'
+
+      if (settings.showDetectingState) {
+        setLocationPresentation(
+          'Detectando...',
+          settings.interactive
+            ? `Aguardando a confirmação da localização exata ${getLocationPromptSourceLabel()}.`
+            : 'Atualizando a localização atual do aparelho.',
+          null,
+          '--',
+          { suppressNotification }
+        );
+      }
+
+      const permissionState = await queryLocationPermissionState();
+      const shouldAttemptLookup = clientState.shouldAttemptSilentLocationLookup(
+        permissionState,
+        readStorageFlag(locationPermissionGrantedKey)
       );
+
+      if (!shouldAttemptLookup) {
+        setLocationWithoutPermission();
+        return null;
+      }
 
       try {
         const position = await requestCurrentPosition();
         writeStorageFlag(locationPermissionGrantedKey, true);
         setGpsLocationPermissionGranted(true);
         const matchPayload = await matchCurrentPosition(position);
-        applyLocationMatch(matchPayload);
+        applyLocationMatch(matchPayload, { suppressNotification });
         if (settings.showCompletionStatus) {
           setStatus(
             buildLocationCompletionMessage(matchPayload),
@@ -710,7 +802,7 @@
         }
         return matchPayload;
       } catch (error) {
-        applyLocationBrowserError(error);
+        applyLocationBrowserError(error, { suppressNotification });
         return null;
       }
     })();
@@ -726,39 +818,25 @@
     }
   }
 
-  async function updateLocationForLifecycleSequence() {
-    if (!window.isSecureContext || !navigator.geolocation) {
-      setGpsLocationPermissionGranted(false);
-      setResolvedLocation(null);
-      setLocationPresentation('Indisponível', '', 'error', '--', { suppressNotification: true });
-      return null;
-    }
+  async function captureAndResolveLocation(options) {
+    const settings = options || {};
+    return resolveCurrentLocation({
+      interactive: Boolean(settings.interactive),
+      forceRefresh: Boolean(settings.forceRefresh),
+      showCompletionStatus: Boolean(settings.showCompletionStatus),
+      suppressNotification: Boolean(settings.suppressNotification),
+      showDetectingState: settings.showDetectingState !== false,
+    });
+  }
 
-    const permissionState = await queryLocationPermissionState();
-    const hasGrantedPermission = clientState.shouldAttemptSilentLocationLookup(
-      permissionState,
-      readStorageFlag(locationPermissionGrantedKey)
-    );
-
-    if (!hasGrantedPermission) {
-      setLocationWithoutPermission();
-      return null;
-    }
-
-    setLocationRefreshLoading(true);
-    try {
-      const position = await requestCurrentPosition();
-      writeStorageFlag(locationPermissionGrantedKey, true);
-      setGpsLocationPermissionGranted(true);
-      const matchPayload = await matchCurrentPosition(position);
-      applyLocationMatch(matchPayload, { suppressNotification: true });
-      return matchPayload;
-    } catch (error) {
-      applyLocationBrowserError(error, { suppressNotification: true });
-      return null;
-    } finally {
-      setLocationRefreshLoading(false);
-    }
+  async function updateLocationForLifecycleSequence(options) {
+    const settings = options || {};
+    return resolveCurrentLocation({
+      interactive: false,
+      forceRefresh: Boolean(settings.forceRefresh),
+      suppressNotification: settings.suppressNotification !== false,
+      showDetectingState: Boolean(settings.showDetectingState),
+    });
   }
 
   async function ensureLocationReadyForSubmit() {
@@ -804,8 +882,9 @@
   }
 
   function setSubmitting(isSubmitting) {
-    submitButton.disabled = isSubmitting;
-    submitButton.textContent = isSubmitting ? 'Enviando...' : 'Registrar';
+    submitInProgress = Boolean(isSubmitting);
+    submitButton.textContent = submitInProgress ? 'Enviando...' : 'Registrar';
+    syncFormControlStates();
   }
 
   function setHistoryMessage(message, tone) {
@@ -989,6 +1068,10 @@
 
   async function runLifecycleUpdateSequence(options) {
     const settings = options || {};
+    if (isUserInteractionLocked() && !settings.allowWhileLocked) {
+      return false;
+    }
+
     const normalized = sanitizeChave(chaveInput.value);
     if (normalized.length !== 4) {
       return false;
@@ -1041,6 +1124,62 @@
     }
   }
 
+  async function runManualLocationRefreshSequence() {
+    if (isUserInteractionLocked()) {
+      return;
+    }
+
+    await runWithLockedUserInteraction(async () => {
+      await resolveCurrentLocation({
+        interactive: true,
+        forceRefresh: true,
+        showDetectingState: true,
+        showCompletionStatus: true,
+        suppressNotification: false,
+      });
+    });
+  }
+
+  async function runAutomaticActivitiesEnableSequence() {
+    const normalizedChave = sanitizeChave(chaveInput.value);
+    if (normalizedChave.length !== 4) {
+      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      return;
+    }
+
+    await runWithLockedUserInteraction(async () => {
+      try {
+        setStatus('Atualização em andamento.', 'info');
+
+        const locationPayload = await resolveCurrentLocation({
+          interactive: true,
+          forceRefresh: true,
+          showDetectingState: true,
+          showCompletionStatus: false,
+          suppressNotification: true,
+        });
+        const automaticActivityResult = await runAutomaticActivitiesIfNeeded(locationPayload, {
+          suppressStatus: true,
+        });
+
+        if (automaticActivityResult.performed) {
+          setStatus(
+            `Atualizações concluídas com ${describeAutomaticActivity(automaticActivityResult.action)} realizado.`,
+            'success'
+          );
+          return;
+        }
+
+        setStatus('Atualizações concluídas sem atividades realizadas.', 'success');
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : 'Não foi possível concluir as atualizações automáticas neste momento.';
+        setStatus(message, 'error');
+      }
+    });
+  }
+
   function syncProjectVisibility() {
     const isCheckIn = getSelectedValue('action') === 'checkin';
     projectField.classList.toggle('is-hidden', !isCheckIn);
@@ -1084,7 +1223,7 @@
     automaticActivitiesToggle.addEventListener('change', () => {
       persistCurrentUserSettings();
       if (automaticActivitiesToggle.checked) {
-        setStatus('Atividades automáticas habilitadas.', 'success');
+        void runAutomaticActivitiesEnableSequence();
         return;
       }
 
@@ -1106,11 +1245,7 @@
   });
 
   refreshLocationButton.addEventListener('click', () => {
-    void captureAndResolveLocation({
-      interactive: true,
-      forceRefresh: true,
-      showCompletionStatus: true,
-    });
+    void runManualLocationRefreshSequence();
   });
 
   form.addEventListener('submit', async (event) => {
@@ -1180,6 +1315,7 @@
   syncProjectVisibility();
   syncAutomaticActivitiesToggle();
   syncManualLocationControl();
+  syncFormControlStates();
   void loadManualLocations();
 
   const persistedChave = readPersistedChave();
