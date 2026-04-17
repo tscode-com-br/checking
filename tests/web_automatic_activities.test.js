@@ -38,6 +38,21 @@ test('automatic check-in runs for a regular monitored location after checkout', 
   );
 });
 
+test('automatic check-in after checkout requires a location change when current location is known', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Escritório Principal' },
+      {
+        current_action: 'checkout',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      }
+    ),
+    false
+  );
+});
+
 test('automatic check-in does not repeat for the same current location', () => {
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(

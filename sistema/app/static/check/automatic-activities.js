@@ -55,13 +55,25 @@
     return state && state.current_action === 'checkin' ? state.current_local : null;
   }
 
+  function resolveCurrentRecordedLocation(state) {
+    return state ? state.current_local : null;
+  }
+
   function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
     const lastRecordedAction = resolveLastRecordedAction(remoteState);
+    const currentRecordedLocation = resolveCurrentRecordedLocation(remoteState);
     const lastCheckInLocation = resolveRecordedCheckInLocation(remoteState);
 
     if (isCheckoutZoneLocationName(resolvedLocal)) {
       return lastRecordedAction === 'checkin';
+    }
+
+    if (
+      normalizeLocationName(resolvedLocal)
+      && normalizeLocationName(resolvedLocal) === normalizeLocationName(currentRecordedLocation)
+    ) {
+      return false;
     }
 
     if (lastRecordedAction !== 'checkin') {
