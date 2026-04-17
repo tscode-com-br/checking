@@ -291,6 +291,11 @@ def test_provider_endpoint_creates_user_and_history_with_normalized_name():
             .where(UserSyncEvent.chave == "PV11", UserSyncEvent.source == "provider")
             .order_by(UserSyncEvent.id)
         ).scalars().all()
+        forms_rows = db.execute(
+            select(FormsSubmission)
+            .where(FormsSubmission.chave == "PV11")
+            .order_by(FormsSubmission.id)
+        ).scalars().all()
 
     assert user.nome == "Adriano Jose da Silva"
     assert user.projeto == "P82"
@@ -300,6 +305,55 @@ def test_provider_endpoint_creates_user_and_history_with_normalized_name():
     assert history_rows[0].atividade == "check-in"
     assert history_rows[0].informe == "normal"
     assert len(provider_events) == 1
+    assert forms_rows == []
+
+
+def test_provider_endpoint_never_enqueues_forms_even_for_multiple_events():
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV21",
+                "nome": "USUARIO FORMS",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "07:30:00",
+            },
+        )
+        second = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV21",
+                "nome": "USUARIO FORMS",
+                "projeto": "P80",
+                "atividade": "check-out",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "18:00:00",
+            },
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+    with SessionLocal() as db:
+        forms_rows = db.execute(
+            select(FormsSubmission)
+            .where(FormsSubmission.chave == "PV21")
+            .order_by(FormsSubmission.id)
+        ).scalars().all()
+        provider_log_rows = db.execute(
+            select(CheckEvent)
+            .where(CheckEvent.source == "provider", CheckEvent.project == "P80")
+            .order_by(CheckEvent.id.desc())
+        ).scalars().all()
+
+    assert forms_rows == []
+    assert provider_log_rows
+    assert all("forms_skipped=true" in (row.details or "") for row in provider_log_rows[:2])
 
 
 def test_provider_endpoint_updates_project_but_keeps_existing_name():

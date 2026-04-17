@@ -6,6 +6,12 @@ Este documento descreve como um provedor externo deve enviar atividades para a A
 
 O endpoint recebe eventos de `check-in` e `check-out`, cria usuários novos quando a `chave` ainda não existe, registra todas as atividades em `checkinghistory` e mantém o estado atual do usuário na tabela `users`.
 
+Importante:
+
+- este endpoint atualiza apenas o banco de dados local da API;
+- este endpoint nao envia nada ao FORMS;
+- isso foi definido para evitar looping infinito, porque os dados postados aqui ja se originam da base do FORMS.
+
 ## Endereço de produção
 
 - Domínio principal da API: `https://www.tscode.com.br`
@@ -169,6 +175,17 @@ Campos gravados:
 - `projeto`
 - `time`
 - `informe`
+
+### 5.1. Regra de isolamento em relacao ao FORMS
+
+Ao receber dados em `updaterecords`, a API:
+
+- nao enfileira `FormsSubmission`;
+- nao chama nenhum fluxo de envio para o FORMS;
+- nao replica a atividade para o formulario externo;
+- apenas atualiza `users`, `checkinghistory`, `user_sync_events` e os logs internos da API.
+
+Essa regra existe para impedir um ciclo infinito entre a base que origina os dados e a propria API.
 
 ### 6. Atualização de `users`
 

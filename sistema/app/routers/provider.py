@@ -61,6 +61,9 @@ def submit_provider_checking(
     payload: ProviderCheckSubmitRequest,
     db: Session = Depends(get_db),
 ) -> ProviderCheckSubmitResponse:
+    # This endpoint mirrors data that already originated from FORMS.
+    # It must only update the local database and must never enqueue or submit
+    # anything back to FORMS, otherwise production could enter a feedback loop.
     action = _ACTION_BY_ACTIVITY[payload.atividade]
     ontime = payload.informe == "normal"
     event_time = merge_provider_date_and_time(payload.data, payload.hora)
@@ -119,7 +122,8 @@ def submit_provider_checking(
             ontime=ontime,
             details=(
                 f"chave={user.chave}; atividade={payload.atividade}; informe={payload.informe}; "
-                f"event_time={event_time.isoformat()}; created_user={created_user}; updated_project={updated_project}"
+                f"event_time={event_time.isoformat()}; created_user={created_user}; updated_project={updated_project}; "
+                "forms_skipped=true; reason=source_is_forms_database"
             ),
         )
         db.commit()
@@ -181,7 +185,8 @@ def submit_provider_checking(
         details=(
             f"chave={user.chave}; atividade={payload.atividade}; informe={payload.informe}; "
             f"event_time={event_time.isoformat()}; created_user={created_user}; "
-            f"updated_project={updated_project}; updated_current_state={updated_current_state}"
+            f"updated_project={updated_project}; updated_current_state={updated_current_state}; "
+            "forms_skipped=true; reason=source_is_forms_database"
         ),
     )
     db.commit()
