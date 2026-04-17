@@ -11,7 +11,7 @@ O endpoint recebe eventos de `check-in` e `check-out`, cria usuários novos quan
 - Domínio principal da API: `https://www.tscode.com.br`
 - Base pública recomendada da API: `https://www.tscode.com.br/api`
 - Health check público: `https://www.tscode.com.br/api/health`
-- Endpoint deste provedor: `POST https://www.tscode.com.br/api/provider/checking`
+- Endpoint deste provedor: `POST https://www.tscode.com.br/api/provider/updaterecords`
 
 ## Observação sobre IP público
 
@@ -32,11 +32,12 @@ O endpoint exige uma chave compartilhada enviada no header:
 Valor esperado:
 
 - o valor configurado no servidor através da variável de ambiente `PROVIDER_SHARED_KEY`
+- valor atual configurado: `PETROBRASP80P82P83`
 
 Exemplo:
 
 ```http
-X-Provider-Shared-Key: SEU_SEGREDO_COMPARTILHADO
+X-Provider-Shared-Key: PETROBRASP80P82P83
 ```
 
 ## Protocolo de conexão
@@ -49,13 +50,13 @@ X-Provider-Shared-Key: SEU_SEGREDO_COMPARTILHADO
 ## Endpoint
 
 ```text
-POST /api/provider/checking
+POST /api/provider/updaterecords
 ```
 
 URL completa:
 
 ```text
-https://www.tscode.com.br/api/provider/checking
+https://www.tscode.com.br/api/provider/updaterecords
 ```
 
 ## Payload JSON
@@ -270,9 +271,9 @@ Exemplos:
 ## Exemplo com cURL
 
 ```bash
-curl -X POST "https://www.tscode.com.br/api/provider/checking" \
+curl -X POST "https://www.tscode.com.br/api/provider/updaterecords" \
   -H "Content-Type: application/json" \
-  -H "X-Provider-Shared-Key: SEU_SEGREDO_COMPARTILHADO" \
+  -H "X-Provider-Shared-Key: PETROBRASP80P82P83" \
   -d '{
     "chave": "CF10",
     "nome": "ADRIANO JOSE DA SILVA",
@@ -289,10 +290,10 @@ curl -X POST "https://www.tscode.com.br/api/provider/checking" \
 ```python
 import requests
 
-url = "https://www.tscode.com.br/api/provider/checking"
+url = "https://www.tscode.com.br/api/provider/updaterecords"
 headers = {
     "Content-Type": "application/json",
-    "X-Provider-Shared-Key": "SEU_SEGREDO_COMPARTILHADO",
+    "X-Provider-Shared-Key": "PETROBRASP80P82P83",
 }
 payload = {
     "chave": "CF10",

@@ -23,6 +23,7 @@ from ..services.user_sync import (
 )
 
 router = APIRouter(prefix="/api/provider", tags=["provider"])
+PROVIDER_REQUEST_PATH = "/api/provider/updaterecords"
 
 _ACTION_BY_ACTIVITY = {
     "check-in": "checkin",
@@ -43,7 +44,7 @@ def require_provider_shared_key(
         action="auth",
         status="failed",
         message="Provider API request rejected due to invalid shared key",
-        request_path="/api/provider/checking",
+        request_path=PROVIDER_REQUEST_PATH,
         http_status=401,
         commit=True,
     )
@@ -55,7 +56,7 @@ def _build_provider_request_id(*, chave: str, projeto: str, atividade: str, info
     return hashlib.sha1(raw_value.encode("utf-8")).hexdigest()
 
 
-@router.post("/checking", response_model=ProviderCheckSubmitResponse, dependencies=[Depends(require_provider_shared_key)])
+@router.post("/updaterecords", response_model=ProviderCheckSubmitResponse, dependencies=[Depends(require_provider_shared_key)])
 def submit_provider_checking(
     payload: ProviderCheckSubmitRequest,
     db: Session = Depends(get_db),
@@ -113,7 +114,7 @@ def submit_provider_checking(
             message="Provider event already processed",
             rfid=user.rfid,
             project=user.projeto,
-            request_path="/api/provider/checking",
+            request_path=PROVIDER_REQUEST_PATH,
             http_status=200,
             ontime=ontime,
             details=(
@@ -173,7 +174,7 @@ def submit_provider_checking(
         rfid=user.rfid,
         project=user.projeto,
         device_id="provider",
-        request_path="/api/provider/checking",
+        request_path=PROVIDER_REQUEST_PATH,
         http_status=200,
         ontime=ontime,
         submitted_at=now_sgt(),

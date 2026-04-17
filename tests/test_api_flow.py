@@ -13,7 +13,7 @@ os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test_checking.db"
 os.environ["FORMS_URL"] = "https://example.com/form"
 os.environ["DEVICE_SHARED_KEY"] = "device-test-key"
 os.environ["MOBILE_APP_SHARED_KEY"] = "mobile-test-key"
-os.environ["PROVIDER_SHARED_KEY"] = "provider-test-key"
+os.environ["PROVIDER_SHARED_KEY"] = "PETROBRASP80P82P83"
 os.environ["ADMIN_SESSION_SECRET"] = "test-admin-session-secret"
 os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
@@ -44,7 +44,7 @@ from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid
 ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
 MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
-PROVIDER_HEADERS = {"x-provider-shared-key": "provider-test-key"}
+PROVIDER_HEADERS = {"x-provider-shared-key": "PETROBRASP80P82P83"}
 
 Base.metadata.create_all(bind=engine)
 
@@ -243,7 +243,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
 def test_provider_endpoint_requires_valid_shared_key():
     with TestClient(app) as client:
         response = client.post(
-            "/api/provider/checking",
+            "/api/provider/updaterecords",
             json={
                 "chave": "PV01",
                 "nome": "Usuario Provider",
@@ -262,7 +262,7 @@ def test_provider_endpoint_requires_valid_shared_key():
 def test_provider_endpoint_creates_user_and_history_with_normalized_name():
     with TestClient(app) as client:
         response = client.post(
-            "/api/provider/checking",
+            "/api/provider/updaterecords",
             headers=PROVIDER_HEADERS,
             json={
                 "chave": "PV11",
@@ -321,7 +321,7 @@ def test_provider_endpoint_updates_project_but_keeps_existing_name():
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/provider/checking",
+            "/api/provider/updaterecords",
             headers=PROVIDER_HEADERS,
             json={
                 "chave": "PV12",
@@ -374,7 +374,7 @@ def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/provider/checking",
+            "/api/provider/updaterecords",
             headers=PROVIDER_HEADERS,
             json={
                 "chave": "PV13",
@@ -391,7 +391,7 @@ def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_
         assert payload["updated_current_state"] is False
 
         duplicate = client.post(
-            "/api/provider/checking",
+            "/api/provider/updaterecords",
             headers=PROVIDER_HEADERS,
             json={
                 "chave": "PV13",

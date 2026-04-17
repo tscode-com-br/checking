@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     device_shared_key: str = "change-me"
     mobile_app_shared_key: str = "change-mobile-app-shared-key"
-    provider_shared_key: str = "change-provider-shared-key"
+    provider_shared_key: str = "PETROBRASP80P82P83"
     admin_session_secret: str = "change-admin-session-secret"
     admin_session_max_age_seconds: int = 28800
     bootstrap_admin_key: str = "HR70"
