@@ -2081,7 +2081,7 @@ def test_web_location_match_blocks_low_accuracy_before_matching():
         assert payload["accuracy_threshold_meters"] == 15
 
 
-def test_web_location_match_returns_unknown_location_without_message_within_two_km():
+def test_web_location_match_returns_unregistered_location_without_message_within_two_km():
     with TestClient(app) as client:
         ensure_admin_session(client)
 
@@ -2115,7 +2115,7 @@ def test_web_location_match_returns_unknown_location_without_message_within_two_
         payload = match_response.json()
         assert payload["matched"] is False
         assert payload["resolved_local"] is None
-        assert payload["label"] == "Localização Desconhecida"
+        assert payload["label"] == "Localização não Cadastrada"
         assert payload["status"] == "not_in_known_location"
         assert payload["message"] == ""
         assert payload["nearest_workplace_distance_meters"] < 2000

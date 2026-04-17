@@ -9,6 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const AUTOMATIC_CHECKOUT_DISTANCE_METERS = 2000;
   const AUTOMATIC_CHECKOUT_LOCATION = 'Fora do Local de Trabalho';
+  const AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION = 'Localização não Cadastrada';
 
   function parseHistoryTimestamp(value) {
     if (!value) {
@@ -59,6 +60,20 @@
     return state ? state.current_local : null;
   }
 
+  function resolveAutomaticCheckInLocation(locationPayload) {
+    const resolvedLocal = String(locationPayload && locationPayload.resolved_local || '').trim();
+    if (resolvedLocal) {
+      return resolvedLocal;
+    }
+
+    const fallbackLabel = String(locationPayload && locationPayload.label || '').trim();
+    if (fallbackLabel) {
+      return fallbackLabel;
+    }
+
+    return AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION;
+  }
+
   function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
     const lastRecordedAction = resolveLastRecordedAction(remoteState);
@@ -91,14 +106,30 @@
     return resolveLastRecordedAction(remoteState) === 'checkin';
   }
 
+  function shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState) {
+    if (!locationPayload || locationPayload.matched || locationPayload.status !== 'not_in_known_location') {
+      return false;
+    }
+
+    if (resolveLastRecordedAction(remoteState) !== 'checkout') {
+      return false;
+    }
+
+    return normalizeLocationName(resolveAutomaticCheckInLocation(locationPayload))
+      !== normalizeLocationName(resolveCurrentRecordedLocation(remoteState));
+  }
+
   return {
     AUTOMATIC_CHECKOUT_DISTANCE_METERS,
     AUTOMATIC_CHECKOUT_LOCATION,
+    AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION,
     normalizeLocationName,
     isCheckoutZoneLocationName,
     resolveLastRecordedAction,
     resolveRecordedCheckInLocation,
+    resolveAutomaticCheckInLocation,
     shouldAttemptAutomaticLocationEvent,
     shouldAttemptAutomaticOutOfRangeCheckout,
+    shouldAttemptAutomaticNearbyWorkplaceCheckIn,
   };
 });

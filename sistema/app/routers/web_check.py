@@ -113,7 +113,7 @@ def match_web_check_location(
             if captured_label is not None
             else "not_in_known_location"
         )
-        label = captured_label or "Localização Desconhecida"
+        label = captured_label or "Localização não Cadastrada"
         return WebLocationMatchResponse(
             matched=False,
             resolved_local=None,

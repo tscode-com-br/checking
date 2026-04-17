@@ -53,6 +53,46 @@ test('automatic check-in after checkout requires a location change when current 
   );
 });
 
+test('automatic nearby-workplace check-in runs after checkout when no location is registered', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+      {
+        matched: false,
+        label: 'Localização não Cadastrada',
+        status: 'not_in_known_location',
+        nearest_workplace_distance_meters: 180,
+      },
+      {
+        current_action: 'checkout',
+        current_local: 'Zona de CheckOut',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      }
+    ),
+    true
+  );
+});
+
+test('automatic nearby-workplace check-in does not run without location change', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+      {
+        matched: false,
+        label: 'Localização não Cadastrada',
+        status: 'not_in_known_location',
+        nearest_workplace_distance_meters: 180,
+      },
+      {
+        current_action: 'checkout',
+        current_local: 'Localização não Cadastrada',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      }
+    ),
+    false
+  );
+});
+
 test('automatic check-in does not repeat for the same current location', () => {
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(

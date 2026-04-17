@@ -430,6 +430,14 @@
     return automaticActivities.shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState);
   }
 
+  function shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState) {
+    return automaticActivities.shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState);
+  }
+
+  function resolveAutomaticCheckInLocation(locationPayload) {
+    return automaticActivities.resolveAutomaticCheckInLocation(locationPayload);
+  }
+
   async function submitAutomaticActivity({ action, local, suppressStatus }) {
     const chave = sanitizeChave(chaveInput.value);
     const response = await fetch(submitEndpoint, {
@@ -523,6 +531,20 @@
         performed: true,
         action: 'checkout',
         local: automaticCheckoutLocation,
+      };
+    }
+
+    if (locationPayload && shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState)) {
+      const automaticLocal = resolveAutomaticCheckInLocation(locationPayload);
+      await submitAutomaticActivity({
+        action: 'checkin',
+        local: automaticLocal,
+        suppressStatus: settings.suppressStatus,
+      });
+      return {
+        performed: true,
+        action: 'checkin',
+        local: automaticLocal,
       };
     }
 
