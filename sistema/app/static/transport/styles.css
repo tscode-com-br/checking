@@ -66,6 +66,19 @@ textarea {
   background: var(--transport-border);
 }
 
+.transport-divider-resizable {
+  position: relative;
+  touch-action: none;
+}
+
+.transport-divider-horizontal.transport-divider-resizable {
+  cursor: row-resize;
+}
+
+.transport-divider-vertical.transport-divider-resizable {
+  cursor: col-resize;
+}
+
 .transport-divider-horizontal {
   width: 100%;
   min-height: var(--transport-divider-size);
@@ -123,7 +136,7 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   width: 100%;
 }
 
@@ -190,14 +203,20 @@ textarea {
 }
 
 .transport-today-button {
-  min-height: 22px;
+  min-height: 0;
   padding: 0 9px;
   border-radius: 999px;
-  font-size: var(--transport-small-text-size);
+  font-size: var(--transport-title-date-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+  text-transform: none;
   align-self: center;
+}
+
+.transport-is-resizing,
+.transport-is-resizing * {
+  user-select: none;
 }
 
 @media (max-width: 900px) {

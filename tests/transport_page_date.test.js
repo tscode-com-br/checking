@@ -20,3 +20,27 @@ test('getOrdinalSuffix handles English ordinal edge cases', () => {
   assert.equal(transportPage.getOrdinalSuffix(22), 'nd');
   assert.equal(transportPage.getOrdinalSuffix(23), 'rd');
 });
+
+test('resolvePanelSizes clamps resize positions to the configured limits', () => {
+  assert.deepEqual(
+    transportPage.resolvePanelSizes({
+      containerSize: 805,
+      dividerSize: 5,
+      pointerOffset: 40,
+      minFirstSize: 100,
+      minSecondSize: 120,
+    }),
+    { firstSize: 100, secondSize: 700 }
+  );
+
+  assert.deepEqual(
+    transportPage.resolvePanelSizes({
+      containerSize: 805,
+      dividerSize: 5,
+      pointerOffset: 760,
+      minFirstSize: 100,
+      minSecondSize: 120,
+    }),
+    { firstSize: 680, secondSize: 120 }
+  );
+});

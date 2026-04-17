@@ -14,7 +14,15 @@
     <main id="tela00" class="tela00">
       <section id="tela01" class="tela01" aria-label="Transport layout">
         <section id="tela01menu" class="tela01menu" aria-hidden="true"></section>
-        <div class="transport-divider transport-divider-horizontal" aria-hidden="true"></div>
+        <div
+          class="transport-divider transport-divider-horizontal transport-divider-resizable"
+          data-resize="horizontal"
+          data-min-first="50"
+          data-min-second="180"
+          role="separator"
+          aria-label="Resize menu and main area"
+          aria-orientation="horizontal"
+        ></div>
 
         <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
           <section id="tela01main_esq" class="transport-pane transport-pane-single" data-date-panel>
@@ -49,7 +57,15 @@
             </div>
           </section>
 
-          <div class="transport-divider transport-divider-vertical" aria-hidden="true"></div>
+          <div
+            class="transport-divider transport-divider-vertical transport-divider-resizable"
+            data-resize="vertical"
+            data-min-first="180"
+            data-min-second="180"
+            role="separator"
+            aria-label="Resize left and right columns"
+            aria-orientation="vertical"
+          ></div>
 
           <section id="tela01main_dir" class="tela01main_dir" aria-label="Transport car panels">
             <section id="tela01main_dir_up" class="transport-pane" data-date-panel>
@@ -84,7 +100,15 @@
               </div>
             </section>
 
-            <div class="transport-divider transport-divider-horizontal" aria-hidden="true"></div>
+            <div
+              class="transport-divider transport-divider-horizontal transport-divider-resizable"
+              data-resize="horizontal"
+              data-min-first="150"
+              data-min-second="100"
+              role="separator"
+              aria-label="Resize regular and extra car areas"
+              aria-orientation="horizontal"
+            ></div>
 
             <section id="tela01main_dir_down" class="transport-pane" data-date-panel>
               <div class="transport-pane-head">
