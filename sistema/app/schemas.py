@@ -568,6 +568,75 @@ class WebCheckSubmitResponse(MobileSubmitResponse):
     pass
 
 
+class ProviderCheckSubmitRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    nome: str = Field(min_length=3, max_length=180)
+    projeto: Literal["P80", "P82", "P83"]
+    atividade: Literal["check-in", "check-out"]
+    informe: Literal["normal", "retroativo"]
+    data: str = Field(min_length=10, max_length=10)
+    hora: str = Field(min_length=8, max_length=8)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_provider_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("nome", mode="before")
+    @classmethod
+    def validate_provider_nome(cls, value: str) -> str:
+        return _normalize_required_label(str(value), "O nome", max_length=180)
+
+    @field_validator("informe", mode="before")
+    @classmethod
+    def validate_provider_informe(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"normal", "retroativo"}:
+            raise ValueError("Informe deve ser 'normal' ou 'retroativo'")
+        return normalized
+
+    @field_validator("atividade", mode="before")
+    @classmethod
+    def validate_provider_atividade(cls, value: str) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in {"check-in", "check-out"}:
+            raise ValueError("Atividade deve ser 'check-in' ou 'check-out'")
+        return normalized
+
+    @field_validator("data")
+    @classmethod
+    def validate_provider_data(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if len(normalized) != 10:
+            raise ValueError("A data deve estar no formato dd/mm/aaaa")
+        return normalized
+
+    @field_validator("hora")
+    @classmethod
+    def validate_provider_hora(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if len(normalized) != 8:
+            raise ValueError("A hora deve estar no formato hh:mm:ss")
+        return normalized
+
+
+class ProviderCheckSubmitResponse(BaseModel):
+    ok: bool
+    duplicate: bool = False
+    created_user: bool = False
+    updated_project: bool = False
+    updated_current_state: bool = False
+    message: str
+    chave: str
+    projeto: str
+    atividade: Literal["check-in", "check-out"]
+    informe: Literal["normal", "retroativo"]
+    time: datetime
+
+
 class MobileLocationRow(BaseModel):
     id: int
     local: str

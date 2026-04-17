@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .core.config import settings
 from .database import Base, engine
-from .routers import admin, device, health, mobile, web_check
+from .routers import admin, device, health, mobile, provider, web_check
 from .services.admin_auth import seed_default_admin
 from .services.event_archives import ensure_event_archives_dir
 from .services.forms_queue import forms_submission_worker
@@ -50,6 +50,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(device.router)
 app.include_router(mobile.router)
+app.include_router(provider.router)
 app.include_router(web_check.router)
 app.include_router(admin.router)
 

@@ -13,6 +13,7 @@ os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test_checking.db"
 os.environ["FORMS_URL"] = "https://example.com/form"
 os.environ["DEVICE_SHARED_KEY"] = "device-test-key"
 os.environ["MOBILE_APP_SHARED_KEY"] = "mobile-test-key"
+os.environ["PROVIDER_SHARED_KEY"] = "provider-test-key"
 os.environ["ADMIN_SESSION_SECRET"] = "test-admin-session-secret"
 os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
@@ -37,12 +38,13 @@ from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.time_utils import now_sgt
-from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid
+from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 
 
 ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
 MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
+PROVIDER_HEADERS = {"x-provider-shared-key": "provider-test-key"}
 
 Base.metadata.create_all(bind=engine)
 
@@ -236,6 +238,194 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
     assert all(row.chave == "UF02" for row in sync_rows)
     assert history_rows
     assert all(row.chave == "UF02" for row in history_rows)
+
+
+def test_provider_endpoint_requires_valid_shared_key():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/checking",
+            json={
+                "chave": "PV01",
+                "nome": "Usuario Provider",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid provider shared key"
+
+
+def test_provider_endpoint_creates_user_and_history_with_normalized_name():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/checking",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV11",
+                "nome": "ADRIANO JOSE DA SILVA",
+                "projeto": "P82",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "07:26:00",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["created_user"] is True
+        assert payload["updated_current_state"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV11")
+        history_rows = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "PV11")
+            .order_by(CheckingHistory.id)
+        ).scalars().all()
+        provider_events = db.execute(
+            select(UserSyncEvent)
+            .where(UserSyncEvent.chave == "PV11", UserSyncEvent.source == "provider")
+            .order_by(UserSyncEvent.id)
+        ).scalars().all()
+
+    assert user.nome == "Adriano Jose da Silva"
+    assert user.projeto == "P82"
+    assert user.checkin is True
+    assert user.time.strftime("%d/%m/%Y %H:%M:%S") == "17/04/2026 07:26:00"
+    assert len(history_rows) == 1
+    assert history_rows[0].atividade == "check-in"
+    assert history_rows[0].informe == "normal"
+    assert len(provider_events) == 1
+
+
+def test_provider_endpoint_updates_project_but_keeps_existing_name():
+    with SessionLocal() as db:
+        db.add(
+            User(
+                rfid=None,
+                chave="PV12",
+                nome="Nome Original",
+                projeto="P80",
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/checking",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV12",
+                "nome": "NOME NAO DEVE TROCAR",
+                "projeto": "P83",
+                "atividade": "check-out",
+                "informe": "retroativo",
+                "data": "17/04/2026",
+                "hora": "19:40:00",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["created_user"] is False
+        assert payload["updated_project"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV12")
+        history_row = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "PV12")
+            .order_by(CheckingHistory.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert user.nome == "Nome Original"
+    assert user.projeto == "P83"
+    assert user.checkin is False
+    assert history_row.atividade == "check-out"
+    assert history_row.informe == "retroativo"
+
+
+def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_history():
+    newer_time = datetime(2026, 4, 18, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+    with SessionLocal() as db:
+        db.add(
+            User(
+                rfid=None,
+                chave="PV13",
+                nome="Usuario Atual",
+                projeto="P82",
+                local="main",
+                checkin=False,
+                time=newer_time,
+                last_active_at=newer_time,
+                inactivity_days=0,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/checking",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV13",
+                "nome": "IGNORADO",
+                "projeto": "P82",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["updated_current_state"] is False
+
+        duplicate = client.post(
+            "/api/provider/checking",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV13",
+                "nome": "IGNORADO",
+                "projeto": "P82",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert duplicate.status_code == 200
+        assert duplicate.json()["duplicate"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV13")
+        history_rows = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "PV13")
+            .order_by(CheckingHistory.id)
+        ).scalars().all()
+        provider_events = db.execute(
+            select(UserSyncEvent)
+            .where(UserSyncEvent.chave == "PV13", UserSyncEvent.source == "provider")
+            .order_by(UserSyncEvent.id)
+        ).scalars().all()
+
+    assert normalize_event_time(user.time) == newer_time
+    assert user.checkin is False
+    assert user.local == "main"
+    assert len(history_rows) == 2
+    assert history_rows[0].atividade == "check-out"
+    assert history_rows[1].atividade == "check-in"
+    assert len(provider_events) == 1
 
 
 def test_admin_stream_requires_valid_session():
