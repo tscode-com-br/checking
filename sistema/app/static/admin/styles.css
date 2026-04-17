@@ -664,6 +664,26 @@ input.inline, select.inline {
   min-width: 82px;
 }
 
+.cadastro-users-table td:nth-child(5) .inline {
+  min-width: 96px;
+}
+
+.cadastro-users-table td:nth-child(6) .inline {
+  min-width: 240px;
+}
+
+.cadastro-users-table td:nth-child(7) .inline {
+  min-width: 110px;
+}
+
+.cadastro-users-table td:nth-child(8) .inline {
+  min-width: 220px;
+}
+
+.cadastro-users-table td:nth-child(9) .inline {
+  min-width: 220px;
+}
+
 .cadastro-locations-table td:nth-child(1) .inline {
   min-width: 220px;
 }

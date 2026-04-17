@@ -4,11 +4,21 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, AdminUser, CheckEvent, ManagedLocation, PendingRegistration, User, UserSyncEvent
+from ..models import (
+    AdminAccessRequest,
+    AdminUser,
+    CheckEvent,
+    CheckingHistory,
+    ManagedLocation,
+    PendingRegistration,
+    User,
+    UserSyncEvent,
+    Vehicle,
+)
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
@@ -955,6 +965,11 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
             nome=r.nome,
             chave=r.chave,
             projeto=r.projeto,
+            placa=r.placa,
+            end_rua=r.end_rua,
+            zip=r.zip,
+            cargo=r.cargo,
+            email=r.email,
         )
         for r in rows
     ]
@@ -987,14 +1002,38 @@ def upsert_user(
         else:
             raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com essa chave")
 
+    if payload.rfid is not None:
+        conflicting_rfid_user = find_user_by_rfid(db, payload.rfid)
+        if conflicting_rfid_user is not None and (user is None or conflicting_rfid_user.id != user.id):
+            raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com esse RFID")
+
+    if payload.placa is not None:
+        vehicle = db.execute(select(Vehicle).where(Vehicle.placa == payload.placa)).scalar_one_or_none()
+        if vehicle is None:
+            raise HTTPException(status_code=404, detail="Veiculo nao encontrado para a placa informada")
+
     if user:
-        if payload.rfid is not None and user.rfid not in {None, payload.rfid}:
-            raise HTTPException(status_code=409, detail="Este usuario ja possui outro RFID vinculado")
+        previous_key = user.chave
         user.nome = payload.nome
         user.chave = payload.chave
         user.projeto = payload.projeto
-        if payload.rfid is not None:
-            user.rfid = payload.rfid
+        user.rfid = payload.rfid
+        user.placa = payload.placa
+        user.end_rua = payload.end_rua
+        user.zip = payload.zip
+        user.cargo = payload.cargo
+        user.email = payload.email
+        if previous_key != user.chave:
+            db.execute(
+                update(UserSyncEvent)
+                .where(UserSyncEvent.user_id == user.id)
+                .values(chave=user.chave)
+            )
+            db.execute(
+                update(CheckingHistory)
+                .where(CheckingHistory.chave == previous_key)
+                .values(chave=user.chave)
+            )
     else:
         if payload.rfid is None:
             raise HTTPException(status_code=400, detail="RFID is required for new users")
@@ -1003,6 +1042,11 @@ def upsert_user(
             nome=payload.nome,
             chave=payload.chave,
             projeto=payload.projeto,
+            placa=payload.placa,
+            end_rua=payload.end_rua,
+            zip=payload.zip,
+            cargo=payload.cargo,
+            email=payload.email,
             local=None,
             checkin=None,
             time=None,
@@ -1011,7 +1055,9 @@ def upsert_user(
         )
         db.add(user)
 
-    pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == payload.rfid)).scalar_one_or_none()
+    pending = None
+    if payload.rfid is not None:
+        pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == payload.rfid)).scalar_one_or_none()
     if pending:
         db.delete(pending)
 
@@ -1029,7 +1075,8 @@ def upsert_user(
         submitted_at=now_sgt(),
         details=(
             f"updated_by={current_admin.chave}; chave={payload.chave}; "
-            f"nome={payload.nome}; linked_existing_user={linked_existing_user}"
+            f"nome={payload.nome}; linked_existing_user={linked_existing_user}; "
+            f"placa={payload.placa or '-'}"
         ),
     )
     db.commit()
@@ -1037,7 +1084,7 @@ def upsert_user(
 
     return {
         "ok": True,
-        "rfid": payload.rfid,
+        "rfid": user.rfid,
         "user_id": user.id,
         "linked_existing_user": linked_existing_user,
     }

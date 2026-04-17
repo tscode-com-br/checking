@@ -17,6 +17,8 @@ class User(Base):
     placa: Mapped[str | None] = mapped_column(String(9), ForeignKey("vehicles.placa"), nullable=True)
     end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zip: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    cargo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     checkin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -144,6 +146,30 @@ class UserSyncEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class CheckingHistory(Base):
+    __tablename__ = "checkinghistory"
+    __table_args__ = (
+        UniqueConstraint(
+            "chave",
+            "atividade",
+            "projeto",
+            "time",
+            "informe",
+            name="uq_checkinghistory_event",
+        ),
+        CheckConstraint("atividade IN ('check-in', 'check-out')", name="ck_checkinghistory_atividade_allowed"),
+        CheckConstraint("projeto IN ('P80', 'P82', 'P83')", name="ck_checkinghistory_projeto_allowed"),
+        CheckConstraint("informe IN ('normal', 'retroativo')", name="ck_checkinghistory_informe_allowed"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    atividade: Mapped[str] = mapped_column(String(16), nullable=False)
+    projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    informe: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class AdminUser(Base):

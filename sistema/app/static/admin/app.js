@@ -1267,7 +1267,7 @@ function makeRegisteredUserRow(user) {
   const tr = document.createElement("tr");
   tr.dataset.userId = String(user.id);
   tr.innerHTML = `
-    <td>${escapeHtml(user.rfid ?? "-")}</td>
+    <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" disabled /></td>
     <td><input class="inline user-nome" value="${escapeHtml(user.nome)}" disabled /></td>
     <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
     <td>
@@ -1277,6 +1277,11 @@ function makeRegisteredUserRow(user) {
         <option value="P83">P83</option>
       </select>
     </td>
+    <td><input class="inline user-placa" maxlength="9" value="${escapeHtml(user.placa ?? "")}" disabled /></td>
+    <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
+    <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" disabled /></td>
+    <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" disabled /></td>
+    <td><input class="inline user-email" maxlength="255" value="${escapeHtml(user.email ?? "")}" disabled /></td>
     <td class="pending-actions">
       <button data-user-edit="${user.id}">Editar</button>
       <button data-user-save="${user.id}" disabled>Salvar</button>
@@ -1353,19 +1358,31 @@ function setRegisteredUserEditingState(userId, editing) {
     return;
   }
 
+  const rfid = row.querySelector(".user-rfid");
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
   const projeto = row.querySelector(".user-projeto");
+  const placa = row.querySelector(".user-placa");
+  const endRua = row.querySelector(".user-end-rua");
+  const zip = row.querySelector(".user-zip");
+  const cargo = row.querySelector(".user-cargo");
+  const email = row.querySelector(".user-email");
   const saveButton = row.querySelector(`[data-user-save="${userId}"]`);
   const editButton = row.querySelector(`[data-user-edit="${userId}"]`);
 
+  rfid.disabled = !editing;
   nome.disabled = !editing;
   chave.disabled = !editing;
   projeto.disabled = !editing;
+  placa.disabled = !editing;
+  endRua.disabled = !editing;
+  zip.disabled = !editing;
+  cargo.disabled = !editing;
+  email.disabled = !editing;
   saveButton.disabled = !editing;
   editButton.disabled = editing;
   if (editing) {
-    nome.focus();
+    rfid.focus();
   }
 }
 
@@ -1715,14 +1732,31 @@ async function saveRegisteredUser(userId) {
   if (!row) {
     return;
   }
+  const rfidValue = row.querySelector(".user-rfid").value.trim();
   const nome = row.querySelector(".user-nome").value.trim();
   const chave = row.querySelector(".user-chave").value.trim().toUpperCase();
   const projeto = row.querySelector(".user-projeto").value;
+  const placa = row.querySelector(".user-placa").value.trim().toUpperCase();
+  const endRua = row.querySelector(".user-end-rua").value.trim();
+  const zip = row.querySelector(".user-zip").value.trim();
+  const cargo = row.querySelector(".user-cargo").value.trim();
+  const email = row.querySelector(".user-email").value.trim().toLowerCase();
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  await postJson("/api/admin/users", { user_id: Number(normalizedUserId), nome, chave, projeto });
+  await postJson("/api/admin/users", {
+    user_id: Number(normalizedUserId),
+    rfid: rfidValue || null,
+    nome,
+    chave,
+    projeto,
+    placa: placa || null,
+    end_rua: endRua || null,
+    zip: zip || null,
+    cargo: cargo || null,
+    email: email || null,
+  });
   setStatus("Usuário salvo com sucesso", true);
   await loadRegisteredUsers();
 }

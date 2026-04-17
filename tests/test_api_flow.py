@@ -27,8 +27,8 @@ from fastapi.testclient import TestClient
 
 from sistema.app.main import app
 from sistema.app.core.config import settings
-from sistema.app.database import SessionLocal
-from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, FormsSubmission, User, UserSyncEvent, Vehicle
+from sistema.app.database import Base, SessionLocal, engine
+from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, CheckingHistory, FormsSubmission, User, UserSyncEvent, Vehicle
 from sistema.app.routers import admin as admin_router
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
@@ -43,6 +43,8 @@ from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid
 ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
 MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
+
+Base.metadata.create_all(bind=engine)
 
 
 def login_admin(client: TestClient, *, chave: str = ADMIN_LOGIN_CHAVE, senha: str = ADMIN_LOGIN_SENHA):
@@ -110,6 +112,130 @@ def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
         assert persisted_user.placa == "SGX1234A"
         assert persisted_user.end_rua == "123 Harbour Road"
         assert persisted_user.zip == "0012345678"
+
+
+def test_mobile_sync_records_checkinghistory_entry():
+    event_time = now_sgt().replace(microsecond=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "HC01",
+                "projeto": "P82",
+                "action": "checkin",
+                "event_time": event_time.isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert response.status_code == 200
+
+    with SessionLocal() as db:
+        row = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "HC01")
+            .order_by(CheckingHistory.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert row.atividade == "check-in"
+    assert row.projeto == "P82"
+    assert row.informe == "normal"
+    assert row.time.replace(tzinfo=ZoneInfo(settings.tz_name)) == event_time
+
+
+def test_admin_users_support_extended_profile_fields_and_key_updates_history():
+    with SessionLocal() as db:
+        db.add(Vehicle(placa="TRP1234A", tipo="van", lugares=18))
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "USR9001",
+                "nome": "Usuario Completo",
+                "chave": "UF01",
+                "projeto": "P82",
+                "placa": "TRP1234A",
+                "end_rua": "123 Harbour Road",
+                "zip": "0012345678",
+                "cargo": "Cargo Inicial",
+                "email": "USER@EXAMPLE.COM",
+            },
+        )
+        assert created.status_code == 200
+
+        sync_res = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "UF01",
+                "projeto": "P82",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+        assert sync_res.status_code == 200
+
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        user_row = next(row for row in users.json() if row["chave"] == "UF01")
+        assert user_row["placa"] == "TRP1234A"
+        assert user_row["end_rua"] == "123 Harbour Road"
+        assert user_row["zip"] == "0012345678"
+        assert user_row["cargo"] == "Cargo Inicial"
+        assert user_row["email"] == "user@example.com"
+
+        updated = client.post(
+            "/api/admin/users",
+            json={
+                "user_id": user_row["id"],
+                "rfid": "USR9002",
+                "nome": "Usuario Ajustado",
+                "chave": "UF02",
+                "projeto": "P83",
+                "placa": "TRP1234A",
+                "end_rua": "456 Harbour Road",
+                "zip": "0000001234",
+                "cargo": "Cargo Final",
+                "email": "final@example.com",
+            },
+        )
+        assert updated.status_code == 200
+
+        users_after = client.get("/api/admin/users")
+        assert users_after.status_code == 200
+        updated_row = next(row for row in users_after.json() if row["id"] == user_row["id"])
+        assert updated_row["rfid"] == "USR9002"
+        assert updated_row["nome"] == "Usuario Ajustado"
+        assert updated_row["chave"] == "UF02"
+        assert updated_row["projeto"] == "P83"
+        assert updated_row["placa"] == "TRP1234A"
+        assert updated_row["end_rua"] == "456 Harbour Road"
+        assert updated_row["zip"] == "0000001234"
+        assert updated_row["cargo"] == "Cargo Final"
+        assert updated_row["email"] == "final@example.com"
+
+    with SessionLocal() as db:
+        sync_rows = db.execute(
+            select(UserSyncEvent)
+            .where(UserSyncEvent.user_id == user_row["id"])
+            .order_by(UserSyncEvent.id)
+        ).scalars().all()
+        history_rows = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "UF02")
+            .order_by(CheckingHistory.id)
+        ).scalars().all()
+
+    assert sync_rows
+    assert all(row.chave == "UF02" for row in sync_rows)
+    assert history_rows
+    assert all(row.chave == "UF02" for row in history_rows)
 
 
 def test_admin_stream_requires_valid_session():

@@ -33,6 +33,41 @@ def _normalize_required_label(value: str, field_name: str, *, max_length: int = 
     return normalized
 
 
+def _normalize_optional_text(value: str | None, field_name: str, *, max_length: int) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(str(value).strip().split())
+    if not normalized:
+        return None
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} deve ter no maximo {max_length} caracteres")
+    return normalized
+
+
+def _normalize_optional_compact_text(value: str | None, field_name: str, *, max_length: int) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} deve ter no maximo {max_length} caracteres")
+    return normalized
+
+
+def _normalize_optional_plate(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().upper().replace(" ", "")
+    if not normalized:
+        return None
+    if len(normalized) > 9:
+        raise ValueError("A placa deve ter no maximo 9 caracteres")
+    if not normalized.isalnum():
+        raise ValueError("A placa deve conter apenas caracteres alfanumericos")
+    return normalized
+
+
 def _validate_latitude(value: float) -> float:
     if value < -90 or value > 90:
         raise ValueError("A latitude deve estar entre -90 e 90")
@@ -76,6 +111,11 @@ class AdminUserUpsert(BaseModel):
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
     projeto: Literal["P80", "P82", "P83"]
+    placa: str | None = Field(default=None, max_length=9)
+    end_rua: str | None = Field(default=None, max_length=255)
+    zip: str | None = Field(default=None, max_length=10)
+    cargo: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def validate_identity(self):
@@ -89,6 +129,37 @@ class AdminUserUpsert(BaseModel):
         if not value.isalnum():
             raise ValueError("chave must be alphanumeric")
         return value.upper()
+
+    @field_validator("rfid", mode="before")
+    @classmethod
+    def validate_rfid(cls, value: str | None) -> str | None:
+        return _normalize_optional_compact_text(value, "O RFID", max_length=64)
+
+    @field_validator("placa", mode="before")
+    @classmethod
+    def validate_placa(cls, value: str | None) -> str | None:
+        return _normalize_optional_plate(value)
+
+    @field_validator("end_rua", mode="before")
+    @classmethod
+    def validate_end_rua(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "O endereco", max_length=255)
+
+    @field_validator("zip", mode="before")
+    @classmethod
+    def validate_zip(cls, value: str | None) -> str | None:
+        return _normalize_optional_compact_text(value, "O ZIP code", max_length=10)
+
+    @field_validator("cargo", mode="before")
+    @classmethod
+    def validate_cargo(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "O cargo", max_length=255)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_compact_text(value, "O email", max_length=255)
+        return normalized.lower() if normalized is not None else None
 
 
 class LocationCoordinate(BaseModel):
@@ -270,6 +341,11 @@ class AdminUserListRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    placa: Optional[str] = None
+    end_rua: Optional[str] = None
+    zip: Optional[str] = None
+    cargo: Optional[str] = None
+    email: Optional[str] = None
 
 
 class PendingRow(BaseModel):

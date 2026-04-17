@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..models import CheckEvent, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
+from .checking_history import record_checking_history
 from .time_utils import now_sgt
 from .user_activity import mark_user_active
 
@@ -154,6 +155,14 @@ def create_user_sync_event(
         device_id=device_id,
     )
     db.add(sync_event)
+    record_checking_history(
+        db,
+        chave=user.chave,
+        action=action,
+        projeto=projeto or user.projeto,
+        event_time=event_time,
+        ontime=ontime,
+    )
     return sync_event
 
 
