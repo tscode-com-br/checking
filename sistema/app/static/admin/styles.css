@@ -643,10 +643,16 @@ input.inline, select.inline {
 }
 
 .cadastro-pending-table th:nth-child(1),
-.cadastro-pending-table td:nth-child(1),
-.cadastro-users-table th:nth-child(1),
-.cadastro-users-table td:nth-child(1) {
+.cadastro-pending-table td:nth-child(1) {
   min-width: 124px;
+}
+
+.cadastro-users-table th:nth-child(1),
+.cadastro-users-table td:nth-child(1),
+.cadastro-users-table th:nth-child(3),
+.cadastro-users-table td:nth-child(3) {
+  width: 1%;
+  min-width: 0;
 }
 
 .cadastro-pending-table td:nth-child(2) .inline,
@@ -654,8 +660,7 @@ input.inline, select.inline {
   min-width: 220px;
 }
 
-.cadastro-pending-table td:nth-child(3) .inline,
-.cadastro-users-table td:nth-child(3) .inline {
+.cadastro-pending-table td:nth-child(3) .inline {
   min-width: 76px;
 }
 
@@ -665,23 +670,25 @@ input.inline, select.inline {
 }
 
 .cadastro-users-table td:nth-child(5) .inline {
-  min-width: 96px;
-}
-
-.cadastro-users-table td:nth-child(6) .inline {
   min-width: 240px;
 }
 
-.cadastro-users-table td:nth-child(7) .inline {
+.cadastro-users-table td:nth-child(6) .inline {
   min-width: 110px;
+}
+
+.cadastro-users-table td:nth-child(7) .inline {
+  min-width: 220px;
 }
 
 .cadastro-users-table td:nth-child(8) .inline {
   min-width: 220px;
 }
 
-.cadastro-users-table td:nth-child(9) .inline {
-  min-width: 220px;
+.cadastro-users-table .user-rfid.inline,
+.cadastro-users-table .user-chave.inline {
+  min-width: 0;
+  max-width: none;
 }
 
 .cadastro-locations-table td:nth-child(1) .inline {

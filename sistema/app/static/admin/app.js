@@ -148,6 +148,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function updateAdaptiveInputWidth(input, minimumCharacters = 4) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  const characterCount = Math.max(minimumCharacters, String(input.value || "").trim().length || 0);
+  input.style.width = `${characterCount + 1}ch`;
+}
+
+function bindAdaptiveInputWidth(input, minimumCharacters = 4) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  updateAdaptiveInputWidth(input, minimumCharacters);
+  input.addEventListener("input", () => updateAdaptiveInputWidth(input, minimumCharacters));
+}
+
 function formatDateTime(value) {
   if (!value) {
     return "-";
@@ -629,13 +645,54 @@ function filterPresenceRows(tableKey, rows, filters) {
     if (!rawFilterValue) {
       return true;
     }
-    const tokens = rawFilterValue
-      .toLocaleLowerCase()
-      .split(/\s+/)
-      .filter(Boolean);
     const searchableValue = String(getPresenceRowDisplayValue(tableKey, row, key) || "").toLocaleLowerCase();
-    return tokens.every((token) => searchableValue.includes(token));
+    return searchableValue === rawFilterValue.toLocaleLowerCase();
   }));
+}
+
+function getPresenceFilterOptions(tableKey, key, rows) {
+  const sortedRows = sortPresenceRows(tableKey, rows, key, getPresenceDefaultSortDirection(key));
+  const uniqueOptions = new Map();
+  sortedRows.forEach((row) => {
+    const displayValue = String(getPresenceRowDisplayValue(tableKey, row, key) || "").trim();
+    if (!displayValue || uniqueOptions.has(displayValue)) {
+      return;
+    }
+    uniqueOptions.set(displayValue, displayValue);
+  });
+  return [...uniqueOptions.values()];
+}
+
+function refreshPresenceFilterOptions(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  const container = document.querySelector(`.presence-controls[data-presence-table="${tableKey}"]`);
+  if (!state || !container) {
+    return;
+  }
+
+  container.querySelectorAll("[data-presence-filter]").forEach((control) => {
+    const key = control.dataset.presenceFilter;
+    const options = getPresenceFilterOptions(tableKey, key, state.rawRows);
+    const currentValue = String(state.filters[key] || "");
+    const fragment = document.createDocumentFragment();
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Todos";
+    fragment.appendChild(defaultOption);
+    options.forEach((optionValue) => {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      fragment.appendChild(option);
+    });
+    control.replaceChildren(fragment);
+    if (options.includes(currentValue)) {
+      control.value = currentValue;
+      return;
+    }
+    state.filters[key] = "";
+    control.value = "";
+  });
 }
 
 function sortPresenceRows(tableKey, rows, sortKey, sortDirection) {
@@ -667,9 +724,9 @@ function syncPresenceControls(tableKey) {
     return;
   }
 
-  container.querySelectorAll("[data-presence-filter]").forEach((input) => {
-    const key = input.dataset.presenceFilter;
-    input.value = state.filters[key] || "";
+  container.querySelectorAll("[data-presence-filter]").forEach((control) => {
+    const key = control.dataset.presenceFilter;
+    control.value = state.filters[key] || "";
   });
 }
 
@@ -711,6 +768,7 @@ function applyPresenceTableState(tableKey) {
     return;
   }
 
+  refreshPresenceFilterOptions(tableKey);
   const filteredRows = filterPresenceRows(tableKey, state.rawRows, state.filters);
   const sortedRows = sortPresenceRows(tableKey, filteredRows, state.sortKey, state.sortDirection);
   if (tableKey === "inactive") {
@@ -1277,7 +1335,6 @@ function makeRegisteredUserRow(user) {
         <option value="P83">P83</option>
       </select>
     </td>
-    <td><input class="inline user-placa" maxlength="9" value="${escapeHtml(user.placa ?? "")}" disabled /></td>
     <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
     <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" disabled /></td>
     <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" disabled /></td>
@@ -1289,6 +1346,8 @@ function makeRegisteredUserRow(user) {
     </td>
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
+  bindAdaptiveInputWidth(tr.querySelector(".user-rfid"), 4);
+  bindAdaptiveInputWidth(tr.querySelector(".user-chave"), 4);
   return tr;
 }
 
@@ -1362,7 +1421,6 @@ function setRegisteredUserEditingState(userId, editing) {
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
   const projeto = row.querySelector(".user-projeto");
-  const placa = row.querySelector(".user-placa");
   const endRua = row.querySelector(".user-end-rua");
   const zip = row.querySelector(".user-zip");
   const cargo = row.querySelector(".user-cargo");
@@ -1374,7 +1432,6 @@ function setRegisteredUserEditingState(userId, editing) {
   nome.disabled = !editing;
   chave.disabled = !editing;
   projeto.disabled = !editing;
-  placa.disabled = !editing;
   endRua.disabled = !editing;
   zip.disabled = !editing;
   cargo.disabled = !editing;
@@ -1736,7 +1793,6 @@ async function saveRegisteredUser(userId) {
   const nome = row.querySelector(".user-nome").value.trim();
   const chave = row.querySelector(".user-chave").value.trim().toUpperCase();
   const projeto = row.querySelector(".user-projeto").value;
-  const placa = row.querySelector(".user-placa").value.trim().toUpperCase();
   const endRua = row.querySelector(".user-end-rua").value.trim();
   const zip = row.querySelector(".user-zip").value.trim();
   const cargo = row.querySelector(".user-cargo").value.trim();
@@ -1751,7 +1807,6 @@ async function saveRegisteredUser(userId) {
     nome,
     chave,
     projeto,
-    placa: placa || null,
     end_rua: endRua || null,
     zip: zip || null,
     cargo: cargo || null,
@@ -1913,9 +1968,9 @@ function bindActions() {
   document.querySelectorAll(".presence-controls").forEach((container) => {
     const tableKey = container.dataset.presenceTable;
 
-    container.addEventListener("input", (event) => {
+    const handlePresenceFilterChange = (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLInputElement) || !target.dataset.presenceFilter) {
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || !target.dataset.presenceFilter) {
         return;
       }
       const state = getPresenceTableState(tableKey);
@@ -1924,7 +1979,10 @@ function bindActions() {
       }
       state.filters[target.dataset.presenceFilter] = target.value;
       applyPresenceTableState(tableKey);
-    });
+    };
+
+    container.addEventListener("input", handlePresenceFilterChange);
+    container.addEventListener("change", handlePresenceFilterChange);
 
     container.addEventListener("click", (event) => {
       const target = event.target;

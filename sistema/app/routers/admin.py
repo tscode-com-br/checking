@@ -981,6 +981,8 @@ def upsert_user(
     db: Session = Depends(get_db),
     current_admin: AdminUser = Depends(require_admin_session),
 ) -> dict:
+    payload_fields = set(getattr(payload, "model_fields_set", set()))
+    placa_was_provided = "placa" in payload_fields
     user = None
     linked_existing_user = False
     if payload.user_id is not None:
@@ -1007,7 +1009,7 @@ def upsert_user(
         if conflicting_rfid_user is not None and (user is None or conflicting_rfid_user.id != user.id):
             raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com esse RFID")
 
-    if payload.placa is not None:
+    if placa_was_provided and payload.placa is not None:
         vehicle = db.execute(select(Vehicle).where(Vehicle.placa == payload.placa)).scalar_one_or_none()
         if vehicle is None:
             raise HTTPException(status_code=404, detail="Veiculo nao encontrado para a placa informada")
@@ -1018,7 +1020,8 @@ def upsert_user(
         user.chave = payload.chave
         user.projeto = payload.projeto
         user.rfid = payload.rfid
-        user.placa = payload.placa
+        if placa_was_provided:
+            user.placa = payload.placa
         user.end_rua = payload.end_rua
         user.zip = payload.zip
         user.cargo = payload.cargo
@@ -1076,7 +1079,7 @@ def upsert_user(
         details=(
             f"updated_by={current_admin.chave}; chave={payload.chave}; "
             f"nome={payload.nome}; linked_existing_user={linked_existing_user}; "
-            f"placa={payload.placa or '-'}"
+            f"placa={(payload.placa if placa_was_provided else user.placa) or '-'}"
         ),
     )
     db.commit()
