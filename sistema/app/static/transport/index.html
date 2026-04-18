@@ -13,21 +13,45 @@
   <body>
     <main id="tela00" class="tela00">
       <section id="tela01" class="tela01" aria-label="Transport layout">
-        <section id="tela01menu" class="tela01menu" aria-label="Transport quick actions">
+        <section id="tela01menu" class="tela01menu" data-transport-topbar aria-label="Transport quick actions">
           <div class="transport-topbar-copy transport-topbar-brand">
             <span class="transport-topbar-kicker">Checking Transport</span>
-            <strong class="transport-topbar-title">Allocation board</strong>
+            <strong class="transport-topbar-title" data-settings-title-anchor>Allocation board</strong>
           </div>
-          <div class="transport-topbar-route-slot">
+          <button
+            type="button"
+            class="transport-settings-trigger"
+            data-open-settings-modal
+            aria-label="Open settings"
+            aria-haspopup="dialog"
+            aria-controls="transport-settings-modal"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2.75 13.38 5.43 16.37 5.18 16.18 8.17 18.86 9.55 16.94 12 18.86 14.45 16.18 15.83 16.37 18.82 13.38 18.57 12 21.25 10.62 18.57 7.63 18.82 7.82 15.83 5.14 14.45 7.06 12 5.14 9.55 7.82 8.17 7.63 5.18 10.62 5.43 12 2.75Z" />
+              <circle cx="12" cy="12" r="3.2" />
+            </svg>
+          </button>
+          <div class="transport-topbar-route-slot" data-route-slot>
             <div class="transport-route-toggle transport-topbar-route-toggle" role="radiogroup" aria-label="Selected transport route">
               <label class="transport-route-option">
                 <input type="radio" name="transport_route_kind" value="home_to_work" data-route-kind checked />
-                <span>Home to Work</span>
+                <span data-settings-route-anchor>Home to Work</span>
               </label>
               <label class="transport-route-option">
                 <input type="radio" name="transport_route_kind" value="work_to_home" data-route-kind />
                 <span>Work to Home</span>
               </label>
+            </div>
+            <div class="transport-route-inline-time" data-route-time-popover hidden>
+              <input
+                type="time"
+                step="60"
+                class="transport-route-inline-time-input"
+                data-route-time-input
+                value="16:45"
+                aria-label="Work to Home Time"
+              />
             </div>
           </div>
           <div class="transport-topbar-center" data-date-panel aria-label="Selected service date">
@@ -317,6 +341,55 @@
       </div>
     </div>
 
+    <div class="transport-modal-backdrop" data-settings-modal hidden>
+      <div
+        class="transport-modal transport-settings-modal"
+        id="transport-settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transport-settings-modal-title"
+      >
+        <div class="transport-modal-head">
+          <div>
+            <h2 id="transport-settings-modal-title" class="transport-modal-title transport-settings-modal-title">SETTINGS</h2>
+          </div>
+          <button type="button" class="transport-modal-close" data-close-settings-modal aria-label="Close settings">×</button>
+        </div>
+
+        <div class="transport-settings-modal-body">
+          <section class="transport-settings-section">
+            <h3 class="transport-settings-section-title" data-settings-preferences-title>Preferences</h3>
+
+            <label class="transport-settings-row" for="transportSettingsLanguage">
+              <span class="transport-settings-label" data-settings-language-label>Languages:</span>
+              <select id="transportSettingsLanguage" class="transport-settings-select" data-settings-language-select></select>
+            </label>
+
+            <label class="transport-settings-row" for="transportSettingsWorkToHomeTime">
+              <span class="transport-settings-label" data-settings-time-label>Work to Home Time:</span>
+              <input
+                id="transportSettingsWorkToHomeTime"
+                class="transport-settings-time-input"
+                type="time"
+                step="60"
+                value="16:45"
+                data-settings-work-to-home-time
+              />
+            </label>
+
+            <p class="transport-settings-note" data-settings-time-note>
+              Base default for all dates. To change only the selected date, click Work to Home again in the top bar; it updates Regular and Weekend lists only and resets on the next day.
+            </p>
+          </section>
+
+          <div class="transport-modal-actions transport-settings-actions">
+            <button type="button" class="transport-secondary-button" data-close-settings-modal data-settings-close-button>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="i18n.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

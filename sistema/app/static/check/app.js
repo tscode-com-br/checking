@@ -168,6 +168,11 @@
     second: '2-digit',
     hour12: false,
   });
+  const transportRequestKindLabels = {
+    regular: 'Transporte Rotineiro',
+    weekend: 'Transporte Fim de Semana',
+    extra: 'Transporte Extra',
+  };
 
   let historyRequestToken = 0;
   let historyAbortController = null;
@@ -215,10 +220,12 @@
     status: 'available',
     requestId: null,
     requestKind: null,
+    routeKind: null,
     serviceDate: null,
     endRua: '',
     zip: '',
     requestedTime: '',
+    boardingTime: '',
     confirmationDeadlineTime: '',
     vehicleType: '',
     vehiclePlate: '',
@@ -820,10 +827,12 @@
       ? Number(payload.request_id)
       : null;
     transportState.requestKind = payload && payload.request_kind ? String(payload.request_kind) : null;
+    transportState.routeKind = payload && payload.route_kind ? String(payload.route_kind) : null;
     transportState.serviceDate = payload && payload.service_date ? String(payload.service_date) : null;
     transportState.endRua = String(payload && payload.end_rua || '');
     transportState.zip = String(payload && payload.zip || '');
     transportState.requestedTime = String(payload && payload.requested_time || '');
+    transportState.boardingTime = String(payload && payload.boarding_time || payload && payload.requested_time || '');
     transportState.confirmationDeadlineTime = String(payload && payload.confirmation_deadline_time || payload && payload.requested_time || '');
     transportState.vehicleType = String(payload && payload.vehicle_type || '');
     transportState.vehiclePlate = String(payload && payload.vehicle_plate || '');
@@ -876,7 +885,7 @@
       transportConfirmedPlateLine.textContent = `Placa do Veículo: ${transportState.vehiclePlate || '--'}`;
     }
     if (transportConfirmedBoardingLine) {
-      transportConfirmedBoardingLine.textContent = `Horário de Embarque: ${formatTransportTimeLabel(transportState.requestedTime)}`;
+      transportConfirmedBoardingLine.textContent = `Horário de Embarque: ${formatTransportTimeLabel(transportState.boardingTime)}`;
     }
     if (transportConfirmedToleranceLine) {
       const toleranceLabel = Number.isFinite(transportState.toleranceMinutes)
@@ -942,11 +951,17 @@
       return;
     }
 
-    if (!isApplicationUnlocked() || !clientState.hasCurrentDayCheckIn(latestHistoryState, new Date())) {
+    if (!isApplicationUnlocked()) {
+      setStatus('Digite sua chave e valide a senha para acessar Transporte.', 'error');
+      return;
+    }
+
+    if (!clientState.hasCurrentDayCheckIn(latestHistoryState, new Date())) {
       setStatus('Realize um check-in hoje para acessar Transporte.', 'error');
       return;
     }
 
+    transportUiState.addressEditorOpen = false;
     transportScreen.hidden = false;
     transportScreenBackdrop.hidden = false;
     transportScreen.classList.remove('is-hidden');
@@ -1048,24 +1063,30 @@
     }
   }
 
-  async function requestRegularTransport() {
+  async function requestTransport(requestKind) {
     const normalizedChave = getActiveChave();
+    const requestLabel = transportRequestKindLabels[requestKind] || 'Transporte';
+    if (normalizedChave.length !== 4) {
+      setTransportInlineStatus('Informe uma chave válida antes de solicitar o transporte.', 'error');
+      return;
+    }
+
     transportRequestInProgress = true;
     clearTransportInlineStatus();
     syncFormControlStates();
     try {
       const payload = await postTransportPayload(transportRequestEndpoint, {
         chave: normalizedChave,
-        request_kind: 'regular',
+        request_kind: requestKind,
       });
       applyTransportStatePayload(payload.state || {});
-      setTransportInlineStatus(payload.message || 'Sua solicitação foi enviada.', 'success');
+      clearTransportInlineStatus();
     } catch (error) {
       if (error && error.isAuthExpired) {
         closeTransportScreen();
         return;
       }
-      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível solicitar o transporte.', 'error');
+      setTransportInlineStatus(error instanceof Error ? error.message : `Não foi possível solicitar ${requestLabel}.`, 'error');
     } finally {
       transportRequestInProgress = false;
       syncFormControlStates();
@@ -1088,7 +1109,7 @@
       });
       applyTransportStatePayload(payload.state || {});
       transportUiState.acknowledgementChecked = false;
-      setTransportInlineStatus(payload.message || 'Solicitação cancelada.', 'success');
+      clearTransportInlineStatus();
     } catch (error) {
       if (error && error.isAuthExpired) {
         closeTransportScreen();
@@ -1116,7 +1137,7 @@
         request_id: transportState.requestId,
       });
       applyTransportStatePayload(payload.state || {});
-      setTransportInlineStatus(payload.message || 'Ciência registrada com sucesso.', 'success');
+      clearTransportInlineStatus();
     } catch (error) {
       if (error && error.isAuthExpired) {
         closeTransportScreen();
@@ -3004,19 +3025,19 @@
 
   if (transportRegularButton) {
     transportRegularButton.addEventListener('click', () => {
-      void requestRegularTransport();
+      void requestTransport('regular');
     });
   }
 
   if (transportWeekendButton) {
     transportWeekendButton.addEventListener('click', () => {
-      setTransportInlineStatus('O fluxo de Transporte Fim de Semana será tratado na próxima etapa.', 'info');
+      void requestTransport('weekend');
     });
   }
 
   if (transportExtraButton) {
     transportExtraButton.addEventListener('click', () => {
-      setTransportInlineStatus('O fluxo de Transporte Extra será tratado na próxima etapa.', 'info');
+      void requestTransport('extra');
     });
   }
 

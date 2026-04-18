@@ -97,6 +97,27 @@ test('formatVehicleOccupancyCount shows only the allocated and total seats', () 
   );
 });
 
+test('getEffectiveWorkToHomeDepartureTime prefers the dashboard override and falls back safely', () => {
+  assert.equal(
+    transportPage.getEffectiveWorkToHomeDepartureTime({ work_to_home_departure_time: '18:10' }, '16:45'),
+    '18:10'
+  );
+  assert.equal(
+    transportPage.getEffectiveWorkToHomeDepartureTime({ work_to_home_departure_time: '' }, '17:00'),
+    '17:00'
+  );
+  assert.equal(
+    transportPage.getEffectiveWorkToHomeDepartureTime(null, 'bad-value'),
+    '16:45'
+  );
+});
+
+test('getVehicleDepartureTime returns only valid departure times', () => {
+  assert.equal(transportPage.getVehicleDepartureTime({ departure_time: '17:20' }), '17:20');
+  assert.equal(transportPage.getVehicleDepartureTime({ departure_time: '17h20' }), '');
+  assert.equal(transportPage.getVehicleDepartureTime({}), '');
+});
+
 test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Alice Rider' }), 'pending');
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Bob Rider', awareness_status: 'aware' }), 'aware');

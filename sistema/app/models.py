@@ -110,6 +110,17 @@ class TransportVehicleScheduleException(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class TransportDailySetting(Base):
+    __tablename__ = "transport_daily_settings"
+    __table_args__ = (UniqueConstraint("service_date", name="uq_transport_daily_settings_service_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TransportRequest(Base):
     __tablename__ = "transport_requests"
     __table_args__ = (
@@ -277,6 +288,7 @@ class MobileAppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    transport_work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
     coordinate_update_frequency_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

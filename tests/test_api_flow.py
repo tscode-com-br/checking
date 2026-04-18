@@ -3755,7 +3755,7 @@ def test_web_password_change_replaces_previous_password():
         assert new_login.json()["has_password"] is True
 
 
-def test_web_transport_request_requires_same_day_checkin_and_returns_pending_state(monkeypatch):
+def test_web_transport_vehicle_request_requires_same_day_checkin_and_returns_pending_state(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 7, 30, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
@@ -3778,7 +3778,7 @@ def test_web_transport_request_requires_same_day_checkin_and_returns_pending_sta
         assert registered.status_code == 200
 
         blocked = client.post(
-            "/api/web/transport/request",
+            "/api/web/transport/vehicle-request",
             json={"chave": "WT11", "request_kind": "regular"},
         )
         assert blocked.status_code == 409
@@ -3787,7 +3787,7 @@ def test_web_transport_request_requires_same_day_checkin_and_returns_pending_sta
         set_user_checkin_state(chave="WT11", event_time=fixed_now, local="Workplace Gate")
 
         created = client.post(
-            "/api/web/transport/request",
+            "/api/web/transport/vehicle-request",
             json={"chave": "WT11", "request_kind": "regular"},
         )
         assert created.status_code == 200
@@ -3816,11 +3816,84 @@ def test_web_transport_request_requires_same_day_checkin_and_returns_pending_sta
     assert request_row.created_via == "web"
     assert request_row.requested_time == "07:30"
 
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    assert any(row["chave"] == "WT11" for row in dashboard.json()["regular_requests"])
+
+
+def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypatch):
+    fixed_now = datetime(2026, 4, 18, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT14", projeto="P83", nome="Weekend Transport Rider")
+    set_user_checkin_state(chave="WT14", event_time=fixed_now, local="Weekend Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT14",
+            senha="abc123",
+            projeto="P83",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        weekend_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT14", "request_kind": "weekend"},
+        )
+        assert weekend_created.status_code == 200
+        assert weekend_created.json()["state"]["status"] == "pending"
+        assert weekend_created.json()["state"]["request_kind"] == "weekend"
+
+        extra_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT14", "request_kind": "extra"},
+        )
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
+        assert extra_created.json()["state"]["request_kind"] == "extra"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT14")
+        request_kinds = db.execute(
+            select(TransportRequest.request_kind)
+            .where(
+                TransportRequest.user_id == user.id,
+                TransportRequest.status == "active",
+            )
+            .order_by(TransportRequest.id)
+        ).scalars().all()
+
+    assert request_kinds == ["weekend", "extra"]
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    assert any(row["chave"] == "WT14" for row in dashboard.json()["weekend_requests"])
+    assert any(row["chave"] == "WT14" for row in dashboard.json()["extra_requests"])
+
 
 def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashboard(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 8, 0, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        db.commit()
 
     with SessionLocal() as db:
         vehicle = Vehicle(placa="TWA1234", tipo="van", color="Blue", lugares=12, tolerance=10, service_scope="regular")
@@ -3869,7 +3942,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         assert updated_address.json()["state"]["zip"] == "654321"
 
         requested = client.post(
-            "/api/web/transport/request",
+            "/api/web/transport/vehicle-request",
             json={"chave": "WT12", "request_kind": "regular"},
         )
         assert requested.status_code == 200
@@ -3893,6 +3966,8 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         assert confirmed_state.status_code == 200
         assert confirmed_state.json()["status"] == "confirmed"
         assert confirmed_state.json()["awareness_confirmed"] is False
+        assert confirmed_state.json()["route_kind"] == "work_to_home"
+        assert confirmed_state.json()["boarding_time"] == "16:45"
         assert confirmed_state.json()["vehicle_plate"] == "TWA1234"
 
         acknowledged = client.post(
@@ -3924,6 +3999,387 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
     paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
     assert home_row["awareness_status"] == "aware"
     assert paired_row["awareness_status"] == "aware"
+
+
+def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 8, 10, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        vehicle = Vehicle(placa="TWS1810", tipo="carro", color="Silver", lugares=4, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    ensure_web_user_exists(chave="WT18", projeto="P80", nome="Settings Boarding Rider")
+    set_user_checkin_state(chave="WT18", event_time=fixed_now, local="Settings Gate")
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        current_settings = admin_client.get("/api/transport/settings")
+        assert current_settings.status_code == 200
+        assert current_settings.json()["work_to_home_time"] == "16:45"
+
+        updated_settings = admin_client.put(
+            "/api/transport/settings",
+            json={"work_to_home_time": "18:10"},
+        )
+        assert updated_settings.status_code == 200
+        assert updated_settings.json()["work_to_home_time"] == "18:10"
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT18",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT18", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT18"})
+        assert confirmed_state.status_code == 200
+        assert confirmed_state.json()["status"] == "confirmed"
+        assert confirmed_state.json()["route_kind"] == "work_to_home"
+        assert confirmed_state.json()["boarding_time"] == "18:10"
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        db.commit()
+
+
+def test_transport_date_settings_update_work_to_home_departure_for_selected_date_only(monkeypatch):
+    friday_now = datetime(2026, 4, 17, 8, 35, tzinfo=ZoneInfo(settings.tz_name))
+    saturday = friday_now.date() + timedelta(days=1)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: friday_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: friday_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+
+        regular_vehicle = Vehicle(
+            placa="DTD1710",
+            tipo="carro",
+            color="Graphite",
+            lugares=4,
+            tolerance=8,
+            service_scope="regular",
+        )
+        weekend_vehicle = Vehicle(
+            placa="DTD1720",
+            tipo="van",
+            color="Blue",
+            lugares=8,
+            tolerance=10,
+            service_scope="weekend",
+        )
+        friday_extra_vehicle = Vehicle(
+            placa="DTD1730",
+            tipo="minivan",
+            color="White",
+            lugares=6,
+            tolerance=12,
+            service_scope="extra",
+        )
+        saturday_extra_vehicle = Vehicle(
+            placa="DTD1740",
+            tipo="carro",
+            color="Black",
+            lugares=4,
+            tolerance=9,
+            service_scope="extra",
+        )
+        db.add_all([regular_vehicle, weekend_vehicle, friday_extra_vehicle, saturday_extra_vehicle])
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="home_to_work",
+            recurrence_kind="matching_weekday",
+            weekday=5,
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="work_to_home",
+            recurrence_kind="matching_weekday",
+            weekday=5,
+        )
+        add_transport_schedule(
+            db,
+            vehicle=friday_extra_vehicle,
+            service_scope="extra",
+            route_kind="work_to_home",
+            recurrence_kind="single_date",
+            service_date=friday_now.date(),
+        )
+        add_transport_schedule(
+            db,
+            vehicle=saturday_extra_vehicle,
+            service_scope="extra",
+            route_kind="work_to_home",
+            recurrence_kind="single_date",
+            service_date=saturday,
+        )
+        db.commit()
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        updated_settings = admin_client.put(
+            "/api/transport/date-settings",
+            json={
+                "service_date": friday_now.date().isoformat(),
+                "work_to_home_time": "18:10",
+            },
+        )
+        assert updated_settings.status_code == 200
+        assert updated_settings.json() == {
+            "service_date": friday_now.date().isoformat(),
+            "work_to_home_time": "18:10",
+        }
+
+        friday_dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday_now.date().isoformat(), "route_kind": "work_to_home"},
+        )
+        saturday_dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "work_to_home"},
+        )
+
+    assert friday_dashboard.status_code == 200
+    assert saturday_dashboard.status_code == 200
+
+    friday_payload = friday_dashboard.json()
+    saturday_payload = saturday_dashboard.json()
+    friday_regular_row = next(row for row in friday_payload["regular_vehicles"] if row["placa"] == "DTD1710")
+    friday_extra_row = next(row for row in friday_payload["extra_vehicles"] if row["placa"] == "DTD1730")
+    saturday_weekend_row = next(row for row in saturday_payload["weekend_vehicles"] if row["placa"] == "DTD1720")
+    saturday_extra_row = next(row for row in saturday_payload["extra_vehicles"] if row["placa"] == "DTD1740")
+
+    assert friday_payload["work_to_home_departure_time"] == "18:10"
+    assert friday_regular_row["departure_time"] == "18:10"
+    assert friday_extra_row["departure_time"] is None
+
+    assert saturday_payload["work_to_home_departure_time"] == "16:45"
+    assert saturday_weekend_row["departure_time"] == "16:45"
+    assert saturday_extra_row["departure_time"] is None
+
+
+def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
+    current_now = {"value": datetime(2026, 4, 17, 8, 45, tzinfo=ZoneInfo(settings.tz_name))}
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: current_now["value"])
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: current_now["value"])
+
+    saturday = current_now["value"].date() + timedelta(days=1)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+
+        regular_vehicle = Vehicle(
+            placa="DOW1810",
+            tipo="carro",
+            color="Silver",
+            lugares=4,
+            tolerance=8,
+            service_scope="regular",
+        )
+        weekend_vehicle = Vehicle(
+            placa="DOW1645",
+            tipo="van",
+            color="White",
+            lugares=8,
+            tolerance=10,
+            service_scope="weekend",
+        )
+        db.add_all([regular_vehicle, weekend_vehicle])
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="home_to_work",
+            recurrence_kind="matching_weekday",
+            weekday=5,
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="work_to_home",
+            recurrence_kind="matching_weekday",
+            weekday=5,
+        )
+        db.commit()
+        regular_vehicle_id = regular_vehicle.id
+        weekend_vehicle_id = weekend_vehicle.id
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        updated_settings = admin_client.put(
+            "/api/transport/date-settings",
+            json={
+                "service_date": current_now["value"].date().isoformat(),
+                "work_to_home_time": "18:10",
+            },
+        )
+        assert updated_settings.status_code == 200
+
+    ensure_web_user_exists(chave="DW18", projeto="P80", nome="Date Override Friday Rider")
+    set_user_checkin_state(chave="DW18", event_time=current_now["value"], local="Date Override Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="DW18",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "DW18", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        friday_request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": friday_request_id,
+                    "service_date": current_now["value"].date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": regular_vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        friday_state = client.get("/api/web/transport/state", params={"chave": "DW18"})
+        assert friday_state.status_code == 200
+        assert friday_state.json()["status"] == "confirmed"
+        assert friday_state.json()["route_kind"] == "work_to_home"
+        assert friday_state.json()["boarding_time"] == "18:10"
+
+    current_now["value"] = datetime(2026, 4, 18, 8, 50, tzinfo=ZoneInfo(settings.tz_name))
+    ensure_web_user_exists(chave="DW16", projeto="P80", nome="Date Override Saturday Rider")
+    set_user_checkin_state(chave="DW16", event_time=current_now["value"], local="Date Override Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="DW16",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "DW16", "request_kind": "weekend"},
+        )
+        assert requested.status_code == 200
+        saturday_request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": saturday_request_id,
+                    "service_date": saturday.isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": weekend_vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        saturday_state = client.get("/api/web/transport/state", params={"chave": "DW16"})
+        assert saturday_state.status_code == 200
+        assert saturday_state.json()["status"] == "confirmed"
+        assert saturday_state.json()["route_kind"] == "work_to_home"
+        assert saturday_state.json()["boarding_time"] == "16:45"
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        db.commit()
 
 
 def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_dashboard(monkeypatch):
@@ -3966,7 +4422,7 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
         assert registered.status_code == 200
 
         requested = client.post(
-            "/api/web/transport/request",
+            "/api/web/transport/vehicle-request",
             json={"chave": "WT13", "request_kind": "regular"},
         )
         assert requested.status_code == 200

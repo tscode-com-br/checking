@@ -2,15 +2,15 @@
   const RESIZE_DEFAULT_MIN_SIZE = 96;
   const REQUEST_SECTION_ORDER = ["extra", "weekend", "regular"];
   const VEHICLE_SCOPE_ORDER = ["extra", "weekend", "regular"];
-  const REQUEST_TITLES = {
-    regular: "Regular Car Requests",
-    weekend: "Weekend Car Requests",
-    extra: "Extra Car Requests",
+  const REQUEST_TITLE_KEYS = {
+    regular: "requests.titles.regular",
+    weekend: "requests.titles.weekend",
+    extra: "requests.titles.extra",
   };
-  const REQUEST_LABELS = {
-    regular: "REGULAR",
-    weekend: "WEEKEND",
-    extra: "EXTRA",
+  const REQUEST_LABEL_KEYS = {
+    regular: "requests.labels.regular",
+    weekend: "requests.labels.weekend",
+    extra: "requests.labels.extra",
   };
   const VEHICLE_ICON_PATHS = {
     carro: "icons/car.svg",
@@ -18,26 +18,137 @@
     van: "icons/van.svg",
     onibus: "icons/bus.svg",
   };
-  const ROUTE_KIND_LABELS = {
-    home_to_work: "Home to Work",
-    work_to_home: "Work to Home",
+  const ROUTE_KIND_KEYS = {
+    home_to_work: "routes.home_to_work",
+    work_to_home: "routes.work_to_home",
   };
-  const MODAL_SCOPE_NOTES = {
-    extra: "Extra vehicles are created only for the selected route and selected date.",
-    weekend:
-      "Weekend vehicles must be persistent. Select Every Saturday, Every Sunday, or both. If you need a one-date weekend vehicle, create it in Extra Transport List.",
-    regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
+  const MODAL_SCOPE_NOTE_KEYS = {
+    extra: "modal.notes.extra",
+    weekend: "modal.notes.weekend",
+    regular: "modal.notes.regular",
   };
-  const DEFAULT_STATUS_MESSAGE = "Transport dashboard ready.";
-  const TRANSPORT_LOCKED_MESSAGE = "Enter key and password to unlock the transport dashboard.";
-  const TRANSPORT_SESSION_EXPIRED_MESSAGE = "Transport session expired. Enter key and password again.";
+  const TRANSPORT_LANGUAGE_STORAGE_KEY = "checking.transport.dashboard.language";
+  const transportI18n = globalScope.CheckingTransportI18n || {};
+  const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
+  const DEFAULT_WORK_TO_HOME_TIME = "16:45";
+  const transportLanguages = Array.isArray(transportI18n.languages) && transportI18n.languages.length
+    ? transportI18n.languages.slice()
+    : [{ code: "en", label: "English", locale: "en-US" }];
   const TRANSPORT_AUTH_VERIFY_DELAY_MS = 140;
   const TRANSPORT_REALTIME_DEBOUNCE_MS = 180;
   const VEHICLE_DETAILS_MAX_ROWS = 5;
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
-  const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
-  const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
+
+  function getDictionaryForLanguage(languageCode) {
+    if (transportI18n && typeof transportI18n.getDictionary === "function") {
+      return transportI18n.getDictionary(languageCode);
+    }
+
+    if (transportI18n && transportI18n.dictionaries && transportI18n.dictionaries[languageCode]) {
+      return transportI18n.dictionaries[languageCode];
+    }
+
+    return (transportI18n && transportI18n.dictionaries && transportI18n.dictionaries[TRANSPORT_DEFAULT_LANGUAGE]) || {};
+  }
+
+  function resolveStoredLanguageCode() {
+    if (!globalScope.localStorage) {
+      return TRANSPORT_DEFAULT_LANGUAGE;
+    }
+
+    try {
+      const storedValue = String(globalScope.localStorage.getItem(TRANSPORT_LANGUAGE_STORAGE_KEY) || "").trim();
+      return transportLanguages.some(function (item) {
+        return item.code === storedValue;
+      }) ? storedValue : TRANSPORT_DEFAULT_LANGUAGE;
+    } catch (error) {
+      return TRANSPORT_DEFAULT_LANGUAGE;
+    }
+  }
+
+  const transportLanguageState = {
+    currentCode: resolveStoredLanguageCode(),
+  };
+
+  function setStoredLanguageCode(languageCode) {
+    if (!globalScope.localStorage) {
+      return;
+    }
+
+    try {
+      globalScope.localStorage.setItem(TRANSPORT_LANGUAGE_STORAGE_KEY, languageCode);
+    } catch (error) {}
+  }
+
+  function resolveLanguageCode(languageCode) {
+    return transportLanguages.some(function (item) {
+      return item.code === languageCode;
+    }) ? languageCode : TRANSPORT_DEFAULT_LANGUAGE;
+  }
+
+  function getActiveLanguageCode() {
+    return resolveLanguageCode(transportLanguageState.currentCode);
+  }
+
+  function setActiveLanguageCode(languageCode) {
+    const resolvedCode = resolveLanguageCode(languageCode);
+    transportLanguageState.currentCode = resolvedCode;
+    setStoredLanguageCode(resolvedCode);
+    return resolvedCode;
+  }
+
+  function getLanguageConfig(languageCode) {
+    const resolvedCode = resolveLanguageCode(languageCode);
+    const matchedLanguage = transportLanguages.find(function (item) {
+      return item.code === resolvedCode;
+    });
+    return matchedLanguage || transportLanguages[0];
+  }
+
+  function readTranslationValue(dictionary, keyPath) {
+    return String(keyPath || "")
+      .split(".")
+      .reduce(function (currentValue, segment) {
+        if (!currentValue || typeof currentValue !== "object") {
+          return undefined;
+        }
+        return currentValue[segment];
+      }, dictionary);
+  }
+
+  function interpolateTranslation(template, values) {
+    if (typeof template !== "string") {
+      return "";
+    }
+
+    return template.replace(/\{(\w+)\}/g, function (_, token) {
+      if (!values || values[token] === undefined || values[token] === null) {
+        return "";
+      }
+      return String(values[token]);
+    });
+  }
+
+  function t(keyPath, values, languageCode) {
+    const dictionary = getDictionaryForLanguage(resolveLanguageCode(languageCode || getActiveLanguageCode()));
+    const fallbackDictionary = getDictionaryForLanguage(TRANSPORT_DEFAULT_LANGUAGE);
+    const template = readTranslationValue(dictionary, keyPath);
+    const fallbackTemplate = readTranslationValue(fallbackDictionary, keyPath);
+    return interpolateTranslation(template !== undefined ? template : fallbackTemplate !== undefined ? fallbackTemplate : keyPath, values);
+  }
+
+  function getTransportLockedMessage() {
+    return t("status.locked");
+  }
+
+  function getTransportSessionExpiredMessage() {
+    return t("status.sessionExpired");
+  }
+
+  function getDefaultStatusMessage() {
+    return t("status.ready");
+  }
 
   function startOfLocalDay(value) {
     const date = value instanceof Date ? new Date(value) : new Date(value);
@@ -65,7 +176,19 @@
 
   function formatTransportDate(value) {
     const date = startOfLocalDay(value);
-    return `${weekdayFormatter.format(date)}, ${monthFormatter.format(date)} ${date.getDate()}${getOrdinalSuffix(date.getDate())}, ${date.getFullYear()}`;
+    const activeLocale = getLanguageConfig(getActiveLanguageCode()).locale || "en-US";
+    if (String(activeLocale).toLowerCase().startsWith("en")) {
+      const weekdayFormatter = new Intl.DateTimeFormat(activeLocale, { weekday: "long" });
+      const monthFormatter = new Intl.DateTimeFormat(activeLocale, { month: "long" });
+      return `${weekdayFormatter.format(date)}, ${monthFormatter.format(date)} ${date.getDate()}${getOrdinalSuffix(date.getDate())}, ${date.getFullYear()}`;
+    }
+
+    return new Intl.DateTimeFormat(activeLocale, {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }).format(date);
   }
 
   function shiftLocalDay(value, amount) {
@@ -484,6 +607,27 @@
     return message || `HTTP ${statusCode}`;
   }
 
+  function localizeTransportApiMessage(message) {
+    const normalizedMessage = String(message || "").trim();
+    if (!normalizedMessage) {
+      return "";
+    }
+
+    const messageKey = {
+      "Invalid key or password.": "auth.invalidCredentials",
+      "This user does not have transport access.": "auth.noAccess",
+      "Transport access granted.": "status.accessGranted",
+      "Vehicle saved successfully.": "status.vehicleSaved",
+      "Vehicle deleted from the database.": "status.vehicleDeleted",
+      "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": "warnings.weekendPersistence",
+      "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
+      "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
+      "This vehicle cannot be removed from the selected route.": "warnings.vehicleCannotBeRemoved",
+    }[normalizedMessage];
+
+    return messageKey ? t(messageKey) : normalizedMessage;
+  }
+
   function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
     const serviceScope = String(formData.get("service_scope") || "regular");
     const payload = {
@@ -510,33 +654,13 @@
   }
 
   function mapVehicleTypeLabel(value) {
-    switch (value) {
-      case "carro":
-        return "Car";
-      case "minivan":
-        return "Mini-Van";
-      case "van":
-        return "Van";
-      case "onibus":
-        return "Bus";
-      default:
-        return value;
-    }
+    const normalizedValue = String(value || "").trim();
+    const translatedValue = t(`vehicleTypes.${normalizedValue}`);
+    return translatedValue === `vehicleTypes.${normalizedValue}` ? normalizedValue : translatedValue;
   }
 
   function formatVehicleTypeTableValue(value) {
-    switch (value) {
-      case "carro":
-        return "car";
-      case "minivan":
-        return "minivan";
-      case "van":
-        return "van";
-      case "onibus":
-        return "bus";
-      default:
-        return String(value || "").toLowerCase();
-    }
+    return String(mapVehicleTypeLabel(value) || value || "").toLowerCase();
   }
 
   function formatRouteTableValue(routeKind) {
@@ -557,6 +681,21 @@
     const occupiedSeats = Math.max(0, Number(assignedCount) || 0);
     const totalSeats = Math.max(0, Number(vehicle && vehicle.lugares) || 0);
     return `${occupiedSeats}/${totalSeats}`;
+  }
+
+  function getEffectiveWorkToHomeDepartureTime(dashboard, fallbackTime) {
+    const dashboardTime = String(dashboard && dashboard.work_to_home_departure_time || "").trim();
+    if (/^\d{2}:\d{2}$/.test(dashboardTime)) {
+      return dashboardTime;
+    }
+
+    const normalizedFallback = String(fallbackTime || "").trim();
+    return /^\d{2}:\d{2}$/.test(normalizedFallback) ? normalizedFallback : DEFAULT_WORK_TO_HOME_TIME;
+  }
+
+  function getVehicleDepartureTime(vehicle) {
+    const departureTime = String(vehicle && vehicle.departure_time || "").trim();
+    return /^\d{2}:\d{2}$/.test(departureTime) ? departureTime : "";
   }
 
   function shouldHighlightRequestName(assignmentStatus) {
@@ -589,21 +728,25 @@
   }
 
   function mapScopeTitle(scope) {
-    if (scope === "regular") {
-      return "Regular";
-    }
-    if (scope === "weekend") {
-      return "Weekend";
-    }
-    return "Extra";
+    return t(`modal.scope.${scope === "regular" || scope === "weekend" ? scope : "extra"}`);
   }
 
   function getRouteKindLabel(routeKind) {
-    return ROUTE_KIND_LABELS[routeKind] || routeKind;
+    const routeKey = ROUTE_KIND_KEYS[routeKind];
+    return routeKey ? t(routeKey) : routeKind;
   }
 
   function getModalScopeNote(scope) {
-    return MODAL_SCOPE_NOTES[scope] || MODAL_SCOPE_NOTES.regular;
+    const noteKey = MODAL_SCOPE_NOTE_KEYS[scope] || MODAL_SCOPE_NOTE_KEYS.regular;
+    return t(noteKey);
+  }
+
+  function getRequestTitle(kind) {
+    return t(REQUEST_TITLE_KEYS[kind] || REQUEST_TITLE_KEYS.regular);
+  }
+
+  function getRequestLabel(kind) {
+    return t(REQUEST_LABEL_KEYS[kind] || REQUEST_LABEL_KEYS.regular);
   }
 
   function createEmptyState(message) {
@@ -633,12 +776,31 @@
       realtimeConnected: false,
       realtimeEventStream: null,
       realtimeRefreshTimer: null,
+      settingsLoaded: false,
+      settingsLoading: false,
+      settingsSaving: false,
+      languageLoading: false,
+      workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
+      routeTimeEditorOpen: false,
+      routeTimeSaving: false,
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const selectionBanner = document.querySelector("[data-selection-banner]");
     const selectionText = document.querySelector("[data-selection-text]");
     const clearSelectionButton = document.querySelector("[data-clear-selection]");
     const rejectSelectionButton = document.querySelector("[data-reject-selection]");
+    const transportTopbar = document.querySelector("[data-transport-topbar]");
+    const settingsTrigger = document.querySelector("[data-open-settings-modal]");
+    const settingsTitleAnchor = document.querySelector("[data-settings-title-anchor]");
+    const settingsRouteAnchor = document.querySelector("[data-settings-route-anchor]");
+    const settingsModal = document.querySelector("[data-settings-modal]");
+    const settingsPreferencesTitle = document.querySelector("[data-settings-preferences-title]");
+    const settingsLanguageLabel = document.querySelector("[data-settings-language-label]");
+    const settingsLanguageSelect = document.querySelector("[data-settings-language-select]");
+    const settingsTimeLabel = document.querySelector("[data-settings-time-label]");
+    const settingsTimeInput = document.querySelector("[data-settings-work-to-home-time]");
+    const settingsTimeNote = document.querySelector("[data-settings-time-note]");
+    const settingsCloseButton = document.querySelector("[data-settings-close-button]");
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
     const vehicleForm = document.querySelector("[data-vehicle-form]");
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
@@ -646,7 +808,17 @@
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
+    const routeSlot = document.querySelector("[data-route-slot]");
     const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
+    const routeOptionElements = routeInputs
+      .map(function (inputElement) {
+        return inputElement.closest(".transport-route-option");
+      })
+      .filter(function (optionElement, optionIndex, optionList) {
+        return !!optionElement && optionList.indexOf(optionElement) === optionIndex;
+      });
+    const routeTimePopover = document.querySelector("[data-route-time-popover]");
+    const routeTimeInput = document.querySelector("[data-route-time-input]");
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
@@ -674,6 +846,390 @@
         toggleVehicleViewMode(scope);
       });
     });
+
+    function refreshDatePanelLabels() {
+      const selectedDate = dateStore.getValue();
+      document.querySelectorAll("[data-date-label]").forEach(function (labelElement) {
+        labelElement.textContent = formatTransportDate(selectedDate);
+        labelElement.dataset.dateState = getTransportDateState(selectedDate);
+      });
+    }
+
+    function applyStaticTranslations() {
+      if (typeof document === "undefined") {
+        return;
+      }
+
+      document.documentElement.lang = getActiveLanguageCode();
+      document.title = t("document.title");
+
+      const brandKicker = document.querySelector(".transport-topbar-brand .transport-topbar-kicker");
+      const brandTitle = document.querySelector(".transport-topbar-brand .transport-topbar-title");
+      const supportKicker = document.querySelector(".transport-topbar-support .transport-topbar-kicker");
+      const routeLabels = document.querySelectorAll(".transport-topbar-route-toggle .transport-route-option span");
+      const authLabels = document.querySelectorAll(".transport-auth-label");
+      const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title");
+      const paneLinks = document.querySelectorAll(".transport-pane-title-link");
+      const addVehicleButtons = document.querySelectorAll("[data-open-vehicle-modal]");
+      const modalFieldLabels = vehicleForm ? vehicleForm.querySelectorAll(".transport-field > span") : [];
+      const weekendLabels = weekendPersistenceFields.map(function (fieldElement) {
+        return fieldElement.querySelector("span");
+      });
+      const modalActionButtons = vehicleForm ? vehicleForm.querySelectorAll(".transport-modal-actions button") : [];
+      const typeOptions = vehicleForm && vehicleForm.elements.tipo ? Array.from(vehicleForm.elements.tipo.options) : [];
+      const routeOptions = vehicleForm && vehicleForm.elements.route_kind ? Array.from(vehicleForm.elements.route_kind.options) : [];
+
+      if (brandKicker) {
+        brandKicker.textContent = t("topbar.brand");
+      }
+      if (brandTitle) {
+        brandTitle.textContent = t("topbar.allocationBoard");
+      }
+      if (supportKicker) {
+        supportKicker.textContent = t("topbar.systemSupport");
+      }
+      if (routeLabels[0]) {
+        routeLabels[0].textContent = getRouteKindLabel("home_to_work");
+      }
+      if (routeLabels[1]) {
+        routeLabels[1].textContent = getRouteKindLabel("work_to_home");
+      }
+      if (authLabels[0]) {
+        authLabels[0].textContent = t("auth.key");
+      }
+      if (authLabels[1]) {
+        authLabels[1].textContent = t("auth.pass");
+      }
+
+      const userListTitle = document.querySelector("#tela01main_esq .transport-pane-title");
+      if (userListTitle) {
+        userListTitle.textContent = t("panes.userList");
+      }
+      if (requestSectionTitles[0]) {
+        requestSectionTitles[0].textContent = getRequestTitle("extra");
+      }
+      if (requestSectionTitles[1]) {
+        requestSectionTitles[1].textContent = getRequestTitle("weekend");
+      }
+      if (requestSectionTitles[2]) {
+        requestSectionTitles[2].textContent = getRequestTitle("regular");
+      }
+      if (paneLinks[0]) {
+        paneLinks[0].textContent = t("vehicles.lists.extra");
+      }
+      if (paneLinks[1]) {
+        paneLinks[1].textContent = t("vehicles.lists.weekend");
+      }
+      if (paneLinks[2]) {
+        paneLinks[2].textContent = t("vehicles.lists.regular");
+      }
+      addVehicleButtons.forEach(function (buttonElement) {
+        const scope = buttonElement.dataset.openVehicleModal;
+        if (!scope) {
+          return;
+        }
+        buttonElement.setAttribute("aria-label", t(`vehicles.addAria.${scope}`));
+      });
+
+      const selectedRequestLabel = document.querySelector(".transport-selection-label");
+      if (selectedRequestLabel) {
+        selectedRequestLabel.textContent = t("selection.selectedRequest");
+      }
+      if (rejectSelectionButton) {
+        rejectSelectionButton.textContent = t("selection.rejectSelected");
+      }
+      if (clearSelectionButton) {
+        clearSelectionButton.textContent = t("selection.clear");
+      }
+
+      if (modalScopeLabel) {
+        modalScopeLabel.textContent = mapScopeTitle(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
+      }
+      const modalTitle = document.getElementById("transport-vehicle-modal-title");
+      if (modalTitle) {
+        modalTitle.textContent = t("modal.title");
+      }
+      document.querySelectorAll("[data-close-vehicle-modal]").forEach(function (buttonElement) {
+        if (buttonElement.classList.contains("transport-modal-close")) {
+          buttonElement.setAttribute("aria-label", t("modal.closeVehicleAria"));
+          return;
+        }
+        buttonElement.textContent = t("modal.actions.cancel");
+      });
+      if (modalFieldLabels[0]) {
+        modalFieldLabels[0].textContent = t("modal.fields.type");
+      }
+      if (modalFieldLabels[1]) {
+        modalFieldLabels[1].textContent = t("modal.fields.plate");
+      }
+      if (modalFieldLabels[2]) {
+        modalFieldLabels[2].textContent = t("modal.fields.color");
+      }
+      if (modalFieldLabels[3]) {
+        modalFieldLabels[3].textContent = t("modal.fields.places");
+      }
+      if (modalFieldLabels[4]) {
+        modalFieldLabels[4].textContent = t("modal.fields.tolerance");
+      }
+      if (modalFieldLabels[5]) {
+        modalFieldLabels[5].textContent = t("modal.fields.route");
+      }
+      if (typeOptions[0]) {
+        typeOptions[0].text = t("modal.options.car");
+      }
+      if (typeOptions[1]) {
+        typeOptions[1].text = t("modal.options.minivan");
+      }
+      if (typeOptions[2]) {
+        typeOptions[2].text = t("modal.options.van");
+      }
+      if (typeOptions[3]) {
+        typeOptions[3].text = t("modal.options.bus");
+      }
+      if (routeOptions[0]) {
+        routeOptions[0].text = getRouteKindLabel("home_to_work");
+      }
+      if (routeOptions[1]) {
+        routeOptions[1].text = getRouteKindLabel("work_to_home");
+      }
+      if (weekendLabels[0]) {
+        weekendLabels[0].textContent = t("modal.fields.everySaturday");
+      }
+      if (weekendLabels[1]) {
+        weekendLabels[1].textContent = t("modal.fields.everySunday");
+      }
+      if (modalActionButtons[1]) {
+        modalActionButtons[1].textContent = t("modal.actions.save");
+      }
+
+      if (settingsTrigger) {
+        settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
+      }
+      const settingsTitle = document.getElementById("transport-settings-modal-title");
+      if (settingsTitle) {
+        settingsTitle.textContent = t("settings.title");
+      }
+      document.querySelectorAll("[data-close-settings-modal]").forEach(function (buttonElement) {
+        if (buttonElement.classList.contains("transport-modal-close")) {
+          buttonElement.setAttribute("aria-label", t("settings.closeAria"));
+          return;
+        }
+        buttonElement.textContent = t("settings.close");
+      });
+      if (settingsPreferencesTitle) {
+        settingsPreferencesTitle.textContent = t("settings.preferences");
+      }
+      if (settingsLanguageLabel) {
+        settingsLanguageLabel.textContent = t("settings.languages");
+      }
+      if (settingsTimeLabel) {
+        settingsTimeLabel.textContent = t("settings.workToHomeTime");
+      }
+      if (settingsTimeNote) {
+        settingsTimeNote.textContent = t("settings.workToHomeNote");
+      }
+      if (settingsCloseButton) {
+        settingsCloseButton.textContent = t("settings.close");
+      }
+
+      const transportLayout = document.getElementById("tela01");
+      if (transportLayout) {
+        transportLayout.setAttribute("aria-label", t("layout.transportLayout"));
+      }
+      if (transportTopbar) {
+        transportTopbar.setAttribute("aria-label", t("layout.quickActions"));
+      }
+      const routeGroup = document.querySelector(".transport-topbar-route-toggle");
+      if (routeGroup) {
+        routeGroup.setAttribute("aria-label", t("layout.selectedTransportRoute"));
+      }
+      const datePanel = document.querySelector("[data-date-panel]");
+      if (datePanel) {
+        datePanel.setAttribute("aria-label", t("layout.selectedServiceDate"));
+      }
+      const previousDateButton = document.querySelector('[data-date-shift="-1"]');
+      if (previousDateButton) {
+        previousDateButton.setAttribute("aria-label", t("layout.previousServiceDate"));
+      }
+      const nextDateButton = document.querySelector('[data-date-shift="1"]');
+      if (nextDateButton) {
+        nextDateButton.setAttribute("aria-label", t("layout.nextServiceDate"));
+      }
+      const dateLink = document.querySelector("[data-date-link]");
+      if (dateLink) {
+        dateLink.setAttribute("aria-label", t("layout.returnServiceDateToToday"));
+      }
+      const authArea = document.querySelector(".transport-topbar-auth");
+      if (authArea) {
+        authArea.setAttribute("aria-label", t("layout.transportAccessFields"));
+      }
+      if (requestUserButton) {
+        requestUserButton.setAttribute("aria-label", t("layout.requestUserCreation"));
+      }
+      const layoutDividers = document.querySelectorAll("[data-resize]");
+      if (layoutDividers[0]) {
+        layoutDividers[0].setAttribute("aria-label", t("layout.resizeMenuMain"));
+      }
+      const mainPanels = document.getElementById("tela01principal");
+      if (mainPanels) {
+        mainPanels.setAttribute("aria-label", t("layout.transportMainPanels"));
+      }
+      const requestSections = document.querySelectorAll(".transport-request-section");
+      if (requestSections[0]) {
+        requestSections[0].setAttribute("aria-label", t("layout.extraCarRequests"));
+      }
+      if (requestSections[1]) {
+        requestSections[1].setAttribute("aria-label", t("layout.weekendCarRequests"));
+      }
+      if (requestSections[2]) {
+        requestSections[2].setAttribute("aria-label", t("layout.regularCarRequests"));
+      }
+      if (layoutDividers[1]) {
+        layoutDividers[1].setAttribute("aria-label", t("layout.resizeColumns"));
+      }
+      const carPanels = document.getElementById("tela01main_dir");
+      if (carPanels) {
+        carPanels.setAttribute("aria-label", t("layout.transportCarPanels"));
+      }
+      if (layoutDividers[2]) {
+        layoutDividers[2].setAttribute("aria-label", t("layout.resizeExtraWeekend"));
+      }
+      if (layoutDividers[3]) {
+        layoutDividers[3].setAttribute("aria-label", t("layout.resizeWeekendRegular"));
+      }
+      const footer = document.querySelector(".transport-footer-status");
+      if (footer) {
+        footer.setAttribute("aria-label", t("layout.transportNotifications"));
+      }
+
+      refreshDatePanelLabels();
+      syncVehicleModalFields(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
+    }
+
+    function populateLanguageOptions() {
+      if (!settingsLanguageSelect) {
+        return;
+      }
+
+      clearElement(settingsLanguageSelect);
+      transportLanguages.forEach(function (languageItem) {
+        const optionElement = document.createElement("option");
+        optionElement.value = languageItem.code;
+        optionElement.textContent = languageItem.label;
+        settingsLanguageSelect.appendChild(optionElement);
+      });
+    }
+
+    function syncSettingsControls() {
+      if (settingsLanguageSelect) {
+        settingsLanguageSelect.value = getActiveLanguageCode();
+        settingsLanguageSelect.disabled = state.languageLoading;
+      }
+      if (settingsTimeInput) {
+        settingsTimeInput.value = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
+        settingsTimeInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+      }
+    }
+
+    function syncRouteTimeControls() {
+      const isWorkToHomeSelected = getSelectedRouteKind() === "work_to_home";
+      const canEditRouteTime = state.isAuthenticated && isWorkToHomeSelected;
+      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
+
+      if (!canEditRouteTime) {
+        state.routeTimeEditorOpen = false;
+      }
+
+      if (routeTimeInput) {
+        routeTimeInput.value = effectiveDepartureTime;
+        routeTimeInput.disabled = !canEditRouteTime || state.routeTimeSaving || state.isLoading;
+        routeTimeInput.setAttribute(
+          "aria-label",
+          `${t("settings.workToHomeTime")} ${formatTransportDate(dateStore.getValue())}`.trim()
+        );
+        routeTimeInput.title = effectiveDepartureTime;
+      }
+
+      if (routeTimePopover) {
+        routeTimePopover.hidden = !canEditRouteTime || !state.routeTimeEditorOpen;
+      }
+    }
+
+    function closeRouteTimePopover() {
+      state.routeTimeEditorOpen = false;
+      syncRouteTimeControls();
+    }
+
+    function openRouteTimePopover() {
+      if (!state.isAuthenticated) {
+        setStatus(getTransportLockedMessage(), "warning");
+        syncRouteTimeControls();
+        return;
+      }
+      if (getSelectedRouteKind() !== "work_to_home") {
+        closeRouteTimePopover();
+        return;
+      }
+
+      state.routeTimeEditorOpen = true;
+      syncRouteTimeControls();
+      if (routeTimeInput && typeof routeTimeInput.focus === "function") {
+        globalScope.setTimeout(function () {
+          routeTimeInput.focus();
+        }, 0);
+      }
+    }
+
+    function toggleRouteTimePopover() {
+      if (state.routeTimeEditorOpen) {
+        closeRouteTimePopover();
+        return;
+      }
+      openRouteTimePopover();
+    }
+
+    function saveRouteTimeForSelectedDate(nextWorkToHomeTime) {
+      const normalizedTime = String(nextWorkToHomeTime || "").trim();
+      if (!/^\d{2}:\d{2}$/.test(normalizedTime)) {
+        syncRouteTimeControls();
+        return Promise.resolve(null);
+      }
+      if (!state.isAuthenticated) {
+        setStatus(getTransportLockedMessage(), "warning");
+        syncRouteTimeControls();
+        return Promise.resolve(null);
+      }
+
+      state.routeTimeSaving = true;
+      syncRouteTimeControls();
+      return requestJson("/api/transport/date-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          service_date: getCurrentServiceDateIso(),
+          work_to_home_time: normalizedTime,
+        }),
+      })
+        .then(function (response) {
+          if (state.dashboard) {
+            state.dashboard = Object.assign({}, state.dashboard, {
+              work_to_home_departure_time:
+                response && response.work_to_home_time ? response.work_to_home_time : normalizedTime,
+            });
+          }
+          return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
+            setStatus(t("status.settingsSaved"), "success");
+            return response;
+          });
+        })
+        .catch(function (error) {
+          handleProtectedRequestError(error, t("status.couldNotSaveSettings"));
+          return null;
+        })
+        .finally(function () {
+          state.routeTimeSaving = false;
+          syncRouteTimeControls();
+        });
+    }
 
     function getVehicleViewMode(scope) {
       return state.vehicleViewModes[scope] || "grid";
@@ -721,6 +1277,8 @@
       if (requestUserButton) {
         requestUserButton.hidden = state.isAuthenticated;
       }
+      syncSettingsControls();
+      syncRouteTimeControls();
     }
 
     function normalizeAuthKeyValue() {
@@ -824,6 +1382,8 @@
         state.expandedVehicleKey = null;
         clearDashboard();
       }
+
+      syncSettingsControls();
     }
 
     function clearTransportSession(message) {
@@ -831,15 +1391,15 @@
       clearPendingAuthVerification();
       setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
       requestJson("/api/transport/auth/logout", { method: "POST" }).catch(function () {});
-      setStatus(message || TRANSPORT_LOCKED_MESSAGE, "warning");
+      setStatus(message || getTransportLockedMessage(), "warning");
     }
 
     function handleProtectedRequestError(error, fallbackMessage) {
       if (error && Number(error.status) === 401) {
-        clearTransportSession(TRANSPORT_SESSION_EXPIRED_MESSAGE);
+        clearTransportSession(getTransportSessionExpiredMessage());
         return true;
       }
-      setStatus((error && error.message) || fallbackMessage, "error");
+      setStatus(localizeTransportApiMessage(error && error.message) || fallbackMessage, "error");
       if (error && (Number(error.status) === 404 || Number(error.status) === 409)) {
         requestDashboardRefresh({ announce: false });
       }
@@ -850,7 +1410,113 @@
       if (typeof globalScope.open === "function") {
         globalScope.open("../admin", "_blank", "noopener");
       }
-      setStatus("Open the admin page to request a user creation.", "info");
+      setStatus(t("status.openAdminToRequestUser"), "info");
+    }
+
+    function loadTransportSettings(options) {
+      const nextOptions = options || {};
+      if (!state.isAuthenticated) {
+        state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
+        syncSettingsControls();
+        return Promise.resolve(null);
+      }
+
+      state.settingsLoading = true;
+      syncSettingsControls();
+      return requestJson("/api/transport/settings")
+        .then(function (response) {
+          state.settingsLoaded = true;
+          state.workToHomeTime = String(
+            response && response.work_to_home_time ? response.work_to_home_time : DEFAULT_WORK_TO_HOME_TIME
+          );
+          return response;
+        })
+        .catch(function (error) {
+          handleProtectedRequestError(error, t("status.couldNotLoadSettings"));
+          if (nextOptions.silent) {
+            return null;
+          }
+          return null;
+        })
+        .finally(function () {
+          state.settingsLoading = false;
+          syncSettingsControls();
+          syncRouteTimeControls();
+        });
+    }
+
+    function saveTransportSettings(nextWorkToHomeTime) {
+      const normalizedTime = String(nextWorkToHomeTime || "").trim();
+      if (!/^\d{2}:\d{2}$/.test(normalizedTime)) {
+        syncSettingsControls();
+        return Promise.resolve(null);
+      }
+      if (!state.isAuthenticated) {
+        setStatus(getTransportLockedMessage(), "warning");
+        syncSettingsControls();
+        return Promise.resolve(null);
+      }
+
+      state.settingsSaving = true;
+      syncSettingsControls();
+      return requestJson("/api/transport/settings", {
+        method: "PUT",
+        body: JSON.stringify({ work_to_home_time: normalizedTime }),
+      })
+        .then(function (response) {
+          state.settingsLoaded = true;
+          state.workToHomeTime = String(
+            response && response.work_to_home_time ? response.work_to_home_time : normalizedTime
+          );
+          return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
+            setStatus(t("status.settingsSaved"), "success");
+            return response;
+          });
+        })
+        .catch(function (error) {
+          handleProtectedRequestError(error, t("status.couldNotSaveSettings"));
+          return null;
+        })
+        .finally(function () {
+          state.settingsSaving = false;
+          syncSettingsControls();
+        });
+    }
+
+    function switchTransportLanguage(nextLanguageCode) {
+      const resolvedCode = resolveLanguageCode(nextLanguageCode);
+      state.languageLoading = true;
+      syncSettingsControls();
+      setStatus(t("status.switchingLanguage"), "info");
+
+      return new Promise(function (resolve) {
+        const finishSwitch = function () {
+          setActiveLanguageCode(resolvedCode);
+          applyStaticTranslations();
+          if (state.dashboard) {
+            renderDashboard();
+          } else {
+            clearDashboard();
+          }
+          state.languageLoading = false;
+          syncSettingsControls();
+          syncRouteTimeControls();
+          scheduleSettingsTriggerPositionSync();
+          if (state.isAuthenticated) {
+            setStatus(t("status.dashboardUpdated", { route: getRouteKindLabel(getSelectedRouteKind()) }), "info");
+          } else {
+            setStatus(getTransportLockedMessage(), "warning");
+          }
+          resolve();
+        };
+
+        if (typeof globalScope.requestAnimationFrame === "function") {
+          globalScope.requestAnimationFrame(finishSwitch);
+          return;
+        }
+
+        finishSwitch();
+      });
     }
 
     function verifyTransportCredentials(requestToken) {
@@ -871,19 +1537,22 @@
 
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, {});
-            setStatus(response.message || "Transport access granted.", "success");
-            return loadDashboard(dateStore.getValue(), { announce: false });
+            setStatus(localizeTransportApiMessage(response.message) || t("status.accessGranted"), "success");
+            return Promise.all([
+              loadDashboard(dateStore.getValue(), { announce: false }),
+              loadTransportSettings({ silent: true }),
+            ]);
           }
 
           setAuthenticationState(false, null, {});
-          setStatus((response && response.message) || TRANSPORT_LOCKED_MESSAGE, "warning");
+          setStatus(localizeTransportApiMessage(response && response.message) || getTransportLockedMessage(), "warning");
           return null;
         })
         .catch(function (error) {
           if (requestToken !== state.authVerifyToken) {
             return null;
           }
-          setStatus((error && error.message) || "Could not verify transport access.", "error");
+          setStatus(localizeTransportApiMessage(error && error.message) || t("status.couldNotVerify"), "error");
           return null;
         });
     }
@@ -895,7 +1564,7 @@
       if (chave.length !== 4 || !senha) {
         state.authVerifyToken += 1;
         setAuthenticationState(false, null, {});
-        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        setStatus(getTransportLockedMessage(), "warning");
         return;
       }
 
@@ -912,7 +1581,7 @@
         return;
       }
       event.preventDefault();
-      clearTransportSession("Transport access reset.");
+      clearTransportSession(t("status.accessReset"));
       const fieldElement = event.currentTarget;
       globalScope.setTimeout(function () {
         if (fieldElement && typeof fieldElement.focus === "function") {
@@ -926,17 +1595,20 @@
         .then(function (response) {
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, { fillKey: true });
-            setStatus(DEFAULT_STATUS_MESSAGE, "info");
-            return loadDashboard(dateStore.getValue(), { announce: false });
+            setStatus(getDefaultStatusMessage(), "info");
+            return Promise.all([
+              loadDashboard(dateStore.getValue(), { announce: false }),
+              loadTransportSettings({ silent: true }),
+            ]);
           }
 
           setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
-          setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+          setStatus(getTransportLockedMessage(), "warning");
           return null;
         })
         .catch(function () {
           setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
-          setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+          setStatus(getTransportLockedMessage(), "warning");
           return null;
         });
     }
@@ -955,6 +1627,59 @@
       requestUserButton.addEventListener("click", openUserCreationRequest);
     }
 
+    if (settingsLanguageSelect) {
+      settingsLanguageSelect.addEventListener("change", function () {
+        void switchTransportLanguage(settingsLanguageSelect.value);
+      });
+    }
+
+    if (settingsTimeInput) {
+      settingsTimeInput.addEventListener("change", function () {
+        void saveTransportSettings(settingsTimeInput.value);
+      });
+    }
+
+    if (routeTimeInput) {
+      routeTimeInput.addEventListener("change", function () {
+        void saveRouteTimeForSelectedDate(routeTimeInput.value);
+      });
+    }
+
+    routeOptionElements.forEach(function (optionElement) {
+      optionElement.addEventListener("click", function () {
+        const inputElement = optionElement.querySelector("[data-route-kind]");
+        if (!inputElement) {
+          return;
+        }
+
+        const clickedRouteKind = inputElement.value || "home_to_work";
+        const isAlreadySelected = clickedRouteKind === getSelectedRouteKind() && inputElement.checked;
+        if (clickedRouteKind === "work_to_home" && isAlreadySelected) {
+          toggleRouteTimePopover();
+          return;
+        }
+
+        closeRouteTimePopover();
+      });
+    });
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("click", function (event) {
+        if (!state.routeTimeEditorOpen || !routeSlot) {
+          return;
+        }
+        if (routeSlot.contains(event.target)) {
+          return;
+        }
+        closeRouteTimePopover();
+      });
+    }
+
+    populateLanguageOptions();
+    applyStaticTranslations();
+    syncSettingsControls();
+    syncRouteTimeControls();
+
     routeInputs.forEach(function (inputElement) {
       if (inputElement.checked) {
         state.selectedRouteKind = inputElement.value || state.selectedRouteKind;
@@ -963,6 +1688,7 @@
         if (!inputElement.checked) {
           return;
         }
+        closeRouteTimePopover();
         state.selectedRouteKind = inputElement.value || "home_to_work";
         loadDashboard(dateStore.getValue());
       });
@@ -990,8 +1716,24 @@
           route_kind: getSelectedRouteKind(),
           status: "rejected",
         }).catch(function (error) {
-          handleProtectedRequestError(error, "Could not reject the selected request.");
+          handleProtectedRequestError(error, t("status.couldNotRejectSelectedRequest"));
         });
+      });
+    }
+
+    if (settingsTrigger) {
+      settingsTrigger.addEventListener("click", openSettingsModal);
+    }
+
+    document.querySelectorAll("[data-close-settings-modal]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", closeSettingsModal);
+    });
+
+    if (settingsModal) {
+      settingsModal.addEventListener("click", function (event) {
+        if (event.target === settingsModal) {
+          closeSettingsModal();
+        }
       });
     }
 
@@ -1023,7 +1765,7 @@
         clearVehicleModalFeedback();
         if (payload.service_scope === "weekend" && !payload.every_saturday && !payload.every_sunday) {
           setVehicleModalFeedback(
-            "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.",
+            t("warnings.weekendPersistence"),
             "error"
           );
           return;
@@ -1038,12 +1780,12 @@
         })
           .then(function () {
             closeVehicleModal();
-            setStatus("Vehicle saved successfully.", "success");
+            setStatus(t("status.vehicleSaved"), "success");
             return loadDashboard(dateStore.getValue(), { announce: false });
           })
           .catch(function (error) {
-            setVehicleModalFeedback((error && error.message) || "Could not save vehicle.", "error");
-            handleProtectedRequestError(error, "Could not save vehicle.");
+            setVehicleModalFeedback(localizeTransportApiMessage(error && error.message) || t("status.couldNotSaveVehicle"), "error");
+            handleProtectedRequestError(error, t("status.couldNotSaveVehicle"));
           })
           .finally(function () {
             if (submitButton) {
@@ -1053,12 +1795,14 @@
       });
     }
 
+    scheduleSettingsTriggerPositionSync();
+
     function setStatus(message, tone) {
       if (!statusMessage) {
         return;
       }
 
-      statusMessage.textContent = message || DEFAULT_STATUS_MESSAGE;
+      statusMessage.textContent = message || getDefaultStatusMessage();
       statusMessage.dataset.tone = tone || "info";
     }
 
@@ -1084,6 +1828,64 @@
       setVehicleModalFeedback("", "error");
     }
 
+    function syncSettingsTriggerPosition() {
+      if (!settingsTrigger || !transportTopbar || !settingsTitleAnchor || !settingsRouteAnchor) {
+        return;
+      }
+
+      if (typeof globalScope.matchMedia === "function" && globalScope.matchMedia("(max-width: 860px)").matches) {
+        settingsTrigger.style.left = "";
+        settingsTrigger.style.top = "";
+        return;
+      }
+
+      const topbarRect = transportTopbar.getBoundingClientRect();
+      const titleRect = settingsTitleAnchor.getBoundingClientRect();
+      const routeRect = settingsRouteAnchor.getBoundingClientRect();
+      const triggerWidth = settingsTrigger.offsetWidth || 42;
+      const triggerHeight = settingsTrigger.offsetHeight || 42;
+      const left = (titleRect.right + routeRect.left) / 2 - topbarRect.left - triggerWidth / 2;
+      const top = (routeRect.top + routeRect.bottom) / 2 - topbarRect.top - triggerHeight / 2;
+
+      settingsTrigger.style.left = `${Math.max(0, left)}px`;
+      settingsTrigger.style.top = `${Math.max(0, top)}px`;
+    }
+
+    function scheduleSettingsTriggerPositionSync() {
+      if (typeof globalScope.requestAnimationFrame === "function") {
+        globalScope.requestAnimationFrame(syncSettingsTriggerPosition);
+        return;
+      }
+      syncSettingsTriggerPosition();
+    }
+
+    function openSettingsModal() {
+      if (!settingsModal) {
+        return;
+      }
+      if (state.isAuthenticated && !state.settingsLoaded) {
+        void loadTransportSettings({ silent: true });
+      }
+      syncSettingsControls();
+      settingsModal.hidden = false;
+      if (settingsTrigger) {
+        settingsTrigger.setAttribute("aria-expanded", "true");
+      }
+    }
+
+    function closeSettingsModal() {
+      if (!settingsModal) {
+        return;
+      }
+      settingsModal.hidden = true;
+      if (settingsTrigger) {
+        settingsTrigger.setAttribute("aria-expanded", "false");
+        if (typeof settingsTrigger.focus === "function") {
+          settingsTrigger.focus();
+        }
+      }
+    }
+
     function syncRouteInputs() {
       routeInputs.forEach(function (inputElement) {
         inputElement.checked = inputElement.value === state.selectedRouteKind;
@@ -1100,16 +1902,16 @@
 
     function canOpenVehicleModal(scope) {
       if (!state.isAuthenticated) {
-        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        setStatus(getTransportLockedMessage(), "warning");
         return false;
       }
       const selectedDate = dateStore.getValue();
       if (scope === "regular" && isWeekendDate(selectedDate)) {
-        setStatus("Regular vehicles can only be created from Monday to Friday.", "warning");
+        setStatus(t("warnings.regularWeekdayOnly"), "warning");
         return false;
       }
       if (scope === "weekend" && !isWeekendDate(selectedDate)) {
-        setStatus("Weekend vehicles can only be created on Saturdays or Sundays.", "warning");
+        setStatus(t("warnings.weekendWeekendOnly"), "warning");
         return false;
       }
       return true;
@@ -1257,18 +2059,18 @@
       indicator.classList.add(`is-${awarenessState}`);
       if (awarenessState === "aware") {
         indicator.textContent = "✓";
-        indicator.setAttribute("aria-label", "Passenger acknowledged transport confirmation");
+        indicator.setAttribute("aria-label", t("misc.passengerAwareAria"));
         return indicator;
       }
 
       indicator.textContent = "◷";
-      indicator.setAttribute("aria-label", "Awaiting passenger acknowledgement");
+      indicator.setAttribute("aria-label", t("misc.passengerPendingAria"));
       return indicator;
     }
 
     function createVehicleDetailsPanel(vehicle, assignedRows) {
       const detailsPanel = createNode("div", "transport-vehicle-details");
-      const deleteButton = createNode("button", "transport-vehicle-delete-button", "Delete");
+      const deleteButton = createNode("button", "transport-vehicle-delete-button", t("misc.delete"));
       const passengerTable = createNode("table", "transport-vehicle-passenger-table");
       const tableBody = createNode("tbody");
 
@@ -1316,7 +2118,7 @@
       }
 
       selectionBanner.hidden = false;
-      selectionText.textContent = `${REQUEST_LABELS[selectedRequest.request_kind]} ${selectedRequest.requested_time} - ${selectedRequest.nome}`;
+      selectionText.textContent = `${getRequestLabel(selectedRequest.request_kind)} ${selectedRequest.requested_time} - ${selectedRequest.nome}`;
       if (rejectSelectionButton) {
         rejectSelectionButton.disabled = selectedRequest.assignment_status === "rejected";
       }
@@ -1325,7 +2127,7 @@
     function createRequestMetaLine(requestRow) {
       const metaParts = [];
       if (requestRow.assigned_vehicle) {
-        metaParts.push(`Assigned to ${requestRow.assigned_vehicle.placa}`);
+        metaParts.push(t("misc.assignedTo", { plate: requestRow.assigned_vehicle.placa }));
       }
       if (requestRow.response_message) {
         metaParts.push(requestRow.response_message);
@@ -1343,7 +2145,7 @@
         }
 
         if (!requestRows.length) {
-          container.appendChild(createEmptyState(`No rows in ${REQUEST_TITLES[kind]}.`));
+          container.appendChild(createEmptyState(t("empty.noRows", { title: getRequestTitle(kind) })));
           return;
         }
 
@@ -1357,8 +2159,8 @@
 
           const timeCell = createNode("span", "transport-request-time", requestRow.requested_time);
           const nameCell = createNode("span", "transport-request-primary", requestRow.nome);
-          const addressCell = createNode("span", "transport-request-secondary", requestRow.end_rua || "Address pending");
-          const zipCell = createNode("span", "transport-request-secondary", requestRow.zip || "ZIP pending");
+          const addressCell = createNode("span", "transport-request-secondary", requestRow.end_rua || t("misc.addressPending"));
+          const zipCell = createNode("span", "transport-request-secondary", requestRow.zip || t("misc.zipPending"));
           const metaText = createRequestMetaLine(requestRow);
 
           if (shouldHighlightRequestName(requestRow.assignment_status)) {
@@ -1409,10 +2211,10 @@
         method: "POST",
         body: JSON.stringify(payload),
       }).then(function () {
-        setStatus("Transport allocation updated.", "success");
+        setStatus(t("status.allocationUpdated"), "success");
         return loadDashboard(dateStore.getValue(), { announce: false });
       }).catch(function (error) {
-        if (handleProtectedRequestError(error, "Could not update the transport allocation.")) {
+        if (handleProtectedRequestError(error, t("status.couldNotUpdateAllocation"))) {
           return null;
         }
         throw error;
@@ -1421,7 +2223,7 @@
 
     function removeVehicleFromRoute(vehicle) {
       if (!vehicle || vehicle.schedule_id === null || vehicle.schedule_id === undefined) {
-        setStatus("This vehicle cannot be removed from the selected route.", "error");
+        setStatus(t("warnings.vehicleCannotBeRemoved"), "error");
         return Promise.resolve();
       }
 
@@ -1434,11 +2236,11 @@
         }
       )
         .then(function () {
-          setStatus("Vehicle deleted from the database.", "success");
+          setStatus(t("status.vehicleDeleted"), "success");
           return loadDashboard(dateStore.getValue(), { announce: false });
         })
         .catch(function (error) {
-          handleProtectedRequestError(error, "Could not delete the selected vehicle.");
+          handleProtectedRequestError(error, t("status.couldNotDeleteVehicle"));
         });
     }
 
@@ -1446,6 +2248,7 @@
       const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
+      const departureTime = getVehicleDepartureTime(vehicle);
       const isRouteCompatible =
         scope !== "extra" || !vehicle.route_kind || vehicle.route_kind === getSelectedRouteKind();
       const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope && isRouteCompatible;
@@ -1459,7 +2262,10 @@
       vehicleButton.type = "button";
       vehicleButton.dataset.vehicleId = String(vehicle.id);
       vehicleButton.dataset.vehicleScope = scope;
-      vehicleButton.title = `${mapVehicleTypeLabel(vehicle.tipo)} ${formatVehicleOccupancyLabel(vehicle, assignedCount)}`;
+      vehicleButton.title = t("misc.vehicleButtonTitle", {
+        type: mapVehicleTypeLabel(vehicle.tipo),
+        occupancy: formatVehicleOccupancyLabel(vehicle, assignedCount),
+      });
       vehicleButton.setAttribute("aria-label", vehicleButton.title);
       vehicleButton.classList.toggle("is-selectable", isSelectable);
       vehicleButton.classList.toggle("is-assigned", isAssignedToSelection);
@@ -1480,6 +2286,9 @@
         "transport-vehicle-occupancy",
         formatVehicleOccupancyCount(vehicle, assignedCount)
       );
+      const departureLabel = departureTime
+        ? createNode("span", "transport-vehicle-departure", departureTime)
+        : null;
       const routeLabel = vehicle.route_kind
         ? createNode("span", "transport-vehicle-route", getRouteKindLabel(vehicle.route_kind))
         : null;
@@ -1487,9 +2296,16 @@
       if (vehicle.route_kind) {
         vehicleButton.title = `${vehicleButton.title} | ${getRouteKindLabel(vehicle.route_kind)}`;
       }
+      if (departureLabel) {
+        departureLabel.setAttribute("aria-label", departureTime);
+        vehicleButton.title = `${vehicleButton.title} | ${departureTime}`;
+      }
       vehicleButton.appendChild(plateLabel);
       vehicleButton.appendChild(iconImage);
       vehicleButton.appendChild(occupancyLabel);
+      if (departureLabel) {
+        vehicleButton.appendChild(departureLabel);
+      }
       if (routeLabel) {
         vehicleButton.appendChild(routeLabel);
       }
@@ -1507,7 +2323,7 @@
           status: "confirmed",
           vehicle_id: vehicle.id,
         }).catch(function (error) {
-          handleProtectedRequestError(error, "Could not confirm the selected request.");
+          handleProtectedRequestError(error, t("status.couldNotConfirmSelectedRequest"));
         });
       });
 
@@ -1537,10 +2353,11 @@
         );
         const actionsCell = createNode("td", "transport-vehicle-management-actions");
         const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", rowData.placa);
+        const departureTime = getVehicleDepartureTime(rowData);
         const deleteButton = createNode(
           "button",
           "transport-vehicle-delete-button transport-vehicle-management-delete",
-          "Delete"
+          t("misc.delete")
         );
 
         occupancyCell.classList.toggle("is-occupied", Number(rowData.assigned_count) > 0);
@@ -1555,6 +2372,9 @@
         plateCell.appendChild(vehiclePlate);
         row.appendChild(typeCell);
         row.appendChild(plateCell);
+        if (departureTime) {
+          row.appendChild(createNode("td", "transport-vehicle-management-time", departureTime));
+        }
         actionsCell.appendChild(deleteButton);
         row.appendChild(occupancyCell);
 
@@ -1576,7 +2396,7 @@
       });
 
       table.appendChild(tableBody);
-      table.setAttribute("aria-label", `${mapScopeTitle(scope)} vehicles`);
+      table.setAttribute("aria-label", t("misc.vehiclesAria", { scope: mapScopeTitle(scope) }));
       return table;
     }
 
@@ -1599,7 +2419,7 @@
 
         if (getVehicleViewMode(scope) === "table") {
           if (!registryRows.length) {
-            container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+            container.appendChild(createEmptyState(t("empty.noVehicles", { scope: mapScopeTitle(scope) })));
             return;
           }
           container.appendChild(createVehicleManagementTable(scope, registryRows));
@@ -1607,7 +2427,7 @@
         }
 
         if (!vehicles.length) {
-          container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+          container.appendChild(createEmptyState(t("empty.noVehicles", { scope: mapScopeTitle(scope) })));
           return;
         }
 
@@ -1633,7 +2453,7 @@
         const container = requestContainers[kind];
         clearElement(container);
         if (container) {
-          container.appendChild(createEmptyState(`No rows in ${REQUEST_TITLES[kind]}.`));
+          container.appendChild(createEmptyState(t("empty.noRows", { title: getRequestTitle(kind) })));
         }
       });
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
@@ -1641,7 +2461,7 @@
         clearElement(container);
         if (container) {
           setVehicleContainerViewMode(container, scope);
-          container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+          container.appendChild(createEmptyState(t("empty.noVehicles", { scope: mapScopeTitle(scope) })));
           container.style.removeProperty("grid-template-rows");
           container.style.removeProperty("grid-auto-columns");
         }
@@ -1649,6 +2469,7 @@
       state.expandedVehicleKey = null;
       syncVehicleViewToggleState();
       renderSelectionBanner();
+      syncRouteTimeControls();
     }
 
     function loadDashboard(selectedDate, options) {
@@ -1658,15 +2479,16 @@
         state.dashboard = null;
         state.selectedRequestId = null;
         clearDashboard();
-        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        setStatus(getTransportLockedMessage(), "warning");
         return Promise.resolve(null);
       }
 
       state.isLoading = true;
+      syncRouteTimeControls();
       const serviceDate = formatIsoDate(selectedDate);
       const routeKind = getSelectedRouteKind();
       if (shouldAnnounce) {
-        setStatus(`Loading ${getRouteKindLabel(routeKind)} dashboard.`, "info");
+        setStatus(t("status.loadingDashboard", { route: getRouteKindLabel(routeKind) }), "info");
       }
       return requestJson(
         `/api/transport/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
@@ -1675,8 +2497,9 @@
           state.dashboard = dashboard || null;
           state.selectedRouteKind = (dashboard && dashboard.selected_route) || routeKind;
           syncRouteInputs();
+          syncRouteTimeControls();
           if (shouldAnnounce) {
-            setStatus(`${getRouteKindLabel(getSelectedRouteKind())} dashboard updated.`, "info");
+            setStatus(t("status.dashboardUpdated", { route: getRouteKindLabel(getSelectedRouteKind()) }), "info");
           }
           renderDashboard();
         })
@@ -1685,21 +2508,24 @@
           state.selectedRequestId = null;
           clearDashboard();
           if (error && Number(error.status) === 401) {
-            clearTransportSession(TRANSPORT_SESSION_EXPIRED_MESSAGE);
+            clearTransportSession(getTransportSessionExpiredMessage());
             return;
           }
-          setStatus((error && error.message) || "Could not load the transport dashboard.", "error");
+          setStatus(localizeTransportApiMessage(error && error.message) || t("status.couldNotLoadDashboard"), "error");
         })
         .finally(function () {
           state.isLoading = false;
+          syncRouteTimeControls();
         });
     }
 
     return {
       bootstrapTransportSession,
+      closeRouteTimePopover,
       loadDashboard,
       refreshVehicleGridLayouts: function () {
         updateVehicleGridLayouts(document);
+        scheduleSettingsTriggerPositionSync();
       },
     };
   }
@@ -1720,6 +2546,7 @@
       pageController.refreshVehicleGridLayouts();
     });
     dateStore.subscribe(function (selectedDate) {
+      pageController.closeRouteTimePopover();
       pageController.loadDashboard(selectedDate);
     });
     pageController.bootstrapTransportSession();
@@ -1733,7 +2560,9 @@
     formatApiErrorMessage,
     formatTransportDate,
     formatIsoDate,
+    getEffectiveWorkToHomeDepartureTime,
     getTransportDateState,
+    getVehicleDepartureTime,
     getOrdinalSuffix,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,

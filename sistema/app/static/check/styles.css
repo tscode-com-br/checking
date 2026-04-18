@@ -28,6 +28,13 @@ html {
   box-sizing: border-box;
 }
 
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
 body {
   position: relative;
   display: flex;
@@ -592,10 +599,10 @@ header {
 
 .transport-choice-button.is-enabled {
   cursor: pointer;
-  border-color: #11a7b3;
-  background: linear-gradient(135deg, #20cfd4, #1592d2);
+  border-color: #12a8b4;
+  background: #18c7d4;
   color: #ffffff;
-  box-shadow: 0 10px 24px rgba(21, 146, 210, 0.22);
+  box-shadow: 0 10px 24px rgba(24, 199, 212, 0.28);
 }
 
 .transport-choice-button.is-enabled:hover {
@@ -848,6 +855,10 @@ header {
 
 .transport-detail-line {
   font-weight: 600;
+}
+
+.transport-detail-line + .transport-detail-line.transport-detail-line-separator {
+  margin-top: 10px;
 }
 
 .transport-acknowledgement-section {

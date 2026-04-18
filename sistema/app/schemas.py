@@ -519,6 +519,7 @@ class TransportVehicleRow(BaseModel):
     tolerance: int
     service_scope: str
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    departure_time: str | None = None
 
 
 class TransportVehicleManagementRow(BaseModel):
@@ -530,6 +531,7 @@ class TransportVehicleManagementRow(BaseModel):
     assigned_count: int = Field(ge=0)
     service_date: date | None = None
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    departure_time: str | None = None
 
 
 class TransportRequestCreate(BaseModel):
@@ -608,6 +610,7 @@ class TransportRequestRow(BaseModel):
 class TransportDashboardResponse(BaseModel):
     selected_date: date
     selected_route: Literal["home_to_work", "work_to_home"]
+    work_to_home_departure_time: str = Field(min_length=5, max_length=5)
     regular_requests: list[TransportRequestRow]
     weekend_requests: list[TransportRequestRow]
     extra_requests: list[TransportRequestRow]
@@ -618,6 +621,44 @@ class TransportDashboardResponse(BaseModel):
     weekend_vehicle_registry: list[TransportVehicleManagementRow]
     extra_vehicle_registry: list[TransportVehicleManagementRow]
     workplaces: list[WorkplaceRow]
+
+
+class TransportSettingsResponse(BaseModel):
+    work_to_home_time: str = Field(min_length=5, max_length=5)
+
+    @field_validator("work_to_home_time")
+    @classmethod
+    def validate_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportSettingsUpdateRequest(BaseModel):
+    work_to_home_time: str = Field(min_length=5, max_length=5)
+
+    @field_validator("work_to_home_time")
+    @classmethod
+    def validate_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportDateSettingsResponse(BaseModel):
+    service_date: date
+    work_to_home_time: str = Field(min_length=5, max_length=5)
+
+    @field_validator("work_to_home_time")
+    @classmethod
+    def validate_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportDateSettingsUpdateRequest(BaseModel):
+    service_date: date
+    work_to_home_time: str = Field(min_length=5, max_length=5)
+
+    @field_validator("work_to_home_time")
+    @classmethod
+    def validate_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
 
 
 class TransportBotIncomingMessage(BaseModel):
@@ -972,8 +1013,10 @@ class WebTransportStateResponse(BaseModel):
     status: Literal["available", "pending", "confirmed"] = "available"
     request_id: int | None = None
     request_kind: Literal["regular", "weekend", "extra"] | None = None
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
     service_date: date | None = None
     requested_time: str | None = None
+    boarding_time: str | None = None
     confirmation_deadline_time: str | None = None
     vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
     vehicle_plate: str | None = None

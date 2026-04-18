@@ -37,7 +37,6 @@ from ..services.transport import (
     acknowledge_transport_assignments,
     build_web_transport_state,
     cancel_transport_request_and_assignments,
-    get_latest_active_transport_request,
     upsert_transport_request,
 )
 from ..services.user_sync import (
@@ -52,6 +51,11 @@ router = APIRouter(prefix="/api/web", tags=["web-check"])
 
 WEB_USER_SESSION_KEY = "web_user_chave"
 UNKNOWN_WEB_USER_DETAIL = "A chave do usuario nao esta cadastrada"
+WEB_TRANSPORT_REQUEST_LABELS = {
+    "regular": "Transporte Rotineiro",
+    "weekend": "Transporte Fim de Semana",
+    "extra": "Transporte Extra",
+}
 
 WEB_CHECK_CHANNEL = FormsSubmitChannel(
     event_label="Web check event",
@@ -145,8 +149,22 @@ def _require_matching_authenticated_web_user(request: Request, db: Session, chav
     return user
 
 
+def _resolve_web_transport_route_preference(*, db: Session, user: User) -> str | None:
+    history_state = build_web_check_history_state(db, chave=user.chave)
+    if history_state.current_action == "checkin":
+        return "work_to_home"
+    if history_state.current_action == "checkout":
+        return "home_to_work"
+    return None
+
+
 def _resolve_web_transport_state(*, db: Session, user: User) -> WebTransportStateResponse:
-    return build_web_transport_state(db, user=user, service_date=now_sgt().date())
+    return build_web_transport_state(
+        db,
+        user=user,
+        service_date=now_sgt().date(),
+        preferred_route_kind=_resolve_web_transport_route_preference(db=db, user=user),
+    )
 
 
 def _require_same_day_checkin_for_transport(*, db: Session, user: User) -> None:
@@ -160,6 +178,71 @@ def _require_owned_transport_request(*, user: User, db: Session, request_id: int
     if transport_request is None or transport_request.user_id != user.id or transport_request.status != "active":
         raise HTTPException(status_code=404, detail="Solicitacao de transporte nao encontrada")
     return transport_request
+
+
+def _find_existing_web_transport_request(
+    *,
+    db: Session,
+    user: User,
+    request_kind: str,
+    service_date,
+) -> TransportRequest | None:
+    statement = (
+        select(TransportRequest)
+        .where(
+            TransportRequest.user_id == user.id,
+            TransportRequest.request_kind == request_kind,
+            TransportRequest.status == "active",
+        )
+        .order_by(TransportRequest.updated_at.desc(), TransportRequest.id.desc())
+    )
+    if request_kind == "extra":
+        statement = statement.where(TransportRequest.single_date == service_date)
+    return db.execute(statement).scalars().first()
+
+
+def _build_web_transport_request_message(*, request_kind: str, created: bool) -> str:
+    request_label = WEB_TRANSPORT_REQUEST_LABELS.get(request_kind, "Transporte")
+    if created:
+        return f"Solicitacao de {request_label} enviada."
+    return f"Ja existe uma solicitacao de {request_label} ativa."
+
+
+def _create_web_transport_request_response(
+    payload: WebTransportRequestCreate,
+    request: Request,
+    db: Session,
+) -> WebTransportActionResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    _require_same_day_checkin_for_transport(db=db, user=user)
+
+    service_date = now_sgt().date()
+    existing_request = _find_existing_web_transport_request(
+        db=db,
+        user=user,
+        request_kind=payload.request_kind,
+        service_date=service_date,
+    )
+
+    created = False
+    if existing_request is None:
+        upsert_transport_request(
+            db,
+            user=user,
+            request_kind=payload.request_kind,
+            requested_time=now_sgt().strftime("%H:%M"),
+            requested_date=(service_date if payload.request_kind == "extra" else None),
+            created_via="web",
+        )
+        db.commit()
+        notify_admin_data_changed("event")
+        created = True
+
+    return WebTransportActionResponse(
+        ok=True,
+        message=_build_web_transport_request_message(request_kind=payload.request_kind, created=created),
+        state=_resolve_web_transport_state(db=db, user=user),
+    )
 
 
 @router.get("/auth/status", response_model=WebPasswordStatusResponse)
@@ -340,38 +423,22 @@ def update_web_transport_address(
     )
 
 
+@router.post("/transport/vehicle-request", response_model=WebTransportActionResponse)
+def create_web_transport_vehicle_request(
+    payload: WebTransportRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebTransportActionResponse:
+    return _create_web_transport_request_response(payload, request, db)
+
+
 @router.post("/transport/request", response_model=WebTransportActionResponse)
 def create_web_transport_request(
     payload: WebTransportRequestCreate,
     request: Request,
     db: Session = Depends(get_db),
 ) -> WebTransportActionResponse:
-    user = _require_matching_authenticated_web_user(request, db, payload.chave)
-    if payload.request_kind != "regular":
-        raise HTTPException(status_code=409, detail="Este tipo de transporte ainda nao esta disponivel no webapp")
-
-    _require_same_day_checkin_for_transport(db=db, user=user)
-    existing_request = get_latest_active_transport_request(db, user=user, request_kind=payload.request_kind)
-    if existing_request is None:
-        upsert_transport_request(
-            db,
-            user=user,
-            request_kind=payload.request_kind,
-            requested_time=now_sgt().strftime("%H:%M"),
-            requested_date=None,
-            created_via="web",
-        )
-        message = "Sua solicitacao foi enviada."
-    else:
-        message = "Ja existe uma solicitacao de transporte ativa."
-
-    db.commit()
-    notify_admin_data_changed("event")
-    return WebTransportActionResponse(
-        ok=True,
-        message=message,
-        state=_resolve_web_transport_state(db=db, user=user),
-    )
+    return _create_web_transport_request_response(payload, request, db)
 
 
 @router.post("/transport/cancel", response_model=WebTransportActionResponse)

@@ -31,6 +31,7 @@ from ..schemas import (
     WebTransportStateResponse,
     WorkplaceRow,
 )
+from .location_settings import get_transport_work_to_home_time, get_transport_work_to_home_time_for_date
 from .time_utils import now_sgt
 from .user_profiles import normalize_person_name
 from .user_sync import (
@@ -74,6 +75,38 @@ _MENU_OPTIONS = ["REGULAR", "WEEKEND", "EXTRA", "CHANGE", "CANCEL"]
 _PROJECT_OPTIONS = ["P80", "P82", "P83"]
 
 
+def _resolve_web_transport_route_order(preferred_route_kind: str | None) -> list[str]:
+    if preferred_route_kind in _ROUTE_KIND_TO_LABEL:
+        return [preferred_route_kind] + [
+            route_kind for route_kind in ("home_to_work", "work_to_home") if route_kind != preferred_route_kind
+        ]
+    return ["home_to_work", "work_to_home"]
+
+
+def _resolve_web_transport_boarding_time(
+    db: Session,
+    *,
+    active_request: TransportRequest,
+    service_date: date,
+    route_kind: str | None,
+    vehicle: Vehicle | None,
+) -> str:
+    if route_kind == "work_to_home" and vehicle is not None and vehicle.service_scope in {"regular", "weekend"}:
+        return get_transport_work_to_home_time_for_date(db, service_date=service_date)
+    return active_request.requested_time
+
+
+def _resolve_vehicle_departure_time(
+    *,
+    route_kind: str,
+    service_scope: str | None,
+    work_to_home_departure_time: str,
+) -> str | None:
+    if route_kind != "work_to_home" or service_scope not in {"regular", "weekend"}:
+        return None
+    return work_to_home_departure_time
+
+
 def build_transport_dashboard(
     db: Session,
     *,
@@ -81,10 +114,12 @@ def build_transport_dashboard(
     route_kind: str,
 ) -> TransportDashboardResponse:
     workplaces = list_workplaces(db)
+    work_to_home_departure_time = get_transport_work_to_home_time_for_date(db, service_date=service_date)
     vehicles_by_scope, vehicle_rows_by_id = _build_vehicle_rows_for_dashboard(
         db,
         service_date=service_date,
         route_kind=route_kind,
+        work_to_home_departure_time=work_to_home_departure_time,
     )
 
     request_rows = {
@@ -200,11 +235,14 @@ def build_transport_dashboard(
         request_kind_by_id=request_kind_by_id,
         recurring_assignment_templates=recurring_assignment_templates,
         explicit_assignments=assignments,
+        route_kind=route_kind,
+        work_to_home_departure_time=work_to_home_departure_time,
     )
 
     return TransportDashboardResponse(
         selected_date=service_date,
         selected_route=route_kind,
+        work_to_home_departure_time=work_to_home_departure_time,
         regular_requests=request_rows["regular"],
         weekend_requests=request_rows["weekend"],
         extra_requests=request_rows["extra"],
@@ -534,9 +572,21 @@ def build_web_transport_state(
     *,
     user: User,
     service_date: date,
+    preferred_route_kind: str | None = None,
 ) -> WebTransportStateResponse:
-    active_request = get_latest_active_transport_request(db, user=user, request_kind="regular")
-    if active_request is None or not request_applies_to_date(active_request, service_date):
+    active_requests = db.execute(
+        select(TransportRequest)
+        .where(
+            TransportRequest.user_id == user.id,
+            TransportRequest.status == "active",
+        )
+        .order_by(TransportRequest.updated_at.desc(), TransportRequest.id.desc())
+    ).scalars().all()
+    active_request = next(
+        (candidate for candidate in active_requests if request_applies_to_date(candidate, service_date)),
+        None,
+    )
+    if active_request is None:
         return WebTransportStateResponse(
             chave=user.chave,
             end_rua=user.end_rua,
@@ -562,14 +612,15 @@ def build_web_transport_state(
         schedules_by_vehicle_id=schedules_by_vehicle_id,
     )
 
-    confirmed_assignments: list[tuple[TransportAssignment, Vehicle, bool]] = []
-    for target_route_kind in ("home_to_work", "work_to_home"):
+    route_order = _resolve_web_transport_route_order(preferred_route_kind)
+    confirmed_assignments: list[tuple[TransportAssignment, Vehicle, bool, str]] = []
+    for target_route_kind in route_order:
         assignment = explicit_assignments_by_key.get((active_request.id, service_date, target_route_kind))
         if assignment is not None:
             if assignment.status == "confirmed" and assignment.vehicle_id is not None:
                 confirmed_vehicle = vehicles_by_id.get(assignment.vehicle_id)
                 if confirmed_vehicle is not None:
-                    confirmed_assignments.append((assignment, confirmed_vehicle, False))
+                    confirmed_assignments.append((assignment, confirmed_vehicle, False, target_route_kind))
             continue
 
         recurring_assignment = recurring_assignment_templates.get((active_request.id, service_date.weekday()))
@@ -584,13 +635,16 @@ def build_web_transport_state(
             route_kind=target_route_kind,
         ) is None:
             continue
-        confirmed_assignments.append((template_assignment, template_vehicle, True))
+        confirmed_assignments.append((template_assignment, template_vehicle, True, target_route_kind))
 
     confirmed_assignment = confirmed_assignments[0][0] if confirmed_assignments else None
     confirmed_vehicle = confirmed_assignments[0][1] if confirmed_assignments else None
+    resolved_route_kind = confirmed_assignments[0][3] if confirmed_assignments else (
+        preferred_route_kind if preferred_route_kind in _ROUTE_KIND_TO_LABEL else None
+    )
     awareness_confirmed = bool(confirmed_assignments) and all(
         (not is_synthetic) and assignment.acknowledged_by_user
-        for assignment, _, is_synthetic in confirmed_assignments
+        for assignment, _, is_synthetic, _ in confirmed_assignments
     )
 
     if confirmed_assignment is not None and confirmed_vehicle is not None:
@@ -601,8 +655,16 @@ def build_web_transport_state(
             status="confirmed",
             request_id=active_request.id,
             request_kind=active_request.request_kind,
+            route_kind=resolved_route_kind,
             service_date=service_date,
             requested_time=active_request.requested_time,
+            boarding_time=_resolve_web_transport_boarding_time(
+                db,
+                active_request=active_request,
+                service_date=service_date,
+                route_kind=resolved_route_kind,
+                vehicle=confirmed_vehicle,
+            ),
             confirmation_deadline_time=active_request.requested_time,
             vehicle_type=confirmed_vehicle.tipo,
             vehicle_plate=confirmed_vehicle.placa,
@@ -618,6 +680,7 @@ def build_web_transport_state(
         status="pending",
         request_id=active_request.id,
         request_kind=active_request.request_kind,
+        route_kind=resolved_route_kind,
         service_date=service_date,
         requested_time=active_request.requested_time,
         confirmation_deadline_time=active_request.requested_time,
@@ -1198,6 +1261,8 @@ def _build_transport_vehicle_registry_rows(
     request_kind_by_id: dict[int, str],
     recurring_assignment_templates: dict[tuple[int, int], tuple[TransportAssignment, Vehicle]],
     explicit_assignments: list[TransportAssignment],
+    route_kind: str,
+    work_to_home_departure_time: str,
 ) -> dict[str, list[TransportVehicleManagementRow]]:
     registry_rows: dict[str, list[TransportVehicleManagementRow]] = {
         "regular": [],
@@ -1238,6 +1303,11 @@ def _build_transport_vehicle_registry_rows(
                     placa=vehicle.placa,
                     tipo=vehicle.tipo,
                     lugares=vehicle.lugares,
+                    departure_time=_resolve_vehicle_departure_time(
+                        route_kind=route_kind,
+                        service_scope=schedule.service_scope,
+                        work_to_home_departure_time=work_to_home_departure_time,
+                    ),
                     assigned_count=len(
                         assigned_request_ids_by_vehicle_id.get(schedule.service_scope, {}).get(vehicle.id, set())
                     ),
@@ -1328,6 +1398,7 @@ def _build_vehicle_row_for_schedule(
     vehicle: Vehicle,
     *,
     schedule: TransportVehicleSchedule | None,
+    departure_time: str | None = None,
 ) -> TransportVehicleRow:
     return TransportVehicleRow(
         id=vehicle.id,
@@ -1339,6 +1410,7 @@ def _build_vehicle_row_for_schedule(
         tolerance=vehicle.tolerance,
         service_scope=vehicle.service_scope,
         route_kind=(schedule.route_kind if schedule is not None else None),
+        departure_time=departure_time,
     )
 
 
@@ -1370,6 +1442,7 @@ def _build_vehicle_rows_for_dashboard(
     *,
     service_date: date,
     route_kind: str,
+    work_to_home_departure_time: str,
 ) -> tuple[dict[str, list[TransportVehicleRow]], dict[int, TransportVehicleRow]]:
     vehicles_by_scope: dict[str, list[TransportVehicleRow]] = {
         "regular": [],
@@ -1403,7 +1476,15 @@ def _build_vehicle_rows_for_dashboard(
         if schedule.service_scope != "extra" and schedule.route_kind != route_kind:
             continue
 
-        vehicle_row = _build_vehicle_row_for_schedule(vehicle, schedule=schedule)
+        vehicle_row = _build_vehicle_row_for_schedule(
+            vehicle,
+            schedule=schedule,
+            departure_time=_resolve_vehicle_departure_time(
+                route_kind=route_kind,
+                service_scope=schedule.service_scope,
+                work_to_home_departure_time=work_to_home_departure_time,
+            ),
+        )
         vehicles_by_scope.setdefault(schedule.service_scope, []).append(vehicle_row)
         vehicle_rows_by_id[vehicle.id] = vehicle_row
 

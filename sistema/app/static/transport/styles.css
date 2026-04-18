@@ -84,12 +84,55 @@ button {
 }
 
 .tela01menu {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(140px, 1fr) auto minmax(220px, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
+}
+
+.transport-settings-trigger {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition:
+    transform 160ms ease,
+    filter 160ms ease,
+    opacity 160ms ease;
+}
+
+.transport-settings-trigger svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transport-settings-trigger:hover {
+  transform: scale(1.06);
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.24));
+}
+
+.transport-settings-trigger:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 4px;
+  border-radius: 999px;
 }
 
 .transport-topbar-copy {
@@ -108,6 +151,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -303,6 +348,46 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+.transport-route-inline-time {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 6px 10px;
+  border: 1px solid rgba(72, 212, 206, 0.18);
+  border-radius: 18px;
+  background: rgba(10, 24, 28, 0.88);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.24);
+}
+
+.transport-route-inline-time[hidden] {
+  display: none;
+}
+
+.transport-route-inline-time-input {
+  width: 92px;
+  min-height: 38px;
+  padding: 0 6px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--transport-text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.transport-route-inline-time-input:disabled {
+  color: var(--transport-text-soft);
+  cursor: progress;
+}
+
+.transport-route-inline-time-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(1) saturate(0) brightness(1.35);
 }
 
 .transport-route-option {
@@ -911,6 +996,14 @@ button {
   width: 112px;
 }
 
+.transport-vehicle-management-time {
+  width: 84px;
+  color: #a7fff0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .transport-vehicle-management-route-value {
   width: 104px;
 }
@@ -1083,6 +1176,7 @@ button {
 
 .transport-vehicle-plate,
 .transport-vehicle-occupancy,
+.transport-vehicle-departure,
 .transport-vehicle-route {
   max-width: 100%;
   text-align: center;
@@ -1103,6 +1197,18 @@ button {
   line-height: 1.2;
 }
 
+.transport-vehicle-departure {
+  padding: 2px 8px;
+  border: 1px solid rgba(72, 212, 206, 0.2);
+  border-radius: 999px;
+  background: rgba(72, 212, 206, 0.12);
+  color: #adfff3;
+  font-size: 0.68rem;
+  line-height: 1.15;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
 .transport-vehicle-route {
   color: var(--transport-text-soft);
   font-size: 0.66rem;
@@ -1113,6 +1219,7 @@ button {
 
 .transport-vehicle-button.is-assigned .transport-vehicle-plate,
 .transport-vehicle-button.is-assigned .transport-vehicle-occupancy,
+.transport-vehicle-button.is-assigned .transport-vehicle-departure,
 .transport-vehicle-button.is-assigned .transport-vehicle-route {
   color: #c3ffe6;
 }
@@ -1211,6 +1318,84 @@ button {
   color: #c9ffe4;
 }
 
+.transport-settings-modal {
+  width: min(100%, 420px);
+}
+
+.transport-settings-modal-title {
+  margin-top: 0;
+  letter-spacing: 0.14em;
+}
+
+.transport-settings-modal-body {
+  margin-top: 20px;
+  display: grid;
+  gap: 18px;
+}
+
+.transport-settings-section {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.transport-settings-section-title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transport-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 190px);
+  align-items: center;
+  gap: 16px;
+}
+
+.transport-settings-label {
+  color: var(--transport-text);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.transport-settings-note {
+  margin: -2px 0 0;
+  color: var(--transport-text-soft);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.transport-settings-select,
+.transport-settings-time-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(9, 9, 9, 0.78);
+  color: var(--transport-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.transport-settings-select:disabled,
+.transport-settings-time-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.transport-settings-time-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.9;
+}
+
+.transport-settings-actions {
+  margin-top: 0;
+}
+
 .transport-field {
   display: grid;
   gap: 8px;
@@ -1300,6 +1485,11 @@ button {
     padding: 16px 18px;
   }
 
+  .transport-settings-trigger {
+    position: static;
+    margin: -2px auto 2px;
+  }
+
   .transport-topbar-route-slot,
   .transport-topbar-auth,
   .transport-topbar-support {
@@ -1375,6 +1565,11 @@ button {
 
   .transport-modal {
     padding: 18px;
+  }
+
+  .transport-settings-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
   .transport-request-sections {

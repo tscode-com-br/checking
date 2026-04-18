@@ -19,11 +19,15 @@ from ..schemas import (
     TransportBotConversationResponse,
     TransportAuthVerifyRequest,
     TransportBotIncomingMessage,
+    TransportDateSettingsResponse,
+    TransportDateSettingsUpdateRequest,
     TransportDashboardResponse,
     TransportIdentity,
     TransportNotificationAckResponse,
     TransportNotificationListResponse,
     TransportNotificationRow,
+    TransportSettingsResponse,
+    TransportSettingsUpdateRequest,
     TransportSessionResponse,
     TransportWhatsAppDispatchResponse,
     TransportVehicleCreate,
@@ -40,6 +44,11 @@ from ..services.admin_auth import (
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
 from ..services.event_logger import log_event
+from ..services.location_settings import (
+    get_transport_work_to_home_time,
+    upsert_transport_work_to_home_time,
+    upsert_transport_work_to_home_time_for_date,
+)
 from ..services.time_utils import now_sgt
 from ..services.transport import (
     build_transport_dashboard,
@@ -161,6 +170,38 @@ def get_transport_dashboard(
 ) -> TransportDashboardResponse:
     resolved_date = service_date or now_sgt().date()
     return build_transport_dashboard(db, service_date=resolved_date, route_kind=route_kind)
+
+
+@router.get("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])
+def get_transport_settings(db: Session = Depends(get_db)) -> TransportSettingsResponse:
+    return TransportSettingsResponse(work_to_home_time=get_transport_work_to_home_time(db))
+
+
+@router.put("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])
+def update_transport_settings(
+    payload: TransportSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+) -> TransportSettingsResponse:
+    settings_row = upsert_transport_work_to_home_time(db, work_to_home_time=payload.work_to_home_time)
+    db.commit()
+    return TransportSettingsResponse(work_to_home_time=settings_row.transport_work_to_home_time)
+
+
+@router.put("/date-settings", response_model=TransportDateSettingsResponse, dependencies=[Depends(require_transport_session)])
+def update_transport_date_settings(
+    payload: TransportDateSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+) -> TransportDateSettingsResponse:
+    daily_setting = upsert_transport_work_to_home_time_for_date(
+        db,
+        service_date=payload.service_date,
+        work_to_home_time=payload.work_to_home_time,
+    )
+    db.commit()
+    return TransportDateSettingsResponse(
+        service_date=daily_setting.service_date,
+        work_to_home_time=daily_setting.work_to_home_time,
+    )
 
 
 @router.get("/workplaces", response_model=list[WorkplaceRow], dependencies=[Depends(require_transport_session)])
