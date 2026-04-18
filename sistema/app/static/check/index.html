@@ -37,6 +37,10 @@
           id="checkForm"
           class="check-form"
           novalidate
+          data-auth-status-endpoint="/api/web/auth/status"
+          data-auth-register-endpoint="/api/web/auth/register-password"
+          data-auth-login-endpoint="/api/web/auth/login"
+          data-auth-change-endpoint="/api/web/auth/change-password"
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
           data-locations-endpoint="/api/web/check/locations"
@@ -97,19 +101,39 @@
             </div>
           </section>
 
-          <label class="check-field" for="chaveInput">
-            <span>Chave Petrobras</span>
-            <input
-              id="chaveInput"
-              name="chave"
-              type="text"
-              inputmode="text"
-              autocomplete="username"
-              maxlength="4"
-              placeholder="Ex.: HR70"
-              required
-            />
-          </label>
+          <div class="auth-credentials-row" aria-label="Identificação e senha do usuário">
+            <label class="check-field auth-field" for="chaveInput">
+              <span>Chave</span>
+              <input
+                id="chaveInput"
+                name="chave"
+                type="text"
+                inputmode="text"
+                autocomplete="username"
+                maxlength="4"
+                placeholder="Ex.: HR70"
+                required
+              />
+            </label>
+
+            <label class="check-field auth-field" for="passwordInput">
+              <span>Senha</span>
+              <input
+                id="passwordInput"
+                name="senha"
+                type="password"
+                autocomplete="current-password"
+                minlength="3"
+                maxlength="10"
+                placeholder="3 a 10 caracteres"
+              />
+            </label>
+
+            <div class="check-field auth-field auth-field-button">
+              <span class="auth-field-spacer" aria-hidden="true">Ação</span>
+              <button id="passwordActionButton" type="button" class="auth-action-button">Registrar</button>
+            </div>
+          </div>
 
           <fieldset class="check-group">
             <legend class="check-group-legend-row">
@@ -166,6 +190,68 @@
 
           <button id="submitButton" type="submit" class="submit-button">Registrar</button>
         </form>
+
+        <div id="passwordDialogBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="passwordDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="passwordDialogTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <div class="password-dialog-header">
+              <h2 id="passwordDialogTitle">Alterar Senha</h2>
+            </div>
+
+            <form id="passwordChangeForm" class="password-dialog-form" novalidate>
+              <label class="check-field" for="oldPasswordInput">
+                <span>Senha Antiga</span>
+                <input
+                  id="oldPasswordInput"
+                  name="senha_antiga"
+                  type="password"
+                  autocomplete="current-password"
+                  minlength="3"
+                  maxlength="10"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="newPasswordInput">
+                <span>Nova Senha</span>
+                <input
+                  id="newPasswordInput"
+                  name="nova_senha"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="3"
+                  maxlength="10"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="confirmPasswordInput">
+                <span>Confirme Senha</span>
+                <input
+                  id="confirmPasswordInput"
+                  name="confirmacao_senha"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="3"
+                  maxlength="10"
+                  required
+                />
+              </label>
+
+              <div class="password-dialog-actions">
+                <button id="passwordDialogBackButton" type="button" class="secondary-button">Voltar</button>
+                <button id="passwordDialogSubmitButton" type="submit" class="submit-button">Alterar</button>
+              </div>
+            </form>
+          </div>
+        </section>
       </section>
     </main>
 

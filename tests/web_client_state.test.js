@@ -63,3 +63,31 @@ test('shouldAttemptSilentLocationLookup only blocks explicit denial', () => {
   assert.equal(clientState.shouldAttemptSilentLocationLookup(null, false), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup('denied', true), false);
 });
+
+test('resolvePasswordActionLabel switches between register and change', () => {
+  assert.equal(clientState.resolvePasswordActionLabel(false), 'Registrar');
+  assert.equal(clientState.resolvePasswordActionLabel(true), 'Alterar');
+});
+
+test('resolveAuthenticationPromptMessage reflects password state', () => {
+  assert.equal(
+    clientState.resolveAuthenticationPromptMessage({ hasPassword: false, authenticated: false }),
+    'Digite sua chave e crie uma senha.'
+  );
+  assert.equal(
+    clientState.resolveAuthenticationPromptMessage({ hasPassword: true, authenticated: false }),
+    'Digite sua senha para iniciar.'
+  );
+  assert.equal(
+    clientState.resolveAuthenticationPromptMessage({ hasPassword: true, authenticated: true }),
+    ''
+  );
+});
+
+test('isPasswordLengthValid enforces the requested password length policy', () => {
+  assert.equal(clientState.isPasswordLengthValid('12'), false);
+  assert.equal(clientState.isPasswordLengthValid('123'), true);
+  assert.equal(clientState.isPasswordLengthValid('abc@123'), true);
+  assert.equal(clientState.isPasswordLengthValid('           '), false);
+  assert.equal(clientState.isPasswordLengthValid('12345678901'), false);
+});

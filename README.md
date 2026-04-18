@@ -80,6 +80,22 @@ Observacao:
 - Se a `chave` ainda nao existir em `users`, a API cria automaticamente o usuario com nome `Oriundo do Aplicativo`.
 - O app consulta `GET /api/mobile/state?chave=...` para manter `Ultimo Check-In` e `Ultimo Check-Out` alinhados com eventos vindos tanto do app quanto da ESP32.
 
+## Integracao WhatsApp do transporte
+- A integracao real do transporte usa a Meta WhatsApp Cloud API.
+- Webhook de verificacao e mensagens: `GET/POST /api/transport/whatsapp/webhook`.
+- Despacho manual de notificacoes pendentes: `POST /api/transport/whatsapp/notifications/dispatch`.
+- O endpoint interno `POST /api/transport/bot/messages` continua existindo para testes e integracoes controladas por shared key.
+- Para producao, configure no `.env`:
+   - `WHATSAPP_ENABLED=true`
+   - `WHATSAPP_PROVIDER=meta`
+   - `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+   - `WHATSAPP_ACCESS_TOKEN`
+   - `WHATSAPP_PHONE_NUMBER_ID`
+   - `WHATSAPP_APP_SECRET` (recomendado para validar a assinatura do webhook)
+- Ao confirmar uma alocacao em `/api/transport/assignments`, o sistema tenta enviar imediatamente a notificacao WhatsApp; se a Cloud API nao estiver configurada ou falhar, a notificacao permanece pendente para reenvio.
+- Para configurar o webhook na Meta, use a URL publica `https://SEU_DOMINIO/api/transport/whatsapp/webhook`.
+- Para desenvolvimento rapido, a Meta fornece um numero de teste temporario. Para producao, voce precisa de um numero habilitado no WhatsApp Business; o `phone_number_id` sozinho nao substitui esse numero.
+
 Antes de gerar uma release mobile, garanta que `checking_android_new/lib/src/features/checking/checking_preset_config.dart` e `MOBILE_APP_SHARED_KEY` no backend estejam alinhados com o ambiente real.
 
 Exemplo de envio mobile:

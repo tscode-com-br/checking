@@ -1,0 +1,54 @@
+FUNCIONAMENTO DE CHECK-IN e CHECK-OUT:
+
+Premissas:
+1. A aplicação flutter está atualizando a localização do usuário em primeiro ou em segundo plano de 15 em 15 minutos;
+2. A aplicação flutter atualiza a localização do usuário sempre que for aberta ou sempre que for trazida para o primeiro plano, independentemente de quando foi a última atualização.
+3. A aplicação flutter atualiza as últimas atividades de check-in e check-out e atualiza a localização do usuário sempre que for aberta ou sempre que for trazida para primeiro plano.
+4. Se o botão on/off 'Check-in/check-out automáticos' estiver ligado, executa check-in ou check-out de acordo com as regras abaixo.
+
+Confirme que as regras estão funcionando exatamente como as situações abaixo.
+
+Situação 1:
+- A aplicação Flutter está rodando em primeiro ou em segundo plano.
+- Os botões on/off 'Busca por localização' e 'Check-in/check-out automáticos' estão ligados.
+- a aplicação Flutter atualiza as últimas atividades de check-in e check-out e a localização do usuário, mostrando a nova localização no campo 'Local Capturado', se tiver sido alterado (isto sempre deve ocorrer);
+- A aplicação Flutter percebe que última atividade do usuário foi um check-in;
+- a aplicação Flutter percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
+- a aplicação Flutter, então, realiza o check-out do usuário, pois a última atividade foi um check-in;
+
+Situação 2:
+- A aplicação Flutter está rodando em primeiro ou em segundo plano.
+- Os botões on/off 'Busca por localização' e 'Check-in/check-out automáticos' estão ligados.
+- a aplicação Flutter atualiza as últimas atividades de check-in e check-out e a localização do usuário, mostrando a nova localização no campo 'Local Capturado', se tiver sido alterado (isto sempre deve ocorrer);
+- A aplicação Flutter percebe que última atividade do usuário foi um check-out;
+- a aplicação Flutter percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
+- a aplicação Flutter não toma nenhuma ação, mesmo que tenha havido troca de localização, pois o check-out não precisa ser repetido em função da alteração de localização.
+
+Situação 3:
+- A aplicação Flutter está rodando em primeiro ou em segundo plano.
+- Os botões on/off 'Busca por localização' e 'Check-in/check-out automáticos' estão ligados.
+- a aplicação Flutter atualiza as últimas atividades de check-in e check-out e a localização do usuário, mostrando a nova localização no campo 'Local Capturado', se tiver sido alterado (isto sempre deve ocorrer);
+- A aplicação Flutter percebe que última atividade do usuário foi um check-out;
+- a aplicação Flutter percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut' ou que ele não está em nenhuma localização cadastrada, mas está a menos de 2 km de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação;
+- Nesta situação, o usuário está no ambiente de trabalho ou em seus arredores, inclusive no primeiro check-in ao sair de casa e chegar ao trabalho;
+- a aplicação Flutter, então, realiza o check-in do usuário, pois a última atividade foi um check-out;
+- Ao realizar esse check-in, a aplicação Flutter atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
+
+Situação 4:
+- A aplicação Flutter está rodando em primeiro ou em segundo plano.
+- Os botões on/off 'Busca por localização' e 'Check-in/check-out automáticos' estão ligados.
+- a aplicação Flutter atualiza as últimas atividades de check-in e check-out e a localização do usuário, mostrando a nova localização no campo 'Local Capturado', se tiver sido alterado (isto sempre deve ocorrer);
+- A aplicação Flutter percebe que última atividade do usuário foi um check-in;
+- a aplicação Flutter percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut';
+- a aplicação Flutter também percebe que a localização do usuário foi alterada em relação à localização anterior à atualização das coordenadas.
+- a aplicação Flutter, então, realiza o check-in do usuário, para que a localização do usuário seja atualizada na API.
+
+Situação 5:
+- A aplicação Flutter está rodando em primeiro ou em segundo plano.
+- Os botões on/off 'Busca por localização' e 'Check-in/check-out automáticos' estão ligados.
+- a aplicação Flutter atualiza as últimas atividades de check-in e check-out e a localização do usuário, mostrando a nova localização no campo 'Local Capturado', se tiver sido alterado (isto sempre deve ocorrer);
+- A aplicação Flutter percebe que última atividade do usuário foi um check-in;
+- a aplicação Flutter percebe que o usuário não está em nenhuma localização cadastrada na API e também não está a mais de 2 km distante de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação. Ou seja, o usuário está próximo do local de trabalho.
+- a aplicação Flutter, então, não toma nenhuma ação, pois o usuário não está distante o suficiente para realizar um check-out e nem está na zona de checkout. a aplicação Flutter apenas atualiza a exibição da localização como 'Localização não Cadastrada'.
+
+

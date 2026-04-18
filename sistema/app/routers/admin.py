@@ -15,6 +15,7 @@ from ..models import (
     CheckingHistory,
     ManagedLocation,
     PendingRegistration,
+    Workplace,
     User,
     UserSyncEvent,
     Vehicle,
@@ -965,6 +966,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
             nome=r.nome,
             chave=r.chave,
             projeto=r.projeto,
+            workplace=r.workplace,
             placa=r.placa,
             end_rua=r.end_rua,
             zip=r.zip,
@@ -1014,11 +1016,17 @@ def upsert_user(
         if vehicle is None:
             raise HTTPException(status_code=404, detail="Veiculo nao encontrado para a placa informada")
 
+    if payload.workplace is not None:
+        workplace = db.execute(select(Workplace).where(Workplace.workplace == payload.workplace)).scalar_one_or_none()
+        if workplace is None:
+            raise HTTPException(status_code=404, detail="Workplace nao encontrado para o nome informado")
+
     if user:
         previous_key = user.chave
         user.nome = payload.nome
         user.chave = payload.chave
         user.projeto = payload.projeto
+        user.workplace = payload.workplace
         user.rfid = payload.rfid
         if placa_was_provided:
             user.placa = payload.placa
@@ -1045,6 +1053,7 @@ def upsert_user(
             nome=payload.nome,
             chave=payload.chave,
             projeto=payload.projeto,
+            workplace=payload.workplace,
             placa=payload.placa,
             end_rua=payload.end_rua,
             zip=payload.zip,

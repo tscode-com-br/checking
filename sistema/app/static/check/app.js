@@ -1,5 +1,9 @@
 (function () {
   const form = document.getElementById('checkForm');
+  const authStatusEndpoint = form.dataset.authStatusEndpoint || '/api/web/auth/status';
+  const authRegisterEndpoint = form.dataset.authRegisterEndpoint || '/api/web/auth/register-password';
+  const authLoginEndpoint = form.dataset.authLoginEndpoint || '/api/web/auth/login';
+  const authChangeEndpoint = form.dataset.authChangeEndpoint || '/api/web/auth/change-password';
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
@@ -7,6 +11,8 @@
   const automaticActivities = window.CheckingWebAutomaticActivities;
   const clientState = window.CheckingWebClientState;
   const chaveInput = document.getElementById('chaveInput');
+  const passwordInput = document.getElementById('passwordInput');
+  const passwordActionButton = document.getElementById('passwordActionButton');
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
   const locationSelectField = document.getElementById('locationSelectField');
@@ -22,9 +28,33 @@
   const lastCheckoutValue = document.getElementById('lastCheckoutValue');
   const locationValue = document.getElementById('locationValue');
   const locationAccuracy = document.getElementById('locationAccuracy');
+  const passwordDialog = document.getElementById('passwordDialog');
+  const passwordDialogBackdrop = document.getElementById('passwordDialogBackdrop');
+  const passwordChangeForm = document.getElementById('passwordChangeForm');
+  const oldPasswordInput = document.getElementById('oldPasswordInput');
+  const newPasswordInput = document.getElementById('newPasswordInput');
+  const confirmPasswordInput = document.getElementById('confirmPasswordInput');
+  const passwordDialogBackButton = document.getElementById('passwordDialogBackButton');
+  const passwordDialogSubmitButton = document.getElementById('passwordDialogSubmitButton');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
-  const formControls = Array.from(form.querySelectorAll('input, select, button:not(.choice-card-static)'));
+  const informeInputs = Array.from(document.querySelectorAll('input[name="informe"]'));
+  const processControls = [
+    ...actionInputs,
+    ...informeInputs,
+    manualLocationSelect,
+    automaticActivitiesToggle,
+    submitButton,
+    refreshLocationButton,
+  ].filter(Boolean);
+  const authControls = [chaveInput, passwordInput, passwordActionButton].filter(Boolean);
+  const passwordDialogControls = [
+    oldPasswordInput,
+    newPasswordInput,
+    confirmPasswordInput,
+    passwordDialogBackButton,
+    passwordDialogSubmitButton,
+  ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
   const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
@@ -56,6 +86,8 @@
 
   let historyRequestToken = 0;
   let historyAbortController = null;
+  let authStatusRequestToken = 0;
+  let authStatusAbortController = null;
   let lastLifecycleTriggerAt = 0;
   let locationRequestPromise = null;
   let currentLocationMatch = null;
@@ -64,8 +96,18 @@
   let gpsLocationPermissionGranted = false;
   let lifecycleRefreshInProgress = false;
   let locationRefreshLoading = false;
+  let passwordRegisterInProgress = false;
+  let passwordLoginInProgress = false;
+  let passwordChangeInProgress = false;
   let submitInProgress = false;
   let userInteractionLockCount = 0;
+  const authState = {
+    chave: '',
+    hasPassword: false,
+    authenticated: false,
+    statusResolved: false,
+    statusLoading: false,
+  };
   const notificationState = {
     message: '',
     tone: null,
@@ -90,31 +132,115 @@
     return userInteractionLockCount > 0;
   }
 
+  function isPasswordDialogOpen() {
+    return Boolean(passwordDialog && !passwordDialog.hidden);
+  }
+
+  function isPasswordActionBusy() {
+    return authState.statusLoading || passwordRegisterInProgress || passwordLoginInProgress || passwordChangeInProgress;
+  }
+
+  function getActiveChave() {
+    return sanitizeChave(chaveInput.value);
+  }
+
+  function isApplicationUnlocked(chave) {
+    const normalizedChave = sanitizeChave(typeof chave === 'string' ? chave : chaveInput.value);
+    return normalizedChave.length === 4
+      && authState.authenticated
+      && authState.chave === normalizedChave;
+  }
+
+  function resolvePasswordActionButtonLabel() {
+    if (authState.statusLoading) {
+      return 'Verificando...';
+    }
+    if (passwordRegisterInProgress) {
+      return 'Registrando...';
+    }
+    return clientState.resolvePasswordActionLabel(authState.hasPassword);
+  }
+
   function syncFormControlStates() {
     const lockActive = isUserInteractionLocked();
+    const authBusy = isPasswordActionBusy();
+    const dialogOpen = isPasswordDialogOpen();
+    const unlocked = isApplicationUnlocked();
 
-    formControls.forEach((control) => {
+    projectSelect.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordLoginInProgress || passwordChangeInProgress;
+
+    processControls.forEach((control) => {
+      if (!control) {
+        return;
+      }
+
       if (control === manualLocationSelect) {
-        control.disabled = lockActive || gpsLocationPermissionGranted || availableLocations.length === 0;
+        control.disabled = dialogOpen || lockActive || !unlocked || gpsLocationPermissionGranted || availableLocations.length === 0;
         return;
       }
 
       if (control === refreshLocationButton) {
-        control.disabled = lockActive || locationRefreshLoading;
+        control.disabled = dialogOpen || lockActive || !unlocked || locationRefreshLoading;
         return;
       }
 
       if (control === submitButton) {
-        control.disabled = lockActive || submitInProgress;
+        control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress;
         return;
       }
 
-      control.disabled = lockActive;
+      control.disabled = dialogOpen || lockActive || !unlocked;
     });
 
-    const isBusy = lockActive || locationRefreshLoading || submitInProgress;
+    authControls.forEach((control) => {
+      if (control === chaveInput) {
+        control.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordLoginInProgress || passwordChangeInProgress;
+        return;
+      }
+
+      if (control === passwordInput) {
+        control.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordLoginInProgress || passwordChangeInProgress;
+        return;
+      }
+
+      if (control === passwordActionButton) {
+        const activeChave = getActiveChave();
+        const canRegisterPassword = clientState.isPasswordLengthValid(passwordInput.value);
+        control.textContent = resolvePasswordActionButtonLabel();
+        control.disabled = dialogOpen
+          || lockActive
+          || submitInProgress
+          || authBusy
+          || activeChave.length !== 4
+          || (!authState.hasPassword && !canRegisterPassword);
+      }
+    });
+
+    passwordDialogControls.forEach((control) => {
+      if (!control) {
+        return;
+      }
+
+      if (control === passwordDialogBackButton) {
+        control.disabled = passwordChangeInProgress;
+        return;
+      }
+
+      if (control === passwordDialogSubmitButton) {
+        control.disabled = passwordChangeInProgress;
+        control.textContent = passwordChangeInProgress ? 'Alterando...' : 'Alterar';
+        return;
+      }
+
+      control.disabled = passwordChangeInProgress;
+    });
+
+    const isBusy = lockActive || locationRefreshLoading || submitInProgress || authBusy;
     form.classList.toggle('is-busy', isBusy);
     form.setAttribute('aria-busy', String(isBusy));
+    if (passwordDialog) {
+      passwordDialog.setAttribute('aria-busy', String(passwordChangeInProgress));
+    }
   }
 
   function lockUserInteraction() {
@@ -230,6 +356,403 @@
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '')
       .slice(0, 4);
+  }
+
+  function createRequestError(response, payload) {
+    const error = new Error(parseErrorMessage(payload));
+    error.status = response.status;
+    error.payload = payload;
+    return error;
+  }
+
+  function clearProtectedClientState() {
+    latestHistoryState = null;
+    applyHistoryState(null);
+    setResolvedLocation(null);
+    currentLocationMatch = null;
+    availableLocations = [];
+    setLocationPresentation('Aguardando autenticação.', '', null, '--', { suppressNotification: true });
+  }
+
+  function setAuthenticationPrompt(message) {
+    const promptMessage = message || clientState.resolveAuthenticationPromptMessage(authState);
+    if (promptMessage) {
+      setStatus(promptMessage, 'error');
+    }
+  }
+
+  function applyAuthenticationLockedState(options) {
+    const settings = options || {};
+    const normalizedChave = sanitizeChave(settings.chave || chaveInput.value);
+    authState.chave = normalizedChave;
+    authState.hasPassword = Boolean(settings.hasPassword);
+    authState.authenticated = false;
+    authState.statusResolved = normalizedChave.length === 4;
+    clearProtectedClientState();
+    syncFormControlStates();
+    setAuthenticationPrompt(settings.message);
+  }
+
+  function handleExpiredAuthentication(options) {
+    const settings = options || {};
+    closePasswordDialog();
+    applyAuthenticationLockedState({
+      chave: settings.chave || chaveInput.value,
+      hasPassword: settings.hasPassword !== false,
+      message: settings.message || 'Digite sua senha para iniciar.',
+    });
+  }
+
+  function closePasswordDialog() {
+    if (!passwordDialog || !passwordDialogBackdrop) {
+      return;
+    }
+
+    passwordDialog.hidden = true;
+    passwordDialogBackdrop.hidden = true;
+    passwordDialog.classList.add('is-hidden');
+    passwordDialogBackdrop.classList.add('is-hidden');
+    if (passwordChangeForm) {
+      passwordChangeForm.reset();
+    }
+    syncFormControlStates();
+  }
+
+  function openPasswordDialog() {
+    if (!passwordDialog || !passwordDialogBackdrop || !authState.hasPassword) {
+      return;
+    }
+
+    passwordDialog.hidden = false;
+    passwordDialogBackdrop.hidden = false;
+    passwordDialog.classList.remove('is-hidden');
+    passwordDialogBackdrop.classList.remove('is-hidden');
+    if (passwordChangeForm) {
+      passwordChangeForm.reset();
+    }
+    syncFormControlStates();
+    if (oldPasswordInput) {
+      oldPasswordInput.focus();
+    }
+  }
+
+  function buildProtectedRequestError(response, payload) {
+    if (response.status === 401) {
+      handleExpiredAuthentication({ chave: chaveInput.value, hasPassword: true });
+      const authError = new Error('Digite sua senha para iniciar.');
+      authError.status = response.status;
+      authError.payload = payload;
+      authError.isAuthExpired = true;
+      return authError;
+    }
+    return createRequestError(response, payload);
+  }
+
+  function applyAuthenticationStatusPayload(payload) {
+    const normalizedChave = sanitizeChave((payload && payload.chave) || chaveInput.value);
+    authState.chave = normalizedChave;
+    authState.hasPassword = Boolean(payload && payload.has_password);
+    authState.authenticated = Boolean(payload && payload.authenticated);
+    authState.statusResolved = normalizedChave.length === 4;
+    if (!authState.authenticated) {
+      clearProtectedClientState();
+      setAuthenticationPrompt(payload && payload.message);
+    }
+    syncFormControlStates();
+  }
+
+  async function fetchAuthenticationStatus(chave, signal) {
+    const response = await fetch(`${authStatusEndpoint}?chave=${encodeURIComponent(chave)}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal,
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw createRequestError(response, payload);
+    }
+
+    return payload;
+  }
+
+  async function loadAuthenticatedApplication(chave, options) {
+    const settings = options || {};
+    const normalizedChave = sanitizeChave(chave || chaveInput.value);
+    if (!isApplicationUnlocked(normalizedChave)) {
+      return false;
+    }
+
+    restorePersistedUserSettingsForChave(normalizedChave);
+    await loadManualLocations();
+    if (!isApplicationUnlocked(normalizedChave)) {
+      return false;
+    }
+
+    if (settings.showReadyMessage) {
+      setStatus('Autenticação concluída. Atualizando a aplicação...', 'info');
+    }
+
+    await runLifecycleUpdateSequence({ ignoreCooldown: true });
+    return true;
+  }
+
+  async function refreshAuthenticationStatus(chave, options) {
+    const settings = options || {};
+    const normalizedChave = sanitizeChave(chave);
+
+    if (authStatusAbortController) {
+      authStatusAbortController.abort();
+      authStatusAbortController = null;
+    }
+
+    if (normalizedChave.length !== 4) {
+      authState.chave = '';
+      authState.hasPassword = false;
+      authState.authenticated = false;
+      authState.statusResolved = false;
+      clearProtectedClientState();
+      syncFormControlStates();
+      setAuthenticationPrompt();
+      return null;
+    }
+
+    const requestToken = ++authStatusRequestToken;
+    const controller = new AbortController();
+    authStatusAbortController = controller;
+    authState.chave = normalizedChave;
+    authState.statusResolved = false;
+    authState.statusLoading = true;
+    authState.authenticated = false;
+    syncFormControlStates();
+
+    try {
+      const payload = await fetchAuthenticationStatus(normalizedChave, controller.signal);
+      if (requestToken !== authStatusRequestToken) {
+        return null;
+      }
+
+      applyAuthenticationStatusPayload(payload);
+      if (!payload.authenticated && payload.has_password && settings.allowInlineLogin !== false && clientState.isPasswordLengthValid(passwordInput.value)) {
+        return attemptPasswordLogin({ showReadyMessage: true });
+      }
+
+      if (payload.authenticated && settings.startProcesses !== false) {
+        await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
+      }
+      return payload;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return null;
+      }
+
+      applyAuthenticationLockedState({
+        chave: normalizedChave,
+        hasPassword: false,
+        message: error instanceof Error ? error.message : 'Não foi possível consultar o status da senha.',
+      });
+      return null;
+    } finally {
+      if (authStatusAbortController === controller) {
+        authStatusAbortController = null;
+      }
+      authState.statusLoading = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function registerPasswordForCurrentUser() {
+    const normalizedChave = getActiveChave();
+    const password = passwordInput.value;
+
+    if (normalizedChave.length !== 4) {
+      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      chaveInput.focus();
+      return false;
+    }
+
+    if (!clientState.isPasswordLengthValid(password)) {
+      setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
+      passwordInput.focus();
+      return false;
+    }
+
+    passwordRegisterInProgress = true;
+    syncFormControlStates();
+    setStatus('Cadastrando senha...', 'info');
+
+    try {
+      const response = await fetch(authRegisterEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          chave: normalizedChave,
+          projeto: projectSelect.value,
+          senha: password,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw createRequestError(response, payload);
+      }
+
+      authState.chave = normalizedChave;
+      authState.hasPassword = true;
+      authState.authenticated = true;
+      authState.statusResolved = true;
+      syncFormControlStates();
+      setStatus(payload.message || 'Senha cadastrada com sucesso.', 'success');
+      await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
+      return true;
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Não foi possível cadastrar a senha.', 'error');
+      return false;
+    } finally {
+      passwordRegisterInProgress = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function attemptPasswordLogin(options) {
+    const settings = options || {};
+    const normalizedChave = getActiveChave();
+    const password = passwordInput.value;
+
+    if (normalizedChave.length !== 4 || !authState.hasPassword) {
+      return false;
+    }
+
+    if (isApplicationUnlocked(normalizedChave)) {
+      return true;
+    }
+
+    if (!clientState.isPasswordLengthValid(password)) {
+      if (!settings.silentValidation) {
+        setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
+      }
+      return false;
+    }
+
+    passwordLoginInProgress = true;
+    syncFormControlStates();
+    setStatus('Validando senha...', 'info');
+
+    try {
+      const response = await fetch(authLoginEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          chave: normalizedChave,
+          senha: password,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw createRequestError(response, payload);
+      }
+
+      authState.chave = normalizedChave;
+      authState.hasPassword = true;
+      authState.authenticated = true;
+      authState.statusResolved = true;
+      syncFormControlStates();
+      if (settings.showReadyMessage !== false) {
+        setStatus(payload.message || 'Autenticação concluída.', 'success');
+      }
+      await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
+      return true;
+    } catch (error) {
+      applyAuthenticationLockedState({
+        chave: normalizedChave,
+        hasPassword: true,
+        message: error instanceof Error ? error.message : 'Não foi possível validar a senha.',
+      });
+      return false;
+    } finally {
+      passwordLoginInProgress = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function submitPasswordChange(event) {
+    event.preventDefault();
+
+    const normalizedChave = getActiveChave();
+    const oldPassword = oldPasswordInput.value;
+    const newPassword = newPasswordInput.value;
+    const confirmPassword = confirmPasswordInput.value;
+
+    if (normalizedChave.length !== 4) {
+      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      closePasswordDialog();
+      return;
+    }
+
+    if (!clientState.isPasswordLengthValid(oldPassword)) {
+      setStatus('A senha antiga deve ter entre 3 e 10 caracteres.', 'error');
+      oldPasswordInput.focus();
+      return;
+    }
+
+    if (!clientState.isPasswordLengthValid(newPassword)) {
+      setStatus('A nova senha deve ter entre 3 e 10 caracteres.', 'error');
+      newPasswordInput.focus();
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setStatus('A confirmação da nova senha não confere.', 'error');
+      confirmPasswordInput.focus();
+      return;
+    }
+
+    passwordChangeInProgress = true;
+    syncFormControlStates();
+    setStatus('Alterando senha...', 'info');
+
+    try {
+      const response = await fetch(authChangeEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          chave: normalizedChave,
+          senha_antiga: oldPassword,
+          nova_senha: newPassword,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw createRequestError(response, payload);
+      }
+
+      authState.chave = normalizedChave;
+      authState.hasPassword = true;
+      authState.authenticated = true;
+      authState.statusResolved = true;
+      passwordInput.value = newPassword;
+      closePasswordDialog();
+      setStatus(payload.message || 'Senha alterada com sucesso.', 'success');
+      await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Não foi possível alterar a senha.', 'error');
+    } finally {
+      passwordChangeInProgress = false;
+      syncFormControlStates();
+    }
   }
 
   function getSelectedValue(name) {
@@ -408,6 +931,10 @@
   }
 
   function fetchWebState(chave) {
+    if (!isApplicationUnlocked(chave)) {
+      return Promise.reject(new Error('Digite sua senha para iniciar.'));
+    }
+
     return fetch(`${stateEndpoint}?chave=${encodeURIComponent(chave)}`, {
       method: 'GET',
       headers: {
@@ -416,7 +943,7 @@
     }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(parseErrorMessage(payload));
+        throw buildProtectedRequestError(response, payload);
       }
       return payload;
     });
@@ -440,6 +967,10 @@
 
   async function submitAutomaticActivity({ action, local, suppressStatus }) {
     const chave = sanitizeChave(chaveInput.value);
+    if (!isApplicationUnlocked(chave)) {
+      throw new Error('Digite sua senha para iniciar.');
+    }
+
     const response = await fetch(submitEndpoint, {
       method: 'POST',
       headers: {
@@ -458,7 +989,7 @@
 
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(parseErrorMessage(payload));
+      throw buildProtectedRequestError(response, payload);
     }
 
     if (payload && payload.state) {
@@ -490,7 +1021,7 @@
       local: null,
     };
 
-    if (!isAutomaticActivitiesEnabled() || !gpsLocationPermissionGranted) {
+    if (!isAutomaticActivitiesEnabled() || !gpsLocationPermissionGranted || !isApplicationUnlocked()) {
       return noActivityResult;
     }
 
@@ -630,6 +1161,12 @@
   }
 
   async function loadManualLocations() {
+    if (!isApplicationUnlocked()) {
+      availableLocations = [];
+      syncManualLocationControl();
+      return;
+    }
+
     try {
       const response = await fetch(locationsEndpoint, {
         method: 'GET',
@@ -640,7 +1177,7 @@
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(parseErrorMessage(payload));
+        throw buildProtectedRequestError(response, payload);
       }
 
       availableLocations = Array.from(
@@ -679,6 +1216,10 @@
   }
 
   async function matchCurrentPosition(position) {
+    if (!isApplicationUnlocked()) {
+      throw new Error('Digite sua senha para iniciar.');
+    }
+
     const response = await fetch(locationEndpoint, {
       method: 'POST',
       headers: {
@@ -697,7 +1238,7 @@
 
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(parseErrorMessage(payload));
+      throw buildProtectedRequestError(response, payload);
     }
 
     return payload;
@@ -876,6 +1417,10 @@
   }
 
   async function ensureLocationReadyForSubmit() {
+    if (!isApplicationUnlocked()) {
+      throw new Error('Digite sua senha para iniciar.');
+    }
+
     if (locationRequestPromise) {
       await locationRequestPromise;
       return;
@@ -1011,7 +1556,9 @@
 
   function resetHistory(message) {
     applyHistoryState(null);
-    setHistoryMessage(message || 'Digite sua chave Petrobras para visualizar seu histórico.');
+    if (message) {
+      setHistoryMessage(message);
+    }
   }
 
   async function refreshHistory(chave, options) {
@@ -1024,7 +1571,12 @@
     }
 
     if (normalized.length !== 4) {
-      resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
+      resetHistory();
+      return;
+    }
+
+    if (!isApplicationUnlocked(normalized)) {
+      resetHistory();
       return;
     }
 
@@ -1046,7 +1598,7 @@
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(parseErrorMessage(payload));
+        throw buildProtectedRequestError(response, payload);
       }
 
       if (requestToken !== historyRequestToken) {
@@ -1083,6 +1635,13 @@
         return null;
       }
 
+      if (error && error.isAuthExpired) {
+        if (settings.rethrowErrors) {
+          throw error;
+        }
+        return null;
+      }
+
       applyHistoryState(null);
       if (!settings.suppressMessages) {
         setHistoryMessage('Não foi possível consultar o histórico desta chave.', 'error');
@@ -1109,7 +1668,7 @@
     }
 
     const normalized = sanitizeChave(chaveInput.value);
-    if (normalized.length !== 4) {
+    if (normalized.length !== 4 || !isApplicationUnlocked(normalized)) {
       return false;
     }
 
@@ -1148,6 +1707,10 @@
       setStatus('Aplicação atualizada com sucesso.', 'success');
       return true;
     } catch (error) {
+      if (error && error.isAuthExpired) {
+        return false;
+      }
+
       const message = error instanceof Error
         ? error.message
         : 'Não foi possível atualizar a aplicação neste momento.';
@@ -1161,7 +1724,7 @@
   }
 
   async function runManualLocationRefreshSequence() {
-    if (isUserInteractionLocked()) {
+    if (isUserInteractionLocked() || !isApplicationUnlocked()) {
       return;
     }
 
@@ -1180,6 +1743,11 @@
     const normalizedChave = sanitizeChave(chaveInput.value);
     if (normalizedChave.length !== 4) {
       setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      return;
+    }
+
+    if (!isApplicationUnlocked(normalizedChave)) {
+      setAuthenticationPrompt();
       return;
     }
 
@@ -1208,6 +1776,10 @@
 
         setStatus('Atualizações concluídas sem atividades realizadas.', 'success');
       } catch (error) {
+        if (error && error.isAuthExpired) {
+          return;
+        }
+
         const message = error instanceof Error
           ? error.message
           : 'Não foi possível concluir as atualizações automáticas neste momento.';
@@ -1238,21 +1810,76 @@
   }
 
   chaveInput.addEventListener('input', () => {
+    const previousChave = authState.chave;
     const sanitized = sanitizeChave(chaveInput.value);
     if (sanitized !== chaveInput.value) {
       chaveInput.value = sanitized;
     }
     writePersistedChave(sanitized);
 
+    if (sanitized !== previousChave) {
+      authState.authenticated = false;
+      authState.hasPassword = false;
+      authState.statusResolved = false;
+      passwordInput.value = '';
+      closePasswordDialog();
+      clearProtectedClientState();
+    }
+
     if (sanitized.length === 4) {
       restorePersistedUserSettingsForChave(sanitized);
-      void runLifecycleUpdateSequence({ ignoreCooldown: true });
+      void refreshAuthenticationStatus(sanitized, {
+        startProcesses: true,
+        allowInlineLogin: true,
+      });
       return;
     }
 
-    setNotificationMessage('form', '', null);
-    setNotificationMessage('location', '', null);
-    resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
+    if (authStatusAbortController) {
+      authStatusAbortController.abort();
+      authStatusAbortController = null;
+    }
+
+    authState.chave = '';
+    authState.hasPassword = false;
+    authState.authenticated = false;
+    authState.statusResolved = false;
+    clearProtectedClientState();
+    syncFormControlStates();
+    setAuthenticationPrompt();
+  });
+
+  passwordInput.addEventListener('input', () => {
+    syncFormControlStates();
+  });
+
+  passwordInput.addEventListener('change', () => {
+    if (authState.hasPassword) {
+      void attemptPasswordLogin({ silentValidation: true, showReadyMessage: true });
+    }
+  });
+
+  passwordInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    if (authState.hasPassword) {
+      void attemptPasswordLogin({ showReadyMessage: true });
+      return;
+    }
+
+    void registerPasswordForCurrentUser();
+  });
+
+  passwordActionButton.addEventListener('click', () => {
+    if (authState.hasPassword) {
+      openPasswordDialog();
+      return;
+    }
+
+    void registerPasswordForCurrentUser();
   });
 
   actionInputs.forEach((input) => {
@@ -1261,7 +1888,9 @@
 
   projectSelect.addEventListener('change', () => {
     persistCurrentUserSettings();
-    setStatus('Atualização do projeto concluída.', 'success');
+    if (isApplicationUnlocked()) {
+      setStatus('Atualização do projeto concluída.', 'success');
+    }
   });
 
   if (automaticActivitiesToggle) {
@@ -1307,6 +1936,12 @@
       return;
     }
 
+    if (!isApplicationUnlocked(chave)) {
+      setAuthenticationPrompt();
+      passwordInput.focus();
+      return;
+    }
+
     if (!gpsLocationPermissionGranted && !manualLocationSelect.value) {
       setStatus('Selecione uma localização antes de registrar.', 'error');
       manualLocationSelect.focus();
@@ -1339,7 +1974,7 @@
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(parseErrorMessage(payload));
+        throw buildProtectedRequestError(response, payload);
       }
 
       writePersistedChave(chave);
@@ -1351,6 +1986,10 @@
         'success'
       );
     } catch (error) {
+      if (error && error.isAuthExpired) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : 'Falha de comunicação com a API.';
       setStatus(message, 'error');
     } finally {
@@ -1358,18 +1997,37 @@
     }
   });
 
+  if (passwordDialogBackButton) {
+    passwordDialogBackButton.addEventListener('click', closePasswordDialog);
+  }
+
+  if (passwordDialogBackdrop) {
+    passwordDialogBackdrop.addEventListener('click', closePasswordDialog);
+  }
+
+  if (passwordChangeForm) {
+    passwordChangeForm.addEventListener('submit', submitPasswordChange);
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isPasswordDialogOpen()) {
+      closePasswordDialog();
+    }
+  });
+
   syncProjectVisibility();
   syncAutomaticActivitiesToggle();
-  syncManualLocationControl();
+  clearProtectedClientState();
   syncFormControlStates();
-  void loadManualLocations();
+  setAuthenticationPrompt();
 
   const persistedChave = readPersistedChave();
   if (persistedChave) {
     chaveInput.value = persistedChave;
     restorePersistedUserSettingsForChave(persistedChave);
-    void runLifecycleUpdateSequence({ ignoreCooldown: true });
-  } else {
-    resetHistory('Digite sua chave Petrobras para visualizar seu histórico.');
+    void refreshAuthenticationStatus(persistedChave, {
+      startProcesses: true,
+      allowInlineLogin: true,
+    });
   }
 })();

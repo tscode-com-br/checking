@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     device_shared_key: str = "change-me"
     mobile_app_shared_key: str = "change-mobile-app-shared-key"
     provider_shared_key: str = "PETROBRASP80P82P83"
+    transport_bot_shared_key: str = "change-transport-bot-shared-key"
+    whatsapp_enabled: bool = False
+    whatsapp_provider: str = "meta"
+    whatsapp_webhook_verify_token: str = "change-whatsapp-webhook-verify-token"
+    whatsapp_access_token: str = "change-whatsapp-access-token"
+    whatsapp_phone_number_id: str = ""
+    whatsapp_business_account_id: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_graph_api_version: str = "v22.0"
     admin_session_secret: str = "change-admin-session-secret"
     admin_session_max_age_seconds: int = 28800
     bootstrap_admin_key: str = "HR70"

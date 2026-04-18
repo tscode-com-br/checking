@@ -21,6 +21,37 @@ test('getOrdinalSuffix handles English ordinal edge cases', () => {
   assert.equal(transportPage.getOrdinalSuffix(23), 'rd');
 });
 
+test('getTransportDateState classifies past, current, and future dates', () => {
+  const today = new Date(2026, 3, 17);
+
+  assert.equal(transportPage.getTransportDateState(new Date(2026, 3, 16), today), 'past');
+  assert.equal(transportPage.getTransportDateState(new Date(2026, 3, 17), today), 'today');
+  assert.equal(transportPage.getTransportDateState(new Date(2026, 3, 18), today), 'future');
+});
+
+test('createTransportDateStore shares one selected date across subscribers', () => {
+  const dateStore = transportPage.createTransportDateStore(new Date(2026, 3, 17));
+  const firstSubscriberDates = [];
+  const secondSubscriberDates = [];
+
+  dateStore.subscribe((dateValue) => {
+    firstSubscriberDates.push(transportPage.formatTransportDate(dateValue));
+  });
+  dateStore.subscribe((dateValue) => {
+    secondSubscriberDates.push(transportPage.formatTransportDate(dateValue));
+  });
+
+  dateStore.shiftValue(-1);
+  dateStore.setValue(new Date(2026, 3, 19));
+
+  assert.deepEqual(firstSubscriberDates, [
+    'Friday, April 17th, 2026',
+    'Thursday, April 16th, 2026',
+    'Sunday, April 19th, 2026',
+  ]);
+  assert.deepEqual(secondSubscriberDates, firstSubscriberDates);
+});
+
 test('resolvePanelSizes clamps resize positions to the configured limits', () => {
   assert.deepEqual(
     transportPage.resolvePanelSizes({

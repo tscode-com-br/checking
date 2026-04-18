@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -55,6 +55,15 @@ def _normalize_optional_compact_text(value: str | None, field_name: str, *, max_
     return normalized
 
 
+def _normalize_required_compact_text(value: str, field_name: str, *, max_length: int) -> str:
+    normalized = str(value).strip()
+    if not normalized:
+        raise ValueError(f"{field_name} e obrigatorio")
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} deve ter no maximo {max_length} caracteres")
+    return normalized
+
+
 def _normalize_optional_plate(value: str | None) -> str | None:
     if value is None:
         return None
@@ -78,6 +87,24 @@ def _validate_longitude(value: float) -> float:
     if value < -180 or value > 180:
         raise ValueError("A longitude deve estar entre -180 e 180")
     return value
+
+
+def _normalize_transport_time(value: str) -> str:
+    normalized = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(normalized, "%H:%M")
+    except ValueError as exc:
+        raise ValueError("O horario deve estar no formato hh:mm") from exc
+    return parsed.strftime("%H:%M")
+
+
+def _validate_web_password(value: str, field_name: str) -> str:
+    password = str(value)
+    if len(password) < 3 or len(password) > 10:
+        raise ValueError(f"{field_name} deve ter entre 3 e 10 caracteres")
+    if not password.strip():
+        raise ValueError(f"{field_name} nao pode conter apenas espacos")
+    return password
 
 
 class HealthResponse(BaseModel):
@@ -111,6 +138,7 @@ class AdminUserUpsert(BaseModel):
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
     projeto: Literal["P80", "P82", "P83"]
+    workplace: str | None = Field(default=None, max_length=120)
     placa: str | None = Field(default=None, max_length=9)
     end_rua: str | None = Field(default=None, max_length=255)
     zip: str | None = Field(default=None, max_length=10)
@@ -139,6 +167,11 @@ class AdminUserUpsert(BaseModel):
     @classmethod
     def validate_placa(cls, value: str | None) -> str | None:
         return _normalize_optional_plate(value)
+
+    @field_validator("workplace", mode="before")
+    @classmethod
+    def validate_workplace(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "O workplace", max_length=120)
 
     @field_validator("end_rua", mode="before")
     @classmethod
@@ -341,11 +374,221 @@ class AdminUserListRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    workplace: Optional[str] = None
     placa: Optional[str] = None
     end_rua: Optional[str] = None
     zip: Optional[str] = None
     cargo: Optional[str] = None
     email: Optional[str] = None
+
+
+class TransportWorkplaceUpsert(BaseModel):
+    workplace: str = Field(min_length=2, max_length=120)
+    address: str = Field(min_length=3, max_length=255)
+    zip: str = Field(min_length=1, max_length=10)
+    country: str = Field(min_length=2, max_length=80)
+
+    @field_validator("workplace", mode="before")
+    @classmethod
+    def validate_workplace_name(cls, value: str) -> str:
+        return _normalize_required_label(value, "O workplace", max_length=120)
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def validate_workplace_address(cls, value: str) -> str:
+        return _normalize_required_label(value, "O endereco", max_length=255)
+
+    @field_validator("zip", mode="before")
+    @classmethod
+    def validate_workplace_zip(cls, value: str) -> str:
+        return _normalize_required_compact_text(value, "O ZIP code", max_length=10)
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def validate_workplace_country(cls, value: str) -> str:
+        return _normalize_required_label(value, "O pais", max_length=80)
+
+
+class WorkplaceRow(BaseModel):
+    id: int
+    workplace: str
+    address: str
+    zip: str
+    country: str
+
+
+class TransportVehicleCreate(BaseModel):
+    placa: str = Field(max_length=9)
+    tipo: Literal["carro", "minivan", "van", "onibus"]
+    color: str = Field(min_length=2, max_length=40)
+    lugares: int = Field(ge=1, le=99)
+    tolerance: int = Field(ge=0, le=240)
+    service_scope: Literal["regular", "weekend", "extra"]
+
+    @field_validator("placa", mode="before")
+    @classmethod
+    def validate_vehicle_plate(cls, value: str) -> str:
+        normalized = _normalize_optional_plate(value)
+        if normalized is None:
+            raise ValueError("A placa e obrigatoria")
+        return normalized
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def validate_vehicle_color(cls, value: str) -> str:
+        return _normalize_required_label(value, "A cor", max_length=40)
+
+
+class TransportVehicleRow(BaseModel):
+    id: int
+    placa: str
+    tipo: str
+    color: str | None = None
+    lugares: int
+    tolerance: int
+    service_scope: str
+
+
+class TransportRequestCreate(BaseModel):
+    user_id: int | None = Field(default=None, ge=1)
+    chave: str | None = Field(default=None, min_length=4, max_length=4)
+    request_kind: Literal["regular", "weekend", "extra"]
+    requested_time: str = Field(min_length=5, max_length=5)
+    requested_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_target_identity(self):
+        if self.user_id is None and not self.chave:
+            raise ValueError("user_id or chave is required")
+        if self.request_kind == "extra" and self.requested_date is None:
+            raise ValueError("requested_date is required for extra requests")
+        if self.request_kind != "extra" and self.requested_date is not None:
+            raise ValueError("requested_date is only allowed for extra requests")
+        return self
+
+    @field_validator("chave")
+    @classmethod
+    def validate_request_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("requested_time")
+    @classmethod
+    def validate_requested_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportAssignmentUpsert(BaseModel):
+    request_id: int = Field(ge=1)
+    service_date: date
+    status: Literal["confirmed", "rejected", "cancelled"]
+    vehicle_id: int | None = Field(default=None, ge=1)
+    response_message: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_assignment(self):
+        if self.status == "confirmed" and self.vehicle_id is None:
+            raise ValueError("vehicle_id is required when status is confirmed")
+        if self.status != "confirmed" and self.vehicle_id is not None:
+            raise ValueError("vehicle_id is only allowed when status is confirmed")
+        return self
+
+    @field_validator("response_message", mode="before")
+    @classmethod
+    def validate_response_message(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A resposta", max_length=255)
+
+
+class TransportRequestRow(BaseModel):
+    id: int
+    request_kind: str
+    requested_time: str
+    service_date: date
+    user_id: int
+    chave: str
+    nome: str
+    projeto: str
+    workplace: str | None = None
+    end_rua: str | None = None
+    zip: str | None = None
+    assignment_status: Literal["pending", "confirmed", "rejected", "cancelled"]
+    assigned_vehicle: TransportVehicleRow | None = None
+    response_message: str | None = None
+
+
+class TransportDashboardResponse(BaseModel):
+    selected_date: date
+    regular_requests: list[TransportRequestRow]
+    weekend_requests: list[TransportRequestRow]
+    extra_requests: list[TransportRequestRow]
+    regular_vehicles: list[TransportVehicleRow]
+    weekend_vehicles: list[TransportVehicleRow]
+    extra_vehicles: list[TransportVehicleRow]
+    workplaces: list[WorkplaceRow]
+
+
+class TransportBotIncomingMessage(BaseModel):
+    chat_id: str = Field(min_length=2, max_length=120)
+    message: str = Field(min_length=1, max_length=500)
+
+    @field_validator("chat_id", mode="before")
+    @classmethod
+    def validate_chat_id(cls, value: str) -> str:
+        return _normalize_required_compact_text(value, "O chat_id", max_length=120)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_bot_message(cls, value: str) -> str:
+        normalized = " ".join(str(value or "").strip().split())
+        if not normalized:
+            raise ValueError("A mensagem e obrigatoria")
+        if len(normalized) > 500:
+            raise ValueError("A mensagem deve ter no maximo 500 caracteres")
+        return normalized
+
+
+class TransportBotReplyMessage(BaseModel):
+    text: str
+    options: list[str] = Field(default_factory=list)
+
+
+class TransportBotConversationResponse(BaseModel):
+    ok: bool
+    state: str
+    user_key: str | None = None
+    registration_completed: bool = False
+    request_created: bool = False
+    messages: list[TransportBotReplyMessage]
+
+
+class TransportNotificationRow(BaseModel):
+    id: int
+    chat_id: str | None = None
+    message: str
+    created_at: datetime
+    request_id: int | None = None
+    assignment_id: int | None = None
+
+
+class TransportNotificationListResponse(BaseModel):
+    items: list[TransportNotificationRow]
+
+
+class TransportNotificationAckResponse(BaseModel):
+    ok: bool
+
+
+class TransportWhatsAppDispatchResponse(BaseModel):
+    ok: bool
+    attempted: int
+    sent: int
+    failed: int
+    skipped: int
+    message: str
 
 
 class PendingRow(BaseModel):
@@ -488,6 +731,82 @@ class MobileFormsSubmitRequest(BaseModel):
 
 class WebCheckSubmitRequest(MobileFormsSubmitRequest):
     pass
+
+
+class WebPasswordStatusResponse(BaseModel):
+    found: bool
+    chave: str
+    has_password: bool
+    authenticated: bool
+    message: str
+
+
+class WebPasswordRegisterRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    projeto: Literal["P80", "P82", "P83"]
+    senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_password_register_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha", mode="before")
+    @classmethod
+    def validate_web_password_register_value(cls, value: str) -> str:
+        return _validate_web_password(value, "A senha")
+
+
+class WebPasswordLoginRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_password_login_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha", mode="before")
+    @classmethod
+    def validate_web_password_login_value(cls, value: str) -> str:
+        return _validate_web_password(value, "A senha")
+
+
+class WebPasswordChangeRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha_antiga: str = Field(min_length=3, max_length=10)
+    nova_senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_password_change_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha_antiga", mode="before")
+    @classmethod
+    def validate_web_password_old_value(cls, value: str) -> str:
+        return _validate_web_password(value, "A senha antiga")
+
+    @field_validator("nova_senha", mode="before")
+    @classmethod
+    def validate_web_password_new_value(cls, value: str) -> str:
+        return _validate_web_password(value, "A nova senha")
+
+
+class WebPasswordActionResponse(BaseModel):
+    ok: bool
+    authenticated: bool
+    has_password: bool
+    message: str
 
 
 class WebLocationMatchRequest(BaseModel):

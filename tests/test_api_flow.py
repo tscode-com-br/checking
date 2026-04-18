@@ -1,6 +1,7 @@
 import os
+import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -14,6 +15,13 @@ os.environ["FORMS_URL"] = "https://example.com/form"
 os.environ["DEVICE_SHARED_KEY"] = "device-test-key"
 os.environ["MOBILE_APP_SHARED_KEY"] = "mobile-test-key"
 os.environ["PROVIDER_SHARED_KEY"] = "PETROBRASP80P82P83"
+os.environ["TRANSPORT_BOT_SHARED_KEY"] = "transport-bot-test-key"
+os.environ["WHATSAPP_ENABLED"] = "true"
+os.environ["WHATSAPP_PROVIDER"] = "meta"
+os.environ["WHATSAPP_WEBHOOK_VERIFY_TOKEN"] = "whatsapp-verify-token"
+os.environ["WHATSAPP_ACCESS_TOKEN"] = "whatsapp-access-token"
+os.environ["WHATSAPP_PHONE_NUMBER_ID"] = "1234567890"
+os.environ["WHATSAPP_APP_SECRET"] = "whatsapp-app-secret"
 os.environ["ADMIN_SESSION_SECRET"] = "test-admin-session-secret"
 os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
@@ -29,7 +37,21 @@ from fastapi.testclient import TestClient
 from sistema.app.main import app
 from sistema.app.core.config import settings
 from sistema.app.database import Base, SessionLocal, engine
-from sistema.app.models import AdminAccessRequest, AdminUser, CheckEvent, CheckingHistory, FormsSubmission, User, UserSyncEvent, Vehicle
+from sistema.app.models import (
+    AdminAccessRequest,
+    AdminUser,
+    CheckEvent,
+    CheckingHistory,
+    FormsSubmission,
+    TransportAssignment,
+    TransportBotSession,
+    TransportNotification,
+    TransportRequest,
+    User,
+    UserSyncEvent,
+    Vehicle,
+    Workplace,
+)
 from sistema.app.routers import admin as admin_router
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
 from sistema.app.services.forms_worker import FormsWorker
@@ -37,6 +59,8 @@ from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import user_activity as user_activity_module
+from sistema.app.services import whatsapp_meta as whatsapp_meta_module
+from sistema.app.services.passwords import verify_password
 from sistema.app.services.time_utils import now_sgt
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 
@@ -45,6 +69,7 @@ ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
 MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
 PROVIDER_HEADERS = {"x-provider-shared-key": "PETROBRASP80P82P83"}
+TRANSPORT_BOT_HEADERS = {"x-transport-bot-shared-key": "transport-bot-test-key"}
 
 Base.metadata.create_all(bind=engine)
 
@@ -61,6 +86,26 @@ def ensure_admin_session(client: TestClient) -> None:
 
     login_response = login_admin(client)
     assert login_response.status_code == 200, login_response.text
+
+
+def register_web_password(
+    client: TestClient,
+    *,
+    chave: str,
+    senha: str = "abc123",
+    projeto: str = "P80",
+):
+    return client.post(
+        "/api/web/auth/register-password",
+        json={"chave": chave, "senha": senha, "projeto": projeto},
+    )
+
+
+def login_web_password(client: TestClient, *, chave: str, senha: str):
+    return client.post(
+        "/api/web/auth/login",
+        json={"chave": chave, "senha": senha},
+    )
 
 
 def get_user_by_rfid(db, rfid: str) -> User:
@@ -84,7 +129,8 @@ def test_health():
 
 def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
     with SessionLocal() as db:
-        vehicle = Vehicle(placa="SGX1234A", tipo="van", lugares=18)
+        db.add(Workplace(workplace="Innovation Hub", address="1 Harbour Front", zip="098632", country="Singapore"))
+        vehicle = Vehicle(placa="SGX1234A", tipo="van", color="White", lugares=18, tolerance=12, service_scope="regular")
         db.add(vehicle)
         db.flush()
 
@@ -93,6 +139,7 @@ def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
             nome="Usuario Transporte",
             chave="TR01",
             projeto="P80",
+            workplace="Innovation Hub",
             placa="SGX1234A",
             end_rua="123 Harbour Road",
             zip="0012345678",
@@ -110,7 +157,11 @@ def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
         persisted_user = db.execute(select(User).where(User.chave == "TR01")).scalar_one()
 
         assert persisted_vehicle.tipo == "van"
+        assert persisted_vehicle.color == "White"
         assert persisted_vehicle.lugares == 18
+        assert persisted_vehicle.tolerance == 12
+        assert persisted_vehicle.service_scope == "regular"
+        assert persisted_user.workplace == "Innovation Hub"
         assert persisted_user.placa == "SGX1234A"
         assert persisted_user.end_rua == "123 Harbour Road"
         assert persisted_user.zip == "0012345678"
@@ -149,7 +200,8 @@ def test_mobile_sync_records_checkinghistory_entry():
 
 def test_admin_users_support_extended_profile_fields_and_key_updates_history():
     with SessionLocal() as db:
-        db.add(Vehicle(placa="TRP1234A", tipo="van", lugares=18))
+        db.add(Workplace(workplace="Refinery West", address="2 Harbour Road", zip="112233", country="Singapore"))
+        db.add(Vehicle(placa="TRP1234A", tipo="van", color="Blue", lugares=18, tolerance=10, service_scope="regular"))
         db.commit()
 
     with TestClient(app) as client:
@@ -161,6 +213,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
                 "nome": "Usuario Completo",
                 "chave": "UF01",
                 "projeto": "P82",
+                "workplace": "Refinery West",
                 "placa": "TRP1234A",
                 "end_rua": "123 Harbour Road",
                 "zip": "0012345678",
@@ -186,6 +239,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         users = client.get("/api/admin/users")
         assert users.status_code == 200
         user_row = next(row for row in users.json() if row["chave"] == "UF01")
+        assert user_row["workplace"] == "Refinery West"
         assert user_row["placa"] == "TRP1234A"
         assert user_row["end_rua"] == "123 Harbour Road"
         assert user_row["zip"] == "0012345678"
@@ -200,6 +254,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
                 "nome": "Usuario Ajustado",
                 "chave": "UF02",
                 "projeto": "P83",
+                "workplace": "Refinery West",
                 "placa": "TRP1234A",
                 "end_rua": "456 Harbour Road",
                 "zip": "0000001234",
@@ -216,6 +271,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         assert updated_row["nome"] == "Usuario Ajustado"
         assert updated_row["chave"] == "UF02"
         assert updated_row["projeto"] == "P83"
+        assert updated_row["workplace"] == "Refinery West"
         assert updated_row["placa"] == "TRP1234A"
         assert updated_row["end_rua"] == "456 Harbour Road"
         assert updated_row["zip"] == "0000001234"
@@ -2347,12 +2403,17 @@ def test_mobile_check_page_is_served_on_user_path():
         response = client.get("/user")
         assert response.status_code == 200
         assert "Registrar" in response.text
+        assert "Senha" in response.text
         assert "Local" in response.text
         assert "Atualizar local" in response.text
-        assert "Chave Petrobras" in response.text
+        assert "Chave" in response.text
         assert "Último Check-In" in response.text
         assert "Último Check-Out" in response.text
         assert "/api/web/check" in response.text
+        assert "/api/web/auth/status" in response.text
+        assert "/api/web/auth/register-password" in response.text
+        assert "/api/web/auth/login" in response.text
+        assert "/api/web/auth/change-password" in response.text
         assert "/api/web/check/state" in response.text
         assert "/api/web/check/location" in response.text
 
@@ -2362,11 +2423,456 @@ def test_transport_page_is_served_on_transport_path():
         response = client.get("/transport")
         assert response.status_code == 200
         assert "User List" in response.text
+        assert "Extra Car Requests" in response.text
+        assert "Weekend Car Requests" in response.text
+        assert "Regular Car Requests" in response.text
         assert "Regular Car List" in response.text
+        assert "Weekend Car List" in response.text
         assert "Extra Car List" in response.text
-        assert "Today" in response.text
         assert 'id="tela01menu"' in response.text
         assert 'id="tela01main_dir_down"' in response.text
+        assert 'data-date-link' in response.text
+        assert 'data-date-today' not in response.text
+
+
+def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_status():
+    friday = date(2026, 4, 17)
+    saturday = date(2026, 4, 18)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        regular_vehicle = Vehicle(placa="REG9001", tipo="van", color="Silver", lugares=12, tolerance=8, service_scope="regular")
+        weekend_vehicle = Vehicle(placa="WKD9001", tipo="van", color="Black", lugares=10, tolerance=15, service_scope="weekend")
+        extra_vehicle = Vehicle(placa="EXT9001", tipo="carro", color="Red", lugares=4, tolerance=6, service_scope="extra")
+        db.add_all(
+            [
+                Workplace(workplace="Transport Hub Alpha", address="1 Harbour Front", zip="111111", country="Singapore"),
+                regular_vehicle,
+                weekend_vehicle,
+                extra_vehicle,
+            ]
+        )
+        db.flush()
+
+        regular_user = User(
+            rfid=None,
+            nome="Regular Rider",
+            chave="TD01",
+            projeto="P80",
+            workplace="Transport Hub Alpha",
+            end_rua="10 Regular Street",
+            zip="900001",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        weekend_user = User(
+            rfid=None,
+            nome="Weekend Rider",
+            chave="TD02",
+            projeto="P82",
+            workplace="Transport Hub Alpha",
+            end_rua="20 Weekend Street",
+            zip="900002",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        extra_user = User(
+            rfid=None,
+            nome="Extra Rider",
+            chave="TD03",
+            projeto="P83",
+            workplace="Transport Hub Alpha",
+            end_rua="30 Extra Street",
+            zip="900003",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add_all([regular_user, weekend_user, extra_user])
+        db.flush()
+
+        regular_request = TransportRequest(
+            user_id=regular_user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        weekend_request = TransportRequest(
+            user_id=weekend_user.id,
+            request_kind="weekend",
+            recurrence_kind="weekend",
+            requested_time="08:10",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        extra_request = TransportRequest(
+            user_id=extra_user.id,
+            request_kind="extra",
+            recurrence_kind="single_date",
+            requested_time="09:15",
+            single_date=friday,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add_all([regular_request, weekend_request, extra_request])
+        db.flush()
+        db.add(
+            TransportAssignment(
+                request_id=regular_request.id,
+                service_date=friday,
+                vehicle_id=regular_vehicle.id,
+                status="confirmed",
+                response_message=None,
+                assigned_by_admin_id=None,
+                created_at=timestamp,
+                updated_at=timestamp,
+                notified_at=None,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        friday_response = client.get("/api/transport/dashboard", params={"service_date": friday.isoformat()})
+        saturday_response = client.get("/api/transport/dashboard", params={"service_date": saturday.isoformat()})
+
+    assert friday_response.status_code == 200
+    assert saturday_response.status_code == 200
+
+    friday_payload = friday_response.json()
+    saturday_payload = saturday_response.json()
+
+    assert [row["chave"] for row in friday_payload["regular_requests"]] == ["TD01"]
+    assert friday_payload["regular_requests"][0]["assignment_status"] == "confirmed"
+    assert friday_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
+    assert [row["chave"] for row in friday_payload["extra_requests"]] == ["TD03"]
+    assert friday_payload["extra_requests"][0]["assignment_status"] == "pending"
+    assert friday_payload["weekend_requests"] == []
+
+    assert saturday_payload["regular_requests"] == []
+    assert [row["chave"] for row in saturday_payload["weekend_requests"]] == ["TD02"]
+    assert saturday_payload["extra_requests"] == []
+
+
+def test_transport_bot_registers_user_creates_request_and_exposes_notifications_after_assignment():
+    today = now_sgt().date()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Transport Hub Bot", address="7 Bot Avenue", zip="700700", country="Singapore"))
+        db.add(Vehicle(placa="BOT9001", tipo="van", color="Blue", lugares=14, tolerance=9, service_scope="extra"))
+        db.commit()
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "TB91"},
+        )
+        assert first.status_code == 200
+        assert first.json()["state"] == "awaiting_name"
+
+        assert client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "ADRIANO JOSE DA SILVA"},
+        ).status_code == 200
+        assert client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "P82"},
+        ).status_code == 200
+        assert client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "Transport Hub Bot"},
+        ).status_code == 200
+        assert client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "123 Harbour Road"},
+        ).status_code == 200
+
+        registration = client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "0012345678"},
+        )
+        assert registration.status_code == 200
+        assert registration.json()["registration_completed"] is True
+
+        extra_choice = client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "EXTRA"},
+        )
+        assert extra_choice.status_code == 200
+        assert extra_choice.json()["state"] == "awaiting_request_time"
+
+        request_created = client.post(
+            "/api/transport/bot/messages",
+            headers=TRANSPORT_BOT_HEADERS,
+            json={"chat_id": "chat-transport-1", "message": "07:45"},
+        )
+        assert request_created.status_code == 200
+        assert request_created.json()["request_created"] is True
+
+        ensure_admin_session(client)
+
+    with SessionLocal() as db:
+        bot_user = get_user_by_chave(db, "TB91")
+        transport_request = db.execute(
+            select(TransportRequest)
+            .where(TransportRequest.user_id == bot_user.id, TransportRequest.request_kind == "extra")
+            .order_by(TransportRequest.id.desc())
+            .limit(1)
+        ).scalar_one()
+        vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "BOT9001")).scalar_one()
+
+    assert bot_user.nome == "Adriano Jose da Silva"
+    assert bot_user.workplace == "Transport Hub Bot"
+    assert bot_user.checkin is True
+    assert transport_request.single_date == today
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        assignment = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": transport_request.id,
+                "service_date": today.isoformat(),
+                "status": "confirmed",
+                "vehicle_id": vehicle.id,
+            },
+        )
+        assert assignment.status_code == 200
+
+        notifications = client.get("/api/transport/bot/notifications/pending", headers=TRANSPORT_BOT_HEADERS)
+        assert notifications.status_code == 200
+        items = notifications.json()["items"]
+        matching = next(item for item in items if item["request_id"] == transport_request.id)
+        assert "BOT9001" in matching["message"]
+        assert "Tolerancia: 9 minutos" in matching["message"]
+
+        sent = client.post(f"/api/transport/bot/notifications/{matching['id']}/sent", headers=TRANSPORT_BOT_HEADERS)
+        assert sent.status_code == 200
+
+    with SessionLocal() as db:
+        delivered = db.get(TransportNotification, matching["id"])
+        assert delivered is not None
+        assert delivered.status == "sent"
+
+
+def test_transport_whatsapp_webhook_verifies_meta_challenge():
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/transport/whatsapp/webhook",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "whatsapp-verify-token",
+                "hub.challenge": "challenge-ok",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == "challenge-ok"
+
+
+def test_transport_whatsapp_webhook_processes_messages_and_sends_replies(monkeypatch):
+    today = now_sgt().date()
+    sent_messages = []
+
+    def fake_send_whatsapp_text_message(*, chat_id: str, text: str) -> str:
+        sent_messages.append({"chat_id": chat_id, "text": text})
+        return f"wamid.{len(sent_messages)}"
+
+    monkeypatch.setattr(whatsapp_meta_module, "send_whatsapp_text_message", fake_send_whatsapp_text_message)
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Webhook Hub", address="8 Webhook Avenue", zip="808080", country="Singapore"))
+        db.commit()
+
+    with TestClient(app) as client:
+        for text in ["WB91", "MARIA JOSE DA SILVA", "P80", "Webhook Hub", "321 Harbour Lane", "99887766", "EXTRA", "08:30"]:
+            payload = _build_meta_webhook_payload(message_id=f"wamid-{text}", from_number="5511999999999", text=text)
+            body = json.dumps(payload).encode("utf-8")
+            response = client.post(
+                "/api/transport/whatsapp/webhook",
+                content=body,
+                headers={
+                    "content-type": "application/json",
+                    "x-hub-signature-256": _build_meta_signature(body, "whatsapp-app-secret"),
+                },
+            )
+            assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WB91")
+        transport_request = db.execute(
+            select(TransportRequest)
+            .where(TransportRequest.user_id == user.id, TransportRequest.request_kind == "extra")
+            .order_by(TransportRequest.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert user.nome == "Maria Jose da Silva"
+    assert user.workplace == "Webhook Hub"
+    assert user.checkin is True
+    assert transport_request.single_date == today
+    assert any("Cadastro concluido para Maria Jose da Silva." in row["text"] for row in sent_messages)
+    assert any("Pedido EXTRA registrado para 08:30." in row["text"] for row in sent_messages)
+
+
+def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypatch):
+    sent_messages = []
+
+    def fake_send_whatsapp_text_message(*, chat_id: str, text: str) -> str:
+        sent_messages.append({"chat_id": chat_id, "text": text})
+        return "wamid.notification.1"
+
+    monkeypatch.setattr(whatsapp_meta_module, "send_whatsapp_text_message", fake_send_whatsapp_text_message)
+
+    today = now_sgt().date()
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Dispatch Hub", address="1 Dispatch Road", zip="123123", country="Singapore"))
+        user = User(
+            rfid=None,
+            nome="Dispatch Rider",
+            chave="WD01",
+            projeto="P82",
+            workplace="Dispatch Hub",
+            end_rua="44 Dispatch Street",
+            zip="445566",
+            local=None,
+            checkin=True,
+            time=timestamp,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        vehicle = Vehicle(placa="WPP1001", tipo="van", color="Green", lugares=12, tolerance=7, service_scope="extra")
+        db.add_all([user, vehicle])
+        db.flush()
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="extra",
+            recurrence_kind="single_date",
+            requested_time="07:10",
+            single_date=today,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+        db.add(
+            TransportBotSession(
+                chat_id="5511888888888",
+                user_id=user.id,
+                chave=user.chave,
+                state="ready",
+                context_json=None,
+                created_at=timestamp,
+                updated_at=timestamp,
+                last_message_at=timestamp,
+            )
+        )
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": today.isoformat(),
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+
+    assert response.status_code == 200
+    assert "Notificacao WhatsApp enviada." in response.json()["message"]
+    assert any("WPP1001" in row["text"] for row in sent_messages)
+
+    with SessionLocal() as db:
+        delivered = db.execute(
+            select(TransportNotification)
+            .where(TransportNotification.request_id == request_id)
+            .order_by(TransportNotification.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert delivered.status == "sent"
+
+
+def _build_meta_webhook_payload(*, message_id: str, from_number: str, text: str) -> dict:
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {
+                                "display_phone_number": "15551234567",
+                                "phone_number_id": settings.whatsapp_phone_number_id,
+                            },
+                            "contacts": [
+                                {
+                                    "profile": {"name": "Teste WhatsApp"},
+                                    "wa_id": from_number,
+                                }
+                            ],
+                            "messages": [
+                                {
+                                    "from": from_number,
+                                    "id": message_id,
+                                    "timestamp": "1710000000",
+                                    "type": "text",
+                                    "text": {"body": text},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+
+
+def _build_meta_signature(body: bytes, secret: str) -> str:
+    import hashlib
+    import hmac
+
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
 
 
 def test_admin_page_is_served_on_admin_path():
@@ -2377,39 +2883,120 @@ def test_admin_page_is_served_on_admin_path():
         assert "Acesso Administrativo" in response.text
 
 
-def test_web_check_autocreates_user_with_web_origin_name():
-    client_event_id = f"web-check-create-{uuid.uuid4().hex}"
-
+def test_web_password_registration_autocreates_user_with_web_origin_name_and_hashes_password():
     with TestClient(app) as client:
-        response = client.post(
-            "/api/web/check",
-            json={
-                "chave": "WB11",
-                "projeto": "P82",
-                "action": "checkin",
-                "informe": "normal",
-                "event_time": now_sgt().isoformat(),
-                "client_event_id": client_event_id,
-            },
-        )
+        response = register_web_password(client, chave="WB11", senha="s#123", projeto="P82")
         assert response.status_code == 200
         payload = response.json()
         assert payload["ok"] is True
-        assert payload["duplicate"] is False
-        assert payload["queued_forms"] is True
-        assert payload["state"]["found"] is True
-        assert payload["state"]["projeto"] == "P82"
+        assert payload["authenticated"] is True
+        assert payload["has_password"] is True
+
+        status = client.get("/api/web/auth/status", params={"chave": "WB11"})
+        assert status.status_code == 200
+        assert status.json() == {
+            "found": True,
+            "chave": "WB11",
+            "has_password": True,
+            "authenticated": True,
+            "message": "Aplicacao liberada.",
+        }
 
         with SessionLocal() as db:
             user = get_user_by_chave(db, "WB11")
             assert user.nome == "Oriundo da Web"
             assert user.rfid is None
             assert user.projeto == "P82"
+            assert user.senha is not None
+            assert user.senha != "s#123"
+            assert user.senha.startswith("pbkdf2_sha256$")
+            assert verify_password("s#123", user.senha) is True
+
+
+def test_web_check_endpoints_require_authenticated_password_session():
+    payload = {
+        "chave": "WB90",
+        "projeto": "P80",
+        "action": "checkin",
+        "informe": "normal",
+        "event_time": now_sgt().isoformat(),
+        "client_event_id": f"web-check-auth-{uuid.uuid4().hex}",
+    }
+
+    with TestClient(app) as client:
+        submit_response = client.post("/api/web/check", json=payload)
+        history_response = client.get("/api/web/check/state", params={"chave": "WB90"})
+        locations_response = client.get("/api/web/check/locations")
+        location_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert submit_response.status_code == 401
+        assert history_response.status_code == 401
+        assert locations_response.status_code == 401
+        assert location_response.status_code == 401
+
+
+def test_web_password_change_replaces_previous_password():
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="WB15", senha="abc123", projeto="P80")
+        assert registered.status_code == 200
+
+        wrong_change = client.post(
+            "/api/web/auth/change-password",
+            json={
+                "chave": "WB15",
+                "senha_antiga": "000000",
+                "nova_senha": "n0va#1",
+            },
+        )
+        assert wrong_change.status_code == 401
+
+        changed = client.post(
+            "/api/web/auth/change-password",
+            json={
+                "chave": "WB15",
+                "senha_antiga": "abc123",
+                "nova_senha": "n0va#1",
+            },
+        )
+        assert changed.status_code == 200
+        assert changed.json()["authenticated"] is True
+        assert changed.json()["has_password"] is True
+
+        old_login = login_web_password(client, chave="WB15", senha="abc123")
+        assert old_login.status_code == 401
+
+        new_login = login_web_password(client, chave="WB15", senha="n0va#1")
+        assert new_login.status_code == 200
+        assert new_login.json()["authenticated"] is True
+        assert new_login.json()["has_password"] is True
+
+
+def test_web_password_status_returns_not_found_for_unknown_key():
+    with TestClient(app) as client:
+        response = client.get("/api/web/auth/status", params={"chave": "ZZ99"})
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "found": False,
+            "chave": "ZZ99",
+            "has_password": False,
+            "authenticated": False,
+            "message": "Digite sua chave e crie uma senha.",
+        }
 
 
 def test_web_location_match_returns_known_location_when_accuracy_is_good():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL80", senha="loc123", projeto="P80")
+        assert auth_response.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
@@ -2449,6 +3036,8 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
 def test_web_location_match_blocks_low_accuracy_before_matching():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL81", senha="loc123", projeto="P80")
+        assert auth_response.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
@@ -2488,6 +3077,8 @@ def test_web_location_match_blocks_low_accuracy_before_matching():
 def test_web_location_match_returns_unregistered_location_without_message_within_two_km():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL82", senha="loc123", projeto="P80")
+        assert auth_response.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
@@ -2528,6 +3119,8 @@ def test_web_location_match_returns_unregistered_location_without_message_within
 def test_web_location_match_returns_outside_workplace_without_message():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL83", senha="loc123", projeto="P80")
+        assert auth_response.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
@@ -2569,6 +3162,9 @@ def test_web_check_updates_user_local_when_location_is_provided():
     client_event_id = f"web-check-local-{uuid.uuid4().hex}"
 
     with TestClient(app) as client:
+        auth_response = register_web_password(client, chave="WB14", senha="local1", projeto="P80")
+        assert auth_response.status_code == 200
+
         response = client.post(
             "/api/web/check",
             json={
@@ -2606,6 +3202,9 @@ def test_web_check_reuses_flutter_like_hidden_project_for_checkout():
     second_event_time = first_event_time + timedelta(minutes=4)
 
     with TestClient(app) as client:
+        auth_response = register_web_password(client, chave="WB12", senha="check1", projeto="P83")
+        assert auth_response.status_code == 200
+
         first = client.post(
             "/api/web/check",
             json={
@@ -2661,6 +3260,9 @@ def test_web_check_state_returns_latest_public_history():
     checkout_at = now_sgt()
 
     with TestClient(app) as client:
+        auth_response = register_web_password(client, chave="WB13", senha="state1", projeto="P80")
+        assert auth_response.status_code == 200
+
         first = client.post(
             "/api/web/check",
             json={
@@ -2698,22 +3300,6 @@ def test_web_check_state_returns_latest_public_history():
             "current_local": "Web",
             "last_checkin_at": checkin_at.replace(tzinfo=None).isoformat(),
             "last_checkout_at": checkout_at.replace(tzinfo=None).isoformat(),
-        }
-
-
-def test_web_check_state_returns_not_found_for_unknown_key():
-    with TestClient(app) as client:
-        response = client.get("/api/web/check/state", params={"chave": "ZZ99"})
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "found": False,
-            "chave": "ZZ99",
-            "projeto": None,
-            "current_action": None,
-            "current_local": None,
-            "last_checkin_at": None,
-            "last_checkout_at": None,
         }
 
 

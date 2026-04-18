@@ -71,6 +71,29 @@
     return true;
   }
 
+  function isPasswordLengthValid(password) {
+    const rawPassword = String(password ?? '');
+    return rawPassword.length >= 3 && rawPassword.length <= 10 && rawPassword.trim().length > 0;
+  }
+
+  function resolvePasswordActionLabel(hasPassword) {
+    return hasPassword ? 'Alterar' : 'Registrar';
+  }
+
+  function resolveAuthenticationPromptMessage(authState) {
+    const state = authState && typeof authState === 'object' ? authState : {};
+
+    if (state.authenticated) {
+      return '';
+    }
+
+    if (state.hasPassword) {
+      return 'Digite sua senha para iniciar.';
+    }
+
+    return 'Digite sua chave e crie uma senha.';
+  }
+
   function resolvePersistedUserSettings(settingsByChave, chave, defaults) {
     const normalizedChave = sanitizeSettingsChave(chave);
     const safeDefaults = defaults || {};
@@ -128,6 +151,9 @@
     splitNotificationMessage,
     normalizeProjectValue,
     shouldAttemptSilentLocationLookup,
+    isPasswordLengthValid,
+    resolvePasswordActionLabel,
+    resolveAuthenticationPromptMessage,
     resolvePersistedUserSettings,
     withPersistedUserSettings,
   };

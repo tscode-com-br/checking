@@ -1,9 +1,20 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
+
+
+class Workplace(Base):
+    __tablename__ = "workplaces"
+    __table_args__ = (UniqueConstraint("workplace", name="uq_workplaces_workplace"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workplace: Mapped[str] = mapped_column(String(120), nullable=False)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    zip: Mapped[str] = mapped_column(String(10), nullable=False)
+    country: Mapped[str] = mapped_column(String(80), nullable=False)
 
 
 class User(Base):
@@ -12,8 +23,10 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     rfid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     chave: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
+    senha: Mapped[str | None] = mapped_column(String(255), nullable=True)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)
     placa: Mapped[str | None] = mapped_column(String(9), ForeignKey("vehicles.placa"), nullable=True)
     end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zip: Mapped[str | None] = mapped_column(String(10), nullable=True)
@@ -32,12 +45,93 @@ class Vehicle(Base):
         UniqueConstraint("placa", name="uq_vehicles_placa"),
         CheckConstraint("tipo IN ('carro', 'minivan', 'van', 'onibus')", name="ck_vehicles_tipo_allowed"),
         CheckConstraint("lugares >= 1 AND lugares <= 99", name="ck_vehicles_lugares_range"),
+        CheckConstraint("tolerance >= 0 AND tolerance <= 240", name="ck_vehicles_tolerance_range"),
+        CheckConstraint("service_scope IN ('regular', 'weekend', 'extra')", name="ck_vehicles_service_scope_allowed"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     placa: Mapped[str] = mapped_column(String(9), nullable=False)
     tipo: Mapped[str] = mapped_column(String(16), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(40), nullable=True)
     lugares: Mapped[int] = mapped_column(Integer, nullable=False)
+    tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    service_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="regular")
+
+
+class TransportRequest(Base):
+    __tablename__ = "transport_requests"
+    __table_args__ = (
+        CheckConstraint("request_kind IN ('regular', 'weekend', 'extra')", name="ck_transport_requests_kind_allowed"),
+        CheckConstraint(
+            "recurrence_kind IN ('weekday', 'weekend', 'single_date')",
+            name="ck_transport_requests_recurrence_allowed",
+        ),
+        CheckConstraint("status IN ('active', 'cancelled')", name="ck_transport_requests_status_allowed"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    recurrence_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    single_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    created_via: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TransportAssignment(Base):
+    __tablename__ = "transport_assignments"
+    __table_args__ = (
+        UniqueConstraint("request_id", "service_date", name="uq_transport_assignments_request_date"),
+        CheckConstraint(
+            "status IN ('confirmed', 'rejected', 'cancelled')",
+            name="ck_transport_assignments_status_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("transport_requests.id"), nullable=False)
+    service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
+    response_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    assigned_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TransportBotSession(Base):
+    __tablename__ = "transport_bot_sessions"
+    __table_args__ = (UniqueConstraint("chat_id", name="uq_transport_bot_sessions_chat_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    chave: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="awaiting_key")
+    context_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportNotification(Base):
+    __tablename__ = "transport_notifications"
+    __table_args__ = (CheckConstraint("status IN ('pending', 'sent')", name="ck_transport_notifications_status_allowed"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    chat_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("transport_requests.id"), nullable=True)
+    assignment_id: Mapped[int | None] = mapped_column(ForeignKey("transport_assignments.id"), nullable=True)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PendingRegistration(Base):
