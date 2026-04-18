@@ -47,6 +47,7 @@ from sistema.app.models import (
     TransportBotSession,
     TransportNotification,
     TransportRequest,
+    TransportVehicleSchedule,
     User,
     UserSyncEvent,
     Vehicle,
@@ -150,6 +151,33 @@ def get_user_by_chave(db, chave: str) -> User:
     user = find_user_by_chave(db, chave)
     assert user is not None
     return user
+
+
+def add_transport_schedule(
+    db,
+    *,
+    vehicle: Vehicle,
+    service_scope: str,
+    route_kind: str,
+    recurrence_kind: str,
+    service_date: date | None = None,
+    weekday: int | None = None,
+) -> TransportVehicleSchedule:
+    timestamp = now_sgt()
+    schedule = TransportVehicleSchedule(
+        vehicle_id=vehicle.id,
+        service_scope=service_scope,
+        route_kind=route_kind,
+        recurrence_kind=recurrence_kind,
+        service_date=service_date,
+        weekday=weekday,
+        is_active=True,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    db.add(schedule)
+    db.flush()
+    return schedule
 
 
 def test_health():
@@ -2461,9 +2489,13 @@ def test_transport_page_is_served_on_transport_path():
         assert "Extra Car Requests" in response.text
         assert "Weekend Car Requests" in response.text
         assert "Regular Car Requests" in response.text
-        assert "Regular Car List" in response.text
-        assert "Weekend Car List" in response.text
-        assert "Extra Car List" in response.text
+        assert "Regular Transport List" in response.text
+        assert "Weekend Transport List" in response.text
+        assert "Extra Transport List" in response.text
+        assert "System Support" in response.text
+        assert "Tamer Salmem (HR70)" in response.text
+        assert "Home to Work" in response.text
+        assert "Work to Home" in response.text
         assert 'id="tela01menu"' in response.text
         assert 'id="tela01main_dir_down"' in response.text
         assert 'data-date-link' in response.text
@@ -2488,6 +2520,44 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
             ]
         )
         db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="home_to_work",
+            recurrence_kind="matching_weekday",
+            weekday=saturday.weekday(),
+        )
+        add_transport_schedule(
+            db,
+            vehicle=weekend_vehicle,
+            service_scope="weekend",
+            route_kind="work_to_home",
+            recurrence_kind="matching_weekday",
+            weekday=saturday.weekday(),
+        )
+        add_transport_schedule(
+            db,
+            vehicle=extra_vehicle,
+            service_scope="extra",
+            route_kind="home_to_work",
+            recurrence_kind="single_date",
+            service_date=friday,
+        )
 
         regular_user = User(
             rfid=None,
@@ -2576,6 +2646,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
             TransportAssignment(
                 request_id=regular_request.id,
                 service_date=friday,
+                route_kind="home_to_work",
                 vehicle_id=regular_vehicle.id,
                 status="confirmed",
                 response_message=None,
@@ -2591,12 +2662,18 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
         ensure_admin_session(client)
         friday_response = client.get("/api/transport/dashboard", params={"service_date": friday.isoformat()})
         saturday_response = client.get("/api/transport/dashboard", params={"service_date": saturday.isoformat()})
+        friday_work_to_home_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "work_to_home"},
+        )
 
     assert friday_response.status_code == 200
     assert saturday_response.status_code == 200
+    assert friday_work_to_home_response.status_code == 200
 
     friday_payload = friday_response.json()
     saturday_payload = saturday_response.json()
+    friday_work_to_home_payload = friday_work_to_home_response.json()
 
     assert [row["chave"] for row in friday_payload["regular_requests"]] == ["TD01"]
     assert friday_payload["regular_requests"][0]["assignment_status"] == "confirmed"
@@ -2604,10 +2681,189 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert [row["chave"] for row in friday_payload["extra_requests"]] == ["TD03"]
     assert friday_payload["extra_requests"][0]["assignment_status"] == "pending"
     assert friday_payload["weekend_requests"] == []
+    assert [row["placa"] for row in friday_payload["regular_vehicles"]] == ["REG9001"]
+    assert [row["placa"] for row in friday_payload["extra_vehicles"]] == ["EXT9001"]
+    assert friday_payload["selected_route"] == "home_to_work"
 
     assert saturday_payload["regular_requests"] == []
     assert [row["chave"] for row in saturday_payload["weekend_requests"]] == ["TD02"]
     assert saturday_payload["extra_requests"] == []
+    assert [row["placa"] for row in saturday_payload["weekend_vehicles"]] == ["WKD9001"]
+
+    assert [row["placa"] for row in friday_work_to_home_payload["regular_vehicles"]] == ["REG9001"]
+    assert friday_work_to_home_payload["extra_vehicles"] == []
+    assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "pending"
+
+
+def test_transport_vehicle_registration_creates_route_aware_schedules():
+    friday = date(2026, 4, 17)
+    sunday = date(2026, 4, 19)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        extra_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "extra",
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "tipo": "carro",
+                "placa": "EXT7001",
+                "color": "Red",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+        weekend_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "weekend",
+                "service_date": sunday.isoformat(),
+                "every_weekend": True,
+                "tipo": "van",
+                "placa": "WKD7001",
+                "color": "Black",
+                "lugares": 10,
+                "tolerance": 12,
+            },
+        )
+        regular_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": friday.isoformat(),
+                "tipo": "minivan",
+                "placa": "REG7001",
+                "color": "White",
+                "lugares": 7,
+                "tolerance": 9,
+            },
+        )
+
+    assert extra_response.status_code == 200
+    assert weekend_response.status_code == 200
+    assert regular_response.status_code == 200
+
+    with SessionLocal() as db:
+        extra_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "EXT7001")).scalar_one()
+        weekend_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "WKD7001")).scalar_one()
+        regular_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "REG7001")).scalar_one()
+
+        extra_schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == extra_vehicle.id)
+            .order_by(TransportVehicleSchedule.id)
+        ).scalars().all()
+        weekend_schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == weekend_vehicle.id)
+            .order_by(TransportVehicleSchedule.route_kind)
+        ).scalars().all()
+        regular_schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == regular_vehicle.id)
+            .order_by(TransportVehicleSchedule.route_kind)
+        ).scalars().all()
+
+    assert len(extra_schedules) == 1
+    assert extra_schedules[0].route_kind == "work_to_home"
+    assert extra_schedules[0].recurrence_kind == "single_date"
+    assert extra_schedules[0].service_date == friday
+
+    assert len(weekend_schedules) == 2
+    assert {row.route_kind for row in weekend_schedules} == {"home_to_work", "work_to_home"}
+    assert all(row.recurrence_kind == "matching_weekday" for row in weekend_schedules)
+    assert all(row.weekday == sunday.weekday() for row in weekend_schedules)
+
+    assert len(regular_schedules) == 2
+    assert {row.route_kind for row in regular_schedules} == {"home_to_work", "work_to_home"}
+    assert all(row.recurrence_kind == "weekday" for row in regular_schedules)
+
+
+def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Mirror Hub", address="2 Mirror Road", zip="222222", country="Singapore"))
+        vehicle = Vehicle(placa="REG8001", tipo="van", color="Blue", lugares=11, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Mirror Rider",
+            chave="MR01",
+            projeto="P80",
+            workplace="Mirror Hub",
+            end_rua="22 Mirror Street",
+            zip="220022",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:00",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        assignments = db.execute(
+            select(TransportAssignment)
+            .where(TransportAssignment.request_id == request_id)
+            .order_by(TransportAssignment.route_kind)
+        ).scalars().all()
+
+    assert [row.route_kind for row in assignments] == ["home_to_work", "work_to_home"]
+    assert all(row.status == "confirmed" for row in assignments)
+    assert all(row.vehicle_id == vehicle_id for row in assignments)
 
 
 def test_transport_bot_registers_user_creates_request_and_exposes_notifications_after_assignment():
@@ -2615,7 +2871,17 @@ def test_transport_bot_registers_user_creates_request_and_exposes_notifications_
 
     with SessionLocal() as db:
         db.add(Workplace(workplace="Transport Hub Bot", address="7 Bot Avenue", zip="700700", country="Singapore"))
-        db.add(Vehicle(placa="BOT9001", tipo="van", color="Blue", lugares=14, tolerance=9, service_scope="extra"))
+        vehicle = Vehicle(placa="BOT9001", tipo="van", color="Blue", lugares=14, tolerance=9, service_scope="extra")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="extra",
+            route_kind="home_to_work",
+            recurrence_kind="single_date",
+            service_date=today,
+        )
         db.commit()
 
     with TestClient(app) as client:
@@ -2696,6 +2962,7 @@ def test_transport_bot_registers_user_creates_request_and_exposes_notifications_
             json={
                 "request_id": transport_request.id,
                 "service_date": today.isoformat(),
+                "route_kind": "home_to_work",
                 "status": "confirmed",
                 "vehicle_id": vehicle.id,
             },
@@ -2809,6 +3076,14 @@ def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypat
         vehicle = Vehicle(placa="WPP1001", tipo="van", color="Green", lugares=12, tolerance=7, service_scope="extra")
         db.add_all([user, vehicle])
         db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="extra",
+            route_kind="home_to_work",
+            recurrence_kind="single_date",
+            service_date=today,
+        )
         request_row = TransportRequest(
             user_id=user.id,
             request_kind="extra",
@@ -2846,6 +3121,7 @@ def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypat
             json={
                 "request_id": request_id,
                 "service_date": today.isoformat(),
+                "route_kind": "home_to_work",
                 "status": "confirmed",
                 "vehicle_id": vehicle_id,
             },

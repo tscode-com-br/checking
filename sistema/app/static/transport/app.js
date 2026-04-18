@@ -1,7 +1,7 @@
 (function (globalScope) {
   const RESIZE_DEFAULT_MIN_SIZE = 96;
   const REQUEST_SECTION_ORDER = ["extra", "weekend", "regular"];
-  const VEHICLE_SCOPE_ORDER = ["regular", "weekend", "extra"];
+  const VEHICLE_SCOPE_ORDER = ["extra", "weekend", "regular"];
   const REQUEST_TITLES = {
     regular: "Regular Car Requests",
     weekend: "Weekend Car Requests",
@@ -18,6 +18,17 @@
     van: "icons/van.svg",
     onibus: "icons/bus.svg",
   };
+  const ROUTE_KIND_LABELS = {
+    home_to_work: "Home to Work",
+    work_to_home: "Work to Home",
+  };
+  const MODAL_SCOPE_NOTES = {
+    extra: "Extra vehicles are created only for the selected route and selected date.",
+    weekend:
+      "Weekend vehicles are created for both routes on the selected date. Enable Every Weekend to repeat on the same weekend day.",
+    regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
+  };
+  const DEFAULT_STATUS_MESSAGE = "Transport dashboard ready.";
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
   const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
@@ -72,6 +83,11 @@
     }
 
     return selectedDate.getTime() > referenceDate.getTime() ? "future" : "past";
+  }
+
+  function isWeekendDate(value) {
+    const date = startOfLocalDay(value);
+    return date.getDay() === 0 || date.getDay() === 6;
   }
 
   function createTransportDateStore(initialValue) {
@@ -466,6 +482,14 @@
     return "Extra";
   }
 
+  function getRouteKindLabel(routeKind) {
+    return ROUTE_KIND_LABELS[routeKind] || routeKind;
+  }
+
+  function getModalScopeNote(scope) {
+    return MODAL_SCOPE_NOTES[scope] || MODAL_SCOPE_NOTES.regular;
+  }
+
   function createEmptyState(message) {
     const wrapper = createNode("div", "transport-empty-state");
     wrapper.appendChild(createNode("strong", "transport-empty-title", message));
@@ -479,6 +503,7 @@
       dashboard: null,
       selectedRequestId: null,
       isLoading: false,
+      selectedRouteKind: "home_to_work",
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const selectionBanner = document.querySelector("[data-selection-banner]");
@@ -488,12 +513,29 @@
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
     const vehicleForm = document.querySelector("[data-vehicle-form]");
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
+    const modalScopeNote = document.querySelector("[data-modal-scope-note]");
+    const extraRouteField = document.querySelector("[data-extra-route-field]");
+    const weekendPersistenceField = document.querySelector("[data-weekend-persistence-field]");
+    const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
 
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
     });
     document.querySelectorAll("[data-vehicle-scope]").forEach(function (element) {
       vehicleContainers[element.dataset.vehicleScope] = element;
+    });
+
+    routeInputs.forEach(function (inputElement) {
+      if (inputElement.checked) {
+        state.selectedRouteKind = inputElement.value || state.selectedRouteKind;
+      }
+      inputElement.addEventListener("change", function () {
+        if (!inputElement.checked) {
+          return;
+        }
+        state.selectedRouteKind = inputElement.value || "home_to_work";
+        loadDashboard(dateStore.getValue());
+      });
     });
 
     if (clearSelectionButton) {
@@ -515,6 +557,7 @@
         submitAssignment({
           request_id: selectedRequest.id,
           service_date: state.dashboard.selected_date,
+          route_kind: getSelectedRouteKind(),
           status: "rejected",
         }).catch(function (error) {
           setStatus(error.message || "Could not reject the selected request.", "error");
@@ -546,11 +589,14 @@
         const formData = new FormData(vehicleForm);
         const payload = {
           service_scope: String(formData.get("service_scope") || "regular"),
+          service_date: getCurrentServiceDateIso(),
           tipo: String(formData.get("tipo") || "carro"),
           placa: String(formData.get("placa") || ""),
           color: String(formData.get("color") || ""),
           lugares: Number(formData.get("lugares") || 0),
           tolerance: Number(formData.get("tolerance") || 0),
+          route_kind: String(formData.get("route_kind") || getSelectedRouteKind()),
+          every_weekend: Boolean(formData.get("every_weekend")),
         };
 
         requestJson("/api/transport/vehicles", {
@@ -573,20 +619,67 @@
         return;
       }
 
-      if (!message) {
-        statusMessage.hidden = true;
-        statusMessage.textContent = "";
-        statusMessage.removeAttribute("data-tone");
+      statusMessage.textContent = message || DEFAULT_STATUS_MESSAGE;
+      statusMessage.dataset.tone = tone || "info";
+    }
+
+    function syncRouteInputs() {
+      routeInputs.forEach(function (inputElement) {
+        inputElement.checked = inputElement.value === state.selectedRouteKind;
+      });
+    }
+
+    function getSelectedRouteKind() {
+      return state.selectedRouteKind || "home_to_work";
+    }
+
+    function getCurrentServiceDateIso() {
+      return formatIsoDate(dateStore.getValue());
+    }
+
+    function canOpenVehicleModal(scope) {
+      const selectedDate = dateStore.getValue();
+      if (scope === "regular" && isWeekendDate(selectedDate)) {
+        setStatus("Regular vehicles can only be created from Monday to Friday.", "warning");
+        return false;
+      }
+      if (scope === "weekend" && !isWeekendDate(selectedDate)) {
+        setStatus("Weekend vehicles can only be created on Saturdays or Sundays.", "warning");
+        return false;
+      }
+      return true;
+    }
+
+    function syncVehicleModalFields(scope) {
+      if (!vehicleForm) {
         return;
       }
 
-      statusMessage.hidden = false;
-      statusMessage.textContent = message;
-      statusMessage.dataset.tone = tone || "info";
+      if (modalScopeLabel) {
+        modalScopeLabel.textContent = mapScopeTitle(scope);
+      }
+      if (modalScopeNote) {
+        modalScopeNote.textContent = getModalScopeNote(scope);
+      }
+      if (extraRouteField) {
+        extraRouteField.hidden = scope !== "extra";
+      }
+      if (weekendPersistenceField) {
+        weekendPersistenceField.hidden = scope !== "weekend";
+      }
+      if (vehicleForm.elements.route_kind) {
+        vehicleForm.elements.route_kind.value = getSelectedRouteKind();
+      }
+      if (vehicleForm.elements.every_weekend) {
+        vehicleForm.elements.every_weekend.checked = false;
+      }
     }
 
     function openVehicleModal(scope) {
       if (!vehicleModal || !vehicleForm) {
+        return;
+      }
+      if (!canOpenVehicleModal(scope)) {
         return;
       }
       vehicleModal.hidden = false;
@@ -595,9 +688,7 @@
       vehicleForm.elements.service_scope.value = scope;
       vehicleForm.elements.lugares.value = "4";
       vehicleForm.elements.tolerance.value = "10";
-      if (modalScopeLabel) {
-        modalScopeLabel.textContent = mapScopeTitle(scope);
-      }
+      syncVehicleModalFields(scope);
     }
 
     function closeVehicleModal() {
@@ -760,7 +851,29 @@
       });
     }
 
+    function removeVehicleFromRoute(vehicle) {
+      if (!vehicle || vehicle.schedule_id === null || vehicle.schedule_id === undefined) {
+        setStatus("This vehicle cannot be removed from the selected route.", "error");
+        return Promise.resolve();
+      }
+
+      return requestJson(
+        `/api/transport/vehicles/${encodeURIComponent(String(vehicle.schedule_id))}?service_date=${encodeURIComponent(getCurrentServiceDateIso())}`,
+        {
+          method: "DELETE",
+        }
+      )
+        .then(function () {
+          setStatus("Vehicle removed from the selected route.", "success");
+          return loadDashboard(dateStore.getValue());
+        })
+        .catch(function (error) {
+          setStatus(error.message || "Could not remove the selected vehicle.", "error");
+        });
+    }
+
     function createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest) {
+      const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
       const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope;
@@ -803,6 +916,7 @@
         submitAssignment({
           request_id: selectedRequest.id,
           service_date: state.dashboard.selected_date,
+          route_kind: getSelectedRouteKind(),
           status: "confirmed",
           vehicle_id: vehicle.id,
         }).catch(function (error) {
@@ -810,7 +924,18 @@
         });
       });
 
-      return vehicleButton;
+      const removeButton = createNode("button", "transport-vehicle-remove", "×");
+      removeButton.type = "button";
+      removeButton.setAttribute("aria-label", `Remove ${vehicle.placa} from ${getRouteKindLabel(getSelectedRouteKind())}`);
+      removeButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeVehicleFromRoute(vehicle);
+      });
+
+      tileElement.appendChild(removeButton);
+      tileElement.appendChild(vehicleButton);
+      return tileElement;
     }
 
     function renderVehiclePanels() {
@@ -869,10 +994,16 @@
     function loadDashboard(selectedDate) {
       state.isLoading = true;
       const serviceDate = formatIsoDate(selectedDate);
-      return requestJson(`/api/transport/dashboard?service_date=${encodeURIComponent(serviceDate)}`)
+      const routeKind = getSelectedRouteKind();
+      setStatus(`Loading ${getRouteKindLabel(routeKind)} dashboard.`, "info");
+      return requestJson(
+        `/api/transport/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
+      )
         .then(function (dashboard) {
           state.dashboard = dashboard || null;
-          setStatus("", "info");
+          state.selectedRouteKind = (dashboard && dashboard.selected_route) || routeKind;
+          syncRouteInputs();
+          setStatus(`${getRouteKindLabel(getSelectedRouteKind())} dashboard updated.`, "info");
           renderDashboard();
         })
         .catch(function (error) {
@@ -909,6 +1040,7 @@
     });
     document.querySelectorAll("[data-resize]").forEach(enableResizableDivider);
     const pageController = createTransportPageController(dateStore);
+    globalScope.CheckingTransportPageController = pageController;
     globalScope.addEventListener("resize", function () {
       pageController.refreshVehicleGridLayouts();
     });

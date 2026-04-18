@@ -426,6 +426,32 @@ class TransportVehicleCreate(BaseModel):
     lugares: int = Field(ge=1, le=99)
     tolerance: int = Field(ge=0, le=240)
     service_scope: Literal["regular", "weekend", "extra"]
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    every_weekend: bool = False
+
+    @model_validator(mode="after")
+    def validate_scope_specific_rules(self):
+        if self.service_scope == "extra":
+            if self.route_kind is None:
+                raise ValueError("route_kind is required for extra vehicles")
+            if self.every_weekend:
+                raise ValueError("every_weekend is not allowed for extra vehicles")
+            return self
+
+        if self.route_kind is not None:
+            raise ValueError("route_kind is only allowed for extra vehicles")
+
+        if self.service_scope == "weekend":
+            if self.service_date.weekday() < 5:
+                raise ValueError("Weekend vehicles can only be created on Saturday or Sunday")
+            return self
+
+        if self.every_weekend:
+            raise ValueError("every_weekend is only allowed for weekend vehicles")
+        if self.service_date.weekday() >= 5:
+            raise ValueError("Regular vehicles can only be created from Monday to Friday")
+        return self
 
     @field_validator("placa", mode="before")
     @classmethod
@@ -443,12 +469,14 @@ class TransportVehicleCreate(BaseModel):
 
 class TransportVehicleRow(BaseModel):
     id: int
+    schedule_id: int | None = None
     placa: str
     tipo: str
     color: str | None = None
     lugares: int
     tolerance: int
     service_scope: str
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
 
 
 class TransportRequestCreate(BaseModel):
@@ -487,6 +515,7 @@ class TransportRequestCreate(BaseModel):
 class TransportAssignmentUpsert(BaseModel):
     request_id: int = Field(ge=1)
     service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
     status: Literal["confirmed", "rejected", "cancelled"]
     vehicle_id: int | None = Field(default=None, ge=1)
     response_message: str | None = Field(default=None, max_length=255)
@@ -524,6 +553,7 @@ class TransportRequestRow(BaseModel):
 
 class TransportDashboardResponse(BaseModel):
     selected_date: date
+    selected_route: Literal["home_to_work", "work_to_home"]
     regular_requests: list[TransportRequestRow]
     weekend_requests: list[TransportRequestRow]
     extra_requests: list[TransportRequestRow]

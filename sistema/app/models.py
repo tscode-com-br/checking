@@ -58,6 +58,57 @@ class Vehicle(Base):
     service_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="regular")
 
 
+class TransportVehicleSchedule(Base):
+    __tablename__ = "transport_vehicle_schedules"
+    __table_args__ = (
+        CheckConstraint("service_scope IN ('regular', 'weekend', 'extra')", name="ck_transport_vehicle_schedules_scope_allowed"),
+        CheckConstraint(
+            "route_kind IN ('home_to_work', 'work_to_home')",
+            name="ck_transport_vehicle_schedules_route_allowed",
+        ),
+        CheckConstraint(
+            "recurrence_kind IN ('weekday', 'matching_weekday', 'single_date')",
+            name="ck_transport_vehicle_schedules_recurrence_allowed",
+        ),
+        CheckConstraint("weekday IS NULL OR (weekday >= 0 AND weekday <= 6)", name="ck_transport_vehicle_schedules_weekday_range"),
+        CheckConstraint(
+            "(recurrence_kind = 'single_date' AND service_date IS NOT NULL) OR (recurrence_kind != 'single_date')",
+            name="ck_transport_vehicle_schedules_single_date_required",
+        ),
+        CheckConstraint(
+            "(recurrence_kind = 'matching_weekday' AND weekday IS NOT NULL AND weekday >= 5) OR (recurrence_kind != 'matching_weekday')",
+            name="ck_transport_vehicle_schedules_matching_weekday_required",
+        ),
+        CheckConstraint(
+            "(recurrence_kind = 'weekday' AND weekday IS NULL) OR (recurrence_kind != 'weekday')",
+            name="ck_transport_vehicle_schedules_weekday_kind_shape",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), nullable=False)
+    service_scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    route_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    recurrence_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    service_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportVehicleScheduleException(Base):
+    __tablename__ = "transport_vehicle_schedule_exceptions"
+    __table_args__ = (
+        UniqueConstraint("vehicle_schedule_id", "service_date", name="uq_transport_vehicle_schedule_exceptions_schedule_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vehicle_schedule_id: Mapped[int] = mapped_column(ForeignKey("transport_vehicle_schedules.id"), nullable=False)
+    service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TransportRequest(Base):
     __tablename__ = "transport_requests"
     __table_args__ = (
@@ -85,7 +136,11 @@ class TransportRequest(Base):
 class TransportAssignment(Base):
     __tablename__ = "transport_assignments"
     __table_args__ = (
-        UniqueConstraint("request_id", "service_date", name="uq_transport_assignments_request_date"),
+        UniqueConstraint("request_id", "service_date", "route_kind", name="uq_transport_assignments_request_date_route"),
+        CheckConstraint(
+            "route_kind IN ('home_to_work', 'work_to_home')",
+            name="ck_transport_assignments_route_allowed",
+        ),
         CheckConstraint(
             "status IN ('confirmed', 'rejected', 'cancelled')",
             name="ck_transport_assignments_status_allowed",
@@ -95,6 +150,7 @@ class TransportAssignment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     request_id: Mapped[int] = mapped_column(ForeignKey("transport_requests.id"), nullable=False)
     service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    route_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="home_to_work")
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
     response_message: Mapped[str | None] = mapped_column(String(255), nullable=True)

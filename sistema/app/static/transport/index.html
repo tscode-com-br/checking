@@ -14,11 +14,17 @@
     <main id="tela00" class="tela00">
       <section id="tela01" class="tela01" aria-label="Transport layout">
         <section id="tela01menu" class="tela01menu" aria-label="Transport quick actions">
-          <div class="transport-topbar-copy">
-            <span class="transport-topbar-kicker">Checking Transport</span>
-            <strong class="transport-topbar-title">Allocation board</strong>
+          <div class="transport-topbar-left">
+            <div class="transport-topbar-copy">
+              <span class="transport-topbar-kicker">Checking Transport</span>
+              <strong class="transport-topbar-title">Allocation board</strong>
+            </div>
+            <div class="transport-topbar-copy transport-topbar-support">
+              <span class="transport-topbar-kicker">System Support</span>
+              <strong class="transport-topbar-title">Tamer Salmem (HR70)</strong>
+            </div>
           </div>
-          <div class="transport-topbar-date" data-date-panel aria-label="Selected service date">
+          <div class="transport-topbar-center" data-date-panel aria-label="Selected service date and route">
             <div class="transport-date-stack transport-topbar-date-stack">
               <div class="transport-date-row transport-topbar-date-row">
                 <button
@@ -45,9 +51,18 @@
                   </svg>
                 </button>
               </div>
+              <div class="transport-route-toggle" role="radiogroup" aria-label="Selected transport route">
+                <label class="transport-route-option">
+                  <input type="radio" name="transport_route_kind" value="home_to_work" data-route-kind checked />
+                  <span>Home to Work</span>
+                </label>
+                <label class="transport-route-option">
+                  <input type="radio" name="transport_route_kind" value="work_to_home" data-route-kind />
+                  <span>Work to Home</span>
+                </label>
+              </div>
             </div>
           </div>
-          <div class="transport-topbar-status" data-status-message hidden></div>
         </section>
         <div
           class="transport-divider transport-divider-horizontal transport-divider-resizable"
@@ -113,7 +128,7 @@
             <section id="tela01main_dir_up" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Extra Car List</h2>
+                  <h2 class="transport-pane-title">Extra Transport List</h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="extra" aria-label="Add extra vehicle">+</button>
                 </div>
               </div>
@@ -133,7 +148,8 @@
             <section id="tela01main_dir_mid" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Weekend Car List</h2>
+                  <h2 class="transport-pane-title">Weekend Transport List</h2>
+                  <button type="button" class="transport-add-button" data-open-vehicle-modal="weekend" aria-label="Add weekend vehicle">+</button>
                 </div>
               </div>
               <div class="transport-vehicle-grid" data-vehicle-scope="weekend"></div>
@@ -152,7 +168,7 @@
             <section id="tela01main_dir_down" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Regular Car List</h2>
+                  <h2 class="transport-pane-title">Regular Transport List</h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="regular" aria-label="Add regular vehicle">+</button>
                 </div>
               </div>
@@ -160,6 +176,11 @@
             </section>
           </section>
         </section>
+
+        <div class="transport-divider transport-divider-horizontal" aria-hidden="true"></div>
+        <footer class="transport-footer-status" aria-label="Transport notifications">
+          <div class="transport-footer-status-copy" data-status-message data-tone="info">Transport dashboard ready.</div>
+        </footer>
       </section>
     </main>
 
@@ -175,6 +196,10 @@
 
         <form class="transport-modal-form" data-vehicle-form>
           <input type="hidden" name="service_scope" value="regular" />
+
+          <p class="transport-modal-note" data-modal-scope-note>
+            Regular vehicles are created for both routes and remain active from Monday to Friday.
+          </p>
 
           <label class="transport-field">
             <span>Type</span>
@@ -204,6 +229,19 @@
           <label class="transport-field">
             <span>Tolerance (minutes)</span>
             <input type="number" name="tolerance" min="0" max="240" required />
+          </label>
+
+          <label class="transport-field" data-extra-route-field hidden>
+            <span>Route</span>
+            <select name="route_kind">
+              <option value="home_to_work">Home to Work</option>
+              <option value="work_to_home">Work to Home</option>
+            </select>
+          </label>
+
+          <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
+            <input type="checkbox" name="every_weekend" />
+            <span>Every Weekend</span>
           </label>
 
           <div class="transport-modal-actions">

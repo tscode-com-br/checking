@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..database import get_db
-from ..models import TransportNotification, TransportRequest, User, Vehicle, Workplace
+from ..models import TransportAssignment, TransportNotification, TransportRequest, User, Vehicle, Workplace
 from ..schemas import (
     AdminActionResponse,
     TransportAssignmentUpsert,
@@ -31,10 +32,14 @@ from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
 from ..services.transport import (
     build_transport_dashboard,
+    create_transport_vehicle_registration,
+    find_transport_vehicle_schedule,
+    get_paired_route_kind,
     is_transport_registered_user,
     list_workplaces,
     process_bot_message,
     queue_assignment_notification,
+    remove_transport_vehicle_availability,
     request_applies_to_date,
     update_transport_assignment,
 )
@@ -62,10 +67,11 @@ def _notify_transport_bot_side_effects(response: TransportBotConversationRespons
 @router.get("/dashboard", response_model=TransportDashboardResponse, dependencies=[Depends(require_admin_session)])
 def get_transport_dashboard(
     service_date: date | None = Query(default=None),
+    route_kind: Literal["home_to_work", "work_to_home"] = Query(default="home_to_work"),
     db: Session = Depends(get_db),
 ) -> TransportDashboardResponse:
     resolved_date = service_date or now_sgt().date()
-    return build_transport_dashboard(db, service_date=resolved_date)
+    return build_transport_dashboard(db, service_date=resolved_date, route_kind=route_kind)
 
 
 @router.get("/workplaces", response_model=list[WorkplaceRow], dependencies=[Depends(require_admin_session)])
@@ -106,22 +112,30 @@ def create_transport_vehicle(
     payload: TransportVehicleCreate,
     db: Session = Depends(get_db),
 ) -> AdminActionResponse:
-    existing = db.execute(select(Vehicle).where(Vehicle.placa == payload.placa)).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="Ja existe um veiculo cadastrado com essa placa")
+    try:
+        create_transport_vehicle_registration(db, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    vehicle = Vehicle(
-        placa=payload.placa,
-        tipo=payload.tipo,
-        color=payload.color,
-        lugares=payload.lugares,
-        tolerance=payload.tolerance,
-        service_scope=payload.service_scope,
-    )
-    db.add(vehicle)
     db.commit()
     notify_admin_data_changed("register")
     return AdminActionResponse(ok=True, message="Veiculo cadastrado com sucesso.")
+
+
+@router.delete("/vehicles/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+def delete_transport_vehicle_for_route(
+    schedule_id: int,
+    service_date: date = Query(...),
+    db: Session = Depends(get_db),
+) -> AdminActionResponse:
+    try:
+        remove_transport_vehicle_availability(db, schedule_id=schedule_id, service_date=service_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db.commit()
+    notify_admin_data_changed("event")
+    return AdminActionResponse(ok=True, message="Veiculo removido do trajeto selecionado.")
 
 
 @router.post("/assignments", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
@@ -143,16 +157,52 @@ def save_transport_assignment(
             raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
         if vehicle.service_scope != transport_request.request_kind:
             raise HTTPException(status_code=409, detail="O veiculo selecionado nao pertence a lista correta")
+        if find_transport_vehicle_schedule(
+            db,
+            vehicle=vehicle,
+            service_date=payload.service_date,
+            route_kind=payload.route_kind,
+        ) is None:
+            raise HTTPException(status_code=409, detail="O veiculo selecionado nao esta disponivel para essa data e trajeto")
 
     assignment, is_update = update_transport_assignment(
         db,
         transport_request=transport_request,
         service_date=payload.service_date,
+        route_kind=payload.route_kind,
         status=payload.status,
         vehicle=vehicle,
         response_message=payload.response_message,
         admin_user_id=current_admin.id,
     )
+
+    if payload.status == "confirmed" and vehicle is not None and transport_request.request_kind != "extra":
+        paired_route_kind = get_paired_route_kind(payload.route_kind)
+        if paired_route_kind and find_transport_vehicle_schedule(
+            db,
+            vehicle=vehicle,
+            service_date=payload.service_date,
+            route_kind=paired_route_kind,
+        ) is not None:
+            existing_paired_assignment = db.execute(
+                select(TransportAssignment).where(
+                    TransportAssignment.request_id == transport_request.id,
+                    TransportAssignment.service_date == payload.service_date,
+                    TransportAssignment.route_kind == paired_route_kind,
+                )
+            ).scalar_one_or_none()
+            if existing_paired_assignment is None:
+                update_transport_assignment(
+                    db,
+                    transport_request=transport_request,
+                    service_date=payload.service_date,
+                    route_kind=paired_route_kind,
+                    status="confirmed",
+                    vehicle=vehicle,
+                    response_message="Mirrored from the paired route",
+                    admin_user_id=current_admin.id,
+                )
+
     user = db.get(User, transport_request.user_id)
     queued_notification = None
     if user is not None:

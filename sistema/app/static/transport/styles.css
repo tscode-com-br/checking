@@ -70,7 +70,7 @@ button {
 .tela01 {
   min-height: calc(100dvh - 40px);
   display: grid;
-  grid-template-rows: 72px var(--transport-divider-size) minmax(0, 1fr);
+  grid-template-rows: 88px var(--transport-divider-size) minmax(0, 1fr) var(--transport-divider-size) auto;
   border: 1px solid var(--transport-border);
   border-radius: var(--transport-radius);
   overflow: hidden;
@@ -81,11 +81,18 @@ button {
 
 .tela01menu {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
+}
+
+.transport-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-width: 0;
 }
 
 .transport-topbar-copy {
@@ -95,7 +102,12 @@ button {
   justify-self: start;
 }
 
-.transport-topbar-date {
+.transport-topbar-support {
+  padding-left: 22px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.transport-topbar-center {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -122,31 +134,53 @@ button {
   text-transform: uppercase;
 }
 
-.transport-topbar-status {
-  max-width: min(460px, 100%);
-  padding: 10px 14px;
+.transport-route-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 0.82rem;
-  text-align: right;
-  justify-self: end;
+  background: rgba(255, 255, 255, 0.035);
 }
 
-.transport-topbar-status[data-tone="success"] {
-  border-color: rgba(76, 209, 147, 0.45);
-  color: var(--transport-success);
+.transport-route-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
 }
 
-.transport-topbar-status[data-tone="error"] {
-  border-color: rgba(255, 109, 84, 0.5);
-  color: #ffd2c9;
-  background: rgba(255, 109, 84, 0.1);
+.transport-route-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
 }
 
-.transport-topbar-status[data-tone="info"] {
-  border-color: rgba(72, 212, 206, 0.45);
-  color: #b4f0ed;
+.transport-route-option span {
+  min-height: 38px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  color: var(--transport-text-muted);
+  background: transparent;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.transport-route-option input:checked + span {
+  background: linear-gradient(135deg, rgba(72, 212, 206, 0.32), rgba(26, 162, 157, 0.28));
+  color: #f7fffe;
+  box-shadow: 0 10px 22px rgba(72, 212, 206, 0.18);
+}
+
+.transport-route-option input:focus-visible + span {
+  outline: 2px solid rgba(72, 212, 206, 0.48);
+  outline-offset: 2px;
 }
 
 .transport-divider {
@@ -204,6 +238,49 @@ button {
 .transport-topbar-date .transport-nav-button {
   width: 34px;
   height: 34px;
+}
+
+.transport-footer-status {
+  padding: 10px 22px 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0));
+}
+
+.transport-footer-status-copy {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.transport-footer-status-copy[data-tone="success"] {
+  border-color: rgba(76, 209, 147, 0.45);
+  color: var(--transport-success);
+}
+
+.transport-footer-status-copy[data-tone="error"] {
+  border-color: rgba(255, 109, 84, 0.5);
+  color: #ffd2c9;
+  background: rgba(255, 109, 84, 0.1);
+}
+
+.transport-footer-status-copy[data-tone="warning"] {
+  border-color: rgba(244, 185, 66, 0.48);
+  color: #ffe8b2;
+  background: rgba(244, 185, 66, 0.1);
+}
+
+.transport-footer-status-copy[data-tone="info"] {
+  border-color: rgba(72, 212, 206, 0.45);
+  color: #b4f0ed;
 }
 
 .transport-pane-head {
@@ -554,6 +631,11 @@ button {
   grid-template-rows: repeat(1, minmax(0, auto));
 }
 
+.transport-vehicle-tile {
+  position: relative;
+  width: 104px;
+}
+
 .transport-vehicle-button {
   width: 104px;
   display: flex;
@@ -561,6 +643,7 @@ button {
   align-items: center;
   gap: 3px;
   padding: 0;
+  position: relative;
   border: none;
   background: transparent;
   color: inherit;
@@ -598,6 +681,34 @@ button {
   outline: 2px solid rgba(72, 212, 206, 0.5);
   outline-offset: 4px;
   border-radius: 14px;
+}
+
+.transport-vehicle-remove {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 109, 84, 0.45);
+  border-radius: 999px;
+  background: rgba(13, 13, 16, 0.94);
+  color: #ffd2c9;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.transport-vehicle-remove:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 109, 84, 0.68);
+  background: rgba(255, 109, 84, 0.16);
 }
 
 .transport-vehicle-icon {
@@ -692,6 +803,17 @@ button {
   margin-top: 20px;
 }
 
+.transport-modal-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(72, 212, 206, 0.18);
+  border-radius: 16px;
+  background: rgba(72, 212, 206, 0.06);
+  color: var(--transport-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .transport-field {
   display: grid;
   gap: 8px;
@@ -717,6 +839,24 @@ button {
 .transport-field select option {
   background: #050505;
   color: var(--transport-text);
+}
+
+.transport-checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--transport-text-muted);
+}
+
+.transport-checkbox-field input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--transport-accent);
 }
 
 .transport-field input:focus,
@@ -751,7 +891,7 @@ button {
 
   .tela01 {
     min-height: calc(100dvh - 28px);
-    grid-template-rows: auto var(--transport-divider-size) minmax(0, 1fr);
+    grid-template-rows: auto var(--transport-divider-size) minmax(0, 1fr) var(--transport-divider-size) auto;
   }
 
   .tela01menu {
@@ -760,13 +900,37 @@ button {
     padding: 16px 18px;
   }
 
+  .transport-topbar-left {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .transport-topbar-support {
+    padding-left: 0;
+    border-left: none;
+  }
+
   .transport-topbar-copy,
-  .transport-topbar-status {
+  .transport-topbar-center {
     justify-self: stretch;
   }
 
-  .transport-topbar-status {
-    text-align: center;
+  .transport-topbar-center {
+    width: 100%;
+  }
+
+  .transport-route-toggle {
+    width: 100%;
+    flex-direction: column;
+    border-radius: 24px;
+  }
+
+  .transport-route-option,
+  .transport-route-option span {
+    width: 100%;
+    justify-content: center;
   }
 
   .transport-request-row {
@@ -796,8 +960,13 @@ button {
     grid-auto-columns: 92px;
   }
 
+  .transport-vehicle-tile,
   .transport-vehicle-button {
     width: 92px;
+  }
+
+  .transport-footer-status {
+    padding: 10px 12px 12px;
   }
 
   .transport-selection-banner {
