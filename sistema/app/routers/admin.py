@@ -4,13 +4,12 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import delete, desc, func, select, update
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import (
     AdminAccessRequest,
-    AdminUser,
     CheckEvent,
     CheckingHistory,
     ManagedLocation,
@@ -45,11 +44,19 @@ from ..schemas import (
     UserRow,
 )
 from ..services.admin_auth import (
+    ADMIN_ACCESS_DIGIT,
+    add_profile_access,
+    clear_admin_session,
+    describe_user_profile,
     get_authenticated_admin_from_session,
     hash_password,
     normalize_admin_key,
+    normalize_user_profile,
+    remove_profile_access,
     require_admin_session,
     require_admin_stream_session,
+    user_has_admin_access,
+    user_profile_has_access,
     verify_password,
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
@@ -231,8 +238,8 @@ def encode_sse(payload: dict[str, str]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def build_admin_identity(admin: AdminUser) -> AdminIdentity:
-    return AdminIdentity(id=admin.id, chave=admin.chave, nome_completo=admin.nome_completo)
+def build_admin_identity(admin: User) -> AdminIdentity:
+    return AdminIdentity(id=admin.id, chave=admin.chave, nome_completo=admin.nome, perfil=admin.perfil)
 
 
 def build_location_row(location: ManagedLocation) -> LocationRow:
@@ -249,25 +256,32 @@ def build_location_row(location: ManagedLocation) -> LocationRow:
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
-    admins = db.execute(select(AdminUser).order_by(AdminUser.nome_completo, AdminUser.chave)).scalars().all()
+    admins = db.execute(
+        select(User)
+        .where(User.perfil != 0)
+        .order_by(User.nome, User.chave)
+    ).scalars().all()
     requests = db.execute(select(AdminAccessRequest).order_by(AdminAccessRequest.requested_at.desc())).scalars().all()
 
     rows: list[AdminManagementRow] = []
     for admin in admins:
-        status = "password_reset_requested" if admin.requires_password_reset else "active"
-        status_label = "Recadastro de Senha Pendente" if admin.requires_password_reset else "Administrador Ativo"
+        status = "password_reset_requested" if admin.senha is None else "active"
+        status_label = describe_user_profile(admin.perfil)
+        if admin.senha is None:
+            status_label = f"{status_label} | senha pendente"
         rows.append(
             AdminManagementRow(
                 id=admin.id,
                 row_type="admin",
                 chave=admin.chave,
-                nome=admin.nome_completo,
+                nome=admin.nome,
+                perfil=admin.perfil,
                 status=status,
                 status_label=status_label,
-                can_revoke=not admin.requires_password_reset,
+                can_revoke=user_has_admin_access(admin),
                 can_approve=False,
                 can_reject=False,
-                can_set_password=admin.requires_password_reset,
+                can_set_password=admin.senha is None and user_has_admin_access(admin),
             )
         )
 
@@ -278,6 +292,7 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
                 row_type="request",
                 chave=request_row.chave,
                 nome=request_row.nome_completo,
+                perfil=None,
                 status="pending",
                 status_label="Solicitacao Pendente",
                 can_revoke=False,
@@ -293,7 +308,7 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
 @router.post("/auth/login", response_model=AdminActionResponse)
 def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)) -> AdminActionResponse:
     key = normalize_admin_key(payload.chave)
-    admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
+    admin = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
 
     if admin is None:
         log_event(
@@ -309,13 +324,13 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
         )
         raise HTTPException(status_code=401, detail="Chave ou senha invalida")
 
-    if admin.password_hash is None or admin.requires_password_reset:
+    if not user_has_admin_access(admin):
         log_event(
             db,
             source="admin",
             action="login",
             status="blocked",
-            message="Administrative login blocked due to pending password reset",
+            message="Administrative login blocked due to missing admin profile",
             request_path="/api/admin/auth/login",
             http_status=403,
             details=f"chave={admin.chave}",
@@ -323,10 +338,24 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
         )
         raise HTTPException(
             status_code=403,
-            detail="Sua senha foi removida. Solicite a outro administrador o recadastro da senha.",
+            detail="Este usuario nao possui acesso ao Admin.",
         )
 
-    if not verify_password(payload.senha, admin.password_hash):
+    if admin.senha is None:
+        log_event(
+            db,
+            source="admin",
+            action="login",
+            status="blocked",
+            message="Administrative login blocked due to missing user password",
+            request_path="/api/admin/auth/login",
+            http_status=403,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=403, detail="Este usuario ainda nao possui senha cadastrada.")
+
+    if not verify_password(payload.senha, admin.senha):
         log_event(
             db,
             source="admin",
@@ -340,7 +369,7 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
         )
         raise HTTPException(status_code=401, detail="Chave ou senha invalida")
 
-    request.session.clear()
+    clear_admin_session(request)
     request.session["admin_user_id"] = admin.id
     log_event(
         db,
@@ -371,7 +400,7 @@ def admin_logout(request: Request, db: Session = Depends(get_db)) -> AdminAction
             details=f"chave={admin.chave}",
             commit=True,
         )
-    request.session.clear()
+    clear_admin_session(request)
     return AdminActionResponse(ok=True, message="Sessao encerrada com sucesso.")
 
 
@@ -386,8 +415,8 @@ def admin_session(request: Request, db: Session = Depends(get_db)) -> AdminSessi
 @router.post("/auth/request-access", response_model=AdminActionResponse)
 def request_admin_access(payload: AdminAccessRequestCreate, db: Session = Depends(get_db)) -> AdminActionResponse:
     key = normalize_admin_key(payload.chave)
-    existing_admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
-    if existing_admin is not None:
+    existing_admin = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+    if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
             db,
             source="admin",
@@ -442,8 +471,8 @@ def request_admin_access(payload: AdminAccessRequestCreate, db: Session = Depend
 @router.post("/auth/request-password-reset", response_model=AdminActionResponse)
 def request_password_reset(payload: AdminPasswordResetRequest, db: Session = Depends(get_db)) -> AdminActionResponse:
     key = normalize_admin_key(payload.chave)
-    admin = db.execute(select(AdminUser).where(AdminUser.chave == key)).scalar_one_or_none()
-    if admin is None:
+    admin = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+    if admin is None or not user_has_admin_access(admin):
         log_event(
             db,
             source="admin",
@@ -456,7 +485,7 @@ def request_password_reset(payload: AdminPasswordResetRequest, db: Session = Dep
             commit=True,
         )
         raise HTTPException(status_code=404, detail="Administrador nao encontrado para a chave informada.")
-    if admin.requires_password_reset:
+    if admin.senha is None:
         log_event(
             db,
             source="admin",
@@ -470,10 +499,7 @@ def request_password_reset(payload: AdminPasswordResetRequest, db: Session = Dep
         )
         raise HTTPException(status_code=409, detail="Ja existe um pedido de recadastro de senha para esta chave.")
 
-    admin.password_hash = None
-    admin.requires_password_reset = True
-    admin.password_reset_requested_at = now_sgt()
-    admin.updated_at = now_sgt()
+    admin.senha = None
     log_event(
         db,
         source="admin",
@@ -534,7 +560,7 @@ def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRo
 def approve_administrator_request(
     request_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
     access_request = db.get(AdminAccessRequest, request_id)
     if access_request is None:
@@ -551,8 +577,8 @@ def approve_administrator_request(
         )
         raise HTTPException(status_code=404, detail="Solicitacao de administrador nao encontrada.")
 
-    existing_admin = db.execute(select(AdminUser).where(AdminUser.chave == access_request.chave)).scalar_one_or_none()
-    if existing_admin is not None:
+    existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
+    if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
             db,
             source="admin",
@@ -567,19 +593,33 @@ def approve_administrator_request(
         raise HTTPException(status_code=409, detail="Ja existe um administrador com essa chave.")
 
     timestamp = now_sgt()
-    db.add(
-        AdminUser(
-            chave=access_request.chave,
-            nome_completo=access_request.nome_completo,
-            password_hash=access_request.password_hash,
-            requires_password_reset=False,
-            approved_by_admin_id=current_admin.id,
-            approved_at=timestamp,
-            password_reset_requested_at=None,
-            created_at=timestamp,
-            updated_at=timestamp,
+    if existing_admin is None:
+        db.add(
+            User(
+                rfid=None,
+                chave=access_request.chave,
+                senha=access_request.password_hash,
+                perfil=1,
+                nome=access_request.nome_completo,
+                projeto="P80",
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=timestamp,
+                inactivity_days=0,
+            )
         )
-    )
+    else:
+        existing_admin.nome = access_request.nome_completo
+        existing_admin.senha = access_request.password_hash
+        existing_admin.perfil = add_profile_access(existing_admin.perfil, ADMIN_ACCESS_DIGIT)
+
     log_event(
         db,
         source="admin",
@@ -603,7 +643,7 @@ def approve_administrator_request(
 def reject_administrator_request(
     request_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
     access_request = db.get(AdminAccessRequest, request_id)
     if access_request is None:
@@ -640,10 +680,10 @@ def reject_administrator_request(
 def revoke_administrator(
     admin_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
-    admin = db.get(AdminUser, admin_id)
-    if admin is None:
+    admin = db.get(User, admin_id)
+    if admin is None or not user_has_admin_access(admin):
         log_event(
             db,
             source="admin",
@@ -670,7 +710,11 @@ def revoke_administrator(
         )
         raise HTTPException(status_code=409, detail="Voce nao pode revogar seu proprio acesso.")
 
-    total_admins = db.execute(select(func.count(AdminUser.id))).scalar_one()
+    total_admins = sum(
+        1
+        for row in db.execute(select(User).where(User.perfil != 0)).scalars().all()
+        if user_has_admin_access(row)
+    )
     if total_admins <= 1:
         log_event(
             db,
@@ -685,6 +729,7 @@ def revoke_administrator(
         )
         raise HTTPException(status_code=409, detail="Nao e possivel revogar o unico administrador ativo do sistema.")
 
+    admin.perfil = remove_profile_access(admin.perfil, ADMIN_ACCESS_DIGIT)
     log_event(
         db,
         source="admin",
@@ -695,7 +740,6 @@ def revoke_administrator(
         http_status=200,
         details=f"chave={admin.chave}; revoked_by={current_admin.chave}",
     )
-    db.delete(admin)
     db.commit()
     notify_admin_views("admin", "event")
     return AdminActionResponse(ok=True, message="Administrador revogado com sucesso.")
@@ -706,10 +750,10 @@ def set_administrator_password(
     admin_id: int,
     payload: AdminPasswordSetRequest,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
-    admin = db.get(AdminUser, admin_id)
-    if admin is None:
+    admin = db.get(User, admin_id)
+    if admin is None or not user_has_admin_access(admin):
         log_event(
             db,
             source="admin",
@@ -722,7 +766,7 @@ def set_administrator_password(
             commit=True,
         )
         raise HTTPException(status_code=404, detail="Administrador nao encontrado.")
-    if not admin.requires_password_reset:
+    if admin.senha is not None:
         log_event(
             db,
             source="admin",
@@ -736,10 +780,7 @@ def set_administrator_password(
         )
         raise HTTPException(status_code=409, detail="Esse administrador nao possui recadastro de senha pendente.")
 
-    admin.password_hash = hash_password(payload.nova_senha)
-    admin.requires_password_reset = False
-    admin.password_reset_requested_at = None
-    admin.updated_at = now_sgt()
+    admin.senha = hash_password(payload.nova_senha)
     log_event(
         db,
         source="admin",
@@ -815,7 +856,7 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
 def upsert_location(
     payload: AdminLocationUpsert,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
     location = db.get(ManagedLocation, payload.location_id) if payload.location_id is not None else None
     if payload.location_id is not None and location is None:
@@ -883,7 +924,7 @@ def upsert_location(
 def update_location_settings(
     payload: AdminLocationSettingsUpdate,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminLocationSettingsResponse:
     previous_accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
     settings = upsert_location_settings(
@@ -921,7 +962,7 @@ def update_location_settings(
 def remove_location(
     location_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
     location = db.get(ManagedLocation, location_id)
     if location is None:
@@ -965,6 +1006,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
             rfid=r.rfid,
             nome=r.nome,
             chave=r.chave,
+            perfil=r.perfil,
             projeto=r.projeto,
             workplace=r.workplace,
             placa=r.placa,
@@ -981,7 +1023,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
 def upsert_user(
     payload: AdminUserUpsert,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> dict:
     payload_fields = set(getattr(payload, "model_fields_set", set()))
     placa_was_provided = "placa" in payload_fields
@@ -1021,10 +1063,20 @@ def upsert_user(
         if workplace is None:
             raise HTTPException(status_code=404, detail="Workplace nao encontrado para o nome informado")
 
+    if user is not None and user_has_admin_access(user) and not user_profile_has_access(payload.perfil, ADMIN_ACCESS_DIGIT):
+        total_admins = sum(
+            1
+            for row in db.execute(select(User).where(User.perfil != 0)).scalars().all()
+            if user_has_admin_access(row)
+        )
+        if total_admins <= 1:
+            raise HTTPException(status_code=409, detail="Nao e possivel remover o unico administrador ativo do sistema.")
+
     if user:
         previous_key = user.chave
         user.nome = payload.nome
         user.chave = payload.chave
+        user.perfil = normalize_user_profile(payload.perfil)
         user.projeto = payload.projeto
         user.workplace = payload.workplace
         user.rfid = payload.rfid
@@ -1052,6 +1104,7 @@ def upsert_user(
             rfid=payload.rfid,
             nome=payload.nome,
             chave=payload.chave,
+            perfil=normalize_user_profile(payload.perfil),
             projeto=payload.projeto,
             workplace=payload.workplace,
             placa=payload.placa,
@@ -1087,7 +1140,7 @@ def upsert_user(
         submitted_at=now_sgt(),
         details=(
             f"updated_by={current_admin.chave}; chave={payload.chave}; "
-            f"nome={payload.nome}; linked_existing_user={linked_existing_user}; "
+            f"nome={payload.nome}; perfil={normalize_user_profile(payload.perfil)}; linked_existing_user={linked_existing_user}; "
             f"placa={(payload.placa if placa_was_provided else user.placa) or '-'}"
         ),
     )
@@ -1106,7 +1159,7 @@ def upsert_user(
 def remove_pending(
     pending_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> dict:
     pending = db.get(PendingRegistration, pending_id)
     if pending is None:
@@ -1145,7 +1198,7 @@ def remove_pending(
 def remove_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> dict:
     user = db.get(User, user_id)
     if user is None:
@@ -1161,6 +1214,15 @@ def remove_user(
             commit=True,
         )
         raise HTTPException(status_code=404, detail="User not found")
+
+    if user_has_admin_access(user):
+        total_admins = sum(
+            1
+            for row in db.execute(select(User).where(User.perfil != 0)).scalars().all()
+            if user_has_admin_access(row)
+        )
+        if total_admins <= 1:
+            raise HTTPException(status_code=409, detail="Nao e possivel remover o unico administrador ativo do sistema.")
 
     user_rfid = user.rfid
     user_key = user.chave
@@ -1195,7 +1257,7 @@ def remove_user(
 def reset_user_password(
     user_id: int,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
     user = db.get(User, user_id)
     if user is None:
@@ -1284,7 +1346,7 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
 @router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_session)])
 def archive_events(
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> EventArchiveCreateResponse:
     current_rows = db.execute(
         select(CheckEvent)
@@ -1366,7 +1428,7 @@ def get_event_archives(
 @router.get("/events/archives/download-all", dependencies=[Depends(require_admin_session)])
 def download_all_event_archives(
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> Response:
     try:
         file_name, payload = build_event_archives_zip()
@@ -1407,7 +1469,7 @@ def download_all_event_archives(
 def download_event_archive(
     file_name: str,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> FileResponse:
     try:
         archive_path = get_event_archive_path(file_name)
@@ -1444,7 +1506,7 @@ def download_event_archive(
 def remove_event_archive(
     file_name: str,
     db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(require_admin_session),
+    current_admin: User = Depends(require_admin_session),
 ) -> dict:
     try:
         delete_event_archive(file_name)

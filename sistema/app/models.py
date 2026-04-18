@@ -24,6 +24,7 @@ class User(Base):
     rfid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     chave: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
     senha: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    perfil: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(3), nullable=False)
     workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)

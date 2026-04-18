@@ -37,14 +37,12 @@
     <section id="authShell" class="auth-shell">
       <div class="auth-card">
         <h1>Acesso Administrativo</h1>
-        <p class="auth-copy">Entre com sua chave administrativa e senha para acessar o painel.</p>
+        <p class="auth-copy">Entre com sua chave de usuário e senha. Apenas perfis com 1 ou 9 acessam o painel.</p>
         <label class="auth-field-label" for="loginChave">Chave</label>
         <input id="loginChave" class="auth-input" type="text" maxlength="4" autocomplete="username" />
         <label class="auth-field-label" for="loginSenha">Senha</label>
         <input id="loginSenha" class="auth-input" type="password" minlength="3" maxlength="20" autocomplete="current-password" />
         <div class="auth-actions">
-          <button id="requestAdminButton" type="button" class="secondary-button">Solicitar Admin</button>
-          <button id="resetPasswordButton" type="button" class="secondary-button">Recadastrar Senha</button>
           <button id="loginButton" type="button">Entrar</button>
         </div>
         <p id="authStatus" class="auth-status"></p>
@@ -351,12 +349,12 @@
         </div>
 
         <div class="section-header">
-          <h2>Administradores</h2>
+          <h2>Administradores (admin)</h2>
         </div>
         <div class="table-wrap">
           <table class="responsive-table cadastro-table cadastro-admin-table">
             <thead>
-              <tr><th>Chave</th><th>Nome</th><th>Status</th><th>Ações</th></tr>
+              <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
             </thead>
             <tbody id="administratorsBody"></tbody>
           </table>
@@ -368,7 +366,7 @@
         <div class="table-wrap cadastro-grid-wrap">
           <table class="responsive-table cadastro-table cadastro-users-table">
             <thead>
-              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Endereço</th><th>ZIP Code</th><th>Cargo</th><th>Email</th><th>Ações</th></tr>
+              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Perfil</th><th>Projeto</th><th>Endereço</th><th>ZIP Code</th><th>Cargo</th><th>Email</th><th>Ações</th></tr>
             </thead>
             <tbody id="usersBody"></tbody>
           </table>

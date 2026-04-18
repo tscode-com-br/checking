@@ -85,7 +85,7 @@ button {
 
 .tela01menu {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.9fr) auto auto auto minmax(0, 0.8fr);
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
@@ -101,6 +101,12 @@ button {
 
 .transport-topbar-brand {
   min-width: 0;
+}
+
+.transport-topbar-route-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .transport-topbar-support {
@@ -137,6 +143,94 @@ button {
   font-size: 1rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.transport-topbar-route-toggle {
+  flex: 0 0 auto;
+}
+
+.transport-topbar-auth {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(86px, auto));
+  gap: 10px;
+  align-items: end;
+}
+
+.transport-auth-field {
+  display: grid;
+  gap: 4px;
+}
+
+.transport-auth-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--transport-text-soft);
+  text-align: left;
+}
+
+.transport-auth-shell {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 109, 84, 0.55);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.transport-auth-shell.is-authenticated {
+  border-color: rgba(76, 209, 147, 0.7);
+  box-shadow: 0 0 0 1px rgba(76, 209, 147, 0.18);
+}
+
+.transport-auth-shell.is-logged-out {
+  border-color: rgba(255, 109, 84, 0.58);
+}
+
+.transport-auth-shell:focus-within {
+  box-shadow: 0 0 0 2px rgba(72, 212, 206, 0.24);
+}
+
+.transport-auth-input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--transport-text);
+  text-transform: uppercase;
+}
+
+.transport-auth-input::placeholder {
+  color: var(--transport-text-soft);
+}
+
+.transport-auth-plus {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(76, 209, 147, 0.98), rgba(52, 168, 121, 0.98));
+  color: #082113;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 8px 14px rgba(76, 209, 147, 0.24);
+}
+
+.transport-auth-plus:hover {
+  transform: translateY(-1px);
 }
 
 .transport-route-toggle {
@@ -301,12 +395,6 @@ button {
 
 .transport-pane-head-extra {
   gap: 10px;
-}
-
-.transport-pane-route-controls {
-  width: 100%;
-  display: flex;
-  justify-content: center;
 }
 
 .transport-pane-title-row {
@@ -991,6 +1079,12 @@ button {
     padding: 16px 18px;
   }
 
+  .transport-topbar-route-slot,
+  .transport-topbar-auth,
+  .transport-topbar-support {
+    width: 100%;
+  }
+
   .transport-topbar-support {
     justify-self: stretch;
     align-items: center;
@@ -1004,6 +1098,11 @@ button {
 
   .transport-topbar-center {
     width: 100%;
+  }
+
+  .transport-topbar-auth {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .transport-route-toggle {

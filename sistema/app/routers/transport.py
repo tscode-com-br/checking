@@ -16,17 +16,27 @@ from ..schemas import (
     AdminActionResponse,
     TransportAssignmentUpsert,
     TransportBotConversationResponse,
+    TransportAuthVerifyRequest,
     TransportBotIncomingMessage,
     TransportDashboardResponse,
+    TransportIdentity,
     TransportNotificationAckResponse,
     TransportNotificationListResponse,
     TransportNotificationRow,
+    TransportSessionResponse,
     TransportWhatsAppDispatchResponse,
     TransportVehicleCreate,
     TransportWorkplaceUpsert,
     WorkplaceRow,
 )
-from ..services.admin_auth import require_admin_session
+from ..services.admin_auth import (
+    clear_transport_session,
+    get_authenticated_transport_user_from_session,
+    normalize_admin_key,
+    require_transport_session,
+    user_has_transport_access,
+    verify_password,
+)
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
@@ -50,6 +60,10 @@ from ..services.user_sync import find_user_by_chave
 router = APIRouter(prefix="/api/transport", tags=["transport"])
 
 
+def build_transport_identity(user: User) -> TransportIdentity:
+    return TransportIdentity(id=user.id, chave=user.chave, nome_completo=user.nome, perfil=user.perfil)
+
+
 def require_transport_bot_shared_key(x_transport_bot_shared_key: str | None = Header(default=None)) -> None:
     if x_transport_bot_shared_key == settings.transport_bot_shared_key:
         return
@@ -64,7 +78,48 @@ def _notify_transport_bot_side_effects(response: TransportBotConversationRespons
         notify_admin_data_changed("event")
 
 
-@router.get("/dashboard", response_model=TransportDashboardResponse, dependencies=[Depends(require_admin_session)])
+@router.get("/auth/session", response_model=TransportSessionResponse)
+def transport_session(request: Request, db: Session = Depends(get_db)) -> TransportSessionResponse:
+    transport_user = get_authenticated_transport_user_from_session(request, db)
+    if transport_user is None:
+        return TransportSessionResponse(authenticated=False)
+    return TransportSessionResponse(authenticated=True, user=build_transport_identity(transport_user))
+
+
+@router.post("/auth/verify", response_model=TransportSessionResponse)
+def verify_transport_access(
+    payload: TransportAuthVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> TransportSessionResponse:
+    key = normalize_admin_key(payload.chave)
+    transport_user = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+
+    if transport_user is None or transport_user.senha is None:
+        clear_transport_session(request)
+        return TransportSessionResponse(authenticated=False, message="Invalid key or password.")
+    if not user_has_transport_access(transport_user):
+        clear_transport_session(request)
+        return TransportSessionResponse(authenticated=False, message="This user does not have transport access.")
+    if not verify_password(payload.senha, transport_user.senha):
+        clear_transport_session(request)
+        return TransportSessionResponse(authenticated=False, message="Invalid key or password.")
+
+    request.session["transport_user_id"] = transport_user.id
+    return TransportSessionResponse(
+        authenticated=True,
+        user=build_transport_identity(transport_user),
+        message="Transport access granted.",
+    )
+
+
+@router.post("/auth/logout", response_model=AdminActionResponse)
+def transport_logout(request: Request) -> AdminActionResponse:
+    clear_transport_session(request)
+    return AdminActionResponse(ok=True, message="Transport session closed.")
+
+
+@router.get("/dashboard", response_model=TransportDashboardResponse, dependencies=[Depends(require_transport_session)])
 def get_transport_dashboard(
     service_date: date | None = Query(default=None),
     route_kind: Literal["home_to_work", "work_to_home"] = Query(default="home_to_work"),
@@ -74,12 +129,12 @@ def get_transport_dashboard(
     return build_transport_dashboard(db, service_date=resolved_date, route_kind=route_kind)
 
 
-@router.get("/workplaces", response_model=list[WorkplaceRow], dependencies=[Depends(require_admin_session)])
+@router.get("/workplaces", response_model=list[WorkplaceRow], dependencies=[Depends(require_transport_session)])
 def get_transport_workplaces(db: Session = Depends(get_db)) -> list[WorkplaceRow]:
     return list_workplaces(db)
 
 
-@router.post("/workplaces", response_model=WorkplaceRow, dependencies=[Depends(require_admin_session)])
+@router.post("/workplaces", response_model=WorkplaceRow, dependencies=[Depends(require_transport_session)])
 def create_transport_workplace(
     payload: TransportWorkplaceUpsert,
     db: Session = Depends(get_db),
@@ -107,7 +162,7 @@ def create_transport_workplace(
     )
 
 
-@router.post("/vehicles", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.post("/vehicles", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
 def create_transport_vehicle(
     payload: TransportVehicleCreate,
     db: Session = Depends(get_db),
@@ -122,7 +177,7 @@ def create_transport_vehicle(
     return AdminActionResponse(ok=True, message="Veiculo cadastrado com sucesso.")
 
 
-@router.delete("/vehicles/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.delete("/vehicles/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
 def delete_transport_vehicle_for_route(
     schedule_id: int,
     service_date: date = Query(...),
@@ -138,11 +193,11 @@ def delete_transport_vehicle_for_route(
     return AdminActionResponse(ok=True, message="Veiculo removido do trajeto selecionado.")
 
 
-@router.post("/assignments", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.post("/assignments", response_model=AdminActionResponse)
 def save_transport_assignment(
     payload: TransportAssignmentUpsert,
     db: Session = Depends(get_db),
-    current_admin=Depends(require_admin_session),
+    _current_transport_user: User = Depends(require_transport_session),
 ) -> AdminActionResponse:
     transport_request = db.get(TransportRequest, payload.request_id)
     if transport_request is None:
@@ -173,7 +228,7 @@ def save_transport_assignment(
         status=payload.status,
         vehicle=vehicle,
         response_message=payload.response_message,
-        admin_user_id=current_admin.id,
+        admin_user_id=None,
     )
 
     if payload.status == "confirmed" and vehicle is not None and transport_request.request_kind != "extra":
@@ -200,7 +255,7 @@ def save_transport_assignment(
                     status="confirmed",
                     vehicle=vehicle,
                     response_message="Mirrored from the paired route",
-                    admin_user_id=current_admin.id,
+                    admin_user_id=None,
                 )
 
     user = db.get(User, transport_request.user_id)
@@ -415,7 +470,7 @@ async def receive_transport_whatsapp_webhook(
 @router.post(
     "/whatsapp/notifications/dispatch",
     response_model=TransportWhatsAppDispatchResponse,
-    dependencies=[Depends(require_admin_session)],
+    dependencies=[Depends(require_transport_session)],
 )
 def dispatch_transport_whatsapp_notifications(
     db: Session = Depends(get_db),

@@ -1351,6 +1351,7 @@ function makeRegisteredUserRow(user) {
     <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" disabled /></td>
     <td><textarea class="inline user-nome user-field-textarea" rows="2" disabled>${escapeHtml(user.nome)}</textarea></td>
     <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
+    <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
     <td>
       <select class="inline user-projeto" disabled>
         <option value="P80">P80</option>
@@ -1376,33 +1377,11 @@ function makeRegisteredUserRow(user) {
 
 function makeAdministratorRow(row) {
   const tr = document.createElement("tr");
-  const actions = [];
-  if (row.can_revoke) {
-    actions.push(`<button type="button" data-admin-revoke="${row.id}">Revogar</button>`);
-  }
-  if (row.can_approve) {
-    actions.push(`<button type="button" data-admin-approve="${row.id}">Aprovar</button>`);
-  }
-  if (row.can_reject) {
-    actions.push(`<button type="button" data-admin-reject="${row.id}">Rejeitar</button>`);
-  }
-  if (row.can_set_password) {
-    actions.push(`<button type="button" data-admin-show-password="${row.id}">Cadastrar Senha</button>`);
-  }
-
   tr.innerHTML = `
     <td>${escapeHtml(row.chave)}</td>
     <td>${escapeHtml(row.nome)}</td>
+    <td>${escapeHtml(row.perfil ?? 0)}</td>
     <td>${escapeHtml(row.status_label)}</td>
-    <td>
-      <div class="pending-actions">${actions.join("") || "-"}</div>
-      <div class="admin-password-editor" id="admin-password-editor-${row.id}">
-        <span class="admin-password-label">Nova Senha</span>
-        <input class="admin-password-input" id="admin-password-input-${row.id}" type="password" minlength="3" maxlength="20" />
-        <button type="button" data-admin-save-password="${row.id}">Salvar</button>
-        <button type="button" class="secondary-button" data-admin-cancel-password="${row.id}">Cancelar</button>
-      </div>
-    </td>
   `;
   return tr;
 }
@@ -1443,6 +1422,7 @@ function setRegisteredUserEditingState(userId, editing) {
   const rfid = row.querySelector(".user-rfid");
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
+  const perfil = row.querySelector(".user-perfil");
   const projeto = row.querySelector(".user-projeto");
   const endRua = row.querySelector(".user-end-rua");
   const zip = row.querySelector(".user-zip");
@@ -1455,6 +1435,7 @@ function setRegisteredUserEditingState(userId, editing) {
   rfid.disabled = !editing;
   nome.disabled = !editing;
   chave.disabled = !editing;
+  perfil.disabled = !editing;
   projeto.disabled = !editing;
   endRua.disabled = !editing;
   zip.disabled = !editing;
@@ -1522,7 +1503,7 @@ async function loadAdministrators() {
   const rows = await fetchJson("/api/admin/administrators");
   const body = document.getElementById("administratorsBody");
   body.innerHTML = "";
-  rows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
+  rows.filter((row) => row.row_type === "admin").forEach((row) => body.appendChild(makeAdministratorRow(row)));
   applyResponsiveLabels("administratorsBody");
 }
 
@@ -1819,6 +1800,7 @@ async function saveRegisteredUser(userId) {
   const rfidValue = row.querySelector(".user-rfid").value.trim();
   const nome = row.querySelector(".user-nome").value.trim();
   const chave = row.querySelector(".user-chave").value.trim().toUpperCase();
+  const perfilValue = row.querySelector(".user-perfil").value.trim();
   const projeto = row.querySelector(".user-projeto").value;
   const endRua = row.querySelector(".user-end-rua").value.trim();
   const zip = row.querySelector(".user-zip").value.trim();
@@ -1828,11 +1810,16 @@ async function saveRegisteredUser(userId) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
+  if (!/^\d{1,3}$/.test(perfilValue)) {
+    setStatus("Informe um perfil numérico entre 0 e 999.", false);
+    return;
+  }
   await postJson("/api/admin/users", {
     user_id: Number(normalizedUserId),
     rfid: rfidValue || null,
     nome,
     chave,
+    perfil: Number(perfilValue),
     projeto,
     end_rua: endRua || null,
     zip: zip || null,
@@ -2068,25 +2055,40 @@ function bindActions() {
       submitLogin().catch((error) => setAuthStatus(error.message, "error"));
     }
   });
-  document.getElementById("requestAdminButton").addEventListener("click", openRequestAdminModal);
-  document.getElementById("resetPasswordButton").addEventListener("click", () => {
-    submitPasswordReset().catch((error) => setAuthStatus(error.message, "error"));
-  });
   document.getElementById("logoutButton").addEventListener("click", () => {
     logout().catch((error) => setAuthStatus(error.message, "error"));
   });
 
-  document.getElementById("closeRequestAdmin").addEventListener("click", closeRequestAdminModal);
-  document.getElementById("submitRequestAdmin").addEventListener("click", () => {
-    submitRequestAdmin().catch((error) => {
-      document.getElementById("requestAdminStatus").textContent = error.message;
+  const requestAdminButton = document.getElementById("requestAdminButton");
+  const resetPasswordButton = document.getElementById("resetPasswordButton");
+  const closeRequestAdminButton = document.getElementById("closeRequestAdmin");
+  const submitRequestAdminButton = document.getElementById("submitRequestAdmin");
+  const requestAdminModal = document.getElementById("requestAdminModal");
+  if (requestAdminButton) {
+    requestAdminButton.addEventListener("click", openRequestAdminModal);
+  }
+  if (resetPasswordButton) {
+    resetPasswordButton.addEventListener("click", () => {
+      submitPasswordReset().catch((error) => setAuthStatus(error.message, "error"));
     });
-  });
-  document.getElementById("requestAdminModal").addEventListener("click", (event) => {
-    if (event.target.id === "requestAdminModal") {
-      closeRequestAdminModal();
-    }
-  });
+  }
+  if (closeRequestAdminButton) {
+    closeRequestAdminButton.addEventListener("click", closeRequestAdminModal);
+  }
+  if (submitRequestAdminButton) {
+    submitRequestAdminButton.addEventListener("click", () => {
+      submitRequestAdmin().catch((error) => {
+        document.getElementById("requestAdminStatus").textContent = error.message;
+      });
+    });
+  }
+  if (requestAdminModal) {
+    requestAdminModal.addEventListener("click", (event) => {
+      if (event.target.id === "requestAdminModal") {
+        closeRequestAdminModal();
+      }
+    });
+  }
 
   document.getElementById("clearEvents").addEventListener("click", () => {
     archiveAndClearEvents().catch((error) => setStatus(error.message, false));
@@ -2133,7 +2135,9 @@ function bindActions() {
     if (event.key === "Escape") {
       closeEventDetails();
       closeEventArchivesModal();
-      closeRequestAdminModal();
+      if (document.getElementById("requestAdminModal")) {
+        closeRequestAdminModal();
+      }
     }
   });
 
@@ -2240,35 +2244,7 @@ function bindActions() {
     }
   });
 
-  document.getElementById("administratorsBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName !== "BUTTON") {
-      return;
-    }
-    if (target.dataset.adminApprove) {
-      approveAdministrator(target.dataset.adminApprove).catch((error) => setStatus(error.message, false));
-      return;
-    }
-    if (target.dataset.adminReject) {
-      rejectAdministrator(target.dataset.adminReject).catch((error) => setStatus(error.message, false));
-      return;
-    }
-    if (target.dataset.adminRevoke) {
-      revokeAdministrator(target.dataset.adminRevoke).catch((error) => setStatus(error.message, false));
-      return;
-    }
-    if (target.dataset.adminShowPassword) {
-      toggleAdminPasswordEditor(target.dataset.adminShowPassword, true);
-      return;
-    }
-    if (target.dataset.adminCancelPassword) {
-      toggleAdminPasswordEditor(target.dataset.adminCancelPassword, false);
-      return;
-    }
-    if (target.dataset.adminSavePassword) {
-      saveAdministratorPassword(target.dataset.adminSavePassword).catch((error) => setStatus(error.message, false));
-    }
-  });
+  document.getElementById("administratorsBody").addEventListener("click", () => {});
 
   Object.keys(presenceTableStates).forEach((tableKey) => {
     syncPresenceControls(tableKey);

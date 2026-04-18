@@ -29,6 +29,9 @@
     regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
   };
   const DEFAULT_STATUS_MESSAGE = "Transport dashboard ready.";
+  const TRANSPORT_LOCKED_MESSAGE = "Enter key and password to unlock the transport dashboard.";
+  const TRANSPORT_SESSION_EXPIRED_MESSAGE = "Transport session expired. Enter key and password again.";
+  const TRANSPORT_AUTH_VERIFY_DELAY_MS = 140;
   const VEHICLE_DETAILS_MAX_ROWS = 5;
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
@@ -531,6 +534,10 @@
       isLoading: false,
       selectedRouteKind: "home_to_work",
       expandedVehicleKey: null,
+      isAuthenticated: false,
+      authenticatedUser: null,
+      authVerifyToken: 0,
+      authVerifyTimer: null,
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const selectionBanner = document.querySelector("[data-selection-banner]");
@@ -544,6 +551,11 @@
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceField = document.querySelector("[data-weekend-persistence-field]");
     const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
+    const authKeyInput = document.querySelector("[data-transport-auth-key]");
+    const authPasswordInput = document.querySelector("[data-transport-auth-password]");
+    const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
+    const authPasswordShell = document.querySelector('[data-transport-auth-shell="password"]');
+    const requestUserButton = document.querySelector("[data-request-user-link]");
 
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
@@ -551,6 +563,194 @@
     document.querySelectorAll("[data-vehicle-scope]").forEach(function (element) {
       vehicleContainers[element.dataset.vehicleScope] = element;
     });
+
+    function setAuthShellState(shellElement, authenticated) {
+      if (!shellElement) {
+        return;
+      }
+      shellElement.classList.toggle("is-authenticated", authenticated);
+      shellElement.classList.toggle("is-logged-out", !authenticated);
+    }
+
+    function updateAuthControls() {
+      setAuthShellState(authKeyShell, state.isAuthenticated);
+      setAuthShellState(authPasswordShell, state.isAuthenticated);
+      if (requestUserButton) {
+        requestUserButton.hidden = state.isAuthenticated;
+      }
+    }
+
+    function normalizeAuthKeyValue() {
+      if (!authKeyInput) {
+        return "";
+      }
+      const normalizedValue = String(authKeyInput.value || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 4);
+      if (authKeyInput.value !== normalizedValue) {
+        authKeyInput.value = normalizedValue;
+      }
+      return normalizedValue;
+    }
+
+    function clearPendingAuthVerification() {
+      if (state.authVerifyTimer !== null) {
+        globalScope.clearTimeout(state.authVerifyTimer);
+        state.authVerifyTimer = null;
+      }
+    }
+
+    function setAuthenticationState(authenticated, user, options) {
+      const nextOptions = options || {};
+      state.isAuthenticated = Boolean(authenticated);
+      state.authenticatedUser = state.isAuthenticated ? user || null : null;
+      updateAuthControls();
+
+      if (authKeyInput) {
+        if (nextOptions.resetInputs) {
+          authKeyInput.value = "";
+        } else if (nextOptions.fillKey && user && user.chave) {
+          authKeyInput.value = user.chave;
+        }
+      }
+      if (authPasswordInput && nextOptions.resetInputs) {
+        authPasswordInput.value = "";
+      }
+
+      if (nextOptions.clearDashboard) {
+        state.dashboard = null;
+        state.selectedRequestId = null;
+        state.expandedVehicleKey = null;
+        clearDashboard();
+      }
+    }
+
+    function clearTransportSession(message) {
+      state.authVerifyToken += 1;
+      clearPendingAuthVerification();
+      setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
+      requestJson("/api/transport/auth/logout", { method: "POST" }).catch(function () {});
+      setStatus(message || TRANSPORT_LOCKED_MESSAGE, "warning");
+    }
+
+    function handleProtectedRequestError(error, fallbackMessage) {
+      if (error && Number(error.status) === 401) {
+        clearTransportSession(TRANSPORT_SESSION_EXPIRED_MESSAGE);
+        return true;
+      }
+      setStatus((error && error.message) || fallbackMessage, "error");
+      return false;
+    }
+
+    function openUserCreationRequest() {
+      if (typeof globalScope.open === "function") {
+        globalScope.open("../admin", "_blank", "noopener");
+      }
+      setStatus("Open the admin page to request a user creation.", "info");
+    }
+
+    function verifyTransportCredentials(requestToken) {
+      const chave = normalizeAuthKeyValue();
+      const senha = authPasswordInput ? String(authPasswordInput.value || "") : "";
+      if (chave.length !== 4 || !senha) {
+        return Promise.resolve(null);
+      }
+
+      return requestJson("/api/transport/auth/verify", {
+        method: "POST",
+        body: JSON.stringify({ chave: chave, senha: senha }),
+      })
+        .then(function (response) {
+          if (requestToken !== state.authVerifyToken) {
+            return null;
+          }
+
+          if (response && response.authenticated && response.user) {
+            setAuthenticationState(true, response.user, {});
+            setStatus(response.message || "Transport access granted.", "success");
+            return loadDashboard(dateStore.getValue());
+          }
+
+          setAuthenticationState(false, null, {});
+          setStatus((response && response.message) || TRANSPORT_LOCKED_MESSAGE, "warning");
+          return null;
+        })
+        .catch(function (error) {
+          if (requestToken !== state.authVerifyToken) {
+            return null;
+          }
+          setStatus((error && error.message) || "Could not verify transport access.", "error");
+          return null;
+        });
+    }
+
+    function scheduleTransportVerification() {
+      clearPendingAuthVerification();
+      const chave = normalizeAuthKeyValue();
+      const senha = authPasswordInput ? String(authPasswordInput.value || "") : "";
+      if (chave.length !== 4 || !senha) {
+        state.authVerifyToken += 1;
+        setAuthenticationState(false, null, {});
+        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        return;
+      }
+
+      state.authVerifyToken += 1;
+      const requestToken = state.authVerifyToken;
+      state.authVerifyTimer = globalScope.setTimeout(function () {
+        state.authVerifyTimer = null;
+        verifyTransportCredentials(requestToken);
+      }, TRANSPORT_AUTH_VERIFY_DELAY_MS);
+    }
+
+    function resetAuthenticatedTransportField(event) {
+      if (!state.isAuthenticated) {
+        return;
+      }
+      event.preventDefault();
+      clearTransportSession("Transport access reset.");
+      const fieldElement = event.currentTarget;
+      globalScope.setTimeout(function () {
+        if (fieldElement && typeof fieldElement.focus === "function") {
+          fieldElement.focus();
+        }
+      }, 0);
+    }
+
+    function bootstrapTransportSession() {
+      return requestJson("/api/transport/auth/session")
+        .then(function (response) {
+          if (response && response.authenticated && response.user) {
+            setAuthenticationState(true, response.user, { fillKey: true });
+            setStatus(DEFAULT_STATUS_MESSAGE, "info");
+            return loadDashboard(dateStore.getValue());
+          }
+
+          setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
+          setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+          return null;
+        })
+        .catch(function () {
+          setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
+          setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+          return null;
+        });
+    }
+
+    if (authKeyInput) {
+      authKeyInput.addEventListener("input", scheduleTransportVerification);
+      authKeyInput.addEventListener("pointerdown", resetAuthenticatedTransportField);
+    }
+
+    if (authPasswordInput) {
+      authPasswordInput.addEventListener("input", scheduleTransportVerification);
+      authPasswordInput.addEventListener("pointerdown", resetAuthenticatedTransportField);
+    }
+
+    if (requestUserButton) {
+      requestUserButton.addEventListener("click", openUserCreationRequest);
+    }
 
     routeInputs.forEach(function (inputElement) {
       if (inputElement.checked) {
@@ -636,7 +836,7 @@
             return loadDashboard(dateStore.getValue());
           })
           .catch(function (error) {
-            setStatus(error.message || "Could not save vehicle.", "error");
+            handleProtectedRequestError(error, "Could not save vehicle.");
           });
       });
     }
@@ -665,6 +865,10 @@
     }
 
     function canOpenVehicleModal(scope) {
+      if (!state.isAuthenticated) {
+        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        return false;
+      }
       const selectedDate = dateStore.getValue();
       if (scope === "regular" && isWeekendDate(selectedDate)) {
         setStatus("Regular vehicles can only be created from Monday to Friday.", "warning");
@@ -955,6 +1159,11 @@
       }).then(function () {
         setStatus("Transport allocation updated.", "success");
         return loadDashboard(dateStore.getValue());
+      }).catch(function (error) {
+        if (handleProtectedRequestError(error, "Could not update the transport allocation.")) {
+          return null;
+        }
+        throw error;
       });
     }
 
@@ -975,7 +1184,7 @@
           return loadDashboard(dateStore.getValue());
         })
         .catch(function (error) {
-          setStatus(error.message || "Could not remove the selected vehicle.", "error");
+          handleProtectedRequestError(error, "Could not remove the selected vehicle.");
         });
     }
 
@@ -1100,6 +1309,14 @@
     }
 
     function loadDashboard(selectedDate) {
+      if (!state.isAuthenticated) {
+        state.dashboard = null;
+        state.selectedRequestId = null;
+        clearDashboard();
+        setStatus(TRANSPORT_LOCKED_MESSAGE, "warning");
+        return Promise.resolve(null);
+      }
+
       state.isLoading = true;
       const serviceDate = formatIsoDate(selectedDate);
       const routeKind = getSelectedRouteKind();
@@ -1119,7 +1336,7 @@
           state.selectedRequestId = null;
           clearDashboard();
           if (error && Number(error.status) === 401) {
-            setStatus("Administrative login is required to use the transport dashboard.", "error");
+            clearTransportSession(TRANSPORT_SESSION_EXPIRED_MESSAGE);
             return;
           }
           setStatus((error && error.message) || "Could not load the transport dashboard.", "error");
@@ -1130,6 +1347,7 @@
     }
 
     return {
+      bootstrapTransportSession,
       loadDashboard,
       refreshVehicleGridLayouts: function () {
         updateVehicleGridLayouts(document);
@@ -1155,6 +1373,7 @@
     dateStore.subscribe(function (selectedDate) {
       pageController.loadDashboard(selectedDate);
     });
+    pageController.bootstrapTransportSession();
   }
 
   const transportPageApi = {

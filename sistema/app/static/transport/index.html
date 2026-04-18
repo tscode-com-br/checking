@@ -18,6 +18,18 @@
             <span class="transport-topbar-kicker">Checking Transport</span>
             <strong class="transport-topbar-title">Allocation board</strong>
           </div>
+          <div class="transport-topbar-route-slot">
+            <div class="transport-route-toggle transport-topbar-route-toggle" role="radiogroup" aria-label="Selected transport route">
+              <label class="transport-route-option">
+                <input type="radio" name="transport_route_kind" value="home_to_work" data-route-kind checked />
+                <span>Home to Work</span>
+              </label>
+              <label class="transport-route-option">
+                <input type="radio" name="transport_route_kind" value="work_to_home" data-route-kind />
+                <span>Work to Home</span>
+              </label>
+            </div>
+          </div>
           <div class="transport-topbar-center" data-date-panel aria-label="Selected service date">
             <div class="transport-date-stack transport-topbar-date-stack">
               <div class="transport-date-row transport-topbar-date-row">
@@ -46,6 +58,36 @@
                 </button>
               </div>
             </div>
+          </div>
+          <div class="transport-topbar-auth" aria-label="Transport access fields">
+            <label class="transport-auth-field" for="transportAuthKey">
+              <span class="transport-auth-label">key</span>
+              <div class="transport-auth-shell is-logged-out" data-transport-auth-shell="key">
+                <input
+                  id="transportAuthKey"
+                  class="transport-auth-input"
+                  type="text"
+                  maxlength="4"
+                  autocomplete="username"
+                  spellcheck="false"
+                  data-transport-auth-key
+                />
+                <button type="button" class="transport-auth-plus" data-request-user-link aria-label="Request user creation">+</button>
+              </div>
+            </label>
+            <label class="transport-auth-field" for="transportAuthPassword">
+              <span class="transport-auth-label">pass</span>
+              <div class="transport-auth-shell is-logged-out" data-transport-auth-shell="password">
+                <input
+                  id="transportAuthPassword"
+                  class="transport-auth-input"
+                  type="password"
+                  maxlength="255"
+                  autocomplete="current-password"
+                  data-transport-auth-password
+                />
+              </div>
+            </label>
           </div>
           <div class="transport-topbar-copy transport-topbar-support">
             <span class="transport-topbar-kicker">System Support</span>
@@ -115,18 +157,6 @@
           <section id="tela01main_dir" class="tela01main_dir" aria-label="Transport car panels">
             <section id="tela01main_dir_up" class="transport-pane">
               <div class="transport-pane-head transport-pane-head-extra">
-                <div class="transport-pane-route-controls">
-                  <div class="transport-route-toggle" role="radiogroup" aria-label="Selected transport route">
-                    <label class="transport-route-option">
-                      <input type="radio" name="transport_route_kind" value="home_to_work" data-route-kind checked />
-                      <span>Home to Work</span>
-                    </label>
-                    <label class="transport-route-option">
-                      <input type="radio" name="transport_route_kind" value="work_to_home" data-route-kind />
-                      <span>Work to Home</span>
-                    </label>
-                  </div>
-                </div>
                 <div class="transport-pane-title-row">
                   <h2 class="transport-pane-title">Extra Transport List</h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="extra" aria-label="Add extra vehicle">+</button>

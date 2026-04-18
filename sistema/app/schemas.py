@@ -139,6 +139,7 @@ class AdminUserUpsert(BaseModel):
     rfid: str | None = Field(default=None, min_length=4, max_length=64)
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
+    perfil: int = Field(default=0, ge=0, le=999)
     projeto: Literal["P80", "P82", "P83"]
     workplace: str | None = Field(default=None, max_length=120)
     placa: str | None = Field(default=None, max_length=9)
@@ -328,6 +329,7 @@ class AdminIdentity(BaseModel):
     id: int
     chave: str
     nome_completo: str
+    perfil: int
 
 
 class AdminSessionResponse(BaseModel):
@@ -341,12 +343,39 @@ class AdminManagementRow(BaseModel):
     row_type: Literal["admin", "request"]
     chave: str
     nome: str
+    perfil: int | None = None
     status: Literal["active", "pending", "password_reset_requested"]
     status_label: str
     can_revoke: bool
     can_approve: bool
     can_reject: bool
     can_set_password: bool
+
+
+class TransportIdentity(BaseModel):
+    id: int
+    chave: str
+    nome_completo: str
+    perfil: int
+
+
+class TransportAuthVerifyRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha: str = Field(min_length=1, max_length=255)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_transport_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class TransportSessionResponse(BaseModel):
+    authenticated: bool
+    user: TransportIdentity | None = None
+    message: str | None = None
 
 
 class AdminActionResponse(BaseModel):
@@ -375,6 +404,7 @@ class AdminUserListRow(BaseModel):
     rfid: Optional[str]
     nome: str
     chave: str
+    perfil: int = 0
     projeto: str
     workplace: Optional[str] = None
     placa: Optional[str] = None

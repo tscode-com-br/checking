@@ -39,7 +39,6 @@ from sistema.app.core.config import settings
 from sistema.app.database import Base, SessionLocal, engine
 from sistema.app.models import (
     AdminAccessRequest,
-    AdminUser,
     CheckEvent,
     CheckingHistory,
     FormsSubmission,
@@ -4357,7 +4356,10 @@ def test_admin_login_session_and_logout_flow():
 
         admins = client.get("/api/admin/administrators")
         assert admins.status_code == 200
-        assert any(row["chave"] == "HR70" and row["status"] == "active" for row in admins.json())
+        assert any(
+            row["chave"] == "HR70" and row["status"] == "active" and row["perfil"] == 9
+            for row in admins.json()
+        )
 
         logout_response = client.post("/api/admin/auth/logout")
         assert logout_response.status_code == 200
@@ -4410,10 +4412,49 @@ def test_admin_request_access_and_approval_flow():
         assert new_admin_login.status_code == 200
 
         with SessionLocal() as db:
-            admin = db.execute(select(AdminUser).where(AdminUser.chave == "TS11")).scalar_one_or_none()
+            admin = db.execute(select(User).where(User.chave == "TS11")).scalar_one_or_none()
             pending = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "TS11")).scalar_one_or_none()
             assert admin is not None
+            assert admin.perfil == 1
+            assert admin.senha is not None
             assert pending is None
+
+
+def test_admin_login_rejects_transport_only_profile():
+    ensure_web_user_exists(chave="TT20", nome="Transport Only")
+    with TestClient(app) as client:
+        registration = register_web_password(client, chave="TT20", senha="tt2024", ensure_user_exists=False)
+        assert registration.status_code == 200
+
+    with SessionLocal() as db:
+        transport_only_user = get_user_by_chave(db, "TT20")
+        transport_only_user.perfil = 2
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="TT20", senha="tt2024")
+        assert login_response.status_code == 403
+
+
+def test_administrators_endpoint_lists_nonzero_profiles_only():
+    ensure_web_user_exists(chave="UTO9", nome="Admin Perfil")
+    ensure_web_user_exists(chave="TP22", nome="Transport Perfil")
+    ensure_web_user_exists(chave="ZZ00", nome="Sem Perfil")
+
+    with SessionLocal() as db:
+        get_user_by_chave(db, "UTO9").perfil = 1
+        get_user_by_chave(db, "TP22").perfil = 2
+        get_user_by_chave(db, "ZZ00").perfil = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        rows = client.get("/api/admin/administrators")
+        assert rows.status_code == 200
+        rows_by_key = {row["chave"]: row for row in rows.json() if row["row_type"] == "admin"}
+        assert rows_by_key["UTO9"]["perfil"] == 1
+        assert rows_by_key["TP22"]["perfil"] == 2
+        assert "ZZ00" not in rows_by_key
 
 
 def test_admin_password_reset_and_redefine_flow():
@@ -4566,6 +4607,43 @@ def test_admin_event_audit_covers_new_auth_lifecycle():
             and event["request_path"] == f"/api/admin/administrators/{reset_row['id']}/revoke"
             for event in events
         )
+
+
+def test_transport_inline_auth_respects_user_profile():
+    ensure_web_user_exists(chave="TRP2", nome="Transport Access")
+    ensure_web_user_exists(chave="AD11", nome="Admin Only")
+    with TestClient(app) as client:
+        registration = register_web_password(client, chave="TRP2", senha="tp1234", ensure_user_exists=False)
+        assert registration.status_code == 200
+        admin_registration = register_web_password(client, chave="AD11", senha="ad1111", ensure_user_exists=False)
+        assert admin_registration.status_code == 200
+
+    with SessionLocal() as db:
+        transport_user = get_user_by_chave(db, "TRP2")
+        transport_user.perfil = 2
+        admin_only_user = get_user_by_chave(db, "AD11")
+        admin_only_user.perfil = 1
+        db.commit()
+
+    with TestClient(app) as client:
+        denied = client.post("/api/transport/auth/verify", json={"chave": "AD11", "senha": "ad1111"})
+        assert denied.status_code == 200
+        assert denied.json()["authenticated"] is False
+        assert "transport access" in denied.json()["message"].lower()
+
+        granted = client.post("/api/transport/auth/verify", json={"chave": "TRP2", "senha": "tp1234"})
+        assert granted.status_code == 200
+        assert granted.json()["authenticated"] is True
+        assert granted.json()["user"]["perfil"] == 2
+
+        dashboard = client.get("/api/transport/dashboard")
+        assert dashboard.status_code == 200
+
+        logout = client.post("/api/transport/auth/logout")
+        assert logout.status_code == 200
+
+        dashboard_after_logout = client.get("/api/transport/dashboard")
+        assert dashboard_after_logout.status_code == 401
 
 
 def test_admin_locations_crud_and_mobile_catalog_sync():
