@@ -64,13 +64,17 @@ button {
 
 .tela00 {
   min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   padding: 20px;
 }
 
 .tela01 {
-  min-height: calc(100dvh - 40px);
+  min-height: 0;
+  flex: 1 1 auto;
   display: grid;
-  grid-template-rows: 88px var(--transport-divider-size) minmax(0, 1fr) var(--transport-divider-size) auto;
+  grid-template-rows: 88px var(--transport-divider-size) minmax(0, 1fr);
   border: 1px solid var(--transport-border);
   border-radius: var(--transport-radius);
   overflow: hidden;
@@ -81,18 +85,11 @@ button {
 
 .tela01menu {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
-}
-
-.transport-topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  min-width: 0;
 }
 
 .transport-topbar-copy {
@@ -102,19 +99,27 @@ button {
   justify-self: start;
 }
 
+.transport-topbar-brand {
+  min-width: 0;
+}
+
 .transport-topbar-support {
-  padding-left: 22px;
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  justify-self: end;
+  align-items: flex-end;
+  text-align: right;
 }
 
 .transport-topbar-center {
   display: flex;
   align-items: center;
   justify-content: center;
+  justify-self: center;
+  min-width: 0;
 }
 
 .transport-topbar-date-stack {
   width: auto;
+  align-items: center;
 }
 
 .transport-topbar-date-row {
@@ -231,34 +236,39 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
 }
 
-.transport-topbar-date .transport-date-label {
+.transport-topbar-center .transport-date-label {
   font-size: 1.35rem;
 }
 
-.transport-topbar-date .transport-nav-button {
+.transport-topbar-center .transport-nav-button {
   width: 34px;
   height: 34px;
 }
 
 .transport-footer-status {
-  padding: 10px 22px 12px;
+  flex: 0 0 auto;
+  padding: 0 22px 0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0));
 }
 
 .transport-footer-status-copy {
   width: 100%;
-  min-height: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 0 18px;
   border: 1px solid transparent;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.05);
-  font-size: 0.82rem;
+  font-size: 1.23rem;
+  line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  text-align: center;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transport-footer-status-copy[data-tone="success"] {
@@ -287,6 +297,16 @@ button {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.transport-pane-head-extra {
+  gap: 10px;
+}
+
+.transport-pane-route-controls {
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .transport-pane-title-row {
@@ -890,8 +910,7 @@ button {
   }
 
   .tela01 {
-    min-height: calc(100dvh - 28px);
-    grid-template-rows: auto var(--transport-divider-size) minmax(0, 1fr) var(--transport-divider-size) auto;
+    grid-template-rows: auto var(--transport-divider-size) minmax(0, 1fr);
   }
 
   .tela01menu {
@@ -900,16 +919,10 @@ button {
     padding: 16px 18px;
   }
 
-  .transport-topbar-left {
-    width: 100%;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
-  }
-
   .transport-topbar-support {
-    padding-left: 0;
-    border-left: none;
+    justify-self: stretch;
+    align-items: center;
+    text-align: center;
   }
 
   .transport-topbar-copy,
@@ -944,7 +957,7 @@ button {
 }
 
 @media (max-width: 640px) {
-  .transport-topbar-date .transport-date-label {
+  .transport-topbar-center .transport-date-label {
     font-size: 1.15rem;
   }
 
@@ -966,7 +979,7 @@ button {
   }
 
   .transport-footer-status {
-    padding: 10px 12px 12px;
+    padding: 0 12px 0;
   }
 
   .transport-selection-banner {
