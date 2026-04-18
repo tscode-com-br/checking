@@ -154,6 +154,8 @@ class TransportAssignment(Base):
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
     response_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    acknowledged_by_user: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assigned_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ManagedLocation, User
+from ..models import ManagedLocation, TransportRequest, User
 from ..schemas import (
     WebCheckHistoryResponse,
     WebLocationOptionsResponse,
@@ -17,7 +17,13 @@ from ..schemas import (
     WebCheckSubmitResponse,
     WebLocationMatchRequest,
     WebLocationMatchResponse,
+    WebTransportActionResponse,
+    WebTransportAddressUpdateRequest,
+    WebTransportRequestAction,
+    WebTransportRequestCreate,
+    WebTransportStateResponse,
 )
+from ..services.admin_updates import notify_admin_data_changed
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.location_matching import (
     resolve_captured_location_label,
@@ -27,10 +33,18 @@ from ..services.location_matching import (
 from ..services.location_settings import get_location_accuracy_threshold_meters
 from ..services.passwords import hash_password, verify_password
 from ..services.time_utils import now_sgt
+from ..services.transport import (
+    acknowledge_transport_assignments,
+    build_web_transport_state,
+    cancel_transport_request_and_assignments,
+    get_latest_active_transport_request,
+    upsert_transport_request,
+)
 from ..services.user_sync import (
     build_web_check_history_state,
     ensure_web_user,
     find_user_by_chave,
+    is_same_singapore_day,
     normalize_user_key,
 )
 
@@ -129,6 +143,23 @@ def _require_matching_authenticated_web_user(request: Request, db: Session, chav
     if user.chave != normalized_chave:
         raise HTTPException(status_code=401, detail="A chave informada nao corresponde a sessao atual")
     return user
+
+
+def _resolve_web_transport_state(*, db: Session, user: User) -> WebTransportStateResponse:
+    return build_web_transport_state(db, user=user, service_date=now_sgt().date())
+
+
+def _require_same_day_checkin_for_transport(*, db: Session, user: User) -> None:
+    history_state = build_web_check_history_state(db, chave=user.chave)
+    if history_state.last_checkin_at is None or not is_same_singapore_day(history_state.last_checkin_at, now_sgt()):
+        raise HTTPException(status_code=409, detail="Realize um check-in hoje para solicitar transporte")
+
+
+def _require_owned_transport_request(*, user: User, db: Session, request_id: int):
+    transport_request = db.get(TransportRequest, request_id)
+    if transport_request is None or transport_request.user_id != user.id or transport_request.status != "active":
+        raise HTTPException(status_code=404, detail="Solicitacao de transporte nao encontrada")
+    return transport_request
 
 
 @router.get("/auth/status", response_model=WebPasswordStatusResponse)
@@ -278,6 +309,111 @@ def change_web_password(
         authenticated=True,
         has_password=True,
         message="Senha alterada com sucesso.",
+    )
+
+
+@router.get("/transport/state", response_model=WebTransportStateResponse)
+def get_web_transport_state(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> WebTransportStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    return _resolve_web_transport_state(db=db, user=user)
+
+
+@router.post("/transport/address", response_model=WebTransportActionResponse)
+def update_web_transport_address(
+    payload: WebTransportAddressUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebTransportActionResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    user.end_rua = payload.end_rua
+    user.zip = payload.zip
+    db.commit()
+    notify_admin_data_changed("register")
+    return WebTransportActionResponse(
+        ok=True,
+        message="Endereco atualizado com sucesso.",
+        state=_resolve_web_transport_state(db=db, user=user),
+    )
+
+
+@router.post("/transport/request", response_model=WebTransportActionResponse)
+def create_web_transport_request(
+    payload: WebTransportRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebTransportActionResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    if payload.request_kind != "regular":
+        raise HTTPException(status_code=409, detail="Este tipo de transporte ainda nao esta disponivel no webapp")
+
+    _require_same_day_checkin_for_transport(db=db, user=user)
+    existing_request = get_latest_active_transport_request(db, user=user, request_kind=payload.request_kind)
+    if existing_request is None:
+        upsert_transport_request(
+            db,
+            user=user,
+            request_kind=payload.request_kind,
+            requested_time=now_sgt().strftime("%H:%M"),
+            requested_date=None,
+            created_via="web",
+        )
+        message = "Sua solicitacao foi enviada."
+    else:
+        message = "Ja existe uma solicitacao de transporte ativa."
+
+    db.commit()
+    notify_admin_data_changed("event")
+    return WebTransportActionResponse(
+        ok=True,
+        message=message,
+        state=_resolve_web_transport_state(db=db, user=user),
+    )
+
+
+@router.post("/transport/cancel", response_model=WebTransportActionResponse)
+def cancel_web_transport_request(
+    payload: WebTransportRequestAction,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebTransportActionResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    transport_request = _require_owned_transport_request(user=user, db=db, request_id=payload.request_id)
+    cancel_transport_request_and_assignments(db, transport_request=transport_request)
+    db.commit()
+    notify_admin_data_changed("event")
+    return WebTransportActionResponse(
+        ok=True,
+        message="Solicitacao de transporte cancelada.",
+        state=_resolve_web_transport_state(db=db, user=user),
+    )
+
+
+@router.post("/transport/acknowledge", response_model=WebTransportActionResponse)
+def acknowledge_web_transport_request(
+    payload: WebTransportRequestAction,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebTransportActionResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    transport_request = _require_owned_transport_request(user=user, db=db, request_id=payload.request_id)
+    acknowledged = acknowledge_transport_assignments(
+        db,
+        transport_request=transport_request,
+        service_date=now_sgt().date(),
+    )
+    if acknowledged == 0:
+        raise HTTPException(status_code=409, detail="Ainda nao existe confirmacao de transporte para registrar ciencia")
+
+    db.commit()
+    notify_admin_data_changed("event")
+    return WebTransportActionResponse(
+        ok=True,
+        message="Ciencia registrada com sucesso.",
+        state=_resolve_web_transport_state(db=db, user=user),
     )
 
 

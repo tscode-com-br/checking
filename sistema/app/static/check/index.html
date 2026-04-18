@@ -43,6 +43,11 @@
           data-auth-login-endpoint="/api/web/auth/login"
           data-auth-change-endpoint="/api/web/auth/change-password"
           data-auth-logout-endpoint="/api/web/auth/logout"
+          data-transport-state-endpoint="/api/web/transport/state"
+          data-transport-address-endpoint="/api/web/transport/address"
+          data-transport-request-endpoint="/api/web/transport/request"
+          data-transport-cancel-endpoint="/api/web/transport/cancel"
+          data-transport-ack-endpoint="/api/web/transport/acknowledge"
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
           data-locations-endpoint="/api/web/check/locations"
@@ -154,7 +159,9 @@
                 <input type="radio" name="action" value="checkout" />
                 <span>Check-Out</span>
               </label>
-              <button type="button" class="choice-card choice-card-static" aria-disabled="true">Transporte</button>
+              <button id="transportButton" type="button" class="choice-card transport-choice-button" disabled aria-disabled="true">
+                <span>Transporte</span>
+              </button>
             </div>
           </fieldset>
 
@@ -375,6 +382,119 @@
                 <button id="registrationDialogSubmitButton" type="submit" class="submit-button">Cadastrar</button>
               </div>
             </form>
+          </div>
+        </section>
+
+        <div id="transportScreenBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="transportScreen"
+          class="transport-screen is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="transportScreenTitle"
+          hidden
+        >
+          <div class="transport-screen-card">
+            <div class="transport-screen-header">
+              <button
+                id="transportScreenHeaderBackButton"
+                type="button"
+                class="transport-screen-back-button"
+                aria-label="Voltar para a tela principal"
+              >
+                <span aria-hidden="true">←</span>
+              </button>
+              <h2 id="transportScreenTitle">Agendamento de Transporte</h2>
+              <span class="transport-screen-header-spacer" aria-hidden="true"></span>
+            </div>
+
+            <div class="transport-address-summary-row">
+              <button id="transportAddressToggleButton" type="button" class="transport-address-toggle-button">Endereço:</button>
+              <p id="transportAddressSummaryValue" class="transport-address-summary-value"></p>
+            </div>
+
+            <section id="transportAddressEditor" class="transport-address-editor is-hidden" hidden>
+              <form id="transportAddressForm" class="transport-address-form" novalidate>
+                <label class="check-field transport-inline-field" for="transportAddressInput">
+                  <span>Endereço:</span>
+                  <input
+                    id="transportAddressInput"
+                    name="transport_endereco"
+                    type="text"
+                    autocomplete="street-address"
+                    maxlength="255"
+                    placeholder="Bloco (se houver), rua e número."
+                    required
+                  />
+                </label>
+
+                <label class="check-field transport-inline-field" for="transportZipInput">
+                  <span>Código ZIP:</span>
+                  <input
+                    id="transportZipInput"
+                    name="transport_zip"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="postal-code"
+                    maxlength="6"
+                    placeholder="Apenas 6 números"
+                    required
+                  />
+                </label>
+
+                <div class="password-dialog-actions transport-address-actions">
+                  <button id="transportAddressBackButton" type="button" class="secondary-button">Voltar</button>
+                  <button id="transportAddressSubmitButton" type="submit" class="submit-button">Cadastrar</button>
+                </div>
+              </form>
+            </section>
+
+            <hr class="transport-screen-divider" />
+
+            <div class="transport-screen-body">
+              <div id="transportOptionButtons" class="transport-option-buttons">
+                <button id="transportRegularButton" type="button" class="secondary-button transport-option-button">Transporte Rotineiro</button>
+                <button id="transportWeekendButton" type="button" class="secondary-button transport-option-button">Transporte Fim de Semana</button>
+                <button id="transportExtraButton" type="button" class="secondary-button transport-option-button">Transporte Extra</button>
+              </div>
+
+              <section id="transportPendingPanel" class="transport-message-panel is-hidden" hidden>
+                <p class="transport-message-line">Sua solicitação foi enviada.</p>
+                <p id="transportPendingDeadlineLine" class="transport-message-line"></p>
+                <p class="transport-message-line">A confirmação aparecerá aqui.</p>
+              </section>
+
+              <section id="transportConfirmedPanel" class="transport-message-panel is-hidden" hidden>
+                <p class="transport-message-line">Seu transporte foi confirmado.</p>
+
+                <div class="transport-confirmation-details">
+                  <p id="transportConfirmedTypeLine" class="transport-detail-line"></p>
+                  <p id="transportConfirmedPlateLine" class="transport-detail-line"></p>
+                  <p id="transportConfirmedBoardingLine" class="transport-detail-line"></p>
+                  <p id="transportConfirmedToleranceLine" class="transport-detail-line"></p>
+                </div>
+              </section>
+
+              <section id="transportAcknowledgementSection" class="transport-acknowledgement-section is-hidden" hidden>
+                <label class="transport-acknowledgement-label" for="transportAcknowledgementCheckbox">
+                  <input id="transportAcknowledgementCheckbox" type="checkbox" />
+                  <span>Confirmo ciência das informações acima.</span>
+                </label>
+                <button id="transportAcknowledgementButton" type="button" class="submit-button">CONFIRMAR CIÊNCIA</button>
+              </section>
+
+              <section id="transportPendingFooterActions" class="transport-footer-actions is-hidden" hidden>
+                <button id="transportCancelPendingButton" type="button" class="submit-button transport-cancel-button">Cancelar Solicitação</button>
+                <button id="transportPendingBackButton" type="button" class="secondary-button">Voltar</button>
+              </section>
+
+              <section id="transportConfirmedFooterActions" class="transport-footer-actions is-hidden" hidden>
+                <button id="transportConfirmedBackButton" type="button" class="secondary-button">Voltar</button>
+                <button id="transportCancelConfirmedButton" type="button" class="submit-button transport-cancel-button">Cancelar Solicitação</button>
+              </section>
+            </div>
+
+            <p id="transportInlineStatus" class="transport-inline-status" aria-live="polite"></p>
           </div>
         </section>
       </section>

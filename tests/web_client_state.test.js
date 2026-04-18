@@ -106,6 +106,28 @@ test('autofillPetrobrasEmailDomain completes domain after @ is typed', () => {
   assert.equal(clientState.autofillPetrobrasEmailDomain('joao@petrobras.com.br'), 'joao@petrobras.com.br');
 });
 
+test('hasCurrentDayCheckIn compares the latest check-in on the Singapore calendar day', () => {
+  assert.equal(
+    clientState.hasCurrentDayCheckIn(
+      { last_checkin_at: '2026-04-18T07:05:00+08:00' },
+      '2026-04-18T19:30:00+08:00'
+    ),
+    true
+  );
+  assert.equal(
+    clientState.hasCurrentDayCheckIn(
+      { last_checkin_at: '2026-04-17T23:55:00+08:00' },
+      '2026-04-18T00:10:00+08:00'
+    ),
+    false
+  );
+});
+
+test('formatTransportVehicleType keeps labels in Portuguese for the transport confirmation view', () => {
+  assert.equal(clientState.formatTransportVehicleType('carro'), 'carro');
+  assert.equal(clientState.formatTransportVehicleType('onibus'), 'ônibus');
+});
+
 test('resolvePersistedPassword returns the saved password for the active key', () => {
   assert.equal(
     clientState.resolvePersistedPassword({ HR70: 'abc123' }, 'hr70'),

@@ -6,6 +6,11 @@
   const authLoginEndpoint = form.dataset.authLoginEndpoint || '/api/web/auth/login';
   const authChangeEndpoint = form.dataset.authChangeEndpoint || '/api/web/auth/change-password';
   const authLogoutEndpoint = form.dataset.authLogoutEndpoint || '/api/web/auth/logout';
+  const transportStateEndpoint = form.dataset.transportStateEndpoint || '/api/web/transport/state';
+  const transportAddressEndpoint = form.dataset.transportAddressEndpoint || '/api/web/transport/address';
+  const transportRequestEndpoint = form.dataset.transportRequestEndpoint || '/api/web/transport/request';
+  const transportCancelEndpoint = form.dataset.transportCancelEndpoint || '/api/web/transport/cancel';
+  const transportAcknowledgeEndpoint = form.dataset.transportAckEndpoint || '/api/web/transport/acknowledge';
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
@@ -21,6 +26,7 @@
   const informeField = document.getElementById('informeField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
   const automaticActivitiesToggle = document.getElementById('automaticActivitiesToggle');
+  const transportButton = document.getElementById('transportButton');
   const submitButton = document.getElementById('submitButton');
   const refreshLocationButton = document.getElementById('refreshLocationButton');
   const refreshLocationButtonLabel = refreshLocationButton.querySelector('.visually-hidden');
@@ -51,6 +57,38 @@
   const registrationConfirmPasswordInput = document.getElementById('registrationConfirmPasswordInput');
   const registrationDialogBackButton = document.getElementById('registrationDialogBackButton');
   const registrationDialogSubmitButton = document.getElementById('registrationDialogSubmitButton');
+  const transportScreen = document.getElementById('transportScreen');
+  const transportScreenBackdrop = document.getElementById('transportScreenBackdrop');
+  const transportScreenHeaderBackButton = document.getElementById('transportScreenHeaderBackButton');
+  const transportAddressToggleButton = document.getElementById('transportAddressToggleButton');
+  const transportAddressSummaryValue = document.getElementById('transportAddressSummaryValue');
+  const transportAddressEditor = document.getElementById('transportAddressEditor');
+  const transportAddressForm = document.getElementById('transportAddressForm');
+  const transportAddressInput = document.getElementById('transportAddressInput');
+  const transportZipInput = document.getElementById('transportZipInput');
+  const transportAddressBackButton = document.getElementById('transportAddressBackButton');
+  const transportAddressSubmitButton = document.getElementById('transportAddressSubmitButton');
+  const transportOptionButtons = document.getElementById('transportOptionButtons');
+  const transportRegularButton = document.getElementById('transportRegularButton');
+  const transportWeekendButton = document.getElementById('transportWeekendButton');
+  const transportExtraButton = document.getElementById('transportExtraButton');
+  const transportPendingPanel = document.getElementById('transportPendingPanel');
+  const transportPendingDeadlineLine = document.getElementById('transportPendingDeadlineLine');
+  const transportConfirmedPanel = document.getElementById('transportConfirmedPanel');
+  const transportConfirmedTypeLine = document.getElementById('transportConfirmedTypeLine');
+  const transportConfirmedPlateLine = document.getElementById('transportConfirmedPlateLine');
+  const transportConfirmedBoardingLine = document.getElementById('transportConfirmedBoardingLine');
+  const transportConfirmedToleranceLine = document.getElementById('transportConfirmedToleranceLine');
+  const transportAcknowledgementSection = document.getElementById('transportAcknowledgementSection');
+  const transportAcknowledgementCheckbox = document.getElementById('transportAcknowledgementCheckbox');
+  const transportAcknowledgementButton = document.getElementById('transportAcknowledgementButton');
+  const transportPendingFooterActions = document.getElementById('transportPendingFooterActions');
+  const transportCancelPendingButton = document.getElementById('transportCancelPendingButton');
+  const transportPendingBackButton = document.getElementById('transportPendingBackButton');
+  const transportConfirmedFooterActions = document.getElementById('transportConfirmedFooterActions');
+  const transportConfirmedBackButton = document.getElementById('transportConfirmedBackButton');
+  const transportCancelConfirmedButton = document.getElementById('transportCancelConfirmedButton');
+  const transportInlineStatus = document.getElementById('transportInlineStatus');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
   const informeInputs = Array.from(document.querySelectorAll('input[name="informe"]'));
@@ -81,6 +119,23 @@
     registrationConfirmPasswordInput,
     registrationDialogBackButton,
     registrationDialogSubmitButton,
+  ].filter(Boolean);
+  const transportScreenControls = [
+    transportAddressToggleButton,
+    transportAddressInput,
+    transportZipInput,
+    transportAddressBackButton,
+    transportAddressSubmitButton,
+    transportRegularButton,
+    transportWeekendButton,
+    transportExtraButton,
+    transportAcknowledgementCheckbox,
+    transportAcknowledgementButton,
+    transportCancelPendingButton,
+    transportPendingBackButton,
+    transportConfirmedBackButton,
+    transportCancelConfirmedButton,
+    transportScreenHeaderBackButton,
   ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
   const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
@@ -131,6 +186,11 @@
   let passwordChangeInProgress = false;
   let userSelfRegistrationInProgress = false;
   let submitInProgress = false;
+  let transportStateLoading = false;
+  let transportAddressSaveInProgress = false;
+  let transportRequestInProgress = false;
+  let transportCancelInProgress = false;
+  let transportAcknowledgeInProgress = false;
   let userInteractionLockCount = 0;
   let passwordVerificationTimeoutId = null;
   let passwordAutofillSyncTimeoutId = null;
@@ -150,6 +210,27 @@
   const notificationState = {
     message: '',
     tone: null,
+  };
+  const transportState = {
+    status: 'available',
+    requestId: null,
+    requestKind: null,
+    serviceDate: null,
+    endRua: '',
+    zip: '',
+    requestedTime: '',
+    confirmationDeadlineTime: '',
+    vehicleType: '',
+    vehiclePlate: '',
+    toleranceMinutes: null,
+    awarenessRequired: false,
+    awarenessConfirmed: false,
+  };
+  const transportUiState = {
+    addressEditorOpen: false,
+    acknowledgementChecked: false,
+    inlineMessage: '',
+    inlineTone: null,
   };
 
   function isStandaloneShortcutMode() {
@@ -192,8 +273,12 @@
     return Boolean(registrationDialog && !registrationDialog.hidden);
   }
 
+  function isTransportScreenOpen() {
+    return Boolean(transportScreen && !transportScreen.hidden);
+  }
+
   function isAnyDialogOpen() {
-    return isPasswordDialogOpen() || isRegistrationDialogOpen();
+    return isPasswordDialogOpen() || isRegistrationDialogOpen() || isTransportScreenOpen();
   }
 
   function isPasswordActionBusy() {
@@ -259,6 +344,12 @@
     const authBusy = isPasswordActionBusy();
     const dialogOpen = isAnyDialogOpen();
     const unlocked = isApplicationUnlocked();
+    const transportAvailable = unlocked && clientState.hasCurrentDayCheckIn(latestHistoryState, new Date());
+    const transportBusy = transportStateLoading
+      || transportAddressSaveInProgress
+      || transportRequestInProgress
+      || transportCancelInProgress
+      || transportAcknowledgeInProgress;
 
     projectSelect.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordChangeInProgress || userSelfRegistrationInProgress;
 
@@ -347,6 +438,37 @@
 
       control.disabled = userSelfRegistrationInProgress;
     });
+
+    if (transportButton) {
+      const transportEnabled = !dialogOpen && !lockActive && transportAvailable;
+      transportButton.disabled = !transportEnabled;
+      transportButton.setAttribute('aria-disabled', String(!transportEnabled));
+      transportButton.classList.toggle('is-enabled', transportEnabled);
+    }
+
+    transportScreenControls.forEach((control) => {
+      if (!control) {
+        return;
+      }
+
+      if (control === transportAddressSubmitButton) {
+        control.disabled = transportBusy;
+        control.textContent = transportAddressSaveInProgress ? 'Cadastrando...' : 'Cadastrar';
+        return;
+      }
+
+      if (control === transportAcknowledgementButton) {
+        control.disabled = transportBusy || !transportUiState.acknowledgementChecked;
+        control.textContent = transportAcknowledgeInProgress ? 'CONFIRMANDO...' : 'CONFIRMAR CIÊNCIA';
+        return;
+      }
+
+      control.disabled = transportBusy;
+    });
+
+    if (transportScreen) {
+      transportScreen.setAttribute('aria-busy', String(transportBusy));
+    }
 
     const isBusy = lockActive || locationRefreshLoading || submitInProgress || authBusy || passwordLoginInProgress;
     form.classList.toggle('is-busy', isBusy);
@@ -518,6 +640,8 @@
   function clearProtectedClientState() {
     latestHistoryState = null;
     applyHistoryState(null);
+    resetTransportState();
+    closeTransportScreen();
     setResolvedLocation(null);
     currentLocationMatch = null;
     availableLocations = [];
@@ -548,6 +672,7 @@
     const settings = options || {};
     closePasswordDialog();
     closeRegistrationDialog();
+    closeTransportScreen();
     applyAuthenticationLockedState({
       chave: settings.chave || chaveInput.value,
       found: settings.found !== false,
@@ -635,6 +760,373 @@
       return authError;
     }
     return createRequestError(response, payload);
+  }
+
+  function setTransportInlineStatus(message, tone) {
+    transportUiState.inlineMessage = message || '';
+    transportUiState.inlineTone = tone || null;
+    if (!transportInlineStatus) {
+      return;
+    }
+
+    transportInlineStatus.textContent = transportUiState.inlineMessage;
+    transportInlineStatus.classList.remove('is-success', 'is-error', 'is-warning', 'is-info');
+    if (transportUiState.inlineTone) {
+      transportInlineStatus.classList.add(`is-${transportUiState.inlineTone}`);
+    }
+  }
+
+  function clearTransportInlineStatus() {
+    setTransportInlineStatus('', null);
+  }
+
+  function resetTransportState() {
+    transportState.status = 'available';
+    transportState.requestId = null;
+    transportState.requestKind = null;
+    transportState.serviceDate = null;
+    transportState.endRua = '';
+    transportState.zip = '';
+    transportState.requestedTime = '';
+    transportState.confirmationDeadlineTime = '';
+    transportState.vehicleType = '';
+    transportState.vehiclePlate = '';
+    transportState.toleranceMinutes = null;
+    transportState.awarenessRequired = false;
+    transportState.awarenessConfirmed = false;
+    transportUiState.addressEditorOpen = false;
+    transportUiState.acknowledgementChecked = false;
+    clearTransportInlineStatus();
+    renderTransportScreen();
+  }
+
+  function syncTransportAddressFormValues() {
+    if (transportAddressInput) {
+      transportAddressInput.value = transportState.endRua || '';
+    }
+    if (transportZipInput) {
+      transportZipInput.value = transportState.zip || '';
+    }
+  }
+
+  function formatTransportTimeLabel(value) {
+    const normalizedValue = String(value || '').trim();
+    return normalizedValue ? `${normalizedValue}h` : '--';
+  }
+
+  function applyTransportStatePayload(payload) {
+    transportState.status = String(payload && payload.status || 'available');
+    transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
+      ? Number(payload.request_id)
+      : null;
+    transportState.requestKind = payload && payload.request_kind ? String(payload.request_kind) : null;
+    transportState.serviceDate = payload && payload.service_date ? String(payload.service_date) : null;
+    transportState.endRua = String(payload && payload.end_rua || '');
+    transportState.zip = String(payload && payload.zip || '');
+    transportState.requestedTime = String(payload && payload.requested_time || '');
+    transportState.confirmationDeadlineTime = String(payload && payload.confirmation_deadline_time || payload && payload.requested_time || '');
+    transportState.vehicleType = String(payload && payload.vehicle_type || '');
+    transportState.vehiclePlate = String(payload && payload.vehicle_plate || '');
+    transportState.toleranceMinutes = payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
+      ? Number(payload.tolerance_minutes)
+      : null;
+    transportState.awarenessRequired = Boolean(payload && payload.awareness_required);
+    transportState.awarenessConfirmed = Boolean(payload && payload.awareness_confirmed);
+    transportUiState.acknowledgementChecked = Boolean(payload && payload.awareness_confirmed);
+    syncTransportAddressFormValues();
+    renderTransportScreen();
+  }
+
+  function renderTransportScreen() {
+    if (transportAddressSummaryValue) {
+      transportAddressSummaryValue.textContent = transportState.endRua || '';
+    }
+
+    if (transportAddressEditor) {
+      transportAddressEditor.hidden = !transportUiState.addressEditorOpen;
+      transportAddressEditor.classList.toggle('is-hidden', !transportUiState.addressEditorOpen);
+    }
+
+    if (transportOptionButtons) {
+      const showOptions = transportState.status === 'available';
+      transportOptionButtons.hidden = !showOptions;
+      transportOptionButtons.classList.toggle('is-hidden', !showOptions);
+    }
+
+    if (transportPendingPanel) {
+      const showPending = transportState.status === 'pending';
+      transportPendingPanel.hidden = !showPending;
+      transportPendingPanel.classList.toggle('is-hidden', !showPending);
+    }
+
+    if (transportPendingDeadlineLine) {
+      transportPendingDeadlineLine.textContent = `Aguarde a confirmação até as ${transportState.confirmationDeadlineTime || '--:--'}.`;
+    }
+
+    if (transportConfirmedPanel) {
+      const showConfirmed = transportState.status === 'confirmed';
+      transportConfirmedPanel.hidden = !showConfirmed;
+      transportConfirmedPanel.classList.toggle('is-hidden', !showConfirmed);
+    }
+
+    if (transportConfirmedTypeLine) {
+      transportConfirmedTypeLine.textContent = `Tipo de transporte: ${clientState.formatTransportVehicleType(transportState.vehicleType) || '--'}`;
+    }
+    if (transportConfirmedPlateLine) {
+      transportConfirmedPlateLine.textContent = `Placa do Veículo: ${transportState.vehiclePlate || '--'}`;
+    }
+    if (transportConfirmedBoardingLine) {
+      transportConfirmedBoardingLine.textContent = `Horário de Embarque: ${formatTransportTimeLabel(transportState.requestedTime)}`;
+    }
+    if (transportConfirmedToleranceLine) {
+      const toleranceLabel = Number.isFinite(transportState.toleranceMinutes)
+        ? `${transportState.toleranceMinutes} minutos`
+        : '--';
+      transportConfirmedToleranceLine.textContent = `Tolerância: ${toleranceLabel}`;
+    }
+
+    if (transportAcknowledgementSection) {
+      const showAcknowledgement = transportState.status === 'confirmed' && transportState.awarenessRequired && !transportState.awarenessConfirmed;
+      transportAcknowledgementSection.hidden = !showAcknowledgement;
+      transportAcknowledgementSection.classList.toggle('is-hidden', !showAcknowledgement);
+    }
+
+    if (transportAcknowledgementCheckbox) {
+      transportAcknowledgementCheckbox.checked = transportUiState.acknowledgementChecked;
+    }
+
+    if (transportPendingFooterActions) {
+      const showPendingFooter = transportState.status === 'pending';
+      transportPendingFooterActions.hidden = !showPendingFooter;
+      transportPendingFooterActions.classList.toggle('is-hidden', !showPendingFooter);
+    }
+
+    if (transportConfirmedFooterActions) {
+      const showConfirmedFooter = transportState.status === 'confirmed' && transportState.awarenessConfirmed;
+      transportConfirmedFooterActions.hidden = !showConfirmedFooter;
+      transportConfirmedFooterActions.classList.toggle('is-hidden', !showConfirmedFooter);
+    }
+  }
+
+  function closeTransportAddressEditor() {
+    transportUiState.addressEditorOpen = false;
+    syncTransportAddressFormValues();
+    renderTransportScreen();
+  }
+
+  function openTransportAddressEditor() {
+    transportUiState.addressEditorOpen = true;
+    syncTransportAddressFormValues();
+    renderTransportScreen();
+    realignViewport();
+  }
+
+  function closeTransportScreen() {
+    if (!transportScreen || !transportScreenBackdrop || transportScreen.hidden) {
+      return;
+    }
+
+    dismissActiveKeyboard();
+    transportScreen.hidden = true;
+    transportScreenBackdrop.hidden = true;
+    transportScreen.classList.add('is-hidden');
+    transportScreenBackdrop.classList.add('is-hidden');
+    transportUiState.addressEditorOpen = false;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    realignViewport();
+  }
+
+  function openTransportScreen() {
+    if (!transportScreen || !transportScreenBackdrop) {
+      return;
+    }
+
+    if (!isApplicationUnlocked() || !clientState.hasCurrentDayCheckIn(latestHistoryState, new Date())) {
+      setStatus('Realize um check-in hoje para acessar Transporte.', 'error');
+      return;
+    }
+
+    transportScreen.hidden = false;
+    transportScreenBackdrop.hidden = false;
+    transportScreen.classList.remove('is-hidden');
+    transportScreenBackdrop.classList.remove('is-hidden');
+    clearTransportInlineStatus();
+    syncTransportAddressFormValues();
+    renderTransportScreen();
+    syncFormControlStates();
+    realignViewport();
+    void loadTransportState();
+  }
+
+  async function fetchTransportStatePayload(chave) {
+    const response = await fetch(`${transportStateEndpoint}?chave=${encodeURIComponent(chave)}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw buildProtectedRequestError(response, payload);
+    }
+    return payload;
+  }
+
+  async function postTransportPayload(url, payload) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const parsedPayload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw buildProtectedRequestError(response, parsedPayload);
+    }
+    return parsedPayload;
+  }
+
+  async function loadTransportState() {
+    const normalizedChave = getActiveChave();
+    if (normalizedChave.length !== 4 || !isApplicationUnlocked(normalizedChave)) {
+      return null;
+    }
+
+    transportStateLoading = true;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    try {
+      const payload = await fetchTransportStatePayload(normalizedChave);
+      applyTransportStatePayload(payload);
+      return payload;
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        closeTransportScreen();
+        return null;
+      }
+      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível consultar o transporte.', 'error');
+      return null;
+    } finally {
+      transportStateLoading = false;
+      renderTransportScreen();
+      syncFormControlStates();
+    }
+  }
+
+  async function submitTransportAddress(event) {
+    event.preventDefault();
+    const normalizedChave = getActiveChave();
+    if (normalizedChave.length !== 4) {
+      setTransportInlineStatus('Informe uma chave válida antes de atualizar o endereço.', 'error');
+      return;
+    }
+
+    transportAddressSaveInProgress = true;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    try {
+      const payload = await postTransportPayload(transportAddressEndpoint, {
+        chave: normalizedChave,
+        end_rua: transportAddressInput.value,
+        zip: transportZipInput.value,
+      });
+      applyTransportStatePayload(payload.state || {});
+      closeTransportAddressEditor();
+      setTransportInlineStatus(payload.message || 'Endereço atualizado com sucesso.', 'success');
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        closeTransportScreen();
+        return;
+      }
+      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível atualizar o endereço.', 'error');
+    } finally {
+      transportAddressSaveInProgress = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function requestRegularTransport() {
+    const normalizedChave = getActiveChave();
+    transportRequestInProgress = true;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    try {
+      const payload = await postTransportPayload(transportRequestEndpoint, {
+        chave: normalizedChave,
+        request_kind: 'regular',
+      });
+      applyTransportStatePayload(payload.state || {});
+      setTransportInlineStatus(payload.message || 'Sua solicitação foi enviada.', 'success');
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        closeTransportScreen();
+        return;
+      }
+      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível solicitar o transporte.', 'error');
+    } finally {
+      transportRequestInProgress = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function cancelActiveTransportRequest() {
+    const normalizedChave = getActiveChave();
+    if (!transportState.requestId) {
+      return;
+    }
+
+    transportCancelInProgress = true;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    try {
+      const payload = await postTransportPayload(transportCancelEndpoint, {
+        chave: normalizedChave,
+        request_id: transportState.requestId,
+      });
+      applyTransportStatePayload(payload.state || {});
+      transportUiState.acknowledgementChecked = false;
+      setTransportInlineStatus(payload.message || 'Solicitação cancelada.', 'success');
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        closeTransportScreen();
+        return;
+      }
+      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível cancelar a solicitação.', 'error');
+    } finally {
+      transportCancelInProgress = false;
+      syncFormControlStates();
+    }
+  }
+
+  async function acknowledgeTransportInformation() {
+    const normalizedChave = getActiveChave();
+    if (!transportState.requestId) {
+      return;
+    }
+
+    transportAcknowledgeInProgress = true;
+    clearTransportInlineStatus();
+    syncFormControlStates();
+    try {
+      const payload = await postTransportPayload(transportAcknowledgeEndpoint, {
+        chave: normalizedChave,
+        request_id: transportState.requestId,
+      });
+      applyTransportStatePayload(payload.state || {});
+      setTransportInlineStatus(payload.message || 'Ciência registrada com sucesso.', 'success');
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        closeTransportScreen();
+        return;
+      }
+      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível registrar a ciência.', 'error');
+    } finally {
+      transportAcknowledgeInProgress = false;
+      syncFormControlStates();
+    }
   }
 
   function applyAuthenticationStatusPayload(payload) {
@@ -2053,6 +2545,8 @@
     renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
     renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
     applySuggestedActionFromHistory(state);
+    renderTransportScreen();
+    syncFormControlStates();
   }
 
   function resetHistory(message) {
@@ -2477,6 +2971,96 @@
     void registerPasswordForCurrentUser();
   });
 
+  if (transportButton) {
+    transportButton.addEventListener('click', openTransportScreen);
+  }
+
+  if (transportAddressToggleButton) {
+    transportAddressToggleButton.addEventListener('click', () => {
+      if (transportUiState.addressEditorOpen) {
+        closeTransportAddressEditor();
+        return;
+      }
+      openTransportAddressEditor();
+    });
+  }
+
+  if (transportAddressBackButton) {
+    transportAddressBackButton.addEventListener('click', closeTransportAddressEditor);
+  }
+
+  if (transportAddressForm) {
+    transportAddressForm.addEventListener('submit', submitTransportAddress);
+  }
+
+  if (transportZipInput) {
+    transportZipInput.addEventListener('input', () => {
+      const digitsOnly = String(transportZipInput.value || '').replace(/\D/g, '').slice(0, 6);
+      if (digitsOnly !== transportZipInput.value) {
+        transportZipInput.value = digitsOnly;
+      }
+    });
+  }
+
+  if (transportRegularButton) {
+    transportRegularButton.addEventListener('click', () => {
+      void requestRegularTransport();
+    });
+  }
+
+  if (transportWeekendButton) {
+    transportWeekendButton.addEventListener('click', () => {
+      setTransportInlineStatus('O fluxo de Transporte Fim de Semana será tratado na próxima etapa.', 'info');
+    });
+  }
+
+  if (transportExtraButton) {
+    transportExtraButton.addEventListener('click', () => {
+      setTransportInlineStatus('O fluxo de Transporte Extra será tratado na próxima etapa.', 'info');
+    });
+  }
+
+  if (transportAcknowledgementCheckbox) {
+    transportAcknowledgementCheckbox.addEventListener('change', () => {
+      transportUiState.acknowledgementChecked = transportAcknowledgementCheckbox.checked;
+      syncFormControlStates();
+    });
+  }
+
+  if (transportAcknowledgementButton) {
+    transportAcknowledgementButton.addEventListener('click', () => {
+      void acknowledgeTransportInformation();
+    });
+  }
+
+  if (transportCancelPendingButton) {
+    transportCancelPendingButton.addEventListener('click', () => {
+      void cancelActiveTransportRequest();
+    });
+  }
+
+  if (transportCancelConfirmedButton) {
+    transportCancelConfirmedButton.addEventListener('click', () => {
+      void cancelActiveTransportRequest();
+    });
+  }
+
+  if (transportPendingBackButton) {
+    transportPendingBackButton.addEventListener('click', closeTransportScreen);
+  }
+
+  if (transportConfirmedBackButton) {
+    transportConfirmedBackButton.addEventListener('click', closeTransportScreen);
+  }
+
+  if (transportScreenHeaderBackButton) {
+    transportScreenHeaderBackButton.addEventListener('click', closeTransportScreen);
+  }
+
+  if (transportScreenBackdrop) {
+    transportScreenBackdrop.addEventListener('click', closeTransportScreen);
+  }
+
   actionInputs.forEach((input) => {
     input.addEventListener('change', syncProjectVisibility);
   });
@@ -2505,16 +3089,25 @@
     if (document.visibilityState === 'visible') {
       schedulePasswordAutofillSync();
       void runLifecycleUpdateSequence();
+      if (isTransportScreenOpen()) {
+        void loadTransportState();
+      }
     }
   });
 
   window.addEventListener('focus', () => {
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
+    if (isTransportScreenOpen()) {
+      void loadTransportState();
+    }
   });
   window.addEventListener('pageshow', () => {
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
+    if (isTransportScreenOpen()) {
+      void loadTransportState();
+    }
   });
 
   refreshLocationButton.addEventListener('click', () => {
@@ -2647,6 +3240,11 @@
   }
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isTransportScreenOpen()) {
+      closeTransportScreen();
+      return;
+    }
+
     if (event.key === 'Escape' && isRegistrationDialogOpen()) {
       closeRegistrationDialog();
       return;

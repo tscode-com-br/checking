@@ -29,6 +29,7 @@
     regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
   };
   const DEFAULT_STATUS_MESSAGE = "Transport dashboard ready.";
+  const VEHICLE_DETAILS_MAX_ROWS = 5;
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
   const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
@@ -472,6 +473,31 @@
     return `${occupiedSeats}/${totalSeats}`;
   }
 
+  function getPassengerAwarenessState(requestRow) {
+    return requestRow && requestRow.awareness_status === "aware" ? "aware" : "pending";
+  }
+
+  function buildVehiclePassengerAwarenessRows(assignedRows, maxRows) {
+    const normalizedMaxRows = Math.max(1, Number(maxRows) || VEHICLE_DETAILS_MAX_ROWS);
+    const rows = Array.isArray(assignedRows)
+      ? assignedRows.slice(0, normalizedMaxRows).map(function (requestRow) {
+          return {
+            name: String((requestRow && requestRow.nome) || ""),
+            awarenessState: getPassengerAwarenessState(requestRow),
+          };
+        })
+      : [];
+
+    while (rows.length < normalizedMaxRows) {
+      rows.push({
+        name: "",
+        awarenessState: null,
+      });
+    }
+
+    return rows;
+  }
+
   function mapScopeTitle(scope) {
     if (scope === "regular") {
       return "Regular";
@@ -504,6 +530,7 @@
       selectedRequestId: null,
       isLoading: false,
       selectedRouteKind: "home_to_work",
+      expandedVehicleKey: null,
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const selectionBanner = document.querySelector("[data-selection-banner]");
@@ -734,11 +761,91 @@
       );
     }
 
+    function getVehicleDetailsKey(scope, vehicleId) {
+      return `${scope}:${vehicleId}`;
+    }
+
+    function ensureExpandedVehicleStillExists() {
+      if (!state.expandedVehicleKey) {
+        return;
+      }
+
+      const hasVehicle = VEHICLE_SCOPE_ORDER.some(function (scope) {
+        return getVehiclesForScope(scope).some(function (vehicle) {
+          return getVehicleDetailsKey(scope, vehicle.id) === state.expandedVehicleKey;
+        });
+      });
+
+      if (!hasVehicle) {
+        state.expandedVehicleKey = null;
+      }
+    }
+
+    function toggleVehicleDetails(scope, vehicleId) {
+      const vehicleKey = getVehicleDetailsKey(scope, vehicleId);
+      state.expandedVehicleKey = state.expandedVehicleKey === vehicleKey ? null : vehicleKey;
+      renderVehiclePanels();
+    }
+
     function ensureSelectedRequestStillExists() {
       const selectedRequest = getSelectedRequest();
       if (!selectedRequest) {
         state.selectedRequestId = null;
       }
+    }
+
+    function createAwarenessIndicator(awarenessState) {
+      const indicator = createNode("span", "transport-awareness-indicator");
+      if (!awarenessState) {
+        indicator.classList.add("is-empty");
+        indicator.setAttribute("aria-hidden", "true");
+        return indicator;
+      }
+
+      indicator.classList.add(`is-${awarenessState}`);
+      if (awarenessState === "aware") {
+        indicator.textContent = "✓";
+        indicator.setAttribute("aria-label", "Passenger acknowledged transport confirmation");
+        return indicator;
+      }
+
+      indicator.textContent = "◷";
+      indicator.setAttribute("aria-label", "Awaiting passenger acknowledgement");
+      return indicator;
+    }
+
+    function createVehicleDetailsPanel(vehicle, assignedRows) {
+      const detailsPanel = createNode("div", "transport-vehicle-details");
+      const deleteButton = createNode("button", "transport-vehicle-delete-button", "Delete");
+      const passengerTable = createNode("table", "transport-vehicle-passenger-table");
+      const tableBody = createNode("tbody");
+
+      deleteButton.type = "button";
+      deleteButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeVehicleFromRoute(vehicle);
+      });
+
+      buildVehiclePassengerAwarenessRows(assignedRows, VEHICLE_DETAILS_MAX_ROWS).forEach(function (row) {
+        const tableRow = createNode("tr", "transport-vehicle-passenger-row");
+        const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
+        const statusCell = createNode("td", "transport-vehicle-passenger-status");
+
+        if (!row.name) {
+          nameCell.innerHTML = "&nbsp;";
+        }
+
+        statusCell.appendChild(createAwarenessIndicator(row.awarenessState));
+        tableRow.appendChild(nameCell);
+        tableRow.appendChild(statusCell);
+        tableBody.appendChild(tableRow);
+      });
+
+      passengerTable.appendChild(tableBody);
+      detailsPanel.appendChild(deleteButton);
+      detailsPanel.appendChild(passengerTable);
+      return detailsPanel;
     }
 
     function renderSelectionBanner() {
@@ -881,6 +988,8 @@
         !!selectedRequest &&
         !!selectedRequest.assigned_vehicle &&
         Number(selectedRequest.assigned_vehicle.id) === Number(vehicle.id);
+      const vehicleDetailsKey = getVehicleDetailsKey(scope, vehicle.id);
+      const isExpanded = state.expandedVehicleKey === vehicleDetailsKey;
 
       vehicleButton.type = "button";
       vehicleButton.dataset.vehicleId = String(vehicle.id);
@@ -889,6 +998,8 @@
       vehicleButton.setAttribute("aria-label", vehicleButton.title);
       vehicleButton.classList.toggle("is-selectable", isSelectable);
       vehicleButton.classList.toggle("is-assigned", isAssignedToSelection);
+      vehicleButton.classList.toggle("is-details-open", isExpanded);
+      tileElement.classList.toggle("is-expanded", isExpanded);
       if (!isSelectable) {
         vehicleButton.classList.add("is-idle");
       }
@@ -909,10 +1020,12 @@
       vehicleButton.appendChild(iconImage);
       vehicleButton.appendChild(occupancyLabel);
       vehicleButton.addEventListener("click", function () {
-        if (!selectedRequest || selectedRequest.request_kind !== scope) {
+        if (!selectedRequest || selectedRequest.request_kind !== scope || isAssignedToSelection) {
+          toggleVehicleDetails(scope, vehicle.id);
           return;
         }
 
+        state.expandedVehicleKey = vehicleDetailsKey;
         submitAssignment({
           request_id: selectedRequest.id,
           service_date: state.dashboard.selected_date,
@@ -924,17 +1037,10 @@
         });
       });
 
-      const removeButton = createNode("button", "transport-vehicle-remove", "×");
-      removeButton.type = "button";
-      removeButton.setAttribute("aria-label", `Remove ${vehicle.placa} from ${getRouteKindLabel(getSelectedRouteKind())}`);
-      removeButton.addEventListener("click", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        removeVehicleFromRoute(vehicle);
-      });
-
-      tileElement.appendChild(removeButton);
       tileElement.appendChild(vehicleButton);
+      if (isExpanded) {
+        tileElement.appendChild(createVehicleDetailsPanel(vehicle, assignedRows));
+      }
       return tileElement;
     }
 
@@ -966,6 +1072,7 @@
 
     function renderDashboard() {
       ensureSelectedRequestStillExists();
+      ensureExpandedVehicleStillExists();
       renderSelectionBanner();
       renderRequestTables();
       renderVehiclePanels();
@@ -988,6 +1095,7 @@
           container.style.removeProperty("grid-auto-columns");
         }
       });
+      state.expandedVehicleKey = null;
       renderSelectionBanner();
     }
 
@@ -1058,6 +1166,8 @@
     getOrdinalSuffix,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,
+    buildVehiclePassengerAwarenessRows,
+    getPassengerAwarenessState,
     mapVehicleIconPath,
     parsePositiveNumber,
     resolvePanelSizes,

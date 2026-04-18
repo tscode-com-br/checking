@@ -22,10 +22,11 @@ from ..models import (
 from ..schemas import (
     TransportBotConversationResponse,
     TransportBotReplyMessage,
-    TransportVehicleCreate,
     TransportDashboardResponse,
     TransportRequestRow,
+    TransportVehicleCreate,
     TransportVehicleRow,
+    WebTransportStateResponse,
     WorkplaceRow,
 )
 from .time_utils import now_sgt
@@ -129,6 +130,11 @@ def build_transport_dashboard(
                 end_rua=user.end_rua,
                 zip=user.zip,
                 assignment_status=assignment_status,
+                awareness_status=(
+                    "aware"
+                    if assignment is not None and assignment.acknowledged_by_user
+                    else "pending"
+                ),
                 assigned_vehicle=assigned_vehicle,
                 response_message=response_message,
             )
@@ -346,6 +352,24 @@ def upsert_transport_request(
     return transport_request
 
 
+def get_latest_active_transport_request(
+    db: Session,
+    *,
+    user: User,
+    request_kind: str,
+) -> TransportRequest | None:
+    return db.execute(
+        select(TransportRequest)
+        .where(
+            TransportRequest.user_id == user.id,
+            TransportRequest.request_kind == request_kind,
+            TransportRequest.status == "active",
+        )
+        .order_by(TransportRequest.updated_at.desc(), TransportRequest.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def cancel_transport_requests(db: Session, *, user: User, request_kind: str, reference_date: date) -> int:
     timestamp = now_sgt()
     requests = db.execute(
@@ -366,6 +390,120 @@ def cancel_transport_requests(db: Session, *, user: User, request_kind: str, ref
         transport_request.updated_at = timestamp
         cancelled += 1
     return cancelled
+
+
+def cancel_transport_request_and_assignments(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+) -> None:
+    timestamp = now_sgt()
+    transport_request.status = "cancelled"
+    transport_request.cancelled_at = timestamp
+    transport_request.updated_at = timestamp
+
+    assignments = db.execute(
+        select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
+    ).scalars().all()
+    for assignment in assignments:
+        assignment.vehicle_id = None
+        assignment.status = "cancelled"
+        assignment.response_message = "Cancelled by web user"
+        assignment.acknowledged_by_user = False
+        assignment.acknowledged_at = None
+        assignment.updated_at = timestamp
+        assignment.notified_at = None
+
+
+def acknowledge_transport_assignments(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date,
+) -> int:
+    timestamp = now_sgt()
+    assignments = db.execute(
+        select(TransportAssignment).where(
+            TransportAssignment.request_id == transport_request.id,
+            TransportAssignment.service_date == service_date,
+            TransportAssignment.status == "confirmed",
+            TransportAssignment.vehicle_id.is_not(None),
+        )
+    ).scalars().all()
+    acknowledged = 0
+    for assignment in assignments:
+        assignment.acknowledged_by_user = True
+        assignment.acknowledged_at = timestamp
+        assignment.updated_at = timestamp
+        acknowledged += 1
+    return acknowledged
+
+
+def build_web_transport_state(
+    db: Session,
+    *,
+    user: User,
+    service_date: date,
+) -> WebTransportStateResponse:
+    active_request = get_latest_active_transport_request(db, user=user, request_kind="regular")
+    if active_request is None or not request_applies_to_date(active_request, service_date):
+        return WebTransportStateResponse(
+            chave=user.chave,
+            end_rua=user.end_rua,
+            zip=user.zip,
+            status="available",
+        )
+
+    assignments = db.execute(
+        select(TransportAssignment)
+        .where(
+            TransportAssignment.request_id == active_request.id,
+            TransportAssignment.service_date == service_date,
+        )
+        .order_by(TransportAssignment.route_kind, TransportAssignment.id)
+    ).scalars().all()
+    confirmed_assignments = [
+        assignment
+        for assignment in assignments
+        if assignment.status == "confirmed" and assignment.vehicle_id is not None
+    ]
+    confirmed_assignment = confirmed_assignments[0] if confirmed_assignments else None
+    confirmed_vehicle = db.get(Vehicle, confirmed_assignment.vehicle_id) if confirmed_assignment is not None else None
+    awareness_confirmed = bool(confirmed_assignments) and all(
+        assignment.acknowledged_by_user for assignment in confirmed_assignments
+    )
+
+    if confirmed_assignment is not None and confirmed_vehicle is not None:
+        return WebTransportStateResponse(
+            chave=user.chave,
+            end_rua=user.end_rua,
+            zip=user.zip,
+            status="confirmed",
+            request_id=active_request.id,
+            request_kind=active_request.request_kind,
+            service_date=service_date,
+            requested_time=active_request.requested_time,
+            confirmation_deadline_time=active_request.requested_time,
+            vehicle_type=confirmed_vehicle.tipo,
+            vehicle_plate=confirmed_vehicle.placa,
+            tolerance_minutes=confirmed_vehicle.tolerance,
+            awareness_required=True,
+            awareness_confirmed=awareness_confirmed,
+        )
+
+    return WebTransportStateResponse(
+        chave=user.chave,
+        end_rua=user.end_rua,
+        zip=user.zip,
+        status="pending",
+        request_id=active_request.id,
+        request_kind=active_request.request_kind,
+        service_date=service_date,
+        requested_time=active_request.requested_time,
+        confirmation_deadline_time=active_request.requested_time,
+        awareness_required=False,
+        awareness_confirmed=False,
+    )
 
 
 def get_or_create_bot_session(db: Session, *, chat_id: str) -> TransportBotSession:
@@ -593,6 +731,7 @@ def update_transport_assignment(
     admin_user_id: int | None,
 ) -> tuple[TransportAssignment, bool]:
     timestamp = now_sgt()
+    next_vehicle_id = vehicle.id if vehicle is not None else None
     assignment = db.execute(
         select(TransportAssignment).where(
             TransportAssignment.request_id == transport_request.id,
@@ -606,9 +745,11 @@ def update_transport_assignment(
             request_id=transport_request.id,
             service_date=service_date,
             route_kind=route_kind,
-            vehicle_id=(vehicle.id if vehicle is not None else None),
+            vehicle_id=next_vehicle_id,
             status=status,
             response_message=response_message,
+            acknowledged_by_user=False,
+            acknowledged_at=None,
             assigned_by_admin_id=admin_user_id,
             created_at=timestamp,
             updated_at=timestamp,
@@ -617,10 +758,22 @@ def update_transport_assignment(
         db.add(assignment)
         db.flush()
     else:
+        assignment_changed = (
+            assignment.vehicle_id != next_vehicle_id
+            or assignment.status != status
+            or assignment.route_kind != route_kind
+            or assignment.service_date != service_date
+        )
         assignment.route_kind = route_kind
-        assignment.vehicle_id = vehicle.id if vehicle is not None else None
+        assignment.vehicle_id = next_vehicle_id
         assignment.status = status
         assignment.response_message = response_message
+        if status != "confirmed":
+            assignment.acknowledged_by_user = False
+            assignment.acknowledged_at = None
+        elif assignment_changed:
+            assignment.acknowledged_by_user = False
+            assignment.acknowledged_at = None
         assignment.assigned_by_admin_id = admin_user_id
         assignment.updated_at = timestamp
         assignment.notified_at = None

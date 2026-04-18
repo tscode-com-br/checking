@@ -547,6 +547,7 @@ class TransportRequestRow(BaseModel):
     end_rua: str | None = None
     zip: str | None = None
     assignment_status: Literal["pending", "confirmed", "rejected", "cancelled"]
+    awareness_status: Literal["pending", "aware"] = "pending"
     assigned_vehicle: TransportVehicleRow | None = None
     response_message: str | None = None
 
@@ -906,6 +907,82 @@ class WebPasswordActionResponse(BaseModel):
     authenticated: bool
     has_password: bool
     message: str
+
+
+class WebTransportStateResponse(BaseModel):
+    chave: str
+    end_rua: str | None = None
+    zip: str | None = None
+    status: Literal["available", "pending", "confirmed"] = "available"
+    request_id: int | None = None
+    request_kind: Literal["regular", "weekend", "extra"] | None = None
+    service_date: date | None = None
+    requested_time: str | None = None
+    confirmation_deadline_time: str | None = None
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
+    vehicle_plate: str | None = None
+    tolerance_minutes: int | None = Field(default=None, ge=0, le=240)
+    awareness_required: bool = False
+    awareness_confirmed: bool = False
+
+
+class WebTransportActionResponse(BaseModel):
+    ok: bool
+    message: str
+    state: WebTransportStateResponse
+
+
+class WebTransportAddressUpdateRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    end_rua: str = Field(min_length=3, max_length=255)
+    zip: str = Field(min_length=6, max_length=6)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_transport_address_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("end_rua", mode="before")
+    @classmethod
+    def validate_transport_address_value(cls, value: str) -> str:
+        return _normalize_required_label(value, "O endereco", max_length=255)
+
+    @field_validator("zip", mode="before")
+    @classmethod
+    def validate_transport_zip_code(cls, value: str) -> str:
+        digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+        if len(digits) != 6:
+            raise ValueError("O Codigo ZIP deve conter exatamente 6 numeros")
+        return digits
+
+
+class WebTransportRequestCreate(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    request_kind: Literal["regular", "weekend", "extra"]
+
+    @field_validator("chave")
+    @classmethod
+    def validate_transport_request_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+
+class WebTransportRequestAction(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    request_id: int = Field(ge=1)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_transport_action_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
 
 
 class WebLocationMatchRequest(BaseModel):

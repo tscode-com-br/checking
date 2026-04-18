@@ -7,6 +7,8 @@
 
   root.CheckingWebClientState = exported;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const SINGAPORE_TIME_ZONE = 'Asia/Singapore';
+
   function sanitizeSettingsChave(value) {
     return String(value || '')
       .toUpperCase()
@@ -95,6 +97,51 @@
     }
 
     return `${localPart}@petrobras.com.br`;
+  }
+
+  function resolveCalendarDayKey(value, timeZone) {
+    if (!value) {
+      return '';
+    }
+
+    const parsedValue = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsedValue.getTime())) {
+      return '';
+    }
+
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || SINGAPORE_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(parsedValue);
+  }
+
+  function hasCurrentDayCheckIn(historyState, referenceValue, timeZone) {
+    const lastCheckinAt = historyState && historyState.last_checkin_at;
+    if (!lastCheckinAt) {
+      return false;
+    }
+
+    const checkinDayKey = resolveCalendarDayKey(lastCheckinAt, timeZone || SINGAPORE_TIME_ZONE);
+    const referenceDayKey = resolveCalendarDayKey(referenceValue || new Date(), timeZone || SINGAPORE_TIME_ZONE);
+    return Boolean(checkinDayKey && referenceDayKey && checkinDayKey === referenceDayKey);
+  }
+
+  function formatTransportVehicleType(value) {
+    switch (String(value || '').trim().toLowerCase()) {
+      case 'carro':
+        return 'carro';
+      case 'minivan':
+        return 'minivan';
+      case 'van':
+        return 'van';
+      case 'onibus':
+        return 'ônibus';
+      default:
+        return String(value || '').trim();
+    }
   }
 
   function resolvePersistedPassword(passwordsByChave, chave) {
@@ -205,6 +252,8 @@
     isPasswordLengthValid,
     isPasswordVerificationInputValid,
     autofillPetrobrasEmailDomain,
+    hasCurrentDayCheckIn,
+    formatTransportVehicleType,
     resolvePersistedPassword,
     withPersistedPassword,
     resolvePasswordActionLabel,

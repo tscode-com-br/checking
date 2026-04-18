@@ -96,3 +96,27 @@ test('formatVehicleOccupancyCount shows only the allocated and total seats', () 
     '3/7'
   );
 });
+
+test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {
+  assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Alice Rider' }), 'pending');
+  assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Bob Rider', awareness_status: 'aware' }), 'aware');
+});
+
+test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five lines', () => {
+  assert.deepEqual(
+    transportPage.buildVehiclePassengerAwarenessRows(
+      [
+        { nome: 'Alice Rider' },
+        { nome: 'Bob Rider', awareness_status: 'aware' },
+      ],
+      5
+    ),
+    [
+      { name: 'Alice Rider', awarenessState: 'pending' },
+      { name: 'Bob Rider', awarenessState: 'aware' },
+      { name: '', awarenessState: null },
+      { name: '', awarenessState: null },
+      { name: '', awarenessState: null },
+    ]
+  );
+});

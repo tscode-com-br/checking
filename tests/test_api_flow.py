@@ -59,11 +59,13 @@ from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
+from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services import whatsapp_meta as whatsapp_meta_module
 from sistema.app.services.passwords import verify_password
 from sistema.app.services.time_utils import now_sgt
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
+from sistema.app.routers import web_check as web_check_router
 
 
 ADMIN_LOGIN_CHAVE = "HR70"
@@ -178,6 +180,15 @@ def add_transport_schedule(
     db.add(schedule)
     db.flush()
     return schedule
+
+
+def set_user_checkin_state(*, chave: str, event_time: datetime, local: str = "Web") -> None:
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, chave)
+        user.checkin = True
+        user.time = event_time
+        user.local = local
+        db.commit()
 
 
 def test_health():
@@ -3345,6 +3356,269 @@ def test_web_password_change_replaces_previous_password():
         assert new_login.status_code == 200
         assert new_login.json()["authenticated"] is True
         assert new_login.json()["has_password"] is True
+
+
+def test_web_transport_request_requires_same_day_checkin_and_returns_pending_state(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 7, 30, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT11", projeto="P80", nome="Transport Web Rider")
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT11")
+        user.end_rua = "10 Marina Boulevard"
+        user.zip = "123456"
+        db.commit()
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT11",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        blocked = client.post(
+            "/api/web/transport/request",
+            json={"chave": "WT11", "request_kind": "regular"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"] == "Realize um check-in hoje para solicitar transporte"
+
+        set_user_checkin_state(chave="WT11", event_time=fixed_now, local="Workplace Gate")
+
+        created = client.post(
+            "/api/web/transport/request",
+            json={"chave": "WT11", "request_kind": "regular"},
+        )
+        assert created.status_code == 200
+        payload = created.json()
+        assert payload["ok"] is True
+        assert payload["state"]["status"] == "pending"
+        assert payload["state"]["request_kind"] == "regular"
+        assert payload["state"]["requested_time"] == "07:30"
+        assert payload["state"]["confirmation_deadline_time"] == "07:30"
+        assert payload["state"]["end_rua"] == "10 Marina Boulevard"
+        assert payload["state"]["zip"] == "123456"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT11")
+        request_row = db.execute(
+            select(TransportRequest)
+            .where(
+                TransportRequest.user_id == user.id,
+                TransportRequest.request_kind == "regular",
+                TransportRequest.status == "active",
+            )
+            .order_by(TransportRequest.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert request_row.created_via == "web"
+    assert request_row.requested_time == "07:30"
+
+
+def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashboard(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 8, 0, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="TWA1234", tipo="van", color="Blue", lugares=12, tolerance=10, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    ensure_web_user_exists(chave="WT12", projeto="P82", nome="Aware Transport Rider")
+    set_user_checkin_state(chave="WT12", event_time=fixed_now, local="Main Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT12",
+            senha="abc123",
+            projeto="P82",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        updated_address = client.post(
+            "/api/web/transport/address",
+            json={
+                "chave": "WT12",
+                "end_rua": "Block 3, Harbour Street 55",
+                "zip": "654321",
+            },
+        )
+        assert updated_address.status_code == 200
+        assert updated_address.json()["state"]["end_rua"] == "Block 3, Harbour Street 55"
+        assert updated_address.json()["state"]["zip"] == "654321"
+
+        requested = client.post(
+            "/api/web/transport/request",
+            json={"chave": "WT12", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT12"})
+        assert confirmed_state.status_code == 200
+        assert confirmed_state.json()["status"] == "confirmed"
+        assert confirmed_state.json()["awareness_confirmed"] is False
+        assert confirmed_state.json()["vehicle_plate"] == "TWA1234"
+
+        acknowledged = client.post(
+            "/api/web/transport/acknowledge",
+            json={"chave": "WT12", "request_id": request_id},
+        )
+        assert acknowledged.status_code == 200
+        assert acknowledged.json()["state"]["awareness_confirmed"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT12")
+        assert user.end_rua == "Block 3, Harbour Street 55"
+        assert user.zip == "654321"
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        home_dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+        paired_dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "work_to_home"},
+        )
+
+    assert home_dashboard.status_code == 200
+    assert paired_dashboard.status_code == 200
+    home_row = next(row for row in home_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
+    paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
+    assert home_row["awareness_status"] == "aware"
+    assert paired_row["awareness_status"] == "aware"
+
+
+def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_dashboard(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 8, 20, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="TWC1234", tipo="carro", color="White", lugares=4, tolerance=7, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    ensure_web_user_exists(chave="WT13", projeto="P80", nome="Cancel Transport Rider")
+    set_user_checkin_state(chave="WT13", event_time=fixed_now, local="North Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT13",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/request",
+            json={"chave": "WT13", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        cancelled = client.post(
+            "/api/web/transport/cancel",
+            json={"chave": "WT13", "request_id": request_id},
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["state"]["status"] == "available"
+
+    with SessionLocal() as db:
+        request_row = db.get(TransportRequest, request_id)
+        assert request_row is not None
+        assert request_row.status == "cancelled"
+        assignments = db.execute(
+            select(TransportAssignment)
+            .where(TransportAssignment.request_id == request_id)
+            .order_by(TransportAssignment.route_kind)
+        ).scalars().all()
+
+    assert assignments
+    assert all(row.status == "cancelled" for row in assignments)
+    assert all(row.vehicle_id is None for row in assignments)
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    assert all(row["chave"] != "WT13" for row in dashboard.json()["regular_requests"])
 
 
 def test_admin_can_clear_registered_user_password_and_allow_new_registration():
