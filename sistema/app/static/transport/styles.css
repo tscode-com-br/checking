@@ -543,13 +543,15 @@ button {
 }
 
 .transport-vehicle-grid {
-  grid-template-columns: repeat(auto-fill, minmax(104px, 104px));
   gap: 12px 10px;
   align-content: start;
   justify-content: start;
   justify-items: stretch;
   padding-top: 2px;
   padding-right: 0;
+  grid-auto-flow: column;
+  grid-auto-columns: 104px;
+  grid-template-rows: repeat(1, minmax(0, auto));
 }
 
 .transport-vehicle-button {
@@ -791,7 +793,7 @@ button {
   }
 
   .transport-vehicle-grid {
-    grid-template-columns: repeat(auto-fill, minmax(92px, 92px));
+    grid-auto-columns: 92px;
   }
 
   .transport-vehicle-button {

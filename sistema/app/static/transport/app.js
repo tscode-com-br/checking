@@ -18,6 +18,8 @@
     van: "icons/van.svg",
     onibus: "icons/bus.svg",
   };
+  const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
+  const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
   const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
   const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
 
@@ -130,6 +132,14 @@
     return parsed;
   }
 
+  function parsePixelValue(value, fallbackValue) {
+    const parsed = parseFloat(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return fallbackValue;
+    }
+    return parsed;
+  }
+
   function resolvePanelSizes(options) {
     const containerSize = Math.max(0, Number(options.containerSize) || 0);
     const dividerSize = Math.max(0, Number(options.dividerSize) || 0);
@@ -164,6 +174,76 @@
         };
   }
 
+  function getVehicleGridItemMetrics(gridElement) {
+    const sampleButton = gridElement && gridElement.querySelector(".transport-vehicle-button");
+    if (!sampleButton) {
+      return {
+        width: VEHICLE_GRID_FALLBACK_ITEM_WIDTH,
+        height: VEHICLE_GRID_FALLBACK_ITEM_HEIGHT,
+      };
+    }
+
+    const buttonRect = sampleButton.getBoundingClientRect();
+    return {
+      width: Math.max(1, Math.round(buttonRect.width)),
+      height: Math.max(1, Math.round(buttonRect.height)),
+    };
+  }
+
+  function updateVehicleGridLayout(gridElement) {
+    if (!gridElement) {
+      return;
+    }
+
+    const itemElements = gridElement.querySelectorAll(".transport-vehicle-button");
+    if (!itemElements.length) {
+      gridElement.style.removeProperty("grid-template-rows");
+      gridElement.style.removeProperty("grid-auto-columns");
+      return;
+    }
+
+    const gridStyle = globalScope.getComputedStyle(gridElement);
+    const rowGap = parsePixelValue(gridStyle.rowGap || gridStyle.gap, 0);
+    const metrics = getVehicleGridItemMetrics(gridElement);
+    const availableHeight = Math.max(metrics.height, Math.floor(gridElement.clientHeight));
+    const computedRowCount = Math.floor((availableHeight + rowGap) / (metrics.height + rowGap));
+    const rowCount = Math.max(1, Math.min(itemElements.length, computedRowCount));
+
+    gridElement.style.gridAutoColumns = `${metrics.width}px`;
+    gridElement.style.gridTemplateRows = `repeat(${rowCount}, ${metrics.height}px)`;
+  }
+
+  function updateVehicleGridLayouts(rootElement) {
+    const scopeRoot = rootElement || document;
+    scopeRoot.querySelectorAll("[data-vehicle-scope]").forEach(function (gridElement) {
+      updateVehicleGridLayout(gridElement);
+    });
+  }
+
+  function resolvePanelMinimumSize(panelElement, fallbackValue) {
+    if (!panelElement) {
+      return fallbackValue;
+    }
+
+    const vehicleGrid = panelElement.querySelector(".transport-vehicle-grid");
+    if (!vehicleGrid) {
+      return fallbackValue;
+    }
+
+    const panelStyle = globalScope.getComputedStyle(panelElement);
+    const panelGap = parsePixelValue(panelStyle.rowGap || panelStyle.gap, 0);
+    const paddingTop = parsePixelValue(panelStyle.paddingTop, 0);
+    const paddingBottom = parsePixelValue(panelStyle.paddingBottom, 0);
+    const headElement = panelElement.querySelector(".transport-pane-head");
+    const headHeight = headElement ? Math.ceil(headElement.getBoundingClientRect().height) : 0;
+    const gridItemHeight = getVehicleGridItemMetrics(vehicleGrid).height;
+
+    return Math.max(
+      fallbackValue,
+      Math.ceil(paddingTop + headHeight + panelGap + gridItemHeight + paddingBottom)
+    );
+  }
+
   function enableResizableDivider(dividerElement) {
     const orientation = dividerElement.dataset.resize;
     if (!orientation) {
@@ -184,31 +264,54 @@
         return;
       }
 
+      const childElements = Array.from(containerElement.children);
+      const dividerIndex = childElements.indexOf(dividerElement);
+      const firstPanelIndex = dividerIndex - 1;
+      const secondPanelIndex = dividerIndex + 1;
+      if (dividerIndex < 0 || firstPanelIndex < 0 || secondPanelIndex >= childElements.length) {
+        return;
+      }
+
       const containerRect = containerElement.getBoundingClientRect();
-      const dividerRect = dividerElement.getBoundingClientRect();
-      const containerSize = containerRect[resizeConfig.sizeProperty];
-      const dividerSize = dividerRect[resizeConfig.sizeProperty];
-      const minFirstSize = parsePositiveNumber(
-        dividerElement.dataset.minFirst,
-        RESIZE_DEFAULT_MIN_SIZE
+      const trackSizes = childElements.map(function (element) {
+        return Math.round(element.getBoundingClientRect()[resizeConfig.sizeProperty]);
+      });
+      const dividerSize = trackSizes[dividerIndex];
+      const resizeGroupSize =
+        trackSizes[firstPanelIndex] + dividerSize + trackSizes[secondPanelIndex];
+      const groupOffset = trackSizes.slice(0, firstPanelIndex).reduce(function (sum, size) {
+        return sum + size;
+      }, 0);
+      const minFirstSize = resolvePanelMinimumSize(
+        firstPanelElement,
+        parsePositiveNumber(dividerElement.dataset.minFirst, RESIZE_DEFAULT_MIN_SIZE)
       );
-      const minSecondSize = parsePositiveNumber(
-        dividerElement.dataset.minSecond,
-        RESIZE_DEFAULT_MIN_SIZE
+      const minSecondSize = resolvePanelMinimumSize(
+        secondPanelElement,
+        parsePositiveNumber(dividerElement.dataset.minSecond, RESIZE_DEFAULT_MIN_SIZE)
       );
 
       function applyResize(moveEvent) {
         const pointerOffset = moveEvent[
           orientation === "vertical" ? "clientX" : "clientY"
-        ] - containerRect[resizeConfig.startProperty];
+        ] - containerRect[resizeConfig.startProperty] - groupOffset;
         const nextSizes = resolvePanelSizes({
-          containerSize,
+          containerSize: resizeGroupSize,
           dividerSize,
           pointerOffset,
           minFirstSize,
           minSecondSize,
         });
-        containerElement.style[resizeConfig.gridProperty] = `${nextSizes.firstSize}px ${Math.round(dividerSize)}px ${nextSizes.secondSize}px`;
+        const nextTrackSizes = trackSizes.slice();
+        nextTrackSizes[firstPanelIndex] = nextSizes.firstSize;
+        nextTrackSizes[dividerIndex] = Math.round(dividerSize);
+        nextTrackSizes[secondPanelIndex] = nextSizes.secondSize;
+        containerElement.style[resizeConfig.gridProperty] = nextTrackSizes
+          .map(function (size) {
+            return `${Math.round(size)}px`;
+          })
+          .join(" ");
+        updateVehicleGridLayouts(containerElement);
       }
 
       function stopResize() {
@@ -731,6 +834,8 @@
           const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
           container.appendChild(createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest));
         });
+
+        updateVehicleGridLayout(container);
       });
     }
 
@@ -754,6 +859,8 @@
         clearElement(container);
         if (container) {
           container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+          container.style.removeProperty("grid-template-rows");
+          container.style.removeProperty("grid-auto-columns");
         }
       });
       renderSelectionBanner();
@@ -785,6 +892,9 @@
 
     return {
       loadDashboard,
+      refreshVehicleGridLayouts: function () {
+        updateVehicleGridLayouts(document);
+      },
     };
   }
 
@@ -799,6 +909,9 @@
     });
     document.querySelectorAll("[data-resize]").forEach(enableResizableDivider);
     const pageController = createTransportPageController(dateStore);
+    globalScope.addEventListener("resize", function () {
+      pageController.refreshVehicleGridLayouts();
+    });
     dateStore.subscribe(function (selectedDate) {
       pageController.loadDashboard(selectedDate);
     });
