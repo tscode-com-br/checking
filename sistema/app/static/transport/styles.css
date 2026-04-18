@@ -1068,7 +1068,8 @@ button {
 }
 
 .transport-vehicle-plate,
-.transport-vehicle-occupancy {
+.transport-vehicle-occupancy,
+.transport-vehicle-route {
   max-width: 100%;
   text-align: center;
   overflow-wrap: anywhere;
@@ -1088,8 +1089,17 @@ button {
   line-height: 1.2;
 }
 
+.transport-vehicle-route {
+  color: var(--transport-text-soft);
+  font-size: 0.66rem;
+  line-height: 1.15;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .transport-vehicle-button.is-assigned .transport-vehicle-plate,
-.transport-vehicle-button.is-assigned .transport-vehicle-occupancy {
+.transport-vehicle-button.is-assigned .transport-vehicle-occupancy,
+.transport-vehicle-button.is-assigned .transport-vehicle-route {
   color: #c3ffe6;
 }
 

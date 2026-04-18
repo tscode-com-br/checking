@@ -2704,6 +2704,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert friday_payload["weekend_requests"] == []
     assert [row["placa"] for row in friday_payload["regular_vehicles"]] == ["REG9001"]
     assert [row["placa"] for row in friday_payload["extra_vehicles"]] == ["EXT9001"]
+    assert [row["route_kind"] for row in friday_payload["extra_vehicles"]] == ["home_to_work"]
     assert friday_payload["selected_route"] == "home_to_work"
 
     assert saturday_payload["regular_requests"] == []
@@ -2712,7 +2713,8 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert [row["placa"] for row in saturday_payload["weekend_vehicles"]] == ["WKD9001"]
 
     assert [row["placa"] for row in friday_work_to_home_payload["regular_vehicles"]] == ["REG9001"]
-    assert friday_work_to_home_payload["extra_vehicles"] == []
+    assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["EXT9001"]
+    assert [row["route_kind"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["home_to_work"]
     assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "pending"
 
 

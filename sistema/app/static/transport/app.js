@@ -1405,7 +1405,9 @@
       const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
-      const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope;
+      const isRouteCompatible =
+        scope !== "extra" || !vehicle.route_kind || vehicle.route_kind === getSelectedRouteKind();
+      const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope && isRouteCompatible;
       const isAssignedToSelection =
         !!selectedRequest &&
         !!selectedRequest.assigned_vehicle &&
@@ -1437,12 +1439,21 @@
         "transport-vehicle-occupancy",
         formatVehicleOccupancyCount(vehicle, assignedCount)
       );
+      const routeLabel = vehicle.route_kind
+        ? createNode("span", "transport-vehicle-route", getRouteKindLabel(vehicle.route_kind))
+        : null;
 
+      if (vehicle.route_kind) {
+        vehicleButton.title = `${vehicleButton.title} | ${getRouteKindLabel(vehicle.route_kind)}`;
+      }
       vehicleButton.appendChild(plateLabel);
       vehicleButton.appendChild(iconImage);
       vehicleButton.appendChild(occupancyLabel);
+      if (routeLabel) {
+        vehicleButton.appendChild(routeLabel);
+      }
       vehicleButton.addEventListener("click", function () {
-        if (!selectedRequest || selectedRequest.request_kind !== scope || isAssignedToSelection) {
+        if (!selectedRequest || selectedRequest.request_kind !== scope || isAssignedToSelection || !isRouteCompatible) {
           toggleVehicleDetails(scope, vehicle.id);
           return;
         }
@@ -1503,6 +1514,9 @@
 
         if (vehicle.color) {
           metaParts.push(vehicle.color);
+        }
+        if (vehicle.route_kind) {
+          metaParts.push(getRouteKindLabel(vehicle.route_kind));
         }
 
         occupancyCell.classList.toggle("is-occupied", assignedRows.length > 0);

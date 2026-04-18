@@ -911,10 +911,7 @@ def _build_vehicle_rows_for_dashboard(
     schedule_rows = db.execute(
         select(TransportVehicleSchedule, Vehicle)
         .join(Vehicle, Vehicle.id == TransportVehicleSchedule.vehicle_id)
-        .where(
-            TransportVehicleSchedule.is_active.is_(True),
-            TransportVehicleSchedule.route_kind == route_kind,
-        )
+        .where(TransportVehicleSchedule.is_active.is_(True))
         .order_by(TransportVehicleSchedule.service_scope, Vehicle.placa, TransportVehicleSchedule.id)
     ).all()
     schedule_ids = [schedule.id for schedule, _ in schedule_rows]
@@ -932,6 +929,8 @@ def _build_vehicle_rows_for_dashboard(
         if schedule.id in exception_schedule_ids:
             continue
         if not vehicle_schedule_applies_to_date(schedule, service_date):
+            continue
+        if schedule.service_scope != "extra" and schedule.route_kind != route_kind:
             continue
 
         vehicle_row = _build_vehicle_row_for_schedule(vehicle, schedule=schedule)
