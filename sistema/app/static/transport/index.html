@@ -31,36 +31,39 @@
         ></div>
 
         <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
-          <section id="tela01main_esq" class="transport-pane transport-pane-single" data-date-panel>
+          <div class="transport-main-toolbar" data-date-panel aria-label="Selected service date">
+            <div class="transport-date-stack transport-main-date-stack">
+              <div class="transport-date-row transport-main-date-row">
+                <button
+                  type="button"
+                  class="transport-nav-button"
+                  data-date-shift="-1"
+                  aria-label="Previous service date"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M15 18 9 12l6-6" />
+                  </svg>
+                </button>
+                <a href="#" class="transport-date-link" data-date-link aria-label="Return service date to today">
+                  <span class="transport-date-label" data-date-label>--</span>
+                </a>
+                <button
+                  type="button"
+                  class="transport-nav-button"
+                  data-date-shift="1"
+                  aria-label="Next service date"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <section id="tela01main_esq" class="transport-pane transport-pane-single">
             <div class="transport-pane-head">
               <h1 class="transport-pane-title">User List</h1>
-              <div class="transport-date-stack">
-                <div class="transport-date-row">
-                  <button
-                    type="button"
-                    class="transport-nav-button"
-                    data-date-shift="-1"
-                    aria-label="Previous day for User List"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M15 18 9 12l6-6" />
-                    </svg>
-                  </button>
-                  <a href="#" class="transport-date-link" data-date-link aria-label="Return User List date to today">
-                    <span class="transport-date-label" data-date-label>--</span>
-                  </a>
-                  <button
-                    type="button"
-                    class="transport-nav-button"
-                    data-date-shift="1"
-                    aria-label="Next day for User List"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="m9 18 6-6-6-6" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
             </div>
 
             <div class="transport-selection-banner" data-selection-banner hidden>

@@ -21,7 +21,7 @@
   --transport-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
   --transport-radius: 30px;
   --transport-divider-size: 5px;
-  --transport-panel-padding: clamp(18px, 2vw, 28px);
+  --transport-panel-padding: 5px 10px 12px 5px;
   --transport-title-size: clamp(0.82rem, 0.75vw, 0.9rem);
   --transport-body-size: 0.92rem;
 }
@@ -163,7 +163,8 @@ button {
 .tela01main {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(360px, 1.08fr) var(--transport-divider-size) minmax(540px, 1.72fr);
+  grid-template-columns: minmax(280px, 0.54fr) var(--transport-divider-size) minmax(540px, 2.26fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .tela01main_dir {
@@ -177,19 +178,50 @@ button {
   padding: var(--transport-panel-padding);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+}
+
+.transport-main-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 10px 10px;
+}
+
+.transport-main-date-stack {
+  width: auto;
+}
+
+.transport-main-date-row {
+  justify-content: center;
+}
+
+.transport-main-toolbar .transport-date-label {
+  font-size: 1.35rem;
+}
+
+.transport-main-toolbar .transport-nav-button {
+  width: 34px;
+  height: 34px;
+}
+
+.tela01main > .transport-divider-vertical,
+#tela01main_esq,
+#tela01main_dir {
+  grid-row: 2;
 }
 
 .transport-pane-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
 
 .transport-pane-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
 }
@@ -206,7 +238,7 @@ button {
 
 .transport-section-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
@@ -430,8 +462,8 @@ button {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 6px;
+  padding: 5px 8px 8px 5px;
   border: 1px solid var(--transport-border);
   border-radius: 22px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
@@ -518,19 +550,22 @@ button {
 }
 
 .transport-vehicle-grid {
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 18px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 104px));
+  gap: 12px 10px;
   align-content: start;
-  justify-items: center;
+  justify-content: start;
+  justify-items: stretch;
+  padding-top: 2px;
+  padding-right: 0;
 }
 
 .transport-vehicle-button {
-  width: 100%;
+  width: 104px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 8px 4px;
+  gap: 6px;
+  padding: 0;
   border: none;
   background: transparent;
   color: inherit;
@@ -576,13 +611,30 @@ button {
   object-fit: contain;
 }
 
-.transport-vehicle-caption {
+.transport-vehicle-plate,
+.transport-vehicle-occupancy {
   max-width: 100%;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.transport-vehicle-plate {
   color: var(--transport-text);
   font-size: 0.82rem;
-  line-height: 1.35;
-  letter-spacing: 0.04em;
-  overflow-wrap: anywhere;
+  line-height: 1.2;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.transport-vehicle-occupancy {
+  color: var(--transport-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.transport-vehicle-button.is-assigned .transport-vehicle-plate,
+.transport-vehicle-button.is-assigned .transport-vehicle-occupancy {
+  color: #c3ffe6;
 }
 
 .transport-empty-state {
@@ -724,7 +776,14 @@ button {
 }
 
 @media (max-width: 640px) {
-  .transport-pane,
+  .transport-main-toolbar {
+    padding-bottom: 8px;
+  }
+
+  .transport-main-toolbar .transport-date-label {
+    font-size: 1.15rem;
+  }
+
   .transport-modal {
     padding: 18px;
   }
@@ -734,7 +793,11 @@ button {
   }
 
   .transport-vehicle-grid {
-    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(92px, 92px));
+  }
+
+  .transport-vehicle-button {
+    width: 92px;
   }
 
   .transport-selection-banner {

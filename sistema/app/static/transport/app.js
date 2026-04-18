@@ -347,6 +347,12 @@
     return `${vehicle.placa} (${occupiedSeats}/${totalSeats})`;
   }
 
+  function formatVehicleOccupancyCount(vehicle, assignedCount) {
+    const occupiedSeats = Math.max(0, Number(assignedCount) || 0);
+    const totalSeats = Math.max(0, Number(vehicle && vehicle.lugares) || 0);
+    return `${occupiedSeats}/${totalSeats}`;
+  }
+
   function mapScopeTitle(scope) {
     if (scope === "regular") {
       return "Regular";
@@ -571,7 +577,7 @@
       if (requestRow.response_message) {
         metaParts.push(requestRow.response_message);
       }
-        return metaParts.join(" | ");
+      return metaParts.join(" | ");
     }
 
     function renderRequestTables() {
@@ -676,14 +682,16 @@
       iconImage.src = mapVehicleIconPath(vehicle.tipo);
       iconImage.alt = "";
 
-      const caption = createNode(
+      const plateLabel = createNode("span", "transport-vehicle-plate", vehicle.placa);
+      const occupancyLabel = createNode(
         "span",
-        "transport-vehicle-caption",
-        formatVehicleOccupancyLabel(vehicle, assignedCount)
+        "transport-vehicle-occupancy",
+        formatVehicleOccupancyCount(vehicle, assignedCount)
       );
 
+      vehicleButton.appendChild(plateLabel);
       vehicleButton.appendChild(iconImage);
-      vehicleButton.appendChild(caption);
+      vehicleButton.appendChild(occupancyLabel);
       vehicleButton.addEventListener("click", function () {
         if (!selectedRequest || selectedRequest.request_kind !== scope) {
           return;
@@ -804,6 +812,7 @@
     getTransportDateState,
     getOrdinalSuffix,
     formatVehicleOccupancyLabel,
+    formatVehicleOccupancyCount,
     mapVehicleIconPath,
     parsePositiveNumber,
     resolvePanelSizes,

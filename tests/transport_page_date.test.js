@@ -89,3 +89,10 @@ test('formatVehicleOccupancyLabel shows the current and total allocated seats', 
     'SGX1234A (3/7)'
   );
 });
+
+test('formatVehicleOccupancyCount shows only the allocated and total seats', () => {
+  assert.equal(
+    transportPage.formatVehicleOccupancyCount({ placa: 'SGX1234A', lugares: 7 }, 3),
+    '3/7'
+  );
+});
