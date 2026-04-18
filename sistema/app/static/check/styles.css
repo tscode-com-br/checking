@@ -170,6 +170,10 @@ header {
   color: #0f766e;
 }
 
+.notification-line.is-neutral {
+  color: #000000;
+}
+
 .notification-line.is-warning {
   color: #0f766e;
 }
@@ -608,17 +612,26 @@ header {
   align-items: center;
   justify-content: center;
   padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
+  overflow-y: auto;
 }
 
 .password-dialog-card {
   display: grid;
   gap: 12px;
   width: min(100%, 420px);
+  max-height: calc(100dvh - (2 * var(--page-padding-block)));
   padding: clamp(16px, 2.2vw, 22px);
   border: 1px solid rgba(15, 118, 110, 0.18);
   border-radius: calc(var(--card-radius) - 2px);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.registration-dialog-card {
+  width: min(100%, 460px);
 }
 
 .password-dialog-header h2 {
@@ -636,6 +649,11 @@ header {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.password-dialog .check-field input,
+.password-dialog .check-field select {
+  font-size: 16px;
 }
 
 .is-hidden {
@@ -711,6 +729,16 @@ header {
 
   .choice-grid.four-columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .password-dialog {
+    align-items: flex-start;
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+
+  .password-dialog-card {
+    width: 100%;
+    max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
   }
 }
 

@@ -88,13 +88,45 @@ def ensure_admin_session(client: TestClient) -> None:
     assert login_response.status_code == 200, login_response.text
 
 
+def ensure_web_user_exists(*, chave: str, projeto: str = "P80", nome: str = "Oriundo da Web") -> None:
+    with SessionLocal() as db:
+        existing = find_user_by_chave(db, chave)
+        if existing is not None:
+            return
+
+        db.add(
+            User(
+                rfid=None,
+                nome=nome,
+                chave=chave,
+                projeto=projeto,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+        )
+        db.commit()
+
+
 def register_web_password(
     client: TestClient,
     *,
     chave: str,
     senha: str = "abc123",
     projeto: str = "P80",
+    ensure_user_exists: bool = True,
 ):
+    if ensure_user_exists:
+        ensure_web_user_exists(chave=chave, projeto=projeto)
+
     return client.post(
         "/api/web/auth/register-password",
         json={"chave": chave, "senha": senha, "projeto": projeto},
@@ -2412,10 +2444,13 @@ def test_mobile_check_page_is_served_on_user_path():
         assert "/api/web/check" in response.text
         assert "/api/web/auth/status" in response.text
         assert "/api/web/auth/register-password" in response.text
+        assert "/api/web/auth/register-user" in response.text
         assert "/api/web/auth/login" in response.text
         assert "/api/web/auth/change-password" in response.text
+        assert "/api/web/auth/logout" in response.text
         assert "/api/web/check/state" in response.text
         assert "/api/web/check/location" in response.text
+        assert "Cadastro de Usuário" in response.text
 
 
 def test_transport_page_is_served_on_transport_path():
@@ -2883,7 +2918,7 @@ def test_admin_page_is_served_on_admin_path():
         assert "Acesso Administrativo" in response.text
 
 
-def test_web_password_registration_autocreates_user_with_web_origin_name_and_hashes_password():
+def test_web_password_registration_requires_existing_key_and_hashes_password():
     with TestClient(app) as client:
         response = register_web_password(client, chave="WB11", senha="s#123", projeto="P82")
         assert response.status_code == 200
@@ -2911,6 +2946,64 @@ def test_web_password_registration_autocreates_user_with_web_origin_name_and_has
             assert user.senha != "s#123"
             assert user.senha.startswith("pbkdf2_sha256$")
             assert verify_password("s#123", user.senha) is True
+
+
+def test_web_password_registration_returns_not_found_for_unknown_key():
+    with TestClient(app) as client:
+        response = register_web_password(
+            client,
+            chave="ZZ91",
+            senha="s#123",
+            projeto="P82",
+            ensure_user_exists=False,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "A chave do usuario nao esta cadastrada"
+
+
+def test_web_user_self_registration_creates_user_hashes_password_and_authenticates():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/auth/register-user",
+            json={
+                "chave": "WU11",
+                "nome": "maria jose da silva",
+                "projeto": "P83",
+                "end_rua": "Bloco 2, Rua das Flores, 100",
+                "zip": "12345678",
+                "email": "maria.jose@petrobras.com.br",
+                "senha": "cad123",
+                "confirmar_senha": "cad123",
+            },
+        )
+
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["authenticated"] is True
+        assert payload["has_password"] is True
+
+        status = client.get("/api/web/auth/status", params={"chave": "WU11"})
+        assert status.status_code == 200
+        assert status.json() == {
+            "found": True,
+            "chave": "WU11",
+            "has_password": True,
+            "authenticated": True,
+            "message": "Aplicacao liberada.",
+        }
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WU11")
+            assert user.nome == "Maria Jose da Silva"
+            assert user.projeto == "P83"
+            assert user.end_rua == "Bloco 2, Rua das Flores, 100"
+            assert user.zip == "12345678"
+            assert user.email == "maria.jose@petrobras.com.br"
+            assert user.senha is not None
+            assert user.senha != "cad123"
+            assert verify_password("cad123", user.senha) is True
 
 
 def test_web_check_endpoints_require_authenticated_password_session():
@@ -2990,6 +3083,26 @@ def test_web_password_status_returns_not_found_for_unknown_key():
             "authenticated": False,
             "message": "Digite sua chave e crie uma senha.",
         }
+
+
+def test_web_password_login_accepts_partial_attempts_without_validation_error():
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="WB19", senha="abc123", projeto="P80")
+        assert registered.status_code == 200
+
+        logout = client.post("/api/web/auth/logout")
+        assert logout.status_code == 200
+
+        partial_attempt = client.post(
+            "/api/web/auth/login",
+            json={
+                "chave": "WB19",
+                "senha": "a",
+            },
+        )
+
+        assert partial_attempt.status_code == 401
+        assert partial_attempt.json()["detail"] == "Chave ou senha invalida"
 
 
 def test_web_location_match_returns_known_location_when_accuracy_is_good():

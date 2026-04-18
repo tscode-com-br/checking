@@ -76,6 +76,27 @@
     return rawPassword.length >= 3 && rawPassword.length <= 10 && rawPassword.trim().length > 0;
   }
 
+  function isPasswordVerificationInputValid(password) {
+    const rawPassword = String(password ?? '');
+    return rawPassword.length >= 1 && rawPassword.length <= 10;
+  }
+
+  function autofillPetrobrasEmailDomain(value) {
+    const rawValue = String(value ?? '');
+    const atIndex = rawValue.indexOf('@');
+    if (atIndex === -1) {
+      return rawValue;
+    }
+
+    const localPart = rawValue.slice(0, atIndex);
+    const domainPart = rawValue.slice(atIndex + 1);
+    if (!localPart || domainPart.length > 0) {
+      return rawValue;
+    }
+
+    return `${localPart}@petrobras.com.br`;
+  }
+
   function resolvePasswordActionLabel(hasPassword) {
     return hasPassword ? 'Alterar' : 'Registrar';
   }
@@ -152,6 +173,8 @@
     normalizeProjectValue,
     shouldAttemptSilentLocationLookup,
     isPasswordLengthValid,
+    isPasswordVerificationInputValid,
+    autofillPetrobrasEmailDomain,
     resolvePasswordActionLabel,
     resolveAuthenticationPromptMessage,
     resolvePersistedUserSettings,

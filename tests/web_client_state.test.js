@@ -91,3 +91,17 @@ test('isPasswordLengthValid enforces the requested password length policy', () =
   assert.equal(clientState.isPasswordLengthValid('           '), false);
   assert.equal(clientState.isPasswordLengthValid('12345678901'), false);
 });
+
+test('isPasswordVerificationInputValid allows partial typed password attempts', () => {
+  assert.equal(clientState.isPasswordVerificationInputValid(''), false);
+  assert.equal(clientState.isPasswordVerificationInputValid('1'), true);
+  assert.equal(clientState.isPasswordVerificationInputValid('12'), true);
+  assert.equal(clientState.isPasswordVerificationInputValid('1234567890'), true);
+  assert.equal(clientState.isPasswordVerificationInputValid('12345678901'), false);
+});
+
+test('autofillPetrobrasEmailDomain completes domain after @ is typed', () => {
+  assert.equal(clientState.autofillPetrobrasEmailDomain('joao'), 'joao');
+  assert.equal(clientState.autofillPetrobrasEmailDomain('joao@'), 'joao@petrobras.com.br');
+  assert.equal(clientState.autofillPetrobrasEmailDomain('joao@petrobras.com.br'), 'joao@petrobras.com.br');
+});

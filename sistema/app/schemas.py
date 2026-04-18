@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .services.user_profiles import normalize_person_name
+
 
 def _normalize_optional_local(value: str | None) -> str | None:
     if value is None:
@@ -760,9 +762,73 @@ class WebPasswordRegisterRequest(BaseModel):
         return _validate_web_password(value, "A senha")
 
 
+class WebUserSelfRegistrationRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    nome: str = Field(min_length=3, max_length=180)
+    projeto: Literal["P80", "P82", "P83"]
+    end_rua: str = Field(min_length=2, max_length=255)
+    zip: str = Field(min_length=1, max_length=10)
+    email: str = Field(min_length=3, max_length=255)
+    senha: str = Field(min_length=3, max_length=10)
+    confirmar_senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_user_self_registration_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("nome", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_nome(cls, value: str) -> str:
+        return normalize_person_name(str(value))
+
+    @field_validator("end_rua", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_end_rua(cls, value: str) -> str:
+        return _normalize_required_label(str(value), "O endereco", max_length=255)
+
+    @field_validator("zip", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_zip(cls, value: str) -> str:
+        normalized = _normalize_required_compact_text(str(value), "O ZIP code", max_length=10)
+        if not normalized.isdigit():
+            raise ValueError("O ZIP code deve conter apenas numeros")
+        return normalized
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_email(cls, value: str) -> str:
+        normalized = _normalize_required_compact_text(str(value), "O email", max_length=255).lower()
+        if normalized.count("@") != 1:
+            raise ValueError("O email deve ser um endereco Petrobras valido")
+        local_part, domain = normalized.split("@", 1)
+        if not local_part or domain != "petrobras.com.br":
+            raise ValueError("O email deve ser um endereco Petrobras valido")
+        return normalized
+
+    @field_validator("senha", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_password(cls, value: str) -> str:
+        return _validate_web_password(value, "A senha")
+
+    @field_validator("confirmar_senha", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_password_confirmation(cls, value: str) -> str:
+        return _validate_web_password(value, "A confirmacao da senha")
+
+    @model_validator(mode="after")
+    def validate_web_user_self_registration_password_match(self):
+        if self.senha != self.confirmar_senha:
+            raise ValueError("A confirmacao da senha nao confere")
+        return self
+
+
 class WebPasswordLoginRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
-    senha: str = Field(min_length=3, max_length=10)
+    senha: str = Field(min_length=1, max_length=10)
 
     @field_validator("chave")
     @classmethod
@@ -775,7 +841,10 @@ class WebPasswordLoginRequest(BaseModel):
     @field_validator("senha", mode="before")
     @classmethod
     def validate_web_password_login_value(cls, value: str) -> str:
-        return _validate_web_password(value, "A senha")
+        password = str(value)
+        if len(password) < 1 or len(password) > 10:
+            raise ValueError("A senha deve ter entre 1 e 10 caracteres")
+        return password
 
 
 class WebPasswordChangeRequest(BaseModel):

@@ -12,6 +12,7 @@ from ..schemas import (
     WebPasswordLoginRequest,
     WebPasswordRegisterRequest,
     WebPasswordStatusResponse,
+    WebUserSelfRegistrationRequest,
     WebCheckSubmitRequest,
     WebCheckSubmitResponse,
     WebLocationMatchRequest,
@@ -25,6 +26,7 @@ from ..services.location_matching import (
 )
 from ..services.location_settings import get_location_accuracy_threshold_meters
 from ..services.passwords import hash_password, verify_password
+from ..services.time_utils import now_sgt
 from ..services.user_sync import (
     build_web_check_history_state,
     ensure_web_user,
@@ -35,6 +37,7 @@ from ..services.user_sync import (
 router = APIRouter(prefix="/api/web", tags=["web-check"])
 
 WEB_USER_SESSION_KEY = "web_user_chave"
+UNKNOWN_WEB_USER_DETAIL = "A chave do usuario nao esta cadastrada"
 
 WEB_CHECK_CHANNEL = FormsSubmitChannel(
     event_label="Web check event",
@@ -71,6 +74,10 @@ def _set_web_session_chave(request: Request, chave: str) -> None:
 
 def _clear_web_session_chave(request: Request) -> None:
     request.session.pop(WEB_USER_SESSION_KEY, None)
+
+
+def _raise_unknown_web_user() -> None:
+    raise HTTPException(status_code=404, detail=UNKNOWN_WEB_USER_DETAIL)
 
 
 def _build_web_password_status(*, request: Request, user: User | None, chave: str) -> WebPasswordStatusResponse:
@@ -147,7 +154,8 @@ def register_web_password(
     normalized = _validate_public_chave(payload.chave)
     user = find_user_by_chave(db, normalized)
     if user is None:
-        user, _ = ensure_web_user(db, chave=normalized, projeto=payload.projeto)
+        _clear_web_session_chave(request)
+        _raise_unknown_web_user()
 
     if user.senha:
         raise HTTPException(status_code=409, detail="Esta chave ja possui uma senha cadastrada")
@@ -163,6 +171,46 @@ def register_web_password(
     )
 
 
+@router.post("/auth/register-user", response_model=WebPasswordActionResponse, status_code=201)
+def register_web_user(
+    payload: WebUserSelfRegistrationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebPasswordActionResponse:
+    normalized = _validate_public_chave(payload.chave)
+    existing_user = find_user_by_chave(db, normalized)
+    if existing_user is not None:
+        raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
+
+    user = User(
+        rfid=None,
+        chave=normalized,
+        senha=hash_password(payload.senha),
+        nome=payload.nome,
+        projeto=payload.projeto,
+        workplace=None,
+        placa=None,
+        end_rua=payload.end_rua,
+        zip=payload.zip,
+        cargo=None,
+        email=payload.email,
+        local=None,
+        checkin=None,
+        time=None,
+        last_active_at=now_sgt(),
+        inactivity_days=0,
+    )
+    db.add(user)
+    db.commit()
+    _set_web_session_chave(request, normalized)
+    return WebPasswordActionResponse(
+        ok=True,
+        authenticated=True,
+        has_password=True,
+        message="Usuario cadastrado com sucesso.",
+    )
+
+
 @router.post("/auth/login", response_model=WebPasswordActionResponse)
 def login_web_user(
     payload: WebPasswordLoginRequest,
@@ -171,7 +219,11 @@ def login_web_user(
 ) -> WebPasswordActionResponse:
     normalized = _validate_public_chave(payload.chave)
     user = find_user_by_chave(db, normalized)
-    if user is None or not user.senha:
+    if user is None:
+        _clear_web_session_chave(request)
+        _raise_unknown_web_user()
+
+    if not user.senha:
         _clear_web_session_chave(request)
         raise HTTPException(status_code=404, detail="Nao existe senha cadastrada para esta chave")
 
@@ -188,6 +240,17 @@ def login_web_user(
     )
 
 
+@router.post("/auth/logout", response_model=WebPasswordActionResponse)
+def logout_web_user(request: Request) -> WebPasswordActionResponse:
+    _clear_web_session_chave(request)
+    return WebPasswordActionResponse(
+        ok=True,
+        authenticated=False,
+        has_password=False,
+        message="Sessao encerrada.",
+    )
+
+
 @router.post("/auth/change-password", response_model=WebPasswordActionResponse)
 def change_web_password(
     payload: WebPasswordChangeRequest,
@@ -196,7 +259,11 @@ def change_web_password(
 ) -> WebPasswordActionResponse:
     normalized = _validate_public_chave(payload.chave)
     user = find_user_by_chave(db, normalized)
-    if user is None or not user.senha:
+    if user is None:
+        _clear_web_session_chave(request)
+        _raise_unknown_web_user()
+
+    if not user.senha:
         _clear_web_session_chave(request)
         raise HTTPException(status_code=404, detail="Nao existe senha cadastrada para esta chave")
 

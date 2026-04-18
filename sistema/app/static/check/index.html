@@ -39,8 +39,10 @@
           novalidate
           data-auth-status-endpoint="/api/web/auth/status"
           data-auth-register-endpoint="/api/web/auth/register-password"
+          data-auth-user-register-endpoint="/api/web/auth/register-user"
           data-auth-login-endpoint="/api/web/auth/login"
           data-auth-change-endpoint="/api/web/auth/change-password"
+          data-auth-logout-endpoint="/api/web/auth/logout"
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
           data-locations-endpoint="/api/web/check/locations"
@@ -248,6 +250,129 @@
               <div class="password-dialog-actions">
                 <button id="passwordDialogBackButton" type="button" class="secondary-button">Voltar</button>
                 <button id="passwordDialogSubmitButton" type="submit" class="submit-button">Alterar</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <div id="registrationDialogBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="registrationDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="registrationDialogTitle"
+          hidden
+        >
+          <div class="password-dialog-card registration-dialog-card">
+            <div class="password-dialog-header">
+              <h2 id="registrationDialogTitle">Cadastro de Usuário</h2>
+            </div>
+
+            <form id="registrationForm" class="password-dialog-form" novalidate>
+              <label class="check-field" for="registrationChaveInput">
+                <span>Chave Petrobras</span>
+                <input
+                  id="registrationChaveInput"
+                  name="cadastro_chave"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="username"
+                  maxlength="4"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationNameInput">
+                <span>Nome Completo</span>
+                <input
+                  id="registrationNameInput"
+                  name="cadastro_nome"
+                  type="text"
+                  autocomplete="name"
+                  maxlength="180"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationProjectSelect">
+                <span>Projeto Alocado</span>
+                <select id="registrationProjectSelect" name="cadastro_projeto" required>
+                  <option value="P80">P80</option>
+                  <option value="P82">P82</option>
+                  <option value="P83">P83</option>
+                </select>
+              </label>
+
+              <label class="check-field" for="registrationAddressInput">
+                <span>Endereço</span>
+                <input
+                  id="registrationAddressInput"
+                  name="cadastro_endereco"
+                  type="text"
+                  autocomplete="street-address"
+                  maxlength="255"
+                  placeholder="Bloco (se houver), rua e número."
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationZipInput">
+                <span>Código ZIP</span>
+                <input
+                  id="registrationZipInput"
+                  name="cadastro_zip"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="postal-code"
+                  maxlength="10"
+                  placeholder="Apenas números."
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationEmailInput">
+                <span>E-Mail</span>
+                <input
+                  id="registrationEmailInput"
+                  name="cadastro_email"
+                  type="email"
+                  autocomplete="email"
+                  maxlength="255"
+                  placeholder="E-Mail Petrobras"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationPasswordInput">
+                <span>Criar Senha</span>
+                <input
+                  id="registrationPasswordInput"
+                  name="cadastro_senha"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="3"
+                  maxlength="10"
+                  required
+                />
+              </label>
+
+              <label class="check-field" for="registrationConfirmPasswordInput">
+                <span>Confirmar Senha</span>
+                <input
+                  id="registrationConfirmPasswordInput"
+                  name="cadastro_confirmacao_senha"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="3"
+                  maxlength="10"
+                  required
+                />
+              </label>
+
+              <div class="password-dialog-actions">
+                <button id="registrationDialogBackButton" type="button" class="secondary-button">Voltar</button>
+                <button id="registrationDialogSubmitButton" type="submit" class="submit-button">Cadastrar</button>
               </div>
             </form>
           </div>
