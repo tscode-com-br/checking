@@ -128,7 +128,7 @@ test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five 
   );
 });
 
-test('buildVehicleCreatePayload only sends route_kind for extra vehicles', () => {
+test('buildVehicleCreatePayload sends weekend persistence and only sends route_kind for extra vehicles', () => {
   const regularFormData = new FormData();
   regularFormData.set('service_scope', 'regular');
   regularFormData.set('tipo', 'carro');
@@ -148,6 +148,30 @@ test('buildVehicleCreatePayload only sends route_kind for extra vehicles', () =>
       color: 'Black',
       lugares: 4,
       tolerance: 12,
+    }
+  );
+
+  const weekendFormData = new FormData();
+  weekendFormData.set('service_scope', 'weekend');
+  weekendFormData.set('tipo', 'minivan');
+  weekendFormData.set('placa', 'WKD9000');
+  weekendFormData.set('color', 'Silver');
+  weekendFormData.set('lugares', '6');
+  weekendFormData.set('tolerance', '14');
+  weekendFormData.set('every_saturday', 'on');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(weekendFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'weekend',
+      service_date: '2026-04-18',
+      tipo: 'minivan',
+      placa: 'WKD9000',
+      color: 'Silver',
+      lugares: 6,
+      tolerance: 14,
+      every_saturday: true,
+      every_sunday: false,
     }
   );
 

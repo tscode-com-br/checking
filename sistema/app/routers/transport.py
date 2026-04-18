@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..database import get_db
-from ..models import TransportAssignment, TransportNotification, TransportRequest, User, Vehicle, Workplace
+from ..models import TransportNotification, TransportRequest, User, Vehicle, Workplace
 from ..schemas import (
     AdminActionResponse,
     TransportAssignmentUpsert,
@@ -46,13 +46,12 @@ from ..services.transport import (
     create_transport_vehicle_registration,
     delete_transport_vehicle_registration,
     find_transport_vehicle_schedule,
-    get_paired_route_kind,
     is_transport_registered_user,
     list_workplaces,
     process_bot_message,
     queue_assignment_notification,
     request_applies_to_date,
-    update_transport_assignment,
+    upsert_transport_assignment_with_persistence,
 )
 from ..services import whatsapp_meta
 from ..services.user_sync import find_user_by_chave
@@ -255,7 +254,7 @@ def save_transport_assignment(
         ) is None:
             raise HTTPException(status_code=409, detail="The selected vehicle is not available for this date and route.")
 
-    assignment, is_update = update_transport_assignment(
+    assignment, is_update = upsert_transport_assignment_with_persistence(
         db,
         transport_request=transport_request,
         service_date=payload.service_date,
@@ -265,33 +264,6 @@ def save_transport_assignment(
         response_message=payload.response_message,
         admin_user_id=None,
     )
-
-    if payload.status == "confirmed" and vehicle is not None and transport_request.request_kind != "extra":
-        paired_route_kind = get_paired_route_kind(payload.route_kind)
-        if paired_route_kind and find_transport_vehicle_schedule(
-            db,
-            vehicle=vehicle,
-            service_date=payload.service_date,
-            route_kind=paired_route_kind,
-        ) is not None:
-            existing_paired_assignment = db.execute(
-                select(TransportAssignment).where(
-                    TransportAssignment.request_id == transport_request.id,
-                    TransportAssignment.service_date == payload.service_date,
-                    TransportAssignment.route_kind == paired_route_kind,
-                )
-            ).scalar_one_or_none()
-            if existing_paired_assignment is None:
-                update_transport_assignment(
-                    db,
-                    transport_request=transport_request,
-                    service_date=payload.service_date,
-                    route_kind=paired_route_kind,
-                    status="confirmed",
-                    vehicle=vehicle,
-                    response_message="Mirrored from the paired route",
-                    admin_user_id=None,
-                )
 
     user = db.get(User, transport_request.user_id)
     queued_notification = None

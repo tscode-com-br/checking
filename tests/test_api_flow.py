@@ -2705,6 +2705,13 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert [row["placa"] for row in friday_payload["regular_vehicles"]] == ["REG9001"]
     assert [row["placa"] for row in friday_payload["extra_vehicles"]] == ["EXT9001"]
     assert [row["route_kind"] for row in friday_payload["extra_vehicles"]] == ["home_to_work"]
+    assert [row["placa"] for row in friday_payload["regular_vehicle_registry"]] == ["REG9001"]
+    assert friday_payload["regular_vehicle_registry"][0]["assigned_count"] == 1
+    assert [row["placa"] for row in friday_payload["weekend_vehicle_registry"]] == ["WKD9001"]
+    assert friday_payload["weekend_vehicle_registry"][0]["assigned_count"] == 0
+    assert [row["placa"] for row in friday_payload["extra_vehicle_registry"]] == ["EXT9001"]
+    assert friday_payload["extra_vehicle_registry"][0]["service_date"] == friday.isoformat()
+    assert friday_payload["extra_vehicle_registry"][0]["route_kind"] == "home_to_work"
     assert friday_payload["selected_route"] == "home_to_work"
 
     assert saturday_payload["regular_requests"] == []
@@ -2715,7 +2722,9 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert [row["placa"] for row in friday_work_to_home_payload["regular_vehicles"]] == ["REG9001"]
     assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["EXT9001"]
     assert [row["route_kind"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["home_to_work"]
-    assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "pending"
+    assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicle_registry"]] == ["EXT9001"]
+    assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "confirmed"
+    assert friday_work_to_home_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
 
 
 def test_transport_vehicle_registration_creates_route_aware_schedules():
@@ -2743,7 +2752,8 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
             json={
                 "service_scope": "weekend",
                 "service_date": sunday.isoformat(),
-                "every_weekend": True,
+                "every_saturday": True,
+                "every_sunday": True,
                 "tipo": "van",
                 "placa": "WKD7001",
                 "color": "Black",
@@ -2794,14 +2804,36 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
     assert extra_schedules[0].recurrence_kind == "single_date"
     assert extra_schedules[0].service_date == friday
 
-    assert len(weekend_schedules) == 2
+    assert len(weekend_schedules) == 4
     assert {row.route_kind for row in weekend_schedules} == {"home_to_work", "work_to_home"}
     assert all(row.recurrence_kind == "matching_weekday" for row in weekend_schedules)
-    assert all(row.weekday == sunday.weekday() for row in weekend_schedules)
+    assert {row.weekday for row in weekend_schedules} == {5, 6}
 
     assert len(regular_schedules) == 2
     assert {row.route_kind for row in regular_schedules} == {"home_to_work", "work_to_home"}
     assert all(row.recurrence_kind == "weekday" for row in regular_schedules)
+
+
+def test_transport_weekend_vehicle_registration_requires_persistent_weekday_selection():
+    saturday = date(2026, 4, 18)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "weekend",
+                "service_date": saturday.isoformat(),
+                "tipo": "van",
+                "placa": "WKD7011",
+                "color": "Gray",
+                "lugares": 8,
+                "tolerance": 10,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "Weekend vehicles must be persistent" in json.dumps(response.json()["detail"])
 
 
 def test_transport_vehicle_registration_conflict_messages_are_in_english():
@@ -3029,8 +3061,9 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
     assert notifications == []
 
 
-def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
+def test_transport_regular_assignment_persists_across_weekdays_and_routes():
     friday = date(2026, 4, 17)
+    monday = date(2026, 4, 20)
     timestamp = now_sgt()
 
     with SessionLocal() as db:
@@ -3099,8 +3132,18 @@ def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
                 "vehicle_id": vehicle_id,
             },
         )
+        monday_home_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "home_to_work"},
+        )
+        monday_work_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "work_to_home"},
+        )
 
     assert response.status_code == 200
+    assert monday_home_dashboard.status_code == 200
+    assert monday_work_dashboard.status_code == 200
 
     with SessionLocal() as db:
         assignments = db.execute(
@@ -3112,6 +3155,123 @@ def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
     assert [row.route_kind for row in assignments] == ["home_to_work", "work_to_home"]
     assert all(row.status == "confirmed" for row in assignments)
     assert all(row.vehicle_id == vehicle_id for row in assignments)
+    monday_home_request = next(
+        row for row in monday_home_dashboard.json()["regular_requests"] if row["id"] == request_id
+    )
+    monday_work_request = next(
+        row for row in monday_work_dashboard.json()["regular_requests"] if row["id"] == request_id
+    )
+    assert monday_home_request["assignment_status"] == "confirmed"
+    assert monday_work_request["assignment_status"] == "confirmed"
+    assert monday_home_request["assigned_vehicle"]["placa"] == "REG8001"
+    assert monday_work_request["assigned_vehicle"]["placa"] == "REG8001"
+
+
+def test_transport_weekend_assignment_respects_selected_persistent_weekdays():
+    saturday = date(2026, 4, 18)
+    sunday = date(2026, 4, 19)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Weekend Persist Hub", address="9 Weekend Road", zip="919191", country="Singapore"))
+        vehicle = Vehicle(placa="WKD8801", tipo="van", color="Blue", lugares=12, tolerance=11, service_scope="weekend")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="weekend",
+            route_kind="home_to_work",
+            recurrence_kind="matching_weekday",
+            weekday=saturday.weekday(),
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="weekend",
+            route_kind="work_to_home",
+            recurrence_kind="matching_weekday",
+            weekday=saturday.weekday(),
+        )
+
+        user = User(
+            rfid=None,
+            nome="Weekend Persist Rider",
+            chave="WP88",
+            projeto="P80",
+            workplace="Weekend Persist Hub",
+            end_rua="88 Weekend Street",
+            zip="880088",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="weekend",
+            recurrence_kind="weekend",
+            requested_time="09:00",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": saturday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        saturday_home_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "home_to_work"},
+        )
+        saturday_work_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "work_to_home"},
+        )
+        sunday_home_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": sunday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert saturday_home_dashboard.status_code == 200
+    assert saturday_work_dashboard.status_code == 200
+    assert sunday_home_dashboard.status_code == 200
+
+    saturday_home_request = next(
+        row for row in saturday_home_dashboard.json()["weekend_requests"] if row["id"] == request_id
+    )
+    saturday_work_request = next(
+        row for row in saturday_work_dashboard.json()["weekend_requests"] if row["id"] == request_id
+    )
+    sunday_home_request = next(
+        row for row in sunday_home_dashboard.json()["weekend_requests"] if row["id"] == request_id
+    )
+    assert saturday_home_request["assignment_status"] == "confirmed"
+    assert saturday_work_request["assignment_status"] == "confirmed"
+    assert sunday_home_request["assignment_status"] == "pending"
+    assert saturday_home_request["assigned_vehicle"]["placa"] == "WKD8801"
+    assert saturday_work_request["assigned_vehicle"]["placa"] == "WKD8801"
 
 
 def test_transport_bot_registers_user_creates_request_and_exposes_notifications_after_assignment():

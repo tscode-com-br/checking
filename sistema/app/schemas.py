@@ -459,14 +459,22 @@ class TransportVehicleCreate(BaseModel):
     service_date: date
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
     every_weekend: bool = False
+    every_saturday: bool = False
+    every_sunday: bool = False
 
     @model_validator(mode="after")
     def validate_scope_specific_rules(self):
+        if self.service_scope == "weekend" and self.every_weekend and not (self.every_saturday or self.every_sunday):
+            if self.service_date.weekday() == 5:
+                self.every_saturday = True
+            elif self.service_date.weekday() == 6:
+                self.every_sunday = True
+
         if self.service_scope == "extra":
             if self.route_kind is None:
                 raise ValueError("route_kind is required for extra vehicles")
-            if self.every_weekend:
-                raise ValueError("every_weekend is not allowed for extra vehicles")
+            if self.every_weekend or self.every_saturday or self.every_sunday:
+                raise ValueError("weekend persistence is not allowed for extra vehicles")
             return self
 
         if self.route_kind is not None:
@@ -475,10 +483,14 @@ class TransportVehicleCreate(BaseModel):
         if self.service_scope == "weekend":
             if self.service_date.weekday() < 5:
                 raise ValueError("Weekend vehicles can only be created on Saturday or Sunday")
+            if not self.every_saturday and not self.every_sunday:
+                raise ValueError(
+                    "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List"
+                )
             return self
 
-        if self.every_weekend:
-            raise ValueError("every_weekend is only allowed for weekend vehicles")
+        if self.every_weekend or self.every_saturday or self.every_sunday:
+            raise ValueError("weekend persistence is only allowed for weekend vehicles")
         if self.service_date.weekday() >= 5:
             raise ValueError("Regular vehicles can only be created from Monday to Friday")
         return self
@@ -506,6 +518,17 @@ class TransportVehicleRow(BaseModel):
     lugares: int
     tolerance: int
     service_scope: str
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
+
+
+class TransportVehicleManagementRow(BaseModel):
+    vehicle_id: int
+    schedule_id: int | None = None
+    placa: str
+    tipo: str
+    lugares: int
+    assigned_count: int = Field(ge=0)
+    service_date: date | None = None
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
 
 
@@ -591,6 +614,9 @@ class TransportDashboardResponse(BaseModel):
     regular_vehicles: list[TransportVehicleRow]
     weekend_vehicles: list[TransportVehicleRow]
     extra_vehicles: list[TransportVehicleRow]
+    regular_vehicle_registry: list[TransportVehicleManagementRow]
+    weekend_vehicle_registry: list[TransportVehicleManagementRow]
+    extra_vehicle_registry: list[TransportVehicleManagementRow]
     workplaces: list[WorkplaceRow]
 
 

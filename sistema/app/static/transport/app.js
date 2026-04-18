@@ -25,7 +25,7 @@
   const MODAL_SCOPE_NOTES = {
     extra: "Extra vehicles are created only for the selected route and selected date.",
     weekend:
-      "Weekend vehicles are created for both routes on the selected date. Enable Every Weekend to repeat on the same weekend day.",
+      "Weekend vehicles must be persistent. Select Every Saturday, Every Sunday, or both. If you need a one-date weekend vehicle, create it in Extra Transport List.",
     regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
   };
   const DEFAULT_STATUS_MESSAGE = "Transport dashboard ready.";
@@ -502,7 +502,8 @@
     }
 
     if (serviceScope === "weekend") {
-      payload.every_weekend = Boolean(formData.get("every_weekend"));
+      payload.every_saturday = Boolean(formData.get("every_saturday"));
+      payload.every_sunday = Boolean(formData.get("every_sunday"));
     }
 
     return payload;
@@ -521,6 +522,25 @@
       default:
         return value;
     }
+  }
+
+  function formatVehicleTypeTableValue(value) {
+    switch (value) {
+      case "carro":
+        return "car";
+      case "minivan":
+        return "minivan";
+      case "van":
+        return "van";
+      case "onibus":
+        return "bus";
+      default:
+        return String(value || "").toLowerCase();
+    }
+  }
+
+  function formatRouteTableValue(routeKind) {
+    return getRouteKindLabel(routeKind).toLowerCase();
   }
 
   function mapVehicleIconPath(value) {
@@ -625,7 +645,7 @@
     const modalScopeNote = document.querySelector("[data-modal-scope-note]");
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
-    const weekendPersistenceField = document.querySelector("[data-weekend-persistence-field]");
+    const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
     const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
@@ -1001,6 +1021,13 @@
         const submitButton = vehicleForm.querySelector('button[type="submit"]');
 
         clearVehicleModalFeedback();
+        if (payload.service_scope === "weekend" && !payload.every_saturday && !payload.every_sunday) {
+          setVehicleModalFeedback(
+            "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.",
+            "error"
+          );
+          return;
+        }
         if (submitButton) {
           submitButton.disabled = true;
         }
@@ -1102,14 +1129,17 @@
       if (extraRouteField) {
         extraRouteField.hidden = scope !== "extra";
       }
-      if (weekendPersistenceField) {
-        weekendPersistenceField.hidden = scope !== "weekend";
-      }
+      weekendPersistenceFields.forEach(function (fieldElement) {
+        fieldElement.hidden = scope !== "weekend";
+      });
       if (vehicleForm.elements.route_kind) {
         vehicleForm.elements.route_kind.value = getSelectedRouteKind();
       }
-      if (vehicleForm.elements.every_weekend) {
-        vehicleForm.elements.every_weekend.checked = false;
+      if (vehicleForm.elements.every_saturday) {
+        vehicleForm.elements.every_saturday.checked = false;
+      }
+      if (vehicleForm.elements.every_sunday) {
+        vehicleForm.elements.every_sunday.checked = false;
       }
     }
 
@@ -1154,6 +1184,15 @@
       }
       return Array.isArray(state.dashboard[`${scope}_vehicles`])
         ? state.dashboard[`${scope}_vehicles`]
+        : [];
+    }
+
+    function getVehicleRegistryRows(scope) {
+      if (!state.dashboard) {
+        return [];
+      }
+      return Array.isArray(state.dashboard[`${scope}_vehicle_registry`])
+        ? state.dashboard[`${scope}_vehicle_registry`]
         : [];
     }
 
@@ -1386,8 +1425,10 @@
         return Promise.resolve();
       }
 
+      const deleteServiceDate = vehicle.service_date || getCurrentServiceDateIso();
+
       return requestJson(
-        `/api/transport/vehicles/${encodeURIComponent(String(vehicle.schedule_id))}?service_date=${encodeURIComponent(getCurrentServiceDateIso())}`,
+        `/api/transport/vehicles/${encodeURIComponent(String(vehicle.schedule_id))}?service_date=${encodeURIComponent(deleteServiceDate)}`,
         {
           method: "DELETE",
         }
@@ -1477,69 +1518,63 @@
       return tileElement;
     }
 
-    function createVehicleManagementTable(scope, vehicles, assignedRowsByVehicle) {
+    function createVehicleManagementTable(scope, registryRows) {
       const table = createNode("table", "transport-vehicle-management-table");
-      const tableHead = document.createElement("thead");
-      const headRow = document.createElement("tr");
-      const vehicleHead = createNode("th", "transport-vehicle-management-heading", "Vehicle");
-      const occupancyHead = createNode("th", "transport-vehicle-management-heading", "Seats");
-      const actionHead = createNode("th", "transport-vehicle-management-heading is-actions", "Action");
       const tableBody = document.createElement("tbody");
 
-      vehicleHead.scope = "col";
-      occupancyHead.scope = "col";
-      actionHead.scope = "col";
-      headRow.appendChild(vehicleHead);
-      headRow.appendChild(occupancyHead);
-      headRow.appendChild(actionHead);
-      tableHead.appendChild(headRow);
-
-      vehicles.forEach(function (vehicle) {
-        const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
+      registryRows.forEach(function (rowData) {
         const row = createNode("tr", "transport-vehicle-management-row");
-        const vehicleCell = createNode("td", "transport-vehicle-management-vehicle");
+        const typeCell = createNode(
+          "td",
+          "transport-vehicle-management-type",
+          formatVehicleTypeTableValue(rowData.tipo)
+        );
+        const plateCell = createNode("td", "transport-vehicle-management-plate-cell");
         const occupancyCell = createNode(
           "td",
           "transport-vehicle-management-occupancy",
-          formatVehicleOccupancyCount(vehicle, assignedRows.length)
+          formatVehicleOccupancyCount(rowData, rowData.assigned_count)
         );
         const actionsCell = createNode("td", "transport-vehicle-management-actions");
-        const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", vehicle.placa);
-        const metaParts = [mapVehicleTypeLabel(vehicle.tipo)];
+        const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", rowData.placa);
         const deleteButton = createNode(
           "button",
           "transport-vehicle-delete-button transport-vehicle-management-delete",
           "Delete"
         );
 
-        if (vehicle.color) {
-          metaParts.push(vehicle.color);
-        }
-        if (vehicle.route_kind) {
-          metaParts.push(getRouteKindLabel(vehicle.route_kind));
-        }
-
-        occupancyCell.classList.toggle("is-occupied", assignedRows.length > 0);
+        occupancyCell.classList.toggle("is-occupied", Number(rowData.assigned_count) > 0);
         deleteButton.type = "button";
-        deleteButton.disabled = vehicle.schedule_id === null || vehicle.schedule_id === undefined;
+        deleteButton.disabled = rowData.schedule_id === null || rowData.schedule_id === undefined;
         deleteButton.addEventListener("click", function (event) {
           event.preventDefault();
           event.stopPropagation();
-          removeVehicleFromRoute(vehicle);
+          removeVehicleFromRoute(rowData);
         });
 
-        vehicleCell.appendChild(vehiclePlate);
-        vehicleCell.appendChild(
-          createNode("small", "transport-vehicle-management-meta", metaParts.join(" • "))
-        );
+        plateCell.appendChild(vehiclePlate);
+        row.appendChild(typeCell);
+        row.appendChild(plateCell);
         actionsCell.appendChild(deleteButton);
-        row.appendChild(vehicleCell);
         row.appendChild(occupancyCell);
+
+        if (scope === "extra") {
+          row.appendChild(
+            createNode("td", "transport-vehicle-management-date", rowData.service_date || "")
+          );
+          row.appendChild(
+            createNode(
+              "td",
+              "transport-vehicle-management-route-value",
+              rowData.route_kind ? formatRouteTableValue(rowData.route_kind) : ""
+            )
+          );
+        }
+
         row.appendChild(actionsCell);
         tableBody.appendChild(row);
       });
 
-      table.appendChild(tableHead);
       table.appendChild(tableBody);
       table.setAttribute("aria-label", `${mapScopeTitle(scope)} vehicles`);
       return table;
@@ -1553,6 +1588,7 @@
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
         const container = vehicleContainers[scope];
         const vehicles = getVehiclesForScope(scope);
+        const registryRows = getVehicleRegistryRows(scope);
         const assignedRowsByVehicle = groupAssignedRequestsByVehicle(scope);
         clearElement(container);
         if (!container) {
@@ -1561,13 +1597,17 @@
 
         setVehicleContainerViewMode(container, scope);
 
-        if (!vehicles.length) {
-          container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+        if (getVehicleViewMode(scope) === "table") {
+          if (!registryRows.length) {
+            container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+            return;
+          }
+          container.appendChild(createVehicleManagementTable(scope, registryRows));
           return;
         }
 
-        if (getVehicleViewMode(scope) === "table") {
-          container.appendChild(createVehicleManagementTable(scope, vehicles, assignedRowsByVehicle));
+        if (!vehicles.length) {
+          container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
           return;
         }
 

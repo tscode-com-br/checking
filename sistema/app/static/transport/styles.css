@@ -866,10 +866,6 @@ button {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.transport-vehicle-management-vehicle {
-  width: auto;
-}
-
 .transport-vehicle-management-plate {
   display: block;
   color: var(--transport-text);
@@ -877,11 +873,21 @@ button {
   letter-spacing: 0.06em;
 }
 
-.transport-vehicle-management-meta {
-  display: block;
-  margin-top: 4px;
+.transport-vehicle-management-type,
+.transport-vehicle-management-date,
+.transport-vehicle-management-route-value {
   color: var(--transport-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.transport-vehicle-management-type {
+  width: 84px;
+}
+
+.transport-vehicle-management-plate-cell {
+  width: auto;
 }
 
 .transport-vehicle-management-occupancy {
@@ -899,6 +905,14 @@ button {
 .transport-vehicle-management-actions {
   width: 96px;
   text-align: right;
+}
+
+.transport-vehicle-management-date {
+  width: 112px;
+}
+
+.transport-vehicle-management-route-value {
+  width: 104px;
 }
 
 .transport-vehicle-management-delete {
@@ -1234,6 +1248,10 @@ button {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--transport-text-muted);
+}
+
+.transport-checkbox-field + .transport-checkbox-field {
+  margin-top: -2px;
 }
 
 .transport-checkbox-field input {

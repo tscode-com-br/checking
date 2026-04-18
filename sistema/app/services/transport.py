@@ -26,6 +26,7 @@ from ..schemas import (
     TransportDashboardResponse,
     TransportRequestRow,
     TransportVehicleCreate,
+    TransportVehicleManagementRow,
     TransportVehicleRow,
     WebTransportStateResponse,
     WorkplaceRow,
@@ -91,36 +92,85 @@ def build_transport_dashboard(
         "weekend": [],
         "extra": [],
     }
-    assignments = db.execute(
-        select(TransportAssignment).where(
-            TransportAssignment.service_date == service_date,
-            TransportAssignment.route_kind == route_kind,
-        )
-    ).scalars().all()
-    assignments_by_request_id = {assignment.request_id: assignment for assignment in assignments}
-    assigned_vehicle_ids = {assignment.vehicle_id for assignment in assignments if assignment.vehicle_id is not None}
-    assigned_vehicle_rows = {
-        vehicle.id: _build_vehicle_row(vehicle)
-        for vehicle in db.execute(select(Vehicle).where(Vehicle.id.in_(assigned_vehicle_ids))).scalars().all()
-    } if assigned_vehicle_ids else {}
     requests = db.execute(
         select(TransportRequest, User)
         .join(User, User.id == TransportRequest.user_id)
         .where(TransportRequest.status == "active")
     ).all()
+
+    request_kind_by_id = {
+        transport_request.id: transport_request.request_kind
+        for transport_request, _ in requests
+    }
+    request_ids = list(request_kind_by_id.keys())
+    assignments = _list_transport_assignments_for_requests(db, request_ids=request_ids)
+    explicit_assignments_by_key = {
+        (assignment.request_id, assignment.service_date, assignment.route_kind): assignment
+        for assignment in assignments
+    }
+
+    active_schedule_rows = _list_active_transport_schedule_rows(db)
+    schedules_by_vehicle_id: dict[int, list[TransportVehicleSchedule]] = {}
+    vehicles_by_id: dict[int, Vehicle] = {}
+    for schedule, vehicle in active_schedule_rows:
+        schedules_by_vehicle_id.setdefault(vehicle.id, []).append(schedule)
+        vehicles_by_id[vehicle.id] = vehicle
+
+    missing_vehicle_ids = {
+        assignment.vehicle_id
+        for assignment in assignments
+        if assignment.vehicle_id is not None and assignment.vehicle_id not in vehicles_by_id
+    }
+    if missing_vehicle_ids:
+        for vehicle in db.execute(select(Vehicle).where(Vehicle.id.in_(missing_vehicle_ids))).scalars().all():
+            vehicles_by_id[vehicle.id] = vehicle
+            schedules_by_vehicle_id.setdefault(vehicle.id, [])
+
+    recurring_assignment_templates = _build_recurring_assignment_template_index(
+        assignments=assignments,
+        request_kind_by_id=request_kind_by_id,
+        vehicles_by_id=vehicles_by_id,
+        schedules_by_vehicle_id=schedules_by_vehicle_id,
+    )
+    vehicle_schedule_cache: dict[tuple[int, date, str], TransportVehicleSchedule | None] = {}
+
+    def find_available_schedule_for_date(target_vehicle: Vehicle) -> TransportVehicleSchedule | None:
+        cache_key = (target_vehicle.id, service_date, route_kind)
+        if cache_key not in vehicle_schedule_cache:
+            vehicle_schedule_cache[cache_key] = find_transport_vehicle_schedule(
+                db,
+                vehicle=target_vehicle,
+                service_date=service_date,
+                route_kind=route_kind,
+            )
+        return vehicle_schedule_cache[cache_key]
+
     for transport_request, user in requests:
         if not request_applies_to_date(transport_request, service_date):
             continue
 
-        assignment = assignments_by_request_id.get(transport_request.id)
         assigned_vehicle = None
         assignment_status = "pending"
         response_message = None
+        awareness_status = "pending"
+        assignment = explicit_assignments_by_key.get((transport_request.id, service_date, route_kind))
         if assignment is not None:
             assignment_status = assignment.status
             response_message = assignment.response_message
+            awareness_status = "aware" if assignment.acknowledged_by_user else "pending"
             if assignment.vehicle_id is not None:
-                assigned_vehicle = vehicle_rows_by_id.get(assignment.vehicle_id) or assigned_vehicle_rows.get(assignment.vehicle_id)
+                explicit_vehicle = vehicles_by_id.get(assignment.vehicle_id)
+                assigned_vehicle = vehicle_rows_by_id.get(assignment.vehicle_id)
+                if assigned_vehicle is None and explicit_vehicle is not None:
+                    assigned_vehicle = _build_vehicle_row(explicit_vehicle)
+        elif transport_request.request_kind in {"regular", "weekend"}:
+            recurring_assignment = recurring_assignment_templates.get((transport_request.id, service_date.weekday()))
+            if recurring_assignment is not None:
+                template_assignment, template_vehicle = recurring_assignment
+                if find_available_schedule_for_date(template_vehicle) is not None:
+                    assignment_status = "confirmed"
+                    response_message = template_assignment.response_message
+                    assigned_vehicle = vehicle_rows_by_id.get(template_vehicle.id) or _build_vehicle_row(template_vehicle)
 
         request_rows[transport_request.request_kind].append(
             TransportRequestRow(
@@ -136,11 +186,7 @@ def build_transport_dashboard(
                 end_rua=user.end_rua,
                 zip=user.zip,
                 assignment_status=assignment_status,
-                awareness_status=(
-                    "aware"
-                    if assignment is not None and assignment.acknowledged_by_user
-                    else "pending"
-                ),
+                awareness_status=awareness_status,
                 assigned_vehicle=assigned_vehicle,
                 response_message=response_message,
             )
@@ -148,6 +194,13 @@ def build_transport_dashboard(
 
     for rows in request_rows.values():
         rows.sort(key=lambda item: (item.requested_time, item.nome.lower(), item.chave))
+
+    vehicle_registry = _build_transport_vehicle_registry_rows(
+        active_schedule_rows=active_schedule_rows,
+        request_kind_by_id=request_kind_by_id,
+        recurring_assignment_templates=recurring_assignment_templates,
+        explicit_assignments=assignments,
+    )
 
     return TransportDashboardResponse(
         selected_date=service_date,
@@ -158,6 +211,9 @@ def build_transport_dashboard(
         regular_vehicles=vehicles_by_scope["regular"],
         weekend_vehicles=vehicles_by_scope["weekend"],
         extra_vehicles=vehicles_by_scope["extra"],
+        regular_vehicle_registry=vehicle_registry["regular"],
+        weekend_vehicle_registry=vehicle_registry["weekend"],
+        extra_vehicle_registry=vehicle_registry["extra"],
         workplaces=workplaces,
     )
 
@@ -250,14 +306,12 @@ def create_transport_vehicle_registration(
 
     created_schedules: list[TransportVehicleSchedule] = []
     for schedule_spec in _build_schedule_specs_from_payload(payload):
-        if _vehicle_has_active_schedule_on_date(
+        if _vehicle_has_active_schedule_for_spec(
             db,
             vehicle_id=vehicle.id,
-            service_scope=schedule_spec["service_scope"],
-            route_kind=schedule_spec["route_kind"],
-            service_date=payload.service_date,
+            schedule_spec=schedule_spec,
         ):
-            raise ValueError("An active vehicle already exists for the selected list, route, and date.")
+            raise ValueError("An active vehicle already exists for the selected list and recurrence pattern.")
 
         schedule = TransportVehicleSchedule(
             vehicle_id=vehicle.id,
@@ -452,6 +506,11 @@ def acknowledge_transport_assignments(
     transport_request: TransportRequest,
     service_date: date,
 ) -> int:
+    _materialize_recurring_assignments_for_date(
+        db,
+        transport_request=transport_request,
+        service_date=service_date,
+    )
     timestamp = now_sgt()
     assignments = db.execute(
         select(TransportAssignment).where(
@@ -485,23 +544,53 @@ def build_web_transport_state(
             status="available",
         )
 
-    assignments = db.execute(
-        select(TransportAssignment)
-        .where(
-            TransportAssignment.request_id == active_request.id,
-            TransportAssignment.service_date == service_date,
-        )
-        .order_by(TransportAssignment.route_kind, TransportAssignment.id)
-    ).scalars().all()
-    confirmed_assignments = [
-        assignment
+    assignments = _list_transport_assignments_for_requests(db, request_ids=[active_request.id])
+    explicit_assignments_by_key = {
+        (assignment.request_id, assignment.service_date, assignment.route_kind): assignment
         for assignment in assignments
-        if assignment.status == "confirmed" and assignment.vehicle_id is not None
-    ]
-    confirmed_assignment = confirmed_assignments[0] if confirmed_assignments else None
-    confirmed_vehicle = db.get(Vehicle, confirmed_assignment.vehicle_id) if confirmed_assignment is not None else None
+    }
+    vehicle_ids = {assignment.vehicle_id for assignment in assignments if assignment.vehicle_id is not None}
+    vehicles_by_id = {
+        vehicle.id: vehicle
+        for vehicle in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars().all()
+    } if vehicle_ids else {}
+    schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids=vehicle_ids)
+    recurring_assignment_templates = _build_recurring_assignment_template_index(
+        assignments=assignments,
+        request_kind_by_id={active_request.id: active_request.request_kind},
+        vehicles_by_id=vehicles_by_id,
+        schedules_by_vehicle_id=schedules_by_vehicle_id,
+    )
+
+    confirmed_assignments: list[tuple[TransportAssignment, Vehicle, bool]] = []
+    for target_route_kind in ("home_to_work", "work_to_home"):
+        assignment = explicit_assignments_by_key.get((active_request.id, service_date, target_route_kind))
+        if assignment is not None:
+            if assignment.status == "confirmed" and assignment.vehicle_id is not None:
+                confirmed_vehicle = vehicles_by_id.get(assignment.vehicle_id)
+                if confirmed_vehicle is not None:
+                    confirmed_assignments.append((assignment, confirmed_vehicle, False))
+            continue
+
+        recurring_assignment = recurring_assignment_templates.get((active_request.id, service_date.weekday()))
+        if recurring_assignment is None:
+            continue
+
+        template_assignment, template_vehicle = recurring_assignment
+        if find_transport_vehicle_schedule(
+            db,
+            vehicle=template_vehicle,
+            service_date=service_date,
+            route_kind=target_route_kind,
+        ) is None:
+            continue
+        confirmed_assignments.append((template_assignment, template_vehicle, True))
+
+    confirmed_assignment = confirmed_assignments[0][0] if confirmed_assignments else None
+    confirmed_vehicle = confirmed_assignments[0][1] if confirmed_assignments else None
     awareness_confirmed = bool(confirmed_assignments) and all(
-        assignment.acknowledged_by_user for assignment in confirmed_assignments
+        (not is_synthetic) and assignment.acknowledged_by_user
+        for assignment, _, is_synthetic in confirmed_assignments
     )
 
     if confirmed_assignment is not None and confirmed_vehicle is not None:
@@ -812,6 +901,387 @@ def update_transport_assignment(
     return assignment, is_update
 
 
+def upsert_transport_assignment_with_persistence(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date,
+    route_kind: str,
+    status: str,
+    vehicle: Vehicle | None,
+    response_message: str | None,
+    admin_user_id: int | None,
+) -> tuple[TransportAssignment, bool]:
+    existing_assignment = db.execute(
+        select(TransportAssignment).where(
+            TransportAssignment.request_id == transport_request.id,
+            TransportAssignment.service_date == service_date,
+            TransportAssignment.route_kind == route_kind,
+        )
+    ).scalar_one_or_none()
+    is_update = existing_assignment is not None
+
+    if status == "confirmed" and vehicle is not None and transport_request.request_kind in {"regular", "weekend"}:
+        _propagate_confirmed_recurring_assignment(
+            db,
+            transport_request=transport_request,
+            service_date=service_date,
+            vehicle=vehicle,
+            response_message=response_message,
+            admin_user_id=admin_user_id,
+        )
+        assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == transport_request.id,
+                TransportAssignment.service_date == service_date,
+                TransportAssignment.route_kind == route_kind,
+            )
+        ).scalar_one()
+        return assignment, is_update
+
+    return update_transport_assignment(
+        db,
+        transport_request=transport_request,
+        service_date=service_date,
+        route_kind=route_kind,
+        status=status,
+        vehicle=vehicle,
+        response_message=response_message,
+        admin_user_id=admin_user_id,
+    )
+
+
+def _propagate_confirmed_recurring_assignment(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date,
+    vehicle: Vehicle,
+    response_message: str | None,
+    admin_user_id: int | None,
+) -> None:
+    timestamp = now_sgt()
+    schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids={vehicle.id})
+    target_weekdays = _resolve_assignment_template_weekdays(
+        vehicle=vehicle,
+        schedules=schedules_by_vehicle_id.get(vehicle.id, []),
+        reference_date=service_date,
+    )
+    if not target_weekdays:
+        target_weekdays = {service_date.weekday()}
+
+    assignments = db.execute(
+        select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
+    ).scalars().all()
+    assignments_by_key = {
+        (assignment.service_date, assignment.route_kind): assignment
+        for assignment in assignments
+    }
+
+    for assignment in assignments:
+        if not request_applies_to_date(transport_request, assignment.service_date):
+            continue
+        if assignment.service_date.weekday() not in target_weekdays:
+            continue
+
+        assignment.vehicle_id = vehicle.id
+        assignment.status = "confirmed"
+        assignment.response_message = response_message
+        assignment.acknowledged_by_user = False
+        assignment.acknowledged_at = None
+        assignment.assigned_by_admin_id = admin_user_id
+        assignment.updated_at = timestamp
+        assignment.notified_at = None
+
+    for target_route_kind in ("home_to_work", "work_to_home"):
+        if find_transport_vehicle_schedule(
+            db,
+            vehicle=vehicle,
+            service_date=service_date,
+            route_kind=target_route_kind,
+        ) is None:
+            continue
+
+        current_assignment = assignments_by_key.get((service_date, target_route_kind))
+        if current_assignment is None:
+            current_assignment = TransportAssignment(
+                request_id=transport_request.id,
+                service_date=service_date,
+                route_kind=target_route_kind,
+                vehicle_id=vehicle.id,
+                status="confirmed",
+                response_message=response_message,
+                acknowledged_by_user=False,
+                acknowledged_at=None,
+                assigned_by_admin_id=admin_user_id,
+                created_at=timestamp,
+                updated_at=timestamp,
+                notified_at=None,
+            )
+            db.add(current_assignment)
+            db.flush()
+            assignments_by_key[(service_date, target_route_kind)] = current_assignment
+            continue
+
+        current_assignment.vehicle_id = vehicle.id
+        current_assignment.status = "confirmed"
+        current_assignment.response_message = response_message
+        current_assignment.acknowledged_by_user = False
+        current_assignment.acknowledged_at = None
+        current_assignment.assigned_by_admin_id = admin_user_id
+        current_assignment.updated_at = timestamp
+        current_assignment.notified_at = None
+
+
+def _materialize_recurring_assignments_for_date(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date,
+) -> int:
+    if transport_request.request_kind not in {"regular", "weekend"}:
+        return 0
+
+    assignments = _list_transport_assignments_for_requests(db, request_ids=[transport_request.id])
+    explicit_assignments_by_key = {
+        (assignment.request_id, assignment.service_date, assignment.route_kind): assignment
+        for assignment in assignments
+    }
+    vehicle_ids = {assignment.vehicle_id for assignment in assignments if assignment.vehicle_id is not None}
+    if not vehicle_ids:
+        return 0
+
+    vehicles_by_id = {
+        vehicle.id: vehicle
+        for vehicle in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars().all()
+    }
+    schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids=vehicle_ids)
+    recurring_assignment_templates = _build_recurring_assignment_template_index(
+        assignments=assignments,
+        request_kind_by_id={transport_request.id: transport_request.request_kind},
+        vehicles_by_id=vehicles_by_id,
+        schedules_by_vehicle_id=schedules_by_vehicle_id,
+    )
+    recurring_assignment = recurring_assignment_templates.get((transport_request.id, service_date.weekday()))
+    if recurring_assignment is None:
+        return 0
+
+    template_assignment, template_vehicle = recurring_assignment
+    materialized = 0
+    for target_route_kind in ("home_to_work", "work_to_home"):
+        if explicit_assignments_by_key.get((transport_request.id, service_date, target_route_kind)) is not None:
+            continue
+        if find_transport_vehicle_schedule(
+            db,
+            vehicle=template_vehicle,
+            service_date=service_date,
+            route_kind=target_route_kind,
+        ) is None:
+            continue
+
+        update_transport_assignment(
+            db,
+            transport_request=transport_request,
+            service_date=service_date,
+            route_kind=target_route_kind,
+            status="confirmed",
+            vehicle=template_vehicle,
+            response_message=template_assignment.response_message,
+            admin_user_id=template_assignment.assigned_by_admin_id,
+        )
+        materialized += 1
+
+    return materialized
+
+
+def _list_transport_assignments_for_requests(
+    db: Session,
+    *,
+    request_ids: list[int],
+) -> list[TransportAssignment]:
+    if not request_ids:
+        return []
+    return db.execute(
+        select(TransportAssignment).where(TransportAssignment.request_id.in_(request_ids))
+    ).scalars().all()
+
+
+def _list_active_transport_schedule_rows(
+    db: Session,
+) -> list[tuple[TransportVehicleSchedule, Vehicle]]:
+    return db.execute(
+        select(TransportVehicleSchedule, Vehicle)
+        .join(Vehicle, Vehicle.id == TransportVehicleSchedule.vehicle_id)
+        .where(TransportVehicleSchedule.is_active.is_(True))
+        .order_by(TransportVehicleSchedule.service_scope, Vehicle.placa, TransportVehicleSchedule.id)
+    ).all()
+
+
+def _load_active_schedules_by_vehicle_id(
+    db: Session,
+    *,
+    vehicle_ids: set[int],
+) -> dict[int, list[TransportVehicleSchedule]]:
+    if not vehicle_ids:
+        return {}
+
+    schedules = db.execute(
+        select(TransportVehicleSchedule).where(
+            TransportVehicleSchedule.vehicle_id.in_(vehicle_ids),
+            TransportVehicleSchedule.is_active.is_(True),
+        )
+    ).scalars().all()
+    schedules_by_vehicle_id: dict[int, list[TransportVehicleSchedule]] = {}
+    for schedule in schedules:
+        schedules_by_vehicle_id.setdefault(schedule.vehicle_id, []).append(schedule)
+    return schedules_by_vehicle_id
+
+
+def _resolve_assignment_template_weekdays(
+    *,
+    vehicle: Vehicle,
+    schedules: list[TransportVehicleSchedule],
+    reference_date: date,
+) -> set[int]:
+    if vehicle.service_scope == "regular":
+        return {0, 1, 2, 3, 4}
+
+    if vehicle.service_scope == "weekend":
+        matching_weekdays = {
+            schedule.weekday
+            for schedule in schedules
+            if schedule.service_scope == "weekend"
+            and schedule.recurrence_kind == "matching_weekday"
+            and schedule.weekday is not None
+        }
+        if matching_weekdays:
+            return matching_weekdays
+        if reference_date.weekday() >= 5:
+            return {reference_date.weekday()}
+    return set()
+
+
+def _build_recurring_assignment_template_index(
+    *,
+    assignments: list[TransportAssignment],
+    request_kind_by_id: dict[int, str],
+    vehicles_by_id: dict[int, Vehicle],
+    schedules_by_vehicle_id: dict[int, list[TransportVehicleSchedule]],
+) -> dict[tuple[int, int], tuple[TransportAssignment, Vehicle]]:
+    recurring_assignment_templates: dict[tuple[int, int], tuple[TransportAssignment, Vehicle]] = {}
+
+    for assignment in sorted(assignments, key=lambda row: (row.updated_at, row.id), reverse=True):
+        if assignment.status != "confirmed" or assignment.vehicle_id is None:
+            continue
+
+        request_kind = request_kind_by_id.get(assignment.request_id)
+        vehicle = vehicles_by_id.get(assignment.vehicle_id)
+        if request_kind not in {"regular", "weekend"} or vehicle is None:
+            continue
+        if vehicle.service_scope != request_kind:
+            continue
+
+        target_weekdays = _resolve_assignment_template_weekdays(
+            vehicle=vehicle,
+            schedules=schedules_by_vehicle_id.get(vehicle.id, []),
+            reference_date=assignment.service_date,
+        )
+        for weekday in target_weekdays:
+            recurring_assignment_templates.setdefault((assignment.request_id, weekday), (assignment, vehicle))
+
+    return recurring_assignment_templates
+
+
+def _build_transport_vehicle_registry_rows(
+    *,
+    active_schedule_rows: list[tuple[TransportVehicleSchedule, Vehicle]],
+    request_kind_by_id: dict[int, str],
+    recurring_assignment_templates: dict[tuple[int, int], tuple[TransportAssignment, Vehicle]],
+    explicit_assignments: list[TransportAssignment],
+) -> dict[str, list[TransportVehicleManagementRow]]:
+    registry_rows: dict[str, list[TransportVehicleManagementRow]] = {
+        "regular": [],
+        "weekend": [],
+        "extra": [],
+    }
+
+    assigned_request_ids_by_vehicle_id: dict[str, dict[int, set[int]]] = {
+        "regular": {},
+        "weekend": {},
+    }
+    for (request_id, _weekday), (_assignment, vehicle) in recurring_assignment_templates.items():
+        request_kind = request_kind_by_id.get(request_id)
+        if request_kind not in {"regular", "weekend"}:
+            continue
+        assigned_request_ids_by_vehicle_id.setdefault(request_kind, {}).setdefault(vehicle.id, set()).add(request_id)
+
+    extra_assigned_request_ids_by_schedule_key: dict[tuple[int, date, str], set[int]] = {}
+    for assignment in explicit_assignments:
+        if assignment.status != "confirmed" or assignment.vehicle_id is None:
+            continue
+        if request_kind_by_id.get(assignment.request_id) != "extra":
+            continue
+        schedule_key = (assignment.vehicle_id, assignment.service_date, assignment.route_kind)
+        extra_assigned_request_ids_by_schedule_key.setdefault(schedule_key, set()).add(assignment.request_id)
+
+    registry_rows_by_vehicle_id: dict[str, dict[int, TransportVehicleManagementRow]] = {
+        "regular": {},
+        "weekend": {},
+    }
+    for schedule, vehicle in active_schedule_rows:
+        if schedule.service_scope in {"regular", "weekend"}:
+            existing_row = registry_rows_by_vehicle_id[schedule.service_scope].get(vehicle.id)
+            if existing_row is None:
+                registry_rows_by_vehicle_id[schedule.service_scope][vehicle.id] = TransportVehicleManagementRow(
+                    vehicle_id=vehicle.id,
+                    schedule_id=schedule.id,
+                    placa=vehicle.placa,
+                    tipo=vehicle.tipo,
+                    lugares=vehicle.lugares,
+                    assigned_count=len(
+                        assigned_request_ids_by_vehicle_id.get(schedule.service_scope, {}).get(vehicle.id, set())
+                    ),
+                )
+            continue
+
+        if schedule.service_scope != "extra":
+            continue
+
+        schedule_key = (
+            vehicle.id,
+            schedule.service_date,
+            schedule.route_kind,
+        )
+        registry_rows["extra"].append(
+            TransportVehicleManagementRow(
+                vehicle_id=vehicle.id,
+                schedule_id=schedule.id,
+                placa=vehicle.placa,
+                tipo=vehicle.tipo,
+                lugares=vehicle.lugares,
+                assigned_count=len(extra_assigned_request_ids_by_schedule_key.get(schedule_key, set())),
+                service_date=schedule.service_date,
+                route_kind=schedule.route_kind,
+            )
+        )
+
+    for scope in ("regular", "weekend"):
+        registry_rows[scope] = sorted(
+            registry_rows_by_vehicle_id[scope].values(),
+            key=lambda row: (row.placa, row.vehicle_id),
+        )
+
+    registry_rows["extra"].sort(
+        key=lambda row: (
+            row.service_date or date.min,
+            row.route_kind or "",
+            row.placa,
+            row.schedule_id or 0,
+        )
+    )
+    return registry_rows
+
+
 def queue_assignment_notification(
     db: Session,
     *,
@@ -957,15 +1427,20 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
 
     route_kinds = ["home_to_work", "work_to_home"]
     if payload.service_scope == "weekend":
-        recurrence_kind = "matching_weekday" if payload.every_weekend else "single_date"
+        selected_weekdays: list[int] = []
+        if payload.every_saturday:
+            selected_weekdays.append(5)
+        if payload.every_sunday:
+            selected_weekdays.append(6)
         return [
             {
                 "service_scope": payload.service_scope,
                 "route_kind": route_kind,
-                "recurrence_kind": recurrence_kind,
-                "service_date": (None if payload.every_weekend else payload.service_date),
-                "weekday": (payload.service_date.weekday() if payload.every_weekend else None),
+                "recurrence_kind": "matching_weekday",
+                "service_date": None,
+                "weekday": weekday,
             }
+            for weekday in selected_weekdays
             for route_kind in route_kinds
         ]
 
@@ -1057,6 +1532,45 @@ def _format_vehicle_schedule_conflict_entry(schedule: TransportVehicleSchedule) 
     if schedule.service_date is not None:
         return f"{route_label} on {schedule.service_date.isoformat()}"
     return route_label
+
+
+def _vehicle_has_active_schedule_for_spec(
+    db: Session,
+    *,
+    vehicle_id: int,
+    schedule_spec: dict[str, object],
+) -> bool:
+    schedules = db.execute(
+        select(TransportVehicleSchedule).where(
+            TransportVehicleSchedule.vehicle_id == vehicle_id,
+            TransportVehicleSchedule.service_scope == schedule_spec["service_scope"],
+            TransportVehicleSchedule.route_kind == schedule_spec["route_kind"],
+            TransportVehicleSchedule.is_active.is_(True),
+        )
+    ).scalars().all()
+    if not schedules:
+        return False
+
+    recurrence_kind = schedule_spec["recurrence_kind"]
+    if recurrence_kind == "single_date":
+        service_date = schedule_spec["service_date"]
+        return _vehicle_has_active_schedule_on_date(
+            db,
+            vehicle_id=vehicle_id,
+            service_scope=str(schedule_spec["service_scope"]),
+            route_kind=str(schedule_spec["route_kind"]),
+            service_date=service_date,
+        )
+
+    for schedule in schedules:
+        if schedule.recurrence_kind != recurrence_kind:
+            continue
+        if recurrence_kind == "matching_weekday" and schedule.weekday != schedule_spec["weekday"]:
+            continue
+        if recurrence_kind == "weekday" and schedule.weekday is not None:
+            continue
+        return True
+    return False
 
 
 def _vehicle_has_active_schedule_on_date(
