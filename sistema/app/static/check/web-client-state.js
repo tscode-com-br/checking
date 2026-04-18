@@ -97,6 +97,36 @@
     return `${localPart}@petrobras.com.br`;
   }
 
+  function resolvePersistedPassword(passwordsByChave, chave) {
+    const normalizedChave = sanitizeSettingsChave(chave);
+    if (normalizedChave.length !== 4) {
+      return '';
+    }
+
+    const storedPassword = passwordsByChave && typeof passwordsByChave === 'object'
+      ? passwordsByChave[normalizedChave]
+      : '';
+    return isPasswordLengthValid(storedPassword) ? storedPassword : '';
+  }
+
+  function withPersistedPassword(passwordsByChave, chave, password) {
+    const normalizedChave = sanitizeSettingsChave(chave);
+    const currentMap = passwordsByChave && typeof passwordsByChave === 'object'
+      ? { ...passwordsByChave }
+      : {};
+    if (normalizedChave.length !== 4) {
+      return currentMap;
+    }
+
+    if (isPasswordLengthValid(password)) {
+      currentMap[normalizedChave] = String(password);
+      return currentMap;
+    }
+
+    delete currentMap[normalizedChave];
+    return currentMap;
+  }
+
   function resolvePasswordActionLabel(hasPassword) {
     return hasPassword ? 'Alterar' : 'Registrar';
   }
@@ -175,6 +205,8 @@
     isPasswordLengthValid,
     isPasswordVerificationInputValid,
     autofillPetrobrasEmailDomain,
+    resolvePersistedPassword,
+    withPersistedPassword,
     resolvePasswordActionLabel,
     resolveAuthenticationPromptMessage,
     resolvePersistedUserSettings,

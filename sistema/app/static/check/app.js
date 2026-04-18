@@ -84,6 +84,7 @@
   ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
   const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
+  const userPasswordStorageKey = 'checking.web.user.password.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
@@ -845,6 +846,9 @@
       }
 
       applyAuthenticationStatusPayload(payload);
+      if (!payload.found || !payload.has_password) {
+        persistPasswordForChave(normalizedChave, '');
+      }
       if (payload.has_password && settings.schedulePasswordVerification !== false && clientState.isPasswordVerificationInputValid(passwordInput.value)) {
         schedulePasswordVerification({ showReadyMessage: true });
       }
@@ -920,6 +924,7 @@
       authState.statusResolved = true;
       lastVerifiedPassword = password;
       lastObservedPasswordFieldValue = password;
+      persistPasswordForChave(normalizedChave, password);
       syncFormControlStates();
       dismissActiveKeyboard();
       setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
@@ -1005,6 +1010,7 @@
       authState.statusResolved = true;
       lastVerifiedPassword = password;
       lastObservedPasswordFieldValue = password;
+      persistPasswordForChave(normalizedChave, password);
       syncFormControlStates();
 
       dismissActiveKeyboard();
@@ -1103,6 +1109,7 @@
       lastVerifiedPassword = newPassword;
       lastObservedPasswordFieldValue = newPassword;
       passwordInput.value = newPassword;
+      persistPasswordForChave(normalizedChave, newPassword);
       closePasswordDialog();
       dismissActiveKeyboard();
       setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
@@ -1189,6 +1196,7 @@
       authState.statusResolved = true;
       lastVerifiedPassword = password;
       lastObservedPasswordFieldValue = password;
+      persistPasswordForChave(normalizedChave, password);
 
       closeRegistrationDialog();
       dismissActiveKeyboard();
@@ -1287,6 +1295,28 @@
     }
   }
 
+  function readPersistedUserPasswordMap() {
+    try {
+      const rawValue = window.localStorage.getItem(userPasswordStorageKey);
+      if (!rawValue) {
+        return {};
+      }
+
+      const parsedValue = JSON.parse(rawValue);
+      return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writePersistedUserPasswordMap(passwordMap) {
+    try {
+      window.localStorage.setItem(userPasswordStorageKey, JSON.stringify(passwordMap));
+    } catch {
+      // Ignore browsers with unavailable storage.
+    }
+  }
+
   function resolveCurrentUserSettingsDefaults() {
     return {
       project: defaultProjectValue,
@@ -1308,9 +1338,32 @@
     }
   }
 
+  function restorePersistedPasswordForChave(chave) {
+    const resolvedPassword = clientState.resolvePersistedPassword(
+      readPersistedUserPasswordMap(),
+      chave
+    );
+    passwordInput.value = resolvedPassword;
+    lastObservedPasswordFieldValue = resolvedPassword;
+  }
+
   function restorePersistedUserSettingsForChave(chave) {
     applyPersistedUserSettings(chave);
     syncProjectVisibility();
+  }
+
+  function persistPasswordForChave(chave, password) {
+    const normalizedChave = sanitizeChave(chave);
+    if (normalizedChave.length !== 4) {
+      return;
+    }
+
+    const nextPasswordMap = clientState.withPersistedPassword(
+      readPersistedUserPasswordMap(),
+      normalizedChave,
+      password
+    );
+    writePersistedUserPasswordMap(nextPasswordMap);
   }
 
   function persistCurrentUserSettings() {
@@ -2345,6 +2398,7 @@
 
     if (sanitized.length === 4) {
       restorePersistedUserSettingsForChave(sanitized);
+      restorePersistedPasswordForChave(sanitized);
       void refreshAuthenticationStatus(sanitized, {
         schedulePasswordVerification: true,
       });
@@ -2613,6 +2667,7 @@
   if (persistedChave) {
     chaveInput.value = persistedChave;
     restorePersistedUserSettingsForChave(persistedChave);
+    restorePersistedPasswordForChave(persistedChave);
     void logoutWebSession({ silent: true }).finally(() => {
       void refreshAuthenticationStatus(persistedChave, {
         schedulePasswordVerification: true,

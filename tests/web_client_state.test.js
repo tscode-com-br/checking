@@ -105,3 +105,25 @@ test('autofillPetrobrasEmailDomain completes domain after @ is typed', () => {
   assert.equal(clientState.autofillPetrobrasEmailDomain('joao@'), 'joao@petrobras.com.br');
   assert.equal(clientState.autofillPetrobrasEmailDomain('joao@petrobras.com.br'), 'joao@petrobras.com.br');
 });
+
+test('resolvePersistedPassword returns the saved password for the active key', () => {
+  assert.equal(
+    clientState.resolvePersistedPassword({ HR70: 'abc123' }, 'hr70'),
+    'abc123'
+  );
+  assert.equal(
+    clientState.resolvePersistedPassword({ HR70: '12' }, 'hr70'),
+    ''
+  );
+});
+
+test('withPersistedPassword stores and removes passwords by sanitized chave', () => {
+  assert.deepEqual(
+    clientState.withPersistedPassword({}, 'hr70', 'abc123'),
+    { HR70: 'abc123' }
+  );
+  assert.deepEqual(
+    clientState.withPersistedPassword({ HR70: 'abc123' }, 'hr70', ''),
+    {}
+  );
+});
