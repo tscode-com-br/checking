@@ -608,6 +608,7 @@
     const vehicleForm = document.querySelector("[data-vehicle-form]");
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
     const modalScopeNote = document.querySelector("[data-modal-scope-note]");
+    const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceField = document.querySelector("[data-weekend-persistence-field]");
     const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
@@ -935,6 +936,12 @@
         event.preventDefault();
         const formData = new FormData(vehicleForm);
         const payload = buildVehicleCreatePayload(formData, getCurrentServiceDateIso(), getSelectedRouteKind());
+        const submitButton = vehicleForm.querySelector('button[type="submit"]');
+
+        clearVehicleModalFeedback();
+        if (submitButton) {
+          submitButton.disabled = true;
+        }
 
         requestJson("/api/transport/vehicles", {
           method: "POST",
@@ -946,7 +953,13 @@
             return loadDashboard(dateStore.getValue(), { announce: false });
           })
           .catch(function (error) {
+            setVehicleModalFeedback((error && error.message) || "Could not save vehicle.", "error");
             handleProtectedRequestError(error, "Could not save vehicle.");
+          })
+          .finally(function () {
+            if (submitButton) {
+              submitButton.disabled = false;
+            }
           });
       });
     }
@@ -958,6 +971,28 @@
 
       statusMessage.textContent = message || DEFAULT_STATUS_MESSAGE;
       statusMessage.dataset.tone = tone || "info";
+    }
+
+    function setVehicleModalFeedback(message, tone) {
+      if (!vehicleModalFeedback) {
+        return;
+      }
+
+      const nextMessage = String(message || "").trim();
+      if (!nextMessage) {
+        vehicleModalFeedback.hidden = true;
+        vehicleModalFeedback.textContent = "";
+        vehicleModalFeedback.dataset.tone = tone || "error";
+        return;
+      }
+
+      vehicleModalFeedback.hidden = false;
+      vehicleModalFeedback.dataset.tone = tone || "error";
+      vehicleModalFeedback.textContent = nextMessage;
+    }
+
+    function clearVehicleModalFeedback() {
+      setVehicleModalFeedback("", "error");
     }
 
     function syncRouteInputs() {
@@ -1026,6 +1061,7 @@
       vehicleModal.hidden = false;
       vehicleModal.dataset.scope = scope;
       vehicleForm.reset();
+      clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = scope;
       vehicleForm.elements.lugares.value = "4";
       vehicleForm.elements.tolerance.value = "10";
@@ -1037,6 +1073,7 @@
         return;
       }
       vehicleModal.hidden = true;
+      clearVehicleModalFeedback();
       vehicleForm.reset();
     }
 

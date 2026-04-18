@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import unicodedata
@@ -53,6 +54,11 @@ _REQUEST_KIND_TO_LABEL = {
     "regular": "REGULAR",
     "weekend": "WEEKEND",
     "extra": "EXTRA",
+}
+_SCOPE_KIND_TO_LABEL = {
+    "regular": "Regular",
+    "weekend": "Weekend",
+    "extra": "Extra",
 }
 _ROUTE_KIND_TO_LABEL = {
     "home_to_work": "Home to Work",
@@ -210,15 +216,37 @@ def create_transport_vehicle_registration(
         db.add(vehicle)
         db.flush()
     else:
-        if vehicle.service_scope != payload.service_scope:
-            raise ValueError("A vehicle with this plate already exists in another list.")
-        if (
-            vehicle.tipo != payload.tipo
-            or (vehicle.color or "") != payload.color
-            or vehicle.lugares != payload.lugares
-            or vehicle.tolerance != payload.tolerance
-        ):
-            raise ValueError("A vehicle with this plate already exists with a different configuration.")
+        blocking_schedules, reusable_schedules = _classify_vehicle_schedules_for_reuse(
+            db,
+            vehicle_id=vehicle.id,
+            reference_date=payload.service_date,
+        )
+        if not blocking_schedules:
+            for schedule in reusable_schedules:
+                schedule.is_active = False
+                schedule.updated_at = timestamp
+
+            vehicle.tipo = payload.tipo
+            vehicle.color = payload.color
+            vehicle.lugares = payload.lugares
+            vehicle.tolerance = payload.tolerance
+            vehicle.service_scope = payload.service_scope
+        else:
+            schedule_details = _build_vehicle_schedule_conflict_details(blocking_schedules)
+            if vehicle.service_scope != payload.service_scope:
+                raise ValueError(
+                    f"A vehicle with this plate already exists in another list: {schedule_details}."
+                )
+            if (
+                vehicle.tipo != payload.tipo
+                or (vehicle.color or "") != payload.color
+                or vehicle.lugares != payload.lugares
+                or vehicle.tolerance != payload.tolerance
+            ):
+                raise ValueError(
+                    "A vehicle with this plate already exists with a different configuration: "
+                    f"{schedule_details}."
+                )
 
     created_schedules: list[TransportVehicleSchedule] = []
     for schedule_spec in _build_schedule_specs_from_payload(payload):
@@ -949,6 +977,84 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
         }
         for route_kind in route_kinds
     ]
+
+
+def _classify_vehicle_schedules_for_reuse(
+    db: Session,
+    *,
+    vehicle_id: int,
+    reference_date: date,
+) -> tuple[list[TransportVehicleSchedule], list[TransportVehicleSchedule]]:
+    schedules = db.execute(
+        select(TransportVehicleSchedule).where(
+            TransportVehicleSchedule.vehicle_id == vehicle_id,
+            TransportVehicleSchedule.is_active.is_(True),
+        )
+    ).scalars().all()
+    if not schedules:
+        return [], []
+
+    schedule_ids = [schedule.id for schedule in schedules]
+    exception_dates_by_schedule_id: dict[int, set[date]] = {}
+    if schedule_ids:
+        exception_rows = db.execute(
+            select(TransportVehicleScheduleException).where(
+                TransportVehicleScheduleException.vehicle_schedule_id.in_(schedule_ids)
+            )
+        ).scalars().all()
+        for row in exception_rows:
+            exception_dates_by_schedule_id.setdefault(row.vehicle_schedule_id, set()).add(row.service_date)
+
+    blocking_schedules: list[TransportVehicleSchedule] = []
+    reusable_schedules: list[TransportVehicleSchedule] = []
+    for schedule in schedules:
+        schedule_exception_dates = exception_dates_by_schedule_id.get(schedule.id, set())
+        if schedule.recurrence_kind != "single_date":
+            blocking_schedules.append(schedule)
+            continue
+        if schedule.service_date is None:
+            blocking_schedules.append(schedule)
+            continue
+        if schedule.service_date in schedule_exception_dates:
+            reusable_schedules.append(schedule)
+            continue
+        if schedule.service_date >= reference_date:
+            blocking_schedules.append(schedule)
+            continue
+        reusable_schedules.append(schedule)
+
+    return blocking_schedules, reusable_schedules
+
+
+def _build_vehicle_schedule_conflict_details(schedules: list[TransportVehicleSchedule]) -> str:
+    grouped_details: dict[str, list[str]] = {}
+    for schedule in schedules:
+        grouped_details.setdefault(schedule.service_scope, []).append(
+            _format_vehicle_schedule_conflict_entry(schedule)
+        )
+
+    parts: list[str] = []
+    for scope in ("regular", "weekend", "extra"):
+        scope_entries = grouped_details.get(scope)
+        if not scope_entries:
+            continue
+        scope_label = _SCOPE_KIND_TO_LABEL.get(scope, scope.title())
+        unique_entries = list(dict.fromkeys(scope_entries))
+        parts.append(f"{scope_label} list ({', '.join(unique_entries)})")
+    return "; ".join(parts)
+
+
+def _format_vehicle_schedule_conflict_entry(schedule: TransportVehicleSchedule) -> str:
+    route_label = _ROUTE_KIND_TO_LABEL.get(schedule.route_kind, schedule.route_kind)
+    if schedule.recurrence_kind == "weekday":
+        return f"{route_label} on weekdays"
+    if schedule.recurrence_kind == "matching_weekday":
+        if schedule.weekday is None:
+            return f"{route_label} every weekend"
+        return f"{route_label} every {calendar.day_name[schedule.weekday]}"
+    if schedule.service_date is not None:
+        return f"{route_label} on {schedule.service_date.isoformat()}"
+    return route_label
 
 
 def _vehicle_has_active_schedule_on_date(

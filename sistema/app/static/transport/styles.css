@@ -85,7 +85,7 @@ button {
 
 .tela01menu {
   display: grid;
-  grid-template-columns: auto minmax(140px, 1fr) auto auto minmax(0, 0.85fr);
+  grid-template-columns: auto minmax(140px, 1fr) auto minmax(220px, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
@@ -155,16 +155,23 @@ button {
   display: grid;
   grid-template-columns: repeat(2, 120px);
   gap: 10px;
-  align-items: end;
+  align-items: center;
+  justify-self: center;
+  align-self: center;
+  overflow: visible;
 }
 
 .transport-auth-field {
-  display: grid;
-  gap: 4px;
+  position: relative;
   width: 120px;
+  overflow: visible;
 }
 
 .transport-auth-label {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  width: 100%;
   font-size: 0.68rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1048,6 +1055,29 @@ button {
   line-height: 1.45;
 }
 
+.transport-modal-feedback {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 109, 84, 0.32);
+  border-radius: 16px;
+  background: rgba(255, 109, 84, 0.08);
+  color: #ffd4cc;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.transport-modal-feedback[data-tone="warning"] {
+  border-color: rgba(244, 185, 66, 0.32);
+  background: rgba(244, 185, 66, 0.1);
+  color: #ffe9b1;
+}
+
+.transport-modal-feedback[data-tone="success"] {
+  border-color: rgba(76, 209, 147, 0.34);
+  background: rgba(76, 209, 147, 0.08);
+  color: #c9ffe4;
+}
+
 .transport-field {
   display: grid;
   gap: 8px;
@@ -1157,6 +1187,12 @@ button {
   .transport-topbar-auth {
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-self: stretch;
+    margin-top: 18px;
+  }
+
+  .transport-auth-field {
+    width: 100%;
   }
 
   .transport-route-toggle {

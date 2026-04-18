@@ -2835,7 +2835,63 @@ def test_transport_vehicle_registration_conflict_messages_are_in_english():
 
     assert first_response.status_code == 200
     assert duplicate_response.status_code == 409
-    assert duplicate_response.json()["detail"] == "A vehicle with this plate already exists in another list."
+    assert duplicate_response.json()["detail"] == (
+        "A vehicle with this plate already exists in another list: "
+        "Extra list (Work to Home on 2026-04-17)."
+    )
+
+
+def test_transport_vehicle_registration_reuses_plate_after_past_single_date_schedule():
+    friday = date(2026, 4, 17)
+    monday = date(2026, 4, 20)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        first_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "extra",
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "tipo": "carro",
+                "placa": "AAA0000A",
+                "color": "Gray",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+        reused_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": monday.isoformat(),
+                "tipo": "minivan",
+                "placa": "AAA0000A",
+                "color": "Gray",
+                "lugares": 7,
+                "tolerance": 10,
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert reused_response.status_code == 200
+
+    with SessionLocal() as db:
+        vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "AAA0000A")).scalar_one()
+        schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == vehicle.id)
+            .order_by(TransportVehicleSchedule.id)
+        ).scalars().all()
+
+    assert vehicle.service_scope == "regular"
+    assert vehicle.tipo == "minivan"
+    assert len(schedules) == 3
+    assert [row.is_active for row in schedules] == [False, True, True]
+    assert schedules[0].recurrence_kind == "single_date"
+    assert schedules[0].service_date == friday
+    assert {row.route_kind for row in schedules[1:] if row.is_active} == {"home_to_work", "work_to_home"}
 
 
 def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
