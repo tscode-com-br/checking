@@ -75,3 +75,17 @@ test('resolvePanelSizes clamps resize positions to the configured limits', () =>
     { firstSize: 680, secondSize: 120 }
   );
 });
+
+test('mapVehicleIconPath resolves each transport vehicle type to its icon asset', () => {
+  assert.equal(transportPage.mapVehicleIconPath('carro'), '/assets/icons/car.svg');
+  assert.equal(transportPage.mapVehicleIconPath('minivan'), '/assets/icons/minivan.svg');
+  assert.equal(transportPage.mapVehicleIconPath('van'), '/assets/icons/van.svg');
+  assert.equal(transportPage.mapVehicleIconPath('onibus'), '/assets/icons/bus.svg');
+});
+
+test('formatVehicleOccupancyLabel shows the current and total allocated seats', () => {
+  assert.equal(
+    transportPage.formatVehicleOccupancyLabel({ placa: 'SGX1234A', lugares: 7 }, 3),
+    'SGX1234A (3/7)'
+  );
+});

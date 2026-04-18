@@ -271,6 +271,7 @@ button {
 .transport-nav-button,
 .transport-primary-button,
 .transport-secondary-button,
+.transport-selection-reject,
 .transport-selection-clear,
 .transport-modal-close {
   appearance: none;
@@ -287,6 +288,7 @@ button {
 .transport-nav-button:hover,
 .transport-primary-button:hover,
 .transport-secondary-button:hover,
+.transport-selection-reject:hover,
 .transport-selection-clear:hover,
 .transport-modal-close:hover {
   transform: translateY(-1px);
@@ -294,7 +296,8 @@ button {
 
 .transport-nav-button:disabled,
 .transport-primary-button:disabled,
-.transport-secondary-button:disabled {
+.transport-secondary-button:disabled,
+.transport-selection-reject:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   transform: none;
@@ -376,13 +379,21 @@ button {
   color: #d5fffc;
 }
 
+.transport-selection-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .transport-selection-clear,
+.transport-selection-reject,
 .transport-secondary-button,
 .transport-modal-close {
   background: rgba(255, 255, 255, 0.04);
 }
 
 .transport-selection-clear,
+.transport-selection-reject,
 .transport-primary-button,
 .transport-secondary-button {
   min-height: 40px;
@@ -401,6 +412,7 @@ button {
 }
 
 .transport-secondary-button:hover,
+.transport-selection-reject:hover,
 .transport-selection-clear:hover,
 .transport-modal-close:hover {
   border-color: rgba(255, 255, 255, 0.26);
@@ -506,105 +518,71 @@ button {
 }
 
 .transport-vehicle-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 18px 14px;
+  align-content: start;
+  justify-items: center;
 }
 
-.transport-vehicle-card {
+.transport-vehicle-button {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 220px;
-  padding: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)),
-    linear-gradient(135deg, rgba(255, 109, 84, 0.08), rgba(72, 212, 206, 0.04));
-}
-
-.transport-card-head,
-.transport-card-identity,
-.transport-card-meta-grid,
-.transport-card-actions,
-.transport-assigned-row {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  transition: transform 160ms ease, opacity 160ms ease, filter 160ms ease;
 }
 
-.transport-card-identity {
-  flex-wrap: wrap;
-  justify-content: flex-start;
+.transport-vehicle-button:hover {
+  transform: translateY(-2px);
 }
 
-.transport-card-plate {
-  font-size: 1.05rem;
-  letter-spacing: 0.08em;
+.transport-vehicle-button.is-idle {
+  opacity: 0.82;
+  cursor: default;
 }
 
-.transport-card-badge,
-.transport-card-tolerance {
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.transport-vehicle-button.is-idle:hover {
+  transform: none;
 }
 
-.transport-card-badge {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--transport-text-muted);
+.transport-vehicle-button.is-selectable {
+  cursor: pointer;
+  filter: drop-shadow(0 10px 18px rgba(72, 212, 206, 0.18));
 }
 
-.transport-card-tolerance {
-  background: rgba(244, 185, 66, 0.14);
-  color: #ffd887;
+.transport-vehicle-button.is-assigned {
+  filter: drop-shadow(0 12px 22px rgba(76, 209, 147, 0.34));
 }
 
-.transport-card-meta-grid {
-  flex-wrap: wrap;
-  justify-content: flex-start;
+.transport-vehicle-button.is-assigned .transport-vehicle-caption {
+  color: #c3ffe6;
 }
 
-.transport-card-meta {
-  color: var(--transport-text-muted);
-  font-size: 0.82rem;
+.transport-vehicle-button:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.5);
+  outline-offset: 4px;
+  border-radius: 14px;
 }
 
-.transport-assigned-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 72px;
-  padding: 12px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
+.transport-vehicle-icon {
+  width: min(100%, 84px);
+  height: 58px;
+  object-fit: contain;
 }
 
-.transport-assigned-row {
-  justify-content: flex-start;
-  color: var(--transport-text-muted);
-  font-size: 0.84rem;
-}
-
-.transport-assigned-row strong {
-  min-width: 52px;
+.transport-vehicle-caption {
+  max-width: 100%;
   color: var(--transport-text);
-}
-
-.transport-assigned-empty {
-  color: var(--transport-text-soft);
   font-size: 0.82rem;
-}
-
-.transport-card-actions {
-  margin-top: auto;
-}
-
-.transport-card-actions .transport-primary-button,
-.transport-card-actions .transport-secondary-button {
-  flex: 1 1 0;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
 }
 
 .transport-empty-state {
@@ -681,7 +659,16 @@ button {
   padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
+  background: #050505;
+  color: var(--transport-text);
+}
+
+.transport-field select {
+  color-scheme: dark;
+}
+
+.transport-field select option {
+  background: #050505;
   color: var(--transport-text);
 }
 
@@ -734,9 +721,6 @@ button {
     justify-self: flex-start;
   }
 
-  .transport-card-actions {
-    flex-direction: column;
-  }
 }
 
 @media (max-width: 640px) {
@@ -750,12 +734,20 @@ button {
   }
 
   .transport-vehicle-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   }
 
   .transport-selection-banner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .transport-selection-actions {
+    width: 100%;
+  }
+
+  .transport-selection-actions > * {
+    flex: 1 1 0;
   }
 
   .transport-modal-backdrop {

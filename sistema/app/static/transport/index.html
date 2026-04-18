@@ -68,7 +68,10 @@
                 <span class="transport-selection-label">Selected Request</span>
                 <strong class="transport-selection-value" data-selection-text>--</strong>
               </div>
-              <button type="button" class="transport-selection-clear" data-clear-selection>Clear</button>
+              <div class="transport-selection-actions">
+                <button type="button" class="transport-selection-reject" data-reject-selection>Reject Selected</button>
+                <button type="button" class="transport-selection-clear" data-clear-selection>Clear</button>
+              </div>
             </div>
 
             <div class="transport-request-sections">
@@ -106,38 +109,11 @@
           ></div>
 
           <section id="tela01main_dir" class="tela01main_dir" aria-label="Transport car panels">
-            <section id="tela01main_dir_up" class="transport-pane" data-date-panel>
+            <section id="tela01main_dir_up" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
                   <h2 class="transport-pane-title">Regular Car List</h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="regular" aria-label="Add regular vehicle">+</button>
-                </div>
-                <div class="transport-date-stack">
-                  <div class="transport-date-row">
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="-1"
-                      aria-label="Previous day for Regular Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M15 18 9 12l6-6" />
-                      </svg>
-                    </button>
-                    <a href="#" class="transport-date-link" data-date-link aria-label="Return Regular Car List date to today">
-                      <span class="transport-date-label" data-date-label>--</span>
-                    </a>
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="1"
-                      aria-label="Next day for Regular Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m9 18 6-6-6-6" />
-                      </svg>
-                    </button>
-                  </div>
                 </div>
               </div>
               <div class="transport-vehicle-grid" data-vehicle-scope="regular"></div>
@@ -153,37 +129,10 @@
               aria-orientation="horizontal"
             ></div>
 
-            <section id="tela01main_dir_mid" class="transport-pane" data-date-panel>
+            <section id="tela01main_dir_mid" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
                   <h2 class="transport-pane-title">Weekend Car List</h2>
-                </div>
-                <div class="transport-date-stack">
-                  <div class="transport-date-row">
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="-1"
-                      aria-label="Previous day for Weekend Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M15 18 9 12l6-6" />
-                      </svg>
-                    </button>
-                    <a href="#" class="transport-date-link" data-date-link aria-label="Return Weekend Car List date to today">
-                      <span class="transport-date-label" data-date-label>--</span>
-                    </a>
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="1"
-                      aria-label="Next day for Weekend Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m9 18 6-6-6-6" />
-                      </svg>
-                    </button>
-                  </div>
                 </div>
               </div>
               <div class="transport-vehicle-grid" data-vehicle-scope="weekend"></div>
@@ -199,38 +148,11 @@
               aria-orientation="horizontal"
             ></div>
 
-            <section id="tela01main_dir_down" class="transport-pane" data-date-panel>
+            <section id="tela01main_dir_down" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
                   <h2 class="transport-pane-title">Extra Car List</h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="extra" aria-label="Add extra vehicle">+</button>
-                </div>
-                <div class="transport-date-stack">
-                  <div class="transport-date-row">
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="-1"
-                      aria-label="Previous day for Extra Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M15 18 9 12l6-6" />
-                      </svg>
-                    </button>
-                    <a href="#" class="transport-date-link" data-date-link aria-label="Return Extra Car List date to today">
-                      <span class="transport-date-label" data-date-label>--</span>
-                    </a>
-                    <button
-                      type="button"
-                      class="transport-nav-button"
-                      data-date-shift="1"
-                      aria-label="Next day for Extra Car List"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m9 18 6-6-6-6" />
-                      </svg>
-                    </button>
-                  </div>
                 </div>
               </div>
               <div class="transport-vehicle-grid" data-vehicle-scope="extra"></div>

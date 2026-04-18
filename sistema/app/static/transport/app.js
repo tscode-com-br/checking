@@ -12,6 +12,12 @@
     weekend: "FIM DE SEMANA",
     extra: "EXTRA",
   };
+  const VEHICLE_ICON_PATHS = {
+    carro: "/assets/icons/car.svg",
+    minivan: "/assets/icons/minivan.svg",
+    van: "/assets/icons/van.svg",
+    onibus: "/assets/icons/bus.svg",
+  };
   const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
   const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
 
@@ -331,6 +337,16 @@
     }
   }
 
+  function mapVehicleIconPath(value) {
+    return VEHICLE_ICON_PATHS[value] || VEHICLE_ICON_PATHS.carro;
+  }
+
+  function formatVehicleOccupancyLabel(vehicle, assignedCount) {
+    const occupiedSeats = Math.max(0, Number(assignedCount) || 0);
+    const totalSeats = Math.max(0, Number(vehicle && vehicle.lugares) || 0);
+    return `${vehicle.placa} (${occupiedSeats}/${totalSeats})`;
+  }
+
   function mapScopeTitle(scope) {
     if (scope === "regular") {
       return "Regular";
@@ -359,6 +375,7 @@
     const selectionBanner = document.querySelector("[data-selection-banner]");
     const selectionText = document.querySelector("[data-selection-text]");
     const clearSelectionButton = document.querySelector("[data-clear-selection]");
+    const rejectSelectionButton = document.querySelector("[data-reject-selection]");
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
     const vehicleForm = document.querySelector("[data-vehicle-form]");
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
@@ -376,6 +393,23 @@
         renderSelectionBanner();
         renderVehiclePanels();
         renderRequestTables();
+      });
+    }
+
+    if (rejectSelectionButton) {
+      rejectSelectionButton.addEventListener("click", function () {
+        const selectedRequest = getSelectedRequest();
+        if (!selectedRequest || !state.dashboard) {
+          return;
+        }
+
+        submitAssignment({
+          request_id: selectedRequest.id,
+          service_date: state.dashboard.selected_date,
+          status: "rejected",
+        }).catch(function (error) {
+          setStatus(error.message || "Could not reject the selected request.", "error");
+        });
       });
     }
 
@@ -516,11 +550,17 @@
       if (!selectedRequest) {
         selectionBanner.hidden = true;
         selectionText.textContent = "--";
+        if (rejectSelectionButton) {
+          rejectSelectionButton.disabled = true;
+        }
         return;
       }
 
       selectionBanner.hidden = false;
       selectionText.textContent = `${REQUEST_LABELS[selectedRequest.request_kind]} ${selectedRequest.requested_time} - ${selectedRequest.nome}`;
+      if (rejectSelectionButton) {
+        rejectSelectionButton.disabled = selectedRequest.assignment_status === "rejected";
+      }
     }
 
     function createRequestMetaLine(requestRow) {
@@ -611,28 +651,44 @@
       });
     }
 
-    function createVehicleActions(scope, vehicle, selectedRequest) {
-      const actionBar = createNode("div", "transport-card-actions");
-      const confirmButton = createNode("button", "transport-primary-button", "Confirm Selected");
-      const rejectButton = createNode("button", "transport-secondary-button", "Reject Selected");
+    function createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest) {
+      const vehicleButton = createNode("button", "transport-vehicle-button");
+      const assignedCount = assignedRows.length;
+      const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope;
+      const isAssignedToSelection =
+        !!selectedRequest &&
+        !!selectedRequest.assigned_vehicle &&
+        Number(selectedRequest.assigned_vehicle.id) === Number(vehicle.id);
 
-      if (!selectedRequest || selectedRequest.request_kind !== scope) {
-        confirmButton.disabled = true;
-        rejectButton.disabled = true;
+      vehicleButton.type = "button";
+      vehicleButton.dataset.vehicleId = String(vehicle.id);
+      vehicleButton.dataset.vehicleScope = scope;
+      vehicleButton.title = `${mapVehicleTypeLabel(vehicle.tipo)} ${formatVehicleOccupancyLabel(vehicle, assignedCount)}`;
+      vehicleButton.setAttribute("aria-label", vehicleButton.title);
+      vehicleButton.classList.toggle("is-selectable", isSelectable);
+      vehicleButton.classList.toggle("is-assigned", isAssignedToSelection);
+      if (!isSelectable) {
+        vehicleButton.classList.add("is-idle");
       }
 
-      if (
-        selectedRequest &&
-        selectedRequest.assigned_vehicle &&
-        Number(selectedRequest.assigned_vehicle.id) === Number(vehicle.id)
-      ) {
-        confirmButton.textContent = "Already Confirmed";
-      }
+      const iconImage = document.createElement("img");
+      iconImage.className = "transport-vehicle-icon";
+      iconImage.src = mapVehicleIconPath(vehicle.tipo);
+      iconImage.alt = "";
 
-      confirmButton.addEventListener("click", function () {
+      const caption = createNode(
+        "span",
+        "transport-vehicle-caption",
+        formatVehicleOccupancyLabel(vehicle, assignedCount)
+      );
+
+      vehicleButton.appendChild(iconImage);
+      vehicleButton.appendChild(caption);
+      vehicleButton.addEventListener("click", function () {
         if (!selectedRequest || selectedRequest.request_kind !== scope) {
           return;
         }
+
         submitAssignment({
           request_id: selectedRequest.id,
           service_date: state.dashboard.selected_date,
@@ -643,22 +699,7 @@
         });
       });
 
-      rejectButton.addEventListener("click", function () {
-        if (!selectedRequest || selectedRequest.request_kind !== scope) {
-          return;
-        }
-        submitAssignment({
-          request_id: selectedRequest.id,
-          service_date: state.dashboard.selected_date,
-          status: "rejected",
-        }).catch(function (error) {
-          setStatus(error.message || "Could not reject the selected request.", "error");
-        });
-      });
-
-      actionBar.appendChild(confirmButton);
-      actionBar.appendChild(rejectButton);
-      return actionBar;
+      return vehicleButton;
     }
 
     function renderVehiclePanels() {
@@ -679,39 +720,8 @@
         }
 
         vehicles.forEach(function (vehicle) {
-          const vehicleCard = createNode("article", "transport-vehicle-card");
-          const cardHead = createNode("div", "transport-card-head");
-          const identity = createNode("div", "transport-card-identity");
-          const plate = createNode("strong", "transport-card-plate", vehicle.placa);
-          const badge = createNode("span", "transport-card-badge", mapVehicleTypeLabel(vehicle.tipo));
-          identity.appendChild(plate);
-          identity.appendChild(badge);
-          cardHead.appendChild(identity);
-          cardHead.appendChild(createNode("span", "transport-card-tolerance", `${vehicle.tolerance} min`));
-
-          const metaGrid = createNode("div", "transport-card-meta-grid");
-          metaGrid.appendChild(createNode("span", "transport-card-meta", `Color: ${vehicle.color || "-"}`));
-          metaGrid.appendChild(createNode("span", "transport-card-meta", `Places: ${vehicle.lugares}`));
-
-          const assignedList = createNode("div", "transport-assigned-list");
           const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
-          if (assignedRows.length) {
-            assignedList.appendChild(createNode("span", "transport-assigned-title", "Allocated today"));
-            assignedRows.forEach(function (requestRow) {
-              const assignedRow = createNode("div", "transport-assigned-row");
-              assignedRow.appendChild(createNode("strong", null, requestRow.requested_time));
-              assignedRow.appendChild(createNode("span", null, requestRow.nome));
-              assignedList.appendChild(assignedRow);
-            });
-          } else {
-            assignedList.appendChild(createNode("span", "transport-assigned-empty", "No allocations yet"));
-          }
-
-          vehicleCard.appendChild(cardHead);
-          vehicleCard.appendChild(metaGrid);
-          vehicleCard.appendChild(assignedList);
-          vehicleCard.appendChild(createVehicleActions(scope, vehicle, selectedRequest));
-          container.appendChild(vehicleCard);
+          container.appendChild(createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest));
         });
       });
     }
@@ -793,6 +803,8 @@
     formatIsoDate,
     getTransportDateState,
     getOrdinalSuffix,
+    formatVehicleOccupancyLabel,
+    mapVehicleIconPath,
     parsePositiveNumber,
     resolvePanelSizes,
     resolveResizeConfig,
