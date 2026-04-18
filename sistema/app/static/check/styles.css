@@ -687,15 +687,6 @@ header {
     background-size: min(92vw, 420px);
   }
 
-  .auth-credentials-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-  }
-
-  .auth-field-button {
-    grid-column: 1 / -1;
-  }
-
   .form-row {
     flex-direction: column;
     align-items: stretch;
