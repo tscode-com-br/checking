@@ -132,8 +132,11 @@
   let submitInProgress = false;
   let userInteractionLockCount = 0;
   let passwordVerificationTimeoutId = null;
+  let passwordAutofillSyncTimeoutId = null;
+  let passwordAutofillSyncFrameId = null;
   let passwordVerificationRequestToken = 0;
   let lastVerifiedPassword = '';
+  let lastObservedPasswordFieldValue = '';
   const authState = {
     chave: '',
     found: false,
@@ -229,9 +232,23 @@
     passwordVerificationRequestToken += 1;
   }
 
+  function clearPasswordAutofillSync() {
+    if (passwordAutofillSyncTimeoutId !== null) {
+      window.clearTimeout(passwordAutofillSyncTimeoutId);
+      passwordAutofillSyncTimeoutId = null;
+    }
+
+    if (passwordAutofillSyncFrameId !== null) {
+      window.cancelAnimationFrame(passwordAutofillSyncFrameId);
+      passwordAutofillSyncFrameId = null;
+    }
+  }
+
   function clearTypedPasswordAuthentication() {
     clearPasswordVerificationTimer();
+    clearPasswordAutofillSync();
     lastVerifiedPassword = '';
+    lastObservedPasswordFieldValue = passwordInput.value;
     authState.authenticated = false;
     authState.passwordVerified = false;
   }
@@ -703,6 +720,71 @@
     }, passwordVerificationDebounceMs);
   }
 
+  function syncPasswordInputState(options) {
+    const settings = options || {};
+    const normalizedChave = getActiveChave();
+    const currentPassword = passwordInput.value;
+
+    lastObservedPasswordFieldValue = currentPassword;
+
+    if (authState.passwordVerified && currentPassword !== lastVerifiedPassword) {
+      applyAuthenticationLockedState({
+        chave: normalizedChave,
+        found: authState.found,
+        hasPassword: authState.hasPassword,
+        message: 'Digite sua senha para iniciar.',
+      });
+      void logoutWebSession({ silent: true });
+    }
+
+    if (normalizedChave.length === 4 && authState.hasPassword && clientState.isPasswordVerificationInputValid(currentPassword)) {
+      schedulePasswordVerification({ showReadyMessage: settings.showReadyMessage !== false });
+    } else if (normalizedChave.length === 4 && authState.hasPassword && !currentPassword) {
+      clearPasswordVerificationTimer();
+      setAuthenticationPrompt('Digite sua senha para iniciar.');
+    } else {
+      clearPasswordVerificationTimer();
+    }
+
+    syncFormControlStates();
+  }
+
+  function syncAutofilledPasswordValue() {
+    if (passwordInput.value === lastObservedPasswordFieldValue) {
+      return;
+    }
+
+    syncPasswordInputState({ showReadyMessage: true });
+  }
+
+  function schedulePasswordAutofillSync(options) {
+    const settings = options || {};
+    const attempts = Number.isFinite(settings.attempts) && settings.attempts > 0
+      ? Math.floor(settings.attempts)
+      : 8;
+    const delayMs = Number.isFinite(settings.delayMs) && settings.delayMs >= 0
+      ? Math.floor(settings.delayMs)
+      : 120;
+    let remainingAttempts = attempts;
+
+    clearPasswordAutofillSync();
+
+    const runAttempt = () => {
+      syncAutofilledPasswordValue();
+      remainingAttempts -= 1;
+      if (remainingAttempts <= 0) {
+        clearPasswordAutofillSync();
+        return;
+      }
+
+      passwordAutofillSyncTimeoutId = window.setTimeout(() => {
+        passwordAutofillSyncFrameId = window.requestAnimationFrame(runAttempt);
+      }, delayMs);
+    };
+
+    passwordAutofillSyncFrameId = window.requestAnimationFrame(runAttempt);
+  }
+
   async function loadAuthenticatedApplication(chave, options) {
     const settings = options || {};
     const normalizedChave = sanitizeChave(chave || chaveInput.value);
@@ -765,6 +847,9 @@
       applyAuthenticationStatusPayload(payload);
       if (payload.has_password && settings.schedulePasswordVerification !== false && clientState.isPasswordVerificationInputValid(passwordInput.value)) {
         schedulePasswordVerification({ showReadyMessage: true });
+      }
+      if (payload.has_password) {
+        schedulePasswordAutofillSync();
       }
       return payload;
     } catch (error) {
@@ -834,6 +919,7 @@
       authState.passwordVerified = true;
       authState.statusResolved = true;
       lastVerifiedPassword = password;
+      lastObservedPasswordFieldValue = password;
       syncFormControlStates();
       dismissActiveKeyboard();
       setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
@@ -918,6 +1004,7 @@
       authState.passwordVerified = true;
       authState.statusResolved = true;
       lastVerifiedPassword = password;
+      lastObservedPasswordFieldValue = password;
       syncFormControlStates();
 
       dismissActiveKeyboard();
@@ -1014,6 +1101,7 @@
       authState.passwordVerified = true;
       authState.statusResolved = true;
       lastVerifiedPassword = newPassword;
+      lastObservedPasswordFieldValue = newPassword;
       passwordInput.value = newPassword;
       closePasswordDialog();
       dismissActiveKeyboard();
@@ -1100,6 +1188,7 @@
       authState.passwordVerified = true;
       authState.statusResolved = true;
       lastVerifiedPassword = password;
+      lastObservedPasswordFieldValue = password;
 
       closeRegistrationDialog();
       dismissActiveKeyboard();
@@ -2176,6 +2265,7 @@
 
     chaveInput.value = '';
     passwordInput.value = '';
+    lastObservedPasswordFieldValue = '';
     writePersistedChave('');
 
     if (authStatusAbortController) {
@@ -2202,6 +2292,7 @@
     }
 
     passwordInput.value = '';
+    lastObservedPasswordFieldValue = '';
     authState.statusLoading = false;
     applyAuthenticationLockedState({
       chave: getActiveChave(),
@@ -2280,30 +2371,11 @@
   });
 
   passwordInput.addEventListener('input', () => {
-    const normalizedChave = getActiveChave();
-    if (authState.passwordVerified && passwordInput.value !== lastVerifiedPassword) {
-      applyAuthenticationLockedState({
-        chave: normalizedChave,
-        found: authState.found,
-        hasPassword: authState.hasPassword,
-        message: 'Digite sua senha para iniciar.',
-      });
-      void logoutWebSession({ silent: true });
-    }
-
-    if (normalizedChave.length === 4 && authState.hasPassword && clientState.isPasswordVerificationInputValid(passwordInput.value)) {
-      schedulePasswordVerification({ showReadyMessage: true });
-    } else if (normalizedChave.length === 4 && authState.hasPassword && !passwordInput.value) {
-      clearPasswordVerificationTimer();
-      setAuthenticationPrompt('Digite sua senha para iniciar.');
-    } else {
-      clearPasswordVerificationTimer();
-    }
-
-    syncFormControlStates();
+    syncPasswordInputState({ showReadyMessage: true });
   });
 
   passwordInput.addEventListener('change', () => {
+    syncPasswordInputState({ showReadyMessage: true });
     if (authState.hasPassword && clientState.isPasswordVerificationInputValid(passwordInput.value)) {
       void attemptPasswordLogin({
         silentValidation: true,
@@ -2311,6 +2383,11 @@
         allowPartialVerification: true,
       });
     }
+  });
+
+  passwordInput.addEventListener('focus', () => {
+    lastObservedPasswordFieldValue = passwordInput.value;
+    schedulePasswordAutofillSync();
   });
 
   passwordInput.addEventListener('keydown', (event) => {
@@ -2372,14 +2449,17 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      schedulePasswordAutofillSync();
       void runLifecycleUpdateSequence();
     }
   });
 
   window.addEventListener('focus', () => {
+    schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
   });
   window.addEventListener('pageshow', () => {
+    schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
   });
 
