@@ -172,6 +172,8 @@ button {
 }
 
 .transport-auth-shell {
+  --transport-auth-background: rgba(9, 9, 9, 0.88);
+  --transport-auth-text-color: var(--transport-text);
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -179,19 +181,22 @@ button {
   padding: 0 10px;
   border: 1px solid rgba(255, 109, 84, 0.55);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--transport-auth-background);
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
-    background-color 160ms ease;
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .transport-auth-shell.is-authenticated {
+  --transport-auth-text-color: #74ffbe;
   border-color: rgba(76, 209, 147, 0.7);
   box-shadow: 0 0 0 1px rgba(76, 209, 147, 0.18);
 }
 
 .transport-auth-shell.is-logged-out {
+  --transport-auth-text-color: #ff8d7c;
   border-color: rgba(255, 109, 84, 0.58);
 }
 
@@ -207,8 +212,35 @@ button {
   border: none;
   outline: none;
   background: transparent;
-  color: var(--transport-text);
+  color: var(--transport-auth-text-color);
+  caret-color: var(--transport-auth-text-color);
+  -webkit-text-fill-color: var(--transport-auth-text-color);
+  font-weight: 600;
   text-transform: uppercase;
+}
+
+.transport-auth-input,
+.transport-auth-input:hover,
+.transport-auth-input:focus,
+.transport-auth-input:active {
+  background-color: transparent;
+}
+
+.transport-auth-input:-webkit-autofill,
+.transport-auth-input:-webkit-autofill:hover,
+.transport-auth-input:-webkit-autofill:focus,
+.transport-auth-input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--transport-auth-text-color);
+  caret-color: var(--transport-auth-text-color);
+  -webkit-box-shadow: 0 0 0 1000px var(--transport-auth-background) inset;
+  box-shadow: 0 0 0 1000px var(--transport-auth-background) inset;
+  background-clip: content-box;
+  transition: background-color 999999s ease-in-out 0s;
+}
+
+.transport-auth-input:autofill {
+  color: var(--transport-auth-text-color);
+  box-shadow: 0 0 0 1000px var(--transport-auth-background) inset;
 }
 
 .transport-auth-input::placeholder {
