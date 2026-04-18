@@ -83,11 +83,21 @@ def login_admin(client: TestClient, *, chave: str = ADMIN_LOGIN_CHAVE, senha: st
 def ensure_admin_session(client: TestClient) -> None:
     session_response = client.get("/api/admin/auth/session")
     assert session_response.status_code == 200
-    if session_response.json().get("authenticated"):
+    if not session_response.json().get("authenticated"):
+        login_response = login_admin(client)
+        assert login_response.status_code == 200, login_response.text
+
+    transport_session_response = client.get("/api/transport/auth/session")
+    assert transport_session_response.status_code == 200
+    if transport_session_response.json().get("authenticated"):
         return
 
-    login_response = login_admin(client)
-    assert login_response.status_code == 200, login_response.text
+    transport_login_response = client.post(
+        "/api/transport/auth/verify",
+        json={"chave": ADMIN_LOGIN_CHAVE, "senha": ADMIN_LOGIN_SENHA},
+    )
+    assert transport_login_response.status_code == 200, transport_login_response.text
+    assert transport_login_response.json()["authenticated"] is True
 
 
 def ensure_web_user_exists(*, chave: str, projeto: str = "P80", nome: str = "Oriundo da Web") -> None:
@@ -2791,6 +2801,43 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
     assert all(row.recurrence_kind == "weekday" for row in regular_schedules)
 
 
+def test_transport_vehicle_registration_conflict_messages_are_in_english():
+    friday = date(2026, 4, 17)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        first_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "extra",
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "tipo": "carro",
+                "placa": "EXT7010",
+                "color": "Red",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+        duplicate_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": friday.isoformat(),
+                "tipo": "carro",
+                "placa": "EXT7010",
+                "color": "Red",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["detail"] == "A vehicle with this plate already exists in another list."
+
+
 def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
     friday = date(2026, 4, 17)
     timestamp = now_sgt()
@@ -2984,7 +3031,7 @@ def test_transport_bot_registers_user_creates_request_and_exposes_notifications_
         items = notifications.json()["items"]
         matching = next(item for item in items if item["request_id"] == transport_request.id)
         assert "BOT9001" in matching["message"]
-        assert "Tolerancia: 9 minutos" in matching["message"]
+        assert "Tolerance: 9 minutes" in matching["message"]
 
         sent = client.post(f"/api/transport/bot/notifications/{matching['id']}/sent", headers=TRANSPORT_BOT_HEADERS)
         assert sent.status_code == 200

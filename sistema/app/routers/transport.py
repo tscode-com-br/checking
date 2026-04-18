@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,7 +38,7 @@ from ..services.admin_auth import (
     user_has_transport_access,
     verify_password,
 )
-from ..services.admin_updates import notify_admin_data_changed
+from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.time_utils import now_sgt
 from ..services.transport import (
@@ -62,6 +63,10 @@ router = APIRouter(prefix="/api/transport", tags=["transport"])
 
 def build_transport_identity(user: User) -> TransportIdentity:
     return TransportIdentity(id=user.id, chave=user.chave, nome_completo=user.nome, perfil=user.perfil)
+
+
+def encode_sse(payload: dict[str, str]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def require_transport_bot_shared_key(x_transport_bot_shared_key: str | None = Header(default=None)) -> None:
@@ -119,6 +124,36 @@ def transport_logout(request: Request) -> AdminActionResponse:
     return AdminActionResponse(ok=True, message="Transport session closed.")
 
 
+@router.get("/stream", dependencies=[Depends(require_transport_session)])
+async def stream_transport_updates(request: Request) -> StreamingResponse:
+    subscriber_id, queue = admin_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            admin_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/dashboard", response_model=TransportDashboardResponse, dependencies=[Depends(require_transport_session)])
 def get_transport_dashboard(
     service_date: date | None = Query(default=None),
@@ -141,7 +176,7 @@ def create_transport_workplace(
 ) -> WorkplaceRow:
     existing = db.execute(select(Workplace).where(Workplace.workplace == payload.workplace)).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="Ja existe um workplace cadastrado com esse nome")
+        raise HTTPException(status_code=409, detail="A workplace with this name already exists.")
 
     workplace = Workplace(
         workplace=payload.workplace,
@@ -174,7 +209,7 @@ def create_transport_vehicle(
 
     db.commit()
     notify_admin_data_changed("register")
-    return AdminActionResponse(ok=True, message="Veiculo cadastrado com sucesso.")
+    return AdminActionResponse(ok=True, message="Vehicle saved successfully.")
 
 
 @router.delete("/vehicles/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
@@ -190,7 +225,7 @@ def delete_transport_vehicle_for_route(
 
     db.commit()
     notify_admin_data_changed("event")
-    return AdminActionResponse(ok=True, message="Veiculo removido do trajeto selecionado.")
+    return AdminActionResponse(ok=True, message="Vehicle removed from the selected route.")
 
 
 @router.post("/assignments", response_model=AdminActionResponse)
@@ -201,24 +236,24 @@ def save_transport_assignment(
 ) -> AdminActionResponse:
     transport_request = db.get(TransportRequest, payload.request_id)
     if transport_request is None:
-        raise HTTPException(status_code=404, detail="Pedido de transporte nao encontrado")
+        raise HTTPException(status_code=404, detail="Transport request not found.")
     if not request_applies_to_date(transport_request, payload.service_date):
-        raise HTTPException(status_code=400, detail="Pedido de transporte nao se aplica a data informada")
+        raise HTTPException(status_code=400, detail="The transport request does not apply to the selected date.")
 
     vehicle = None
     if payload.vehicle_id is not None:
         vehicle = db.get(Vehicle, payload.vehicle_id)
         if vehicle is None:
-            raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+            raise HTTPException(status_code=404, detail="Vehicle not found.")
         if vehicle.service_scope != transport_request.request_kind:
-            raise HTTPException(status_code=409, detail="O veiculo selecionado nao pertence a lista correta")
+            raise HTTPException(status_code=409, detail="The selected vehicle belongs to a different list.")
         if find_transport_vehicle_schedule(
             db,
             vehicle=vehicle,
             service_date=payload.service_date,
             route_kind=payload.route_kind,
         ) is None:
-            raise HTTPException(status_code=409, detail="O veiculo selecionado nao esta disponivel para essa data e trajeto")
+            raise HTTPException(status_code=409, detail="The selected vehicle is not available for this date and route.")
 
     assignment, is_update = update_transport_assignment(
         db,
@@ -280,14 +315,14 @@ def save_transport_assignment(
                 limit=1,
             )
             if dispatch_result.sent > 0:
-                notification_message_suffix = " Notificacao WhatsApp enviada."
+                notification_message_suffix = " WhatsApp notification sent."
             elif dispatch_result.failed > 0:
-                notification_message_suffix = " Alocacao salva, mas o envio do WhatsApp falhou e a notificacao permaneceu pendente."
+                notification_message_suffix = " Assignment saved, but WhatsApp delivery failed and the notification is still pending."
         except whatsapp_meta.WhatsAppConfigurationError:
-            notification_message_suffix = " Alocacao salva; notificacao WhatsApp ficou pendente porque a Cloud API nao esta configurada."
+            notification_message_suffix = " Assignment saved; the WhatsApp notification is pending because the Cloud API is not configured."
 
     notify_admin_data_changed("event")
-    return AdminActionResponse(ok=True, message=f"Alocacao de transporte salva com sucesso.{notification_message_suffix}")
+    return AdminActionResponse(ok=True, message=f"Transport assignment saved successfully.{notification_message_suffix}")
 
 
 @router.post(
@@ -343,7 +378,7 @@ def get_pending_transport_notifications(db: Session = Depends(get_db)) -> Transp
 def mark_transport_notification_sent(notification_id: int, db: Session = Depends(get_db)) -> TransportNotificationAckResponse:
     notification = db.get(TransportNotification, notification_id)
     if notification is None:
-        raise HTTPException(status_code=404, detail="Notificacao nao encontrada")
+        raise HTTPException(status_code=404, detail="Notification not found.")
     notification.status = "sent"
     notification.sent_at = now_sgt()
     db.commit()

@@ -85,7 +85,7 @@ button {
 
 .tela01menu {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) auto auto auto minmax(0, 0.8fr);
+  grid-template-columns: auto minmax(140px, 1fr) auto auto minmax(0, 0.85fr);
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
@@ -101,12 +101,14 @@ button {
 
 .transport-topbar-brand {
   min-width: 0;
+  justify-self: start;
 }
 
 .transport-topbar-route-slot {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
 }
 
 .transport-topbar-support {

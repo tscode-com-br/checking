@@ -9,7 +9,7 @@
   };
   const REQUEST_LABELS = {
     regular: "REGULAR",
-    weekend: "FIM DE SEMANA",
+    weekend: "WEEKEND",
     extra: "EXTRA",
   };
   const VEHICLE_ICON_PATHS = {
@@ -32,6 +32,7 @@
   const TRANSPORT_LOCKED_MESSAGE = "Enter key and password to unlock the transport dashboard.";
   const TRANSPORT_SESSION_EXPIRED_MESSAGE = "Transport session expired. Enter key and password again.";
   const TRANSPORT_AUTH_VERIFY_DELAY_MS = 140;
+  const TRANSPORT_REALTIME_DEBOUNCE_MS = 180;
   const VEHICLE_DETAILS_MAX_ROWS = 5;
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
@@ -538,6 +539,9 @@
       authenticatedUser: null,
       authVerifyToken: 0,
       authVerifyTimer: null,
+      realtimeConnected: false,
+      realtimeEventStream: null,
+      realtimeRefreshTimer: null,
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const selectionBanner = document.querySelector("[data-selection-banner]");
@@ -601,11 +605,68 @@
       }
     }
 
+    function clearPendingRealtimeRefresh() {
+      if (state.realtimeRefreshTimer !== null) {
+        globalScope.clearTimeout(state.realtimeRefreshTimer);
+        state.realtimeRefreshTimer = null;
+      }
+    }
+
+    function stopRealtimeUpdates() {
+      clearPendingRealtimeRefresh();
+      if (state.realtimeEventStream) {
+        state.realtimeEventStream.close();
+        state.realtimeEventStream = null;
+      }
+      state.realtimeConnected = false;
+    }
+
+    function requestDashboardRefresh(options) {
+      const refreshOptions = options || {};
+      if (!state.isAuthenticated) {
+        return;
+      }
+
+      clearPendingRealtimeRefresh();
+      state.realtimeRefreshTimer = globalScope.setTimeout(function () {
+        state.realtimeRefreshTimer = null;
+        loadDashboard(dateStore.getValue(), Object.assign({ announce: false }, refreshOptions));
+      }, TRANSPORT_REALTIME_DEBOUNCE_MS);
+    }
+
+    function startRealtimeUpdates() {
+      stopRealtimeUpdates();
+      if (typeof globalScope.EventSource !== "function") {
+        return;
+      }
+
+      state.realtimeEventStream = new globalScope.EventSource("/api/transport/stream");
+      state.realtimeEventStream.onopen = function () {
+        state.realtimeConnected = true;
+      };
+      state.realtimeEventStream.onmessage = function () {
+        state.realtimeConnected = true;
+        requestDashboardRefresh({ announce: false });
+      };
+      state.realtimeEventStream.onerror = function () {
+        state.realtimeConnected = false;
+      };
+    }
+
     function setAuthenticationState(authenticated, user, options) {
       const nextOptions = options || {};
+      const wasAuthenticated = state.isAuthenticated;
       state.isAuthenticated = Boolean(authenticated);
       state.authenticatedUser = state.isAuthenticated ? user || null : null;
       updateAuthControls();
+
+      if (state.isAuthenticated) {
+        if (!wasAuthenticated || !state.realtimeEventStream) {
+          startRealtimeUpdates();
+        }
+      } else {
+        stopRealtimeUpdates();
+      }
 
       if (authKeyInput) {
         if (nextOptions.resetInputs) {
@@ -640,6 +701,9 @@
         return true;
       }
       setStatus((error && error.message) || fallbackMessage, "error");
+      if (error && (Number(error.status) === 404 || Number(error.status) === 409)) {
+        requestDashboardRefresh({ announce: false });
+      }
       return false;
     }
 
@@ -669,7 +733,7 @@
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, {});
             setStatus(response.message || "Transport access granted.", "success");
-            return loadDashboard(dateStore.getValue());
+            return loadDashboard(dateStore.getValue(), { announce: false });
           }
 
           setAuthenticationState(false, null, {});
@@ -724,7 +788,7 @@
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, { fillKey: true });
             setStatus(DEFAULT_STATUS_MESSAGE, "info");
-            return loadDashboard(dateStore.getValue());
+            return loadDashboard(dateStore.getValue(), { announce: false });
           }
 
           setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
@@ -787,7 +851,7 @@
           route_kind: getSelectedRouteKind(),
           status: "rejected",
         }).catch(function (error) {
-          setStatus(error.message || "Could not reject the selected request.", "error");
+          handleProtectedRequestError(error, "Could not reject the selected request.");
         });
       });
     }
@@ -833,7 +897,7 @@
           .then(function () {
             closeVehicleModal();
             setStatus("Vehicle saved successfully.", "success");
-            return loadDashboard(dateStore.getValue());
+            return loadDashboard(dateStore.getValue(), { announce: false });
           })
           .catch(function (error) {
             handleProtectedRequestError(error, "Could not save vehicle.");
@@ -1158,7 +1222,7 @@
         body: JSON.stringify(payload),
       }).then(function () {
         setStatus("Transport allocation updated.", "success");
-        return loadDashboard(dateStore.getValue());
+        return loadDashboard(dateStore.getValue(), { announce: false });
       }).catch(function (error) {
         if (handleProtectedRequestError(error, "Could not update the transport allocation.")) {
           return null;
@@ -1181,7 +1245,7 @@
       )
         .then(function () {
           setStatus("Vehicle removed from the selected route.", "success");
-          return loadDashboard(dateStore.getValue());
+          return loadDashboard(dateStore.getValue(), { announce: false });
         })
         .catch(function (error) {
           handleProtectedRequestError(error, "Could not remove the selected vehicle.");
@@ -1242,7 +1306,7 @@
           status: "confirmed",
           vehicle_id: vehicle.id,
         }).catch(function (error) {
-          setStatus(error.message || "Could not confirm the selected request.", "error");
+          handleProtectedRequestError(error, "Could not confirm the selected request.");
         });
       });
 
@@ -1308,7 +1372,9 @@
       renderSelectionBanner();
     }
 
-    function loadDashboard(selectedDate) {
+    function loadDashboard(selectedDate, options) {
+      const loadOptions = options || {};
+      const shouldAnnounce = loadOptions.announce !== false;
       if (!state.isAuthenticated) {
         state.dashboard = null;
         state.selectedRequestId = null;
@@ -1320,7 +1386,9 @@
       state.isLoading = true;
       const serviceDate = formatIsoDate(selectedDate);
       const routeKind = getSelectedRouteKind();
-      setStatus(`Loading ${getRouteKindLabel(routeKind)} dashboard.`, "info");
+      if (shouldAnnounce) {
+        setStatus(`Loading ${getRouteKindLabel(routeKind)} dashboard.`, "info");
+      }
       return requestJson(
         `/api/transport/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
       )
@@ -1328,7 +1396,9 @@
           state.dashboard = dashboard || null;
           state.selectedRouteKind = (dashboard && dashboard.selected_route) || routeKind;
           syncRouteInputs();
-          setStatus(`${getRouteKindLabel(getSelectedRouteKind())} dashboard updated.`, "info");
+          if (shouldAnnounce) {
+            setStatus(`${getRouteKindLabel(getSelectedRouteKind())} dashboard updated.`, "info");
+          }
           renderDashboard();
         })
         .catch(function (error) {

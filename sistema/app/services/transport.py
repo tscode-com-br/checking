@@ -51,7 +51,7 @@ _REQUEST_KIND_TO_RECURRENCE = {
 }
 _REQUEST_KIND_TO_LABEL = {
     "regular": "REGULAR",
-    "weekend": "FIM DE SEMANA",
+    "weekend": "WEEKEND",
     "extra": "EXTRA",
 }
 _ROUTE_KIND_TO_LABEL = {
@@ -63,7 +63,7 @@ _PAIRED_ROUTE_KIND = {
     "work_to_home": "home_to_work",
 }
 _PLACEHOLDER_NAMES = {APP_IMPORTED_USER_NAME, WEB_IMPORTED_USER_NAME}
-_MENU_OPTIONS = ["REGULAR", "FIM DE SEMANA", "EXTRA", "ALTERAR", "CANCELAR"]
+_MENU_OPTIONS = ["REGULAR", "WEEKEND", "EXTRA", "CHANGE", "CANCEL"]
 _PROJECT_OPTIONS = ["P80", "P82", "P83"]
 
 
@@ -211,14 +211,14 @@ def create_transport_vehicle_registration(
         db.flush()
     else:
         if vehicle.service_scope != payload.service_scope:
-            raise ValueError("Ja existe um veiculo cadastrado com essa placa em outra lista")
+            raise ValueError("A vehicle with this plate already exists in another list.")
         if (
             vehicle.tipo != payload.tipo
             or (vehicle.color or "") != payload.color
             or vehicle.lugares != payload.lugares
             or vehicle.tolerance != payload.tolerance
         ):
-            raise ValueError("Ja existe um veiculo cadastrado com essa placa e configuracao diferente")
+            raise ValueError("A vehicle with this plate already exists with a different configuration.")
 
     created_schedules: list[TransportVehicleSchedule] = []
     for schedule_spec in _build_schedule_specs_from_payload(payload):
@@ -229,7 +229,7 @@ def create_transport_vehicle_registration(
             route_kind=schedule_spec["route_kind"],
             service_date=payload.service_date,
         ):
-            raise ValueError("Ja existe um veiculo ativo para essa lista, rota e data selecionadas")
+            raise ValueError("An active vehicle already exists for the selected list, route, and date.")
 
         schedule = TransportVehicleSchedule(
             vehicle_id=vehicle.id,
@@ -258,9 +258,9 @@ def remove_transport_vehicle_availability(
     timestamp = now_sgt()
     schedule = db.get(TransportVehicleSchedule, schedule_id)
     if schedule is None or not schedule.is_active:
-        raise ValueError("Agenda de veiculo nao encontrada")
+        raise ValueError("Vehicle schedule not found.")
     if not vehicle_schedule_applies_to_date(schedule, service_date):
-        raise ValueError("A agenda do veiculo nao se aplica a data informada")
+        raise ValueError("The vehicle schedule does not apply to the selected date.")
 
     if schedule.recurrence_kind == "single_date":
         schedule.is_active = False
@@ -542,7 +542,7 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
     if session.state == "awaiting_key":
         normalized_key = _normalize_key_candidate(normalized_message)
         if normalized_key is None:
-            replies.append(TransportBotReplyMessage(text="Envie primeiro sua chave com 4 caracteres alfanumericos."))
+            replies.append(TransportBotReplyMessage(text="Send your 4-character alphanumeric key first."))
             return _save_bot_response(session, context, replies)
 
         session.chave = normalized_key
@@ -550,40 +550,40 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
         session.user_id = user.id if user is not None else None
         if user is not None and is_transport_registered_user(user):
             session.state = "ready"
-            replies.append(TransportBotReplyMessage(text=f"Chave {normalized_key} validada para {user.nome}."))
+            replies.append(TransportBotReplyMessage(text=f"Key {normalized_key} validated for {user.nome}."))
             replies.append(_menu_reply())
             return _save_bot_response(session, context, replies)
 
         session.state = "awaiting_name"
         if user is not None:
             _remember_existing_user(context, user)
-        replies.append(TransportBotReplyMessage(text="Cadastro incompleto. Informe seu nome completo."))
+        replies.append(TransportBotReplyMessage(text="Registration is incomplete. Enter your full name."))
         return _save_bot_response(session, context, replies)
 
     if session.state == "awaiting_name":
         try:
             context["nome"] = normalize_person_name(normalized_message)
-        except ValueError as exc:
-            replies.append(TransportBotReplyMessage(text=str(exc)))
+        except ValueError:
+            replies.append(TransportBotReplyMessage(text="The name must contain at least 3 characters."))
             return _save_bot_response(session, context, replies)
         session.state = "awaiting_project"
-        replies.append(TransportBotReplyMessage(text="Informe o projeto.", options=_PROJECT_OPTIONS))
+        replies.append(TransportBotReplyMessage(text="Enter the project.", options=_PROJECT_OPTIONS))
         return _save_bot_response(session, context, replies)
 
     if session.state == "awaiting_project":
         project = _normalize_project_code(normalized_message)
         if project is None:
-            replies.append(TransportBotReplyMessage(text="Projeto invalido. Escolha P80, P82 ou P83.", options=_PROJECT_OPTIONS))
+            replies.append(TransportBotReplyMessage(text="Invalid project. Choose P80, P82, or P83.", options=_PROJECT_OPTIONS))
             return _save_bot_response(session, context, replies)
         context["projeto"] = project
         workplaces = list_workplaces(db)
         if not workplaces:
-            replies.append(TransportBotReplyMessage(text="Nenhum workplace esta cadastrado no sistema. Cadastre um workplace antes de continuar."))
+            replies.append(TransportBotReplyMessage(text="No workplace is registered in the system. Add a workplace before continuing."))
             return _save_bot_response(session, context, replies)
         session.state = "awaiting_workplace"
         replies.append(
             TransportBotReplyMessage(
-                text="Escolha seu workplace enviando o nome ou o numero da lista.",
+                text="Choose your workplace by sending the name or the list number.",
                 options=[f"{index + 1}. {row.workplace}" for index, row in enumerate(workplaces)],
             )
         )
@@ -595,30 +595,30 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
             workplaces = list_workplaces(db)
             replies.append(
                 TransportBotReplyMessage(
-                    text="Workplace invalido. Escolha um workplace existente pelo nome ou numero.",
+                    text="Invalid workplace. Choose an existing workplace by name or number.",
                     options=[f"{index + 1}. {row.workplace}" for index, row in enumerate(workplaces)],
                 )
             )
             return _save_bot_response(session, context, replies)
         context["workplace"] = selected_workplace.workplace
         session.state = "awaiting_address"
-        replies.append(TransportBotReplyMessage(text="Informe seu endereco residencial."))
+        replies.append(TransportBotReplyMessage(text="Enter your home address."))
         return _save_bot_response(session, context, replies)
 
     if session.state == "awaiting_address":
         address = _normalize_free_text(normalized_message, min_length=3, max_length=255)
         if address is None:
-            replies.append(TransportBotReplyMessage(text="Informe um endereco residencial valido."))
+            replies.append(TransportBotReplyMessage(text="Enter a valid home address."))
             return _save_bot_response(session, context, replies)
         context["end_rua"] = address
         session.state = "awaiting_zip"
-        replies.append(TransportBotReplyMessage(text="Informe seu ZIP code."))
+        replies.append(TransportBotReplyMessage(text="Enter your ZIP code."))
         return _save_bot_response(session, context, replies)
 
     if session.state == "awaiting_zip":
         zip_code = _normalize_compact_text(normalized_message, max_length=10)
         if zip_code is None:
-            replies.append(TransportBotReplyMessage(text="Informe um ZIP code valido."))
+            replies.append(TransportBotReplyMessage(text="Enter a valid ZIP code."))
             return _save_bot_response(session, context, replies)
         context["zip"] = zip_code
         user = _upsert_registered_user_from_session(db, session=session, context=context)
@@ -626,7 +626,7 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
         session.state = "ready"
         registration_completed = True
         _ensure_transport_registration_checkin(db, user=user, chat_id=chat_id)
-        replies.append(TransportBotReplyMessage(text=f"Cadastro concluido para {user.nome}."))
+        replies.append(TransportBotReplyMessage(text=f"Registration completed for {user.nome}."))
         replies.append(_menu_reply())
         return _save_bot_response(
             session,
@@ -638,7 +638,7 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
     if session.state == "awaiting_cancel_kind":
         request_kind = _resolve_request_kind(normalized_message)
         if request_kind is None:
-            replies.append(TransportBotReplyMessage(text="Escolha REGULAR, FIM DE SEMANA ou EXTRA.", options=_MENU_OPTIONS[:3]))
+            replies.append(TransportBotReplyMessage(text="Choose REGULAR, WEEKEND, or EXTRA.", options=_MENU_OPTIONS[:3]))
             return _save_bot_response(session, context, replies)
         user = _require_session_user(db, session)
         cancelled = cancel_transport_requests(db, user=user, request_kind=request_kind, reference_date=timestamp.date())
@@ -647,16 +647,16 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
             context["pending_kind"] = request_kind
             session.state = "awaiting_request_time"
             if cancelled == 0:
-                replies.append(TransportBotReplyMessage(text=f"Nenhum pedido {_REQUEST_KIND_TO_LABEL[request_kind]} ativo foi encontrado. Informe o novo horario mesmo assim."))
+                replies.append(TransportBotReplyMessage(text=f"No active {_REQUEST_KIND_TO_LABEL[request_kind]} request was found. Enter the new time anyway."))
             else:
-                replies.append(TransportBotReplyMessage(text=f"Pedido {_REQUEST_KIND_TO_LABEL[request_kind]} removido. Informe o novo horario no formato hh:mm."))
+                replies.append(TransportBotReplyMessage(text=f"The {_REQUEST_KIND_TO_LABEL[request_kind]} request was removed. Enter the new time in hh:mm format."))
             return _save_bot_response(session, context, replies)
 
         session.state = "ready"
         if cancelled == 0:
-            replies.append(TransportBotReplyMessage(text=f"Nenhum pedido {_REQUEST_KIND_TO_LABEL[request_kind]} ativo foi encontrado."))
+            replies.append(TransportBotReplyMessage(text=f"No active {_REQUEST_KIND_TO_LABEL[request_kind]} request was found."))
         else:
-            replies.append(TransportBotReplyMessage(text=f"Pedido {_REQUEST_KIND_TO_LABEL[request_kind]} cancelado."))
+            replies.append(TransportBotReplyMessage(text=f"The {_REQUEST_KIND_TO_LABEL[request_kind]} request was cancelled."))
         replies.append(_menu_reply())
         return _save_bot_response(session, context, replies)
 
@@ -664,7 +664,7 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
         requested_time = _normalize_time_message(normalized_message)
         request_kind = str(context.get("pending_kind") or "")
         if requested_time is None or request_kind not in _REQUEST_KIND_TO_RECURRENCE:
-            replies.append(TransportBotReplyMessage(text="Informe o horario no formato hh:mm."))
+            replies.append(TransportBotReplyMessage(text="Enter the time in hh:mm format."))
             return _save_bot_response(session, context, replies)
         user = _require_session_user(db, session)
         transport_request = upsert_transport_request(
@@ -681,8 +681,8 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
         replies.append(
             TransportBotReplyMessage(
                 text=(
-                    f"Pedido {_REQUEST_KIND_TO_LABEL[transport_request.request_kind]} registrado para {transport_request.requested_time}. "
-                    "Seu nome permanece em vermelho ate a alocacao do veiculo."
+                    f"The {_REQUEST_KIND_TO_LABEL[transport_request.request_kind]} request was recorded for {transport_request.requested_time}. "
+                    "Your name stays red until a vehicle is assigned."
                 )
             )
         )
@@ -691,30 +691,31 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
 
     user = _require_session_user(db, session)
     command = _normalize_command(normalized_message)
-    if command in {"REGULAR", "FIM DE SEMANA", "EXTRA"}:
+    request_kind = _resolve_request_kind(command)
+    if request_kind is not None:
         session.state = "awaiting_request_time"
-        context["pending_kind"] = _resolve_request_kind(command)
-        replies.append(TransportBotReplyMessage(text="Informe o horario desejado no formato hh:mm."))
+        context["pending_kind"] = request_kind
+        replies.append(TransportBotReplyMessage(text="Enter the desired time in hh:mm format."))
         return _save_bot_response(session, context, replies)
 
-    if command == "ALTERAR":
+    if command in {"CHANGE", "ALTERAR"}:
         session.state = "awaiting_cancel_kind"
         replies.append(
             TransportBotReplyMessage(
-                text="Escolha qual tipo deseja substituir. Depois disso envie o horario novo.",
+                text="Choose which type you want to replace. After that, send the new time.",
                 options=_MENU_OPTIONS[:3],
             )
         )
         context["replace_after_cancel"] = True
         return _save_bot_response(session, context, replies)
 
-    if command == "CANCELAR":
+    if command in {"CANCEL", "CANCELAR"}:
         session.state = "awaiting_cancel_kind"
-        replies.append(TransportBotReplyMessage(text="Escolha qual tipo deseja cancelar.", options=_MENU_OPTIONS[:3]))
+        replies.append(TransportBotReplyMessage(text="Choose which type you want to cancel.", options=_MENU_OPTIONS[:3]))
         context.pop("replace_after_cancel", None)
         return _save_bot_response(session, context, replies)
 
-    replies.append(TransportBotReplyMessage(text=f"Chave validada para {user.nome}."))
+    replies.append(TransportBotReplyMessage(text=f"Key validated for {user.nome}."))
     replies.append(_menu_reply())
     return _save_bot_response(session, context, replies)
 
@@ -850,17 +851,17 @@ def _build_assignment_message(
     kind_label = _REQUEST_KIND_TO_LABEL[transport_request.request_kind]
     route_label = _ROUTE_KIND_TO_LABEL.get(assignment.route_kind, assignment.route_kind)
     if assignment.status == "confirmed" and vehicle is not None:
-        prefix = "Seu transporte foi atualizado" if is_update else "Seu transporte foi confirmado"
+        prefix = "Your transport has been updated" if is_update else "Your transport has been confirmed"
         vehicle_description = f"{vehicle.tipo} {vehicle.placa}"
         if vehicle.color:
-            vehicle_description = f"{vehicle_description}, cor {vehicle.color}"
+            vehicle_description = f"{vehicle_description}, color {vehicle.color}"
         return (
-            f"{prefix}: {kind_label} as {transport_request.requested_time} ({route_label}) com {vehicle_description}. "
-            f"Tolerancia: {vehicle.tolerance} minutos."
+            f"{prefix}: {kind_label} at {transport_request.requested_time} ({route_label}) with {vehicle_description}. "
+            f"Tolerance: {vehicle.tolerance} minutes."
         )
     if assignment.status == "rejected":
-        return f"Seu transporte {kind_label} das {transport_request.requested_time} ({route_label}) foi rejeitado."
-    return f"Seu transporte {kind_label} das {transport_request.requested_time} ({route_label}) foi cancelado."
+        return f"Your {kind_label} transport at {transport_request.requested_time} ({route_label}) was rejected."
+    return f"Your {kind_label} transport at {transport_request.requested_time} ({route_label}) was cancelled."
 
 
 def _build_vehicle_rows_for_dashboard(
@@ -1033,7 +1034,7 @@ def _upsert_registered_user_from_session(db: Session, *, session: TransportBotSe
     user = db.get(User, session.user_id) if session.user_id is not None else None
     if user is None:
         if session.chave is None:
-            raise ValueError("Chave do usuario nao informada na sessao")
+            raise ValueError("The user key is missing from the session.")
         user = find_user_by_chave(db, session.chave)
     if user is None:
         user = User(
@@ -1156,7 +1157,7 @@ def _require_session_user(db: Session, session: TransportBotSession) -> User:
     if user is None and session.chave:
         user = find_user_by_chave(db, session.chave)
     if user is None:
-        raise ValueError("Sessao do bot sem usuario vinculado")
+        raise ValueError("The bot session does not have a linked user.")
     return user
 
 
@@ -1232,4 +1233,4 @@ def _resolve_workplace_choice(db: Session, value: str) -> Workplace | None:
 
 
 def _menu_reply() -> TransportBotReplyMessage:
-    return TransportBotReplyMessage(text="Escolha uma opcao.", options=_MENU_OPTIONS)
+    return TransportBotReplyMessage(text="Choose an option.", options=_MENU_OPTIONS)
