@@ -2894,6 +2894,114 @@ def test_transport_vehicle_registration_reuses_plate_after_past_single_date_sche
     assert {row.route_kind for row in schedules[1:] if row.is_active} == {"home_to_work", "work_to_home"}
 
 
+def test_transport_vehicle_delete_returns_assigned_passengers_to_dashboard_as_cancelled():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Delete Hub", address="7 Delete Road", zip="707070", country="Singapore"))
+        vehicle = Vehicle(placa="DEL1700", tipo="carro", color="Red", lugares=4, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Delete Route Rider",
+            chave="TD17",
+            projeto="P80",
+            workplace="Delete Hub",
+            end_rua="17 Delete Street",
+            zip="170170",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:15",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+        schedule_id = db.execute(
+            select(TransportVehicleSchedule.id).where(
+                TransportVehicleSchedule.vehicle_id == vehicle.id,
+                TransportVehicleSchedule.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        assigned = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        assert assigned.status_code == 200
+
+        removed = client.delete(
+            f"/api/transport/vehicles/{schedule_id}",
+            params={"service_date": friday.isoformat()},
+        )
+        assert removed.status_code == 200
+
+        refreshed_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert refreshed_dashboard.status_code == 200
+    request_row = next(row for row in refreshed_dashboard.json()["regular_requests"] if row["id"] == request_id)
+    assert request_row["assignment_status"] == "cancelled"
+    assert request_row["assigned_vehicle"] is None
+
+    with SessionLocal() as db:
+        assignments = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == request_id,
+                TransportAssignment.service_date == friday,
+                TransportAssignment.route_kind == "home_to_work",
+            )
+        ).scalars().all()
+
+    assert assignments
+    assert all(row.status == "cancelled" for row in assignments)
+    assert all(row.vehicle_id is None for row in assignments)
+
+
 def test_transport_regular_assignment_mirrors_to_paired_route_by_default():
     friday = date(2026, 4, 17)
     timestamp = now_sgt()

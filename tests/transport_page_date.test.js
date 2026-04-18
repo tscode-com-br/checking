@@ -102,6 +102,13 @@ test('getPassengerAwarenessState defaults to pending until the webapp acknowledg
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Bob Rider', awareness_status: 'aware' }), 'aware');
 });
 
+test('shouldHighlightRequestName marks unassigned and cancelled rows for red-name attention', () => {
+  assert.equal(transportPage.shouldHighlightRequestName('pending'), true);
+  assert.equal(transportPage.shouldHighlightRequestName('cancelled'), true);
+  assert.equal(transportPage.shouldHighlightRequestName('rejected'), true);
+  assert.equal(transportPage.shouldHighlightRequestName('confirmed'), false);
+});
+
 test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five lines', () => {
   assert.deepEqual(
     transportPage.buildVehiclePassengerAwarenessRows(

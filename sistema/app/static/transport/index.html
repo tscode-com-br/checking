@@ -158,11 +158,21 @@
             <section id="tela01main_dir_up" class="transport-pane">
               <div class="transport-pane-head transport-pane-head-extra">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Extra Transport List</h2>
+                  <h2 class="transport-pane-title">
+                    <a
+                      href="#transportVehicleScopeExtra"
+                      class="transport-pane-title-link"
+                      data-toggle-vehicle-view="extra"
+                      aria-controls="transportVehicleScopeExtra"
+                      aria-expanded="false"
+                    >
+                      Extra Transport List
+                    </a>
+                  </h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="extra" aria-label="Add extra vehicle">+</button>
                 </div>
               </div>
-              <div class="transport-vehicle-grid" data-vehicle-scope="extra"></div>
+              <div id="transportVehicleScopeExtra" class="transport-vehicle-grid" data-vehicle-scope="extra"></div>
             </section>
 
             <div
@@ -178,11 +188,21 @@
             <section id="tela01main_dir_mid" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Weekend Transport List</h2>
+                  <h2 class="transport-pane-title">
+                    <a
+                      href="#transportVehicleScopeWeekend"
+                      class="transport-pane-title-link"
+                      data-toggle-vehicle-view="weekend"
+                      aria-controls="transportVehicleScopeWeekend"
+                      aria-expanded="false"
+                    >
+                      Weekend Transport List
+                    </a>
+                  </h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="weekend" aria-label="Add weekend vehicle">+</button>
                 </div>
               </div>
-              <div class="transport-vehicle-grid" data-vehicle-scope="weekend"></div>
+              <div id="transportVehicleScopeWeekend" class="transport-vehicle-grid" data-vehicle-scope="weekend"></div>
             </section>
 
             <div
@@ -198,11 +218,21 @@
             <section id="tela01main_dir_down" class="transport-pane">
               <div class="transport-pane-head">
                 <div class="transport-pane-title-row">
-                  <h2 class="transport-pane-title">Regular Transport List</h2>
+                  <h2 class="transport-pane-title">
+                    <a
+                      href="#transportVehicleScopeRegular"
+                      class="transport-pane-title-link"
+                      data-toggle-vehicle-view="regular"
+                      aria-controls="transportVehicleScopeRegular"
+                      aria-expanded="false"
+                    >
+                      Regular Transport List
+                    </a>
+                  </h2>
                   <button type="button" class="transport-add-button" data-open-vehicle-modal="regular" aria-label="Add regular vehicle">+</button>
                 </div>
               </div>
-              <div class="transport-vehicle-grid" data-vehicle-scope="regular"></div>
+              <div id="transportVehicleScopeRegular" class="transport-vehicle-grid" data-vehicle-scope="regular"></div>
             </section>
           </section>
         </section>

@@ -216,6 +216,12 @@
       return;
     }
 
+    if (gridElement.dataset.vehicleView === "table" || gridElement.classList.contains("is-management-table")) {
+      gridElement.style.removeProperty("grid-template-rows");
+      gridElement.style.removeProperty("grid-auto-columns");
+      return;
+    }
+
     const itemElements = gridElement.querySelectorAll(".transport-vehicle-button");
     if (!itemElements.length) {
       gridElement.style.removeProperty("grid-template-rows");
@@ -533,6 +539,10 @@
     return `${occupiedSeats}/${totalSeats}`;
   }
 
+  function shouldHighlightRequestName(assignmentStatus) {
+    return assignmentStatus === "pending" || assignmentStatus === "rejected" || assignmentStatus === "cancelled";
+  }
+
   function getPassengerAwarenessState(requestRow) {
     return requestRow && requestRow.awareness_status === "aware" ? "aware" : "pending";
   }
@@ -591,6 +601,11 @@
       isLoading: false,
       selectedRouteKind: "home_to_work",
       expandedVehicleKey: null,
+      vehicleViewModes: {
+        extra: "grid",
+        weekend: "grid",
+        regular: "grid",
+      },
       isAuthenticated: false,
       authenticatedUser: null,
       authVerifyToken: 0,
@@ -617,6 +632,7 @@
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
     const authPasswordShell = document.querySelector('[data-transport-auth-shell="password"]');
     const requestUserButton = document.querySelector("[data-request-user-link]");
+    const vehicleViewToggleLinks = {};
 
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
@@ -624,6 +640,52 @@
     document.querySelectorAll("[data-vehicle-scope]").forEach(function (element) {
       vehicleContainers[element.dataset.vehicleScope] = element;
     });
+    document.querySelectorAll("[data-toggle-vehicle-view]").forEach(function (element) {
+      vehicleViewToggleLinks[element.dataset.toggleVehicleView] = element;
+    });
+
+    Object.keys(vehicleViewToggleLinks).forEach(function (scope) {
+      const toggleLink = vehicleViewToggleLinks[scope];
+      if (!toggleLink) {
+        return;
+      }
+      toggleLink.addEventListener("click", function (event) {
+        event.preventDefault();
+        toggleVehicleViewMode(scope);
+      });
+    });
+
+    function getVehicleViewMode(scope) {
+      return state.vehicleViewModes[scope] || "grid";
+    }
+
+    function setVehicleContainerViewMode(container, scope) {
+      if (!container) {
+        return;
+      }
+
+      const viewMode = getVehicleViewMode(scope);
+      container.dataset.vehicleView = viewMode;
+      container.classList.toggle("is-management-table", viewMode === "table");
+    }
+
+    function syncVehicleViewToggleState() {
+      VEHICLE_SCOPE_ORDER.forEach(function (scope) {
+        const toggleLink = vehicleViewToggleLinks[scope];
+        const isTableView = getVehicleViewMode(scope) === "table";
+        if (!toggleLink) {
+          return;
+        }
+
+        toggleLink.classList.toggle("is-management-open", isTableView);
+        toggleLink.setAttribute("aria-expanded", String(isTableView));
+      });
+    }
+
+    function toggleVehicleViewMode(scope) {
+      state.vehicleViewModes[scope] = getVehicleViewMode(scope) === "table" ? "grid" : "table";
+      renderVehiclePanels();
+    }
 
     function setAuthShellState(shellElement, authenticated) {
       if (!shellElement) {
@@ -1260,6 +1322,10 @@
           const zipCell = createNode("span", "transport-request-secondary", requestRow.zip || "ZIP pending");
           const metaText = createRequestMetaLine(requestRow);
 
+          if (shouldHighlightRequestName(requestRow.assignment_status)) {
+            nameCell.classList.add("is-attention");
+          }
+
           if (metaText) {
             const metaLine = createNode("small", "transport-request-meta", metaText);
             nameCell.appendChild(document.createElement("br"));
@@ -1400,8 +1466,75 @@
       return tileElement;
     }
 
+    function createVehicleManagementTable(scope, vehicles, assignedRowsByVehicle) {
+      const table = createNode("table", "transport-vehicle-management-table");
+      const tableHead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      const vehicleHead = createNode("th", "transport-vehicle-management-heading", "Vehicle");
+      const occupancyHead = createNode("th", "transport-vehicle-management-heading", "Seats");
+      const actionHead = createNode("th", "transport-vehicle-management-heading is-actions", "Action");
+      const tableBody = document.createElement("tbody");
+
+      vehicleHead.scope = "col";
+      occupancyHead.scope = "col";
+      actionHead.scope = "col";
+      headRow.appendChild(vehicleHead);
+      headRow.appendChild(occupancyHead);
+      headRow.appendChild(actionHead);
+      tableHead.appendChild(headRow);
+
+      vehicles.forEach(function (vehicle) {
+        const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
+        const row = createNode("tr", "transport-vehicle-management-row");
+        const vehicleCell = createNode("td", "transport-vehicle-management-vehicle");
+        const occupancyCell = createNode(
+          "td",
+          "transport-vehicle-management-occupancy",
+          formatVehicleOccupancyCount(vehicle, assignedRows.length)
+        );
+        const actionsCell = createNode("td", "transport-vehicle-management-actions");
+        const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", vehicle.placa);
+        const metaParts = [mapVehicleTypeLabel(vehicle.tipo)];
+        const deleteButton = createNode(
+          "button",
+          "transport-vehicle-delete-button transport-vehicle-management-delete",
+          "Delete"
+        );
+
+        if (vehicle.color) {
+          metaParts.push(vehicle.color);
+        }
+
+        occupancyCell.classList.toggle("is-occupied", assignedRows.length > 0);
+        deleteButton.type = "button";
+        deleteButton.disabled = vehicle.schedule_id === null || vehicle.schedule_id === undefined;
+        deleteButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          removeVehicleFromRoute(vehicle);
+        });
+
+        vehicleCell.appendChild(vehiclePlate);
+        vehicleCell.appendChild(
+          createNode("small", "transport-vehicle-management-meta", metaParts.join(" • "))
+        );
+        actionsCell.appendChild(deleteButton);
+        row.appendChild(vehicleCell);
+        row.appendChild(occupancyCell);
+        row.appendChild(actionsCell);
+        tableBody.appendChild(row);
+      });
+
+      table.appendChild(tableHead);
+      table.appendChild(tableBody);
+      table.setAttribute("aria-label", `${mapScopeTitle(scope)} vehicles`);
+      return table;
+    }
+
     function renderVehiclePanels() {
       const selectedRequest = getSelectedRequest();
+
+      syncVehicleViewToggleState();
 
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
         const container = vehicleContainers[scope];
@@ -1412,8 +1545,15 @@
           return;
         }
 
+        setVehicleContainerViewMode(container, scope);
+
         if (!vehicles.length) {
           container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
+          return;
+        }
+
+        if (getVehicleViewMode(scope) === "table") {
+          container.appendChild(createVehicleManagementTable(scope, vehicles, assignedRowsByVehicle));
           return;
         }
 
@@ -1446,12 +1586,14 @@
         const container = vehicleContainers[scope];
         clearElement(container);
         if (container) {
+          setVehicleContainerViewMode(container, scope);
           container.appendChild(createEmptyState(`No vehicles in ${mapScopeTitle(scope)} list.`));
           container.style.removeProperty("grid-template-rows");
           container.style.removeProperty("grid-auto-columns");
         }
       });
       state.expandedVehicleKey = null;
+      syncVehicleViewToggleState();
       renderSelectionBanner();
     }
 
@@ -1543,6 +1685,7 @@
     formatVehicleOccupancyCount,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,
+    shouldHighlightRequestName,
     mapVehicleIconPath,
     parsePositiveNumber,
     resolvePanelSizes,

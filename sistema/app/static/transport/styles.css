@@ -475,6 +475,27 @@ button {
   text-transform: uppercase;
 }
 
+.transport-pane-title-link {
+  color: inherit;
+  text-decoration: none;
+  text-underline-offset: 0.26em;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.transport-pane-title-link:hover,
+.transport-pane-title-link:focus-visible,
+.transport-pane-title-link.is-management-open {
+  color: #ffffff;
+  text-decoration: underline;
+  text-decoration-color: rgba(72, 212, 206, 0.8);
+}
+
+.transport-pane-title-link:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.45);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
 .transport-section-head {
   display: flex;
   align-items: flex-start;
@@ -772,6 +793,10 @@ button {
   min-width: 0;
 }
 
+.transport-request-primary.is-attention {
+  color: var(--transport-danger);
+}
+
 .transport-request-secondary {
   color: var(--transport-text-muted);
   min-width: 0;
@@ -798,6 +823,81 @@ button {
   grid-auto-flow: column;
   grid-auto-columns: 104px;
   grid-template-rows: repeat(1, minmax(0, auto));
+}
+
+.transport-vehicle-grid.is-management-table {
+  display: block;
+  padding-top: 0;
+  padding-right: 4px;
+}
+
+.transport-vehicle-management-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.transport-vehicle-management-heading {
+  padding: 0 12px 10px;
+  color: var(--transport-text-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.transport-vehicle-management-heading.is-actions {
+  text-align: right;
+}
+
+.transport-vehicle-management-row td {
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: middle;
+}
+
+.transport-vehicle-management-row:first-child td {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.transport-vehicle-management-vehicle {
+  width: auto;
+}
+
+.transport-vehicle-management-plate {
+  display: block;
+  color: var(--transport-text);
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+}
+
+.transport-vehicle-management-meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--transport-text-muted);
+  font-size: 0.74rem;
+}
+
+.transport-vehicle-management-occupancy {
+  width: 88px;
+  color: var(--transport-text-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.transport-vehicle-management-occupancy.is-occupied {
+  color: var(--transport-success);
+}
+
+.transport-vehicle-management-actions {
+  width: 96px;
+  text-align: right;
+}
+
+.transport-vehicle-management-delete {
+  min-width: 78px;
 }
 
 .transport-vehicle-tile {
@@ -1213,6 +1313,20 @@ button {
 
   .transport-request-row .transport-request-secondary:last-child {
     justify-self: flex-start;
+  }
+
+  .transport-vehicle-grid.is-management-table {
+    display: block;
+  }
+
+  .transport-vehicle-management-heading,
+  .transport-vehicle-management-row td {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .transport-vehicle-management-actions {
+    width: 86px;
   }
 
 }
