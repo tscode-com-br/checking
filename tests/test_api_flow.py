@@ -673,7 +673,7 @@ def test_pending_registration_flow():
 
         save_user = client.post(
             "/api/admin/users",
-            json={"rfid": "ABC12345", "nome": "Usuario Teste", "chave": "HR70", "projeto": "P80"},
+            json={"rfid": "ABC12345", "nome": "Usuario Teste", "chave": "UT70", "projeto": "P80"},
         )
         assert save_user.status_code == 200
 
@@ -3098,8 +3098,8 @@ def test_transport_whatsapp_webhook_processes_messages_and_sends_replies(monkeyp
     assert user.workplace == "Webhook Hub"
     assert user.checkin is True
     assert transport_request.single_date == today
-    assert any("Cadastro concluido para Maria Jose da Silva." in row["text"] for row in sent_messages)
-    assert any("Pedido EXTRA registrado para 08:30." in row["text"] for row in sent_messages)
+    assert any("Registration completed for Maria Jose da Silva." in row["text"] for row in sent_messages)
+    assert any("The EXTRA request was recorded for 08:30." in row["text"] for row in sent_messages)
 
 
 def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypatch):
@@ -3185,7 +3185,7 @@ def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypat
         )
 
     assert response.status_code == 200
-    assert "Notificacao WhatsApp enviada." in response.json()["message"]
+    assert "WhatsApp notification sent." in response.json()["message"]
     assert any("WPP1001" in row["text"] for row in sent_messages)
 
     with SessionLocal() as db:
