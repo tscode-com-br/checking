@@ -20,6 +20,8 @@ html {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * {
@@ -667,12 +669,48 @@ header {
     background-size: min(92vw, 420px);
   }
 
-  .choice-grid.four-columns {
+  .auth-credentials-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
   }
 
-  .auth-credentials-row {
+  .auth-field-button {
+    grid-column: 1 / -1;
+  }
+
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
     gap: 6px;
+  }
+
+  .check-field-compact {
+    flex-basis: auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .legend-toggle {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .legend-toggle-label {
+    text-align: left;
+  }
+
+  .check-field input,
+  .check-field select,
+  .auth-action-button,
+  .submit-button,
+  .secondary-button,
+  .choice-card {
+    font-size: 16px;
+  }
+
+  .choice-grid.four-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -692,20 +730,13 @@ header {
     grid-template-columns: 1fr;
   }
 
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-  }
-
-  .check-field-compact {
-    flex-basis: auto;
-    width: 100%;
-    min-width: 0;
-  }
-
   .auth-credentials-row {
+    grid-template-columns: 1fr;
     gap: 5px;
+  }
+
+  .auth-field-button {
+    grid-column: auto;
   }
 
   .auth-action-button,
