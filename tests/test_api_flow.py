@@ -3071,6 +3071,63 @@ def test_web_password_change_replaces_previous_password():
         assert new_login.json()["has_password"] is True
 
 
+def test_admin_can_clear_registered_user_password_and_allow_new_registration():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "USRSPASS1", "nome": "Usuario Senha", "chave": "PW11", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200
+
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        user_id = next(row["id"] for row in users.json() if row["chave"] == "PW11")
+
+        registered = register_web_password(client, chave="PW11", senha="abc123", projeto="P80", ensure_user_exists=False)
+        assert registered.status_code == 200
+
+        reset_response = client.post(f"/api/admin/users/{user_id}/reset-password")
+        assert reset_response.status_code == 200
+        assert "nova senha" in reset_response.json()["message"]
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "PW11")
+            assert user.senha is None
+
+        status = client.get("/api/web/auth/status", params={"chave": "PW11"})
+        assert status.status_code == 200
+        assert status.json() == {
+            "found": True,
+            "chave": "PW11",
+            "has_password": False,
+            "authenticated": False,
+            "message": "Digite sua chave e crie uma senha.",
+        }
+
+        old_login = login_web_password(client, chave="PW11", senha="abc123")
+        assert old_login.status_code == 404
+
+        new_registration = register_web_password(client, chave="PW11", senha="nova123", projeto="P80", ensure_user_exists=False)
+        assert new_registration.status_code == 200
+        assert new_registration.json()["authenticated"] is True
+        assert new_registration.json()["has_password"] is True
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "PW11")
+            assert user.senha is not None
+            assert verify_password("nova123", user.senha) is True
+
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        assert any(
+            event["action"] == "password"
+            and event["request_path"] == f"/api/admin/users/{user_id}/reset-password"
+            and event["status"] == "removed"
+            for event in events.json()
+        )
+
+
 def test_web_password_status_returns_not_found_for_unknown_key():
     with TestClient(app) as client:
         response = client.get("/api/web/auth/status", params={"chave": "ZZ99"})

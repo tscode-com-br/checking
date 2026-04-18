@@ -561,7 +561,7 @@ th { background: #f3f4f6; }
 }
 .status-ok { color: #065f46; }
 .status-err { color: #991b1b; }
-input.inline, select.inline {
+input.inline, select.inline, textarea.inline {
   width: 100%;
   padding: 4px;
 }
@@ -655,8 +655,7 @@ input.inline, select.inline {
   min-width: 0;
 }
 
-.cadastro-pending-table td:nth-child(2) .inline,
-.cadastro-users-table td:nth-child(2) .inline {
+.cadastro-pending-table td:nth-child(2) .inline {
   min-width: 220px;
 }
 
@@ -689,6 +688,114 @@ input.inline, select.inline {
 .cadastro-users-table .user-chave.inline {
   min-width: 0;
   max-width: none;
+}
+
+.cadastro-users-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.cadastro-users-table th,
+.cadastro-users-table td {
+  font-size: 12px;
+  padding: 6px;
+  vertical-align: top;
+}
+
+.cadastro-users-table th:nth-child(1),
+.cadastro-users-table td:nth-child(1) {
+  width: 8%;
+}
+
+.cadastro-users-table th:nth-child(2),
+.cadastro-users-table td:nth-child(2) {
+  width: 12%;
+}
+
+.cadastro-users-table th:nth-child(3),
+.cadastro-users-table td:nth-child(3) {
+  width: 6%;
+}
+
+.cadastro-users-table th:nth-child(4),
+.cadastro-users-table td:nth-child(4) {
+  width: 7%;
+}
+
+.cadastro-users-table th:nth-child(5),
+.cadastro-users-table td:nth-child(5) {
+  width: 18%;
+}
+
+.cadastro-users-table th:nth-child(6),
+.cadastro-users-table td:nth-child(6) {
+  width: 8%;
+}
+
+.cadastro-users-table th:nth-child(7),
+.cadastro-users-table td:nth-child(7) {
+  width: 13%;
+}
+
+.cadastro-users-table th:nth-child(8),
+.cadastro-users-table td:nth-child(8) {
+  width: 15%;
+}
+
+.cadastro-users-table th:nth-child(9),
+.cadastro-users-table td:nth-child(9) {
+  width: 13%;
+}
+
+.cadastro-users-table input.inline,
+.cadastro-users-table select.inline,
+.cadastro-users-table textarea.inline {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  font-size: inherit;
+}
+
+.cadastro-users-table textarea.inline {
+  min-height: 3.4em;
+  resize: vertical;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+.cadastro-users-table .inline:disabled {
+  color: #334155;
+  -webkit-text-fill-color: #334155;
+  opacity: 1;
+  background: #f8fafc;
+}
+
+.cadastro-users-table .user-rfid.inline,
+.cadastro-users-table .user-chave.inline,
+.cadastro-users-table .user-zip.inline {
+  text-align: center;
+}
+
+.cadastro-users-table td:nth-child(2) .inline,
+.cadastro-users-table td:nth-child(5) .inline,
+.cadastro-users-table td:nth-child(7) .inline,
+.cadastro-users-table td:nth-child(8) .inline {
+  min-width: 0;
+}
+
+.cadastro-users-table .user-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.cadastro-users-table .user-actions button {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 .cadastro-locations-table td:nth-child(1) .inline {
@@ -947,6 +1054,7 @@ input.inline, select.inline {
   }
   .responsive-table td input.inline,
   .responsive-table td select.inline,
+  .responsive-table td textarea.inline,
   .responsive-table td button {
     width: 100%;
   }
@@ -971,6 +1079,10 @@ input.inline, select.inline {
   .cadastro-table th,
   .cadastro-table td {
     white-space: normal;
+  }
+  .cadastro-users-table th,
+  .cadastro-users-table td {
+    font-size: 13px;
   }
   .cadastro-table .pending-actions,
   .cadastro-admin-table .admin-password-editor,
@@ -1125,5 +1237,8 @@ input.inline, select.inline {
   }
   .pending-actions {
     flex-direction: column;
+  }
+  .cadastro-users-table .user-actions {
+    grid-template-columns: 1fr;
   }
 }

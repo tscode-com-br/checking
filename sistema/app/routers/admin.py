@@ -1191,6 +1191,57 @@ def remove_user(
     return {"ok": True, "user_id": user_id}
 
 
+@router.post("/users/{user_id}/reset-password", response_model=AdminActionResponse)
+def reset_user_password(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AdminUser = Depends(require_admin_session),
+) -> AdminActionResponse:
+    user = db.get(User, user_id)
+    if user is None:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="User password reset failed because target user was not found",
+            request_path=f"/api/admin/users/{user_id}/reset-password",
+            http_status=404,
+            details=f"updated_by={current_admin.chave}; user_id={user_id}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Usuario nao encontrado.")
+
+    had_password = bool(user.senha)
+    if had_password:
+        user.senha = None
+
+    log_event(
+        db,
+        source="admin",
+        action="password",
+        status="removed" if had_password else "noop",
+        message="Web user password removed via admin" if had_password else "Web user password reset requested via admin but user already had no password",
+        request_path=f"/api/admin/users/{user_id}/reset-password",
+        http_status=200,
+        details=(
+            f"updated_by={current_admin.chave}; chave={user.chave}; "
+            f"user_id={user_id}; had_password={had_password}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("register", "event")
+    if had_password:
+        return AdminActionResponse(
+            ok=True,
+            message="Senha removida com sucesso. O usuario podera cadastrar uma nova senha.",
+        )
+    return AdminActionResponse(
+        ok=True,
+        message="Esse usuario ja esta sem senha cadastrada e ja pode cadastrar uma nova senha.",
+    )
+
+
 @router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_session)])
 def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
     rows = db.execute(

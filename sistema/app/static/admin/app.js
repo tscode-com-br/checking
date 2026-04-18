@@ -164,6 +164,29 @@ function bindAdaptiveInputWidth(input, minimumCharacters = 4) {
   input.addEventListener("input", () => updateAdaptiveInputWidth(input, minimumCharacters));
 }
 
+function updateAutoTextareaHeight(textarea) {
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  const minimumHeightPx = Number(textarea.dataset.minHeightPx || 0);
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.max(textarea.scrollHeight, minimumHeightPx)}px`;
+}
+
+function bindAutoTextareaHeight(textarea) {
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  if (!textarea.dataset.minHeightPx) {
+    textarea.style.height = "auto";
+    textarea.dataset.minHeightPx = String(textarea.scrollHeight);
+  }
+  updateAutoTextareaHeight(textarea);
+  textarea.addEventListener("input", () => updateAutoTextareaHeight(textarea));
+}
+
 function formatDateTime(value) {
   if (!value) {
     return "-";
@@ -1326,7 +1349,7 @@ function makeRegisteredUserRow(user) {
   tr.dataset.userId = String(user.id);
   tr.innerHTML = `
     <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" disabled /></td>
-    <td><input class="inline user-nome" value="${escapeHtml(user.nome)}" disabled /></td>
+    <td><textarea class="inline user-nome user-field-textarea" rows="2" disabled>${escapeHtml(user.nome)}</textarea></td>
     <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
     <td>
       <select class="inline user-projeto" disabled>
@@ -1335,19 +1358,19 @@ function makeRegisteredUserRow(user) {
         <option value="P83">P83</option>
       </select>
     </td>
-    <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
+    <td><textarea class="inline user-end-rua user-field-textarea" rows="3" maxlength="255" disabled>${escapeHtml(user.end_rua ?? "")}</textarea></td>
     <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" disabled /></td>
-    <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" disabled /></td>
-    <td><input class="inline user-email" maxlength="255" value="${escapeHtml(user.email ?? "")}" disabled /></td>
-    <td class="pending-actions">
+    <td><textarea class="inline user-cargo user-field-textarea" rows="2" maxlength="255" disabled>${escapeHtml(user.cargo ?? "")}</textarea></td>
+    <td><textarea class="inline user-email user-field-textarea" rows="2" maxlength="255" disabled>${escapeHtml(user.email ?? "")}</textarea></td>
+    <td class="pending-actions user-actions">
       <button data-user-edit="${user.id}">Editar</button>
       <button data-user-save="${user.id}" disabled>Salvar</button>
+      <button type="button" class="secondary-button" data-user-password-reset="${user.id}" title="Remove a senha atual para que o usuario cadastre uma nova.">Senha</button>
       <button data-user-remove="${user.id}">Remover</button>
     </td>
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
-  bindAdaptiveInputWidth(tr.querySelector(".user-rfid"), 4);
-  bindAdaptiveInputWidth(tr.querySelector(".user-chave"), 4);
+  tr.querySelectorAll(".user-field-textarea").forEach((textarea) => bindAutoTextareaHeight(textarea));
   return tr;
 }
 
@@ -1427,6 +1450,7 @@ function setRegisteredUserEditingState(userId, editing) {
   const email = row.querySelector(".user-email");
   const saveButton = row.querySelector(`[data-user-save="${userId}"]`);
   const editButton = row.querySelector(`[data-user-edit="${userId}"]`);
+  const passwordButton = row.querySelector(`[data-user-password-reset="${userId}"]`);
 
   rfid.disabled = !editing;
   nome.disabled = !editing;
@@ -1438,6 +1462,9 @@ function setRegisteredUserEditingState(userId, editing) {
   email.disabled = !editing;
   saveButton.disabled = !editing;
   editButton.disabled = editing;
+  if (passwordButton) {
+    passwordButton.disabled = editing;
+  }
   if (editing) {
     rfid.focus();
   }
@@ -1823,6 +1850,20 @@ async function removeRegisteredUser(userId) {
   await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
 }
 
+async function resetRegisteredUserPassword(userId) {
+  const normalizedUserId = requireIntegerId(userId, "Usuário");
+  const confirmed = window.confirm(
+    "Deseja remover a senha deste usuário?\n\nDepois disso, ele precisará cadastrar uma nova senha para voltar a acessar a área web.",
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const payload = await postJson(`/api/admin/users/${normalizedUserId}/reset-password`);
+  setStatus(payload.message, true);
+  await loadRegisteredUsers();
+}
+
 async function approveAdministrator(id) {
   const payload = await postJson(`/api/admin/administrators/requests/${id}/approve`);
   setStatus(payload.message, true);
@@ -2174,6 +2215,10 @@ function bindActions() {
     }
     if (target.tagName === "BUTTON" && target.dataset.userSave) {
       saveRegisteredUser(target.dataset.userSave).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.tagName === "BUTTON" && target.dataset.userPasswordReset) {
+      resetRegisteredUserPassword(target.dataset.userPasswordReset).catch((error) => setStatus(error.message, false));
       return;
     }
     if (target.tagName === "BUTTON" && target.dataset.userRemove) {
