@@ -549,6 +549,7 @@ header {
   border-radius: var(--control-radius);
   background: #ffffff;
   color: #0f172a;
+  font-family: inherit;
   font-weight: 700;
   font-size: var(--choice-size);
   line-height: 1.15;

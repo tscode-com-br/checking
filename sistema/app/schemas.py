@@ -1123,6 +1123,7 @@ class WebCheckHistoryResponse(BaseModel):
     projeto: str | None = None
     current_action: Literal["checkin", "checkout"] | None = None
     current_local: str | None = None
+    has_current_day_checkin: bool = False
     last_checkin_at: datetime | None = None
     last_checkout_at: datetime | None = None
 

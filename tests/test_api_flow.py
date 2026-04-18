@@ -4871,6 +4871,7 @@ def test_web_check_state_returns_latest_public_history():
             "projeto": "P80",
             "current_action": "checkout",
             "current_local": "Web",
+            "has_current_day_checkin": True,
             "last_checkin_at": checkin_at.replace(tzinfo=None).isoformat(),
             "last_checkout_at": checkout_at.replace(tzinfo=None).isoformat(),
         }

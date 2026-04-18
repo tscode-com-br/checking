@@ -106,7 +106,21 @@ test('autofillPetrobrasEmailDomain completes domain after @ is typed', () => {
   assert.equal(clientState.autofillPetrobrasEmailDomain('joao@petrobras.com.br'), 'joao@petrobras.com.br');
 });
 
-test('hasCurrentDayCheckIn compares the latest check-in on the Singapore calendar day', () => {
+test('hasCurrentDayCheckIn prefers the backend same-day flag and falls back to Singapore calendar comparison', () => {
+  assert.equal(
+    clientState.hasCurrentDayCheckIn(
+      { has_current_day_checkin: true, last_checkin_at: '2026-04-17T23:55:00+08:00' },
+      '2026-04-18T00:10:00+08:00'
+    ),
+    true
+  );
+  assert.equal(
+    clientState.hasCurrentDayCheckIn(
+      { has_current_day_checkin: false, last_checkin_at: '2026-04-18T07:05:00+08:00' },
+      '2026-04-18T19:30:00+08:00'
+    ),
+    false
+  );
   assert.equal(
     clientState.hasCurrentDayCheckIn(
       { last_checkin_at: '2026-04-18T07:05:00+08:00' },

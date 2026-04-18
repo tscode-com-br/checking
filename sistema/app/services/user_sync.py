@@ -340,6 +340,9 @@ def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistory
         projeto=state.projeto,
         current_action=state.current_action,
         current_local=state.current_local,
+        has_current_day_checkin=(
+            state.last_checkin_at is not None and is_same_singapore_day(state.last_checkin_at, now_sgt())
+        ),
         last_checkin_at=state.last_checkin_at,
         last_checkout_at=state.last_checkout_at,
     )

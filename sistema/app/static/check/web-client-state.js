@@ -119,6 +119,10 @@
   }
 
   function hasCurrentDayCheckIn(historyState, referenceValue, timeZone) {
+    if (historyState && typeof historyState.has_current_day_checkin === 'boolean') {
+      return historyState.has_current_day_checkin;
+    }
+
     const lastCheckinAt = historyState && historyState.last_checkin_at;
     if (!lastCheckinAt) {
       return false;
