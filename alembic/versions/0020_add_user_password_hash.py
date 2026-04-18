@@ -1,7 +1,7 @@
 """add hashed password column for web users
 
 Revision ID: 0020_add_user_password_hash
-Revises: 0019_transport_workplaces_requests
+Revises: 0019_transport_workflow
 Create Date: 2026-04-18 13:40:00
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = "0020_add_user_password_hash"
-down_revision = "0019_transport_workplaces_requests"
+down_revision = "0019_transport_workflow"
 branch_labels = None
 depends_on = None
 

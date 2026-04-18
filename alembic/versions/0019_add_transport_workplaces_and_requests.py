@@ -1,6 +1,6 @@
 """add workplaces and transport request workflow tables
 
-Revision ID: 0019_transport_workplaces_requests
+Revision ID: 0019_transport_workflow
 Revises: 0018_checkinghistory_csv_import
 Create Date: 2026-04-18 01:30:00
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0019_transport_workplaces_requests"
+revision = "0019_transport_workflow"
 down_revision = "0018_checkinghistory_csv_import"
 branch_labels = None
 depends_on = None

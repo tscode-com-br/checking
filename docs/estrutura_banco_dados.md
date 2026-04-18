@@ -1,6 +1,6 @@
 # Estrutura do Banco de Dados
 
-Este documento descreve o schema relacional atual da aplicacao com base em `sistema/app/models.py` e nas migrations Alembic ate `0019_transport_workplaces_requests`.
+Este documento descreve o schema relacional atual da aplicacao com base em `sistema/app/models.py` e nas migrations Alembic ate `0019_transport_workflow`.
 
 ## Banco principal
 
