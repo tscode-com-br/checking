@@ -77,10 +77,10 @@ test('resolvePanelSizes clamps resize positions to the configured limits', () =>
 });
 
 test('mapVehicleIconPath resolves each transport vehicle type to its icon asset', () => {
-  assert.equal(transportPage.mapVehicleIconPath('carro'), '/assets/icons/car.svg');
-  assert.equal(transportPage.mapVehicleIconPath('minivan'), '/assets/icons/minivan.svg');
-  assert.equal(transportPage.mapVehicleIconPath('van'), '/assets/icons/van.svg');
-  assert.equal(transportPage.mapVehicleIconPath('onibus'), '/assets/icons/bus.svg');
+  assert.equal(transportPage.mapVehicleIconPath('carro'), 'icons/car.svg');
+  assert.equal(transportPage.mapVehicleIconPath('minivan'), 'icons/minivan.svg');
+  assert.equal(transportPage.mapVehicleIconPath('van'), 'icons/van.svg');
+  assert.equal(transportPage.mapVehicleIconPath('onibus'), 'icons/bus.svg');
 });
 
 test('formatVehicleOccupancyLabel shows the current and total allocated seats', () => {

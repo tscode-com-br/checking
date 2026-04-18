@@ -13,10 +13,10 @@
     extra: "EXTRA",
   };
   const VEHICLE_ICON_PATHS = {
-    carro: "/assets/icons/car.svg",
-    minivan: "/assets/icons/minivan.svg",
-    van: "/assets/icons/van.svg",
-    onibus: "/assets/icons/bus.svg",
+    carro: "icons/car.svg",
+    minivan: "icons/minivan.svg",
+    van: "icons/van.svg",
+    onibus: "icons/bus.svg",
   };
   const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "long" });
   const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
