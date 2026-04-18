@@ -18,22 +18,9 @@
             <span class="transport-topbar-kicker">Checking Transport</span>
             <strong class="transport-topbar-title">Allocation board</strong>
           </div>
-          <div class="transport-topbar-status" data-status-message hidden></div>
-        </section>
-        <div
-          class="transport-divider transport-divider-horizontal transport-divider-resizable"
-          data-resize="horizontal"
-          data-min-first="50"
-          data-min-second="180"
-          role="separator"
-          aria-label="Resize menu and main area"
-          aria-orientation="horizontal"
-        ></div>
-
-        <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
-          <div class="transport-main-toolbar" data-date-panel aria-label="Selected service date">
-            <div class="transport-date-stack transport-main-date-stack">
-              <div class="transport-date-row transport-main-date-row">
+          <div class="transport-topbar-date" data-date-panel aria-label="Selected service date">
+            <div class="transport-date-stack transport-topbar-date-stack">
+              <div class="transport-date-row transport-topbar-date-row">
                 <button
                   type="button"
                   class="transport-nav-button"
@@ -60,7 +47,18 @@
               </div>
             </div>
           </div>
-
+          <div class="transport-topbar-status" data-status-message hidden></div>
+        </section>
+        <div
+          class="transport-divider transport-divider-horizontal transport-divider-resizable"
+          data-resize="horizontal"
+          data-min-first="50"
+          data-min-second="180"
+          role="separator"
+          aria-label="Resize menu and main area"
+          aria-orientation="horizontal"
+        ></div>
+        <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
           <section id="tela01main_esq" class="transport-pane transport-pane-single">
             <div class="transport-pane-head">
               <h1 class="transport-pane-title">User List</h1>

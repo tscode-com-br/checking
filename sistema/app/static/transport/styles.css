@@ -80,9 +80,9 @@ button {
 }
 
 .tela01menu {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 18px;
   padding: 18px 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
@@ -92,6 +92,21 @@ button {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  justify-self: start;
+}
+
+.transport-topbar-date {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.transport-topbar-date-stack {
+  width: auto;
+}
+
+.transport-topbar-date-row {
+  justify-content: center;
 }
 
 .transport-topbar-kicker {
@@ -115,6 +130,7 @@ button {
   background: rgba(255, 255, 255, 0.05);
   font-size: 0.82rem;
   text-align: right;
+  justify-self: end;
 }
 
 .transport-topbar-status[data-tone="success"] {
@@ -164,7 +180,6 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(280px, 0.54fr) var(--transport-divider-size) minmax(540px, 2.26fr);
-  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .tela01main_dir {
@@ -182,35 +197,13 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
 }
 
-.transport-main-toolbar {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px 10px 10px;
-}
-
-.transport-main-date-stack {
-  width: auto;
-}
-
-.transport-main-date-row {
-  justify-content: center;
-}
-
-.transport-main-toolbar .transport-date-label {
+.transport-topbar-date .transport-date-label {
   font-size: 1.35rem;
 }
 
-.transport-main-toolbar .transport-nav-button {
+.transport-topbar-date .transport-nav-button {
   width: 34px;
   height: 34px;
-}
-
-.tela01main > .transport-divider-vertical,
-#tela01main_esq,
-#tela01main_dir {
-  grid-row: 2;
 }
 
 .transport-pane-head {
@@ -564,7 +557,7 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   padding: 0;
   border: none;
   background: transparent;
@@ -760,9 +753,18 @@ button {
   }
 
   .tela01menu {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: 1fr;
+    justify-items: center;
     padding: 16px 18px;
+  }
+
+  .transport-topbar-copy,
+  .transport-topbar-status {
+    justify-self: stretch;
+  }
+
+  .transport-topbar-status {
+    text-align: center;
   }
 
   .transport-request-row {
@@ -776,11 +778,7 @@ button {
 }
 
 @media (max-width: 640px) {
-  .transport-main-toolbar {
-    padding-bottom: 8px;
-  }
-
-  .transport-main-toolbar .transport-date-label {
+  .transport-topbar-date .transport-date-label {
     font-size: 1.15rem;
   }
 
