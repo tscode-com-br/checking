@@ -47,6 +47,7 @@ from sistema.app.models import (
     TransportNotification,
     TransportRequest,
     TransportVehicleSchedule,
+    TransportVehicleScheduleException,
     User,
     UserSyncEvent,
     Vehicle,
@@ -2894,7 +2895,7 @@ def test_transport_vehicle_registration_reuses_plate_after_past_single_date_sche
     assert {row.route_kind for row in schedules[1:] if row.is_active} == {"home_to_work", "work_to_home"}
 
 
-def test_transport_vehicle_delete_returns_assigned_passengers_to_dashboard_as_cancelled():
+def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending():
     friday = date(2026, 4, 17)
     timestamp = now_sgt()
 
@@ -2903,19 +2904,27 @@ def test_transport_vehicle_delete_returns_assigned_passengers_to_dashboard_as_ca
         vehicle = Vehicle(placa="DEL1700", tipo="carro", color="Red", lugares=4, tolerance=8, service_scope="regular")
         db.add(vehicle)
         db.flush()
-        add_transport_schedule(
+        first_schedule = add_transport_schedule(
             db,
             vehicle=vehicle,
             service_scope="regular",
             route_kind="home_to_work",
             recurrence_kind="weekday",
         )
-        add_transport_schedule(
+        second_schedule = add_transport_schedule(
             db,
             vehicle=vehicle,
             service_scope="regular",
             route_kind="work_to_home",
             recurrence_kind="weekday",
+        )
+        db.flush()
+        db.add(
+            TransportVehicleScheduleException(
+                vehicle_schedule_id=second_schedule.id,
+                service_date=friday,
+                created_at=timestamp,
+            )
         )
 
         user = User(
@@ -2951,12 +2960,8 @@ def test_transport_vehicle_delete_returns_assigned_passengers_to_dashboard_as_ca
         db.commit()
         request_id = request_row.id
         vehicle_id = vehicle.id
-        schedule_id = db.execute(
-            select(TransportVehicleSchedule.id).where(
-                TransportVehicleSchedule.vehicle_id == vehicle.id,
-                TransportVehicleSchedule.route_kind == "home_to_work",
-            )
-        ).scalar_one()
+        schedule_id = first_schedule.id
+        schedule_ids = [first_schedule.id, second_schedule.id]
 
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -2982,24 +2987,44 @@ def test_transport_vehicle_delete_returns_assigned_passengers_to_dashboard_as_ca
             "/api/transport/dashboard",
             params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
         )
+        paired_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "work_to_home"},
+        )
 
     assert refreshed_dashboard.status_code == 200
+    assert paired_dashboard.status_code == 200
     request_row = next(row for row in refreshed_dashboard.json()["regular_requests"] if row["id"] == request_id)
-    assert request_row["assignment_status"] == "cancelled"
+    paired_request_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["id"] == request_id)
+    assert request_row["assignment_status"] == "pending"
+    assert paired_request_row["assignment_status"] == "pending"
     assert request_row["assigned_vehicle"] is None
+    assert paired_request_row["assigned_vehicle"] is None
+    assert all(row["placa"] != "DEL1700" for row in refreshed_dashboard.json()["regular_vehicles"])
+    assert all(row["placa"] != "DEL1700" for row in paired_dashboard.json()["regular_vehicles"])
 
     with SessionLocal() as db:
-        assignments = db.execute(
-            select(TransportAssignment).where(
-                TransportAssignment.request_id == request_id,
-                TransportAssignment.service_date == friday,
-                TransportAssignment.route_kind == "home_to_work",
+        vehicle_row = db.get(Vehicle, vehicle_id)
+        schedules = db.execute(
+            select(TransportVehicleSchedule).where(TransportVehicleSchedule.vehicle_id == vehicle_id)
+        ).scalars().all()
+        schedule_exceptions = db.execute(
+            select(TransportVehicleScheduleException).where(
+                TransportVehicleScheduleException.vehicle_schedule_id.in_(schedule_ids)
             )
         ).scalars().all()
+        assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == request_id)
+        ).scalars().all()
+        notifications = db.execute(
+            select(TransportNotification).where(TransportNotification.request_id == request_id)
+        ).scalars().all()
 
-    assert assignments
-    assert all(row.status == "cancelled" for row in assignments)
-    assert all(row.vehicle_id is None for row in assignments)
+    assert vehicle_row is None
+    assert schedules == []
+    assert schedule_exceptions == []
+    assert assignments == []
+    assert notifications == []
 
 
 def test_transport_regular_assignment_mirrors_to_paired_route_by_default():

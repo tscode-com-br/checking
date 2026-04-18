@@ -380,6 +380,8 @@ button {
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1.18fr) var(--transport-divider-size) minmax(0, 1.12fr) var(--transport-divider-size) minmax(0, 0.96fr);
+  position: relative;
+  z-index: 0;
 }
 
 .transport-pane {
@@ -388,6 +390,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
+  overflow: visible;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
 }
 
@@ -823,6 +827,7 @@ button {
   grid-auto-flow: column;
   grid-auto-columns: 104px;
   grid-template-rows: repeat(1, minmax(0, auto));
+  position: relative;
 }
 
 .transport-vehicle-grid.is-management-table {
@@ -907,7 +912,7 @@ button {
 }
 
 .transport-vehicle-tile.is-expanded {
-  z-index: 4;
+  z-index: 240;
 }
 
 .transport-vehicle-button {
@@ -965,7 +970,7 @@ button {
   position: absolute;
   top: 0;
   left: calc(100% + 10px);
-  z-index: 1;
+  z-index: 260;
   width: 248px;
   display: grid;
   gap: 8px;
@@ -977,6 +982,10 @@ button {
   transition:
     transform 160ms ease,
     opacity 160ms ease;
+}
+
+.transport-vehicle-details .transport-vehicle-delete-button {
+  justify-self: center;
 }
 
 .transport-vehicle-delete-button {

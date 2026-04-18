@@ -44,13 +44,13 @@ from ..services.time_utils import now_sgt
 from ..services.transport import (
     build_transport_dashboard,
     create_transport_vehicle_registration,
+    delete_transport_vehicle_registration,
     find_transport_vehicle_schedule,
     get_paired_route_kind,
     is_transport_registered_user,
     list_workplaces,
     process_bot_message,
     queue_assignment_notification,
-    remove_transport_vehicle_availability,
     request_applies_to_date,
     update_transport_assignment,
 )
@@ -219,13 +219,13 @@ def delete_transport_vehicle_for_route(
     db: Session = Depends(get_db),
 ) -> AdminActionResponse:
     try:
-        remove_transport_vehicle_availability(db, schedule_id=schedule_id, service_date=service_date)
+        delete_transport_vehicle_registration(db, schedule_id=schedule_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     db.commit()
     notify_admin_data_changed("event")
-    return AdminActionResponse(ok=True, message="Vehicle removed from the selected route.")
+    return AdminActionResponse(ok=True, message="Vehicle deleted from the database.")
 
 
 @router.post("/assignments", response_model=AdminActionResponse)

@@ -1393,11 +1393,11 @@
         }
       )
         .then(function () {
-          setStatus("Vehicle removed from the selected route.", "success");
+          setStatus("Vehicle deleted from the database.", "success");
           return loadDashboard(dateStore.getValue(), { announce: false });
         })
         .catch(function (error) {
-          handleProtectedRequestError(error, "Could not remove the selected vehicle.");
+          handleProtectedRequestError(error, "Could not delete the selected vehicle.");
         });
     }
 

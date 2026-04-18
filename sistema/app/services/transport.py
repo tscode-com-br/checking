@@ -277,53 +277,56 @@ def create_transport_vehicle_registration(
     return vehicle, created_schedules
 
 
-def remove_transport_vehicle_availability(
+def delete_transport_vehicle_registration(
     db: Session,
     *,
     schedule_id: int,
-    service_date: date,
-) -> TransportVehicleSchedule:
-    timestamp = now_sgt()
+) -> Vehicle:
     schedule = db.get(TransportVehicleSchedule, schedule_id)
-    if schedule is None or not schedule.is_active:
+    if schedule is None:
         raise ValueError("Vehicle schedule not found.")
-    if not vehicle_schedule_applies_to_date(schedule, service_date):
-        raise ValueError("The vehicle schedule does not apply to the selected date.")
 
-    if schedule.recurrence_kind == "single_date":
-        schedule.is_active = False
-        schedule.updated_at = timestamp
-    else:
-        existing_exception = db.execute(
-            select(TransportVehicleScheduleException).where(
-                TransportVehicleScheduleException.vehicle_schedule_id == schedule.id,
-                TransportVehicleScheduleException.service_date == service_date,
-            )
-        ).scalar_one_or_none()
-        if existing_exception is None:
-            db.add(
-                TransportVehicleScheduleException(
-                    vehicle_schedule_id=schedule.id,
-                    service_date=service_date,
-                    created_at=timestamp,
-                )
-            )
+    vehicle = db.get(Vehicle, schedule.vehicle_id)
+    if vehicle is None:
+        raise ValueError("Vehicle not found.")
 
-    assignments = db.execute(
-        select(TransportAssignment).where(
-            TransportAssignment.service_date == service_date,
-            TransportAssignment.route_kind == schedule.route_kind,
-            TransportAssignment.vehicle_id == schedule.vehicle_id,
-        )
+    schedule_ids = db.execute(
+        select(TransportVehicleSchedule.id).where(TransportVehicleSchedule.vehicle_id == vehicle.id)
     ).scalars().all()
-    for assignment in assignments:
-        assignment.vehicle_id = None
-        assignment.status = "cancelled"
-        assignment.response_message = "Vehicle removed from this route"
-        assignment.updated_at = timestamp
-        assignment.notified_at = None
+    assignment_ids = db.execute(
+        select(TransportAssignment.id).where(TransportAssignment.vehicle_id == vehicle.id)
+    ).scalars().all()
 
-    return schedule
+    if assignment_ids:
+        notifications = db.execute(
+            select(TransportNotification).where(TransportNotification.assignment_id.in_(assignment_ids))
+        ).scalars().all()
+        for notification in notifications:
+            db.delete(notification)
+
+        assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.id.in_(assignment_ids))
+        ).scalars().all()
+        for assignment in assignments:
+            db.delete(assignment)
+
+    if schedule_ids:
+        schedule_exceptions = db.execute(
+            select(TransportVehicleScheduleException).where(
+                TransportVehicleScheduleException.vehicle_schedule_id.in_(schedule_ids)
+            )
+        ).scalars().all()
+        for schedule_exception in schedule_exceptions:
+            db.delete(schedule_exception)
+
+        schedules = db.execute(
+            select(TransportVehicleSchedule).where(TransportVehicleSchedule.id.in_(schedule_ids))
+        ).scalars().all()
+        for vehicle_schedule in schedules:
+            db.delete(vehicle_schedule)
+
+    db.delete(vehicle)
+    return vehicle
 
 
 def upsert_transport_request(
