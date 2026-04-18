@@ -1,6 +1,6 @@
 """add route-aware transport assignments and vehicle schedules
 
-Revision ID: 0021_add_transport_routes_and_vehicle_schedules
+Revision ID: 0021_transport_routes_sched
 Revises: 0020_add_user_password_hash
 Create Date: 2026-04-18 22:10:00
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0021_add_transport_routes_and_vehicle_schedules"
+revision = "0021_transport_routes_sched"
 down_revision = "0020_add_user_password_hash"
 branch_labels = None
 depends_on = None
