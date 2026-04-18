@@ -433,9 +433,7 @@
         }
 
         if (!response.ok) {
-          const error = new Error(
-            (payload && (payload.detail || payload.message)) || `HTTP ${response.status}`
-          );
+          const error = new Error(formatApiErrorMessage(payload, response.status));
           error.status = response.status;
           error.payload = payload;
           throw error;
@@ -444,6 +442,64 @@
         return payload;
       });
     });
+  }
+
+  function extractApiMessage(value) {
+    if (typeof value === "string") {
+      return value.trim();
+    }
+
+    if (Array.isArray(value)) {
+      return value
+        .map(function (item) {
+          return extractApiMessage(item);
+        })
+        .filter(Boolean)
+        .join(" ");
+    }
+
+    if (value && typeof value === "object") {
+      if (typeof value.msg === "string" && value.msg.trim()) {
+        return value.msg.trim();
+      }
+      if (typeof value.message === "string" && value.message.trim()) {
+        return value.message.trim();
+      }
+      if (typeof value.detail === "string" && value.detail.trim()) {
+        return value.detail.trim();
+      }
+    }
+
+    return "";
+  }
+
+  function formatApiErrorMessage(payload, statusCode) {
+    const message = extractApiMessage(payload && (payload.detail !== undefined ? payload.detail : payload && payload.message));
+    return message || `HTTP ${statusCode}`;
+  }
+
+  function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
+    const serviceScope = String(formData.get("service_scope") || "regular");
+    const payload = {
+      service_scope: serviceScope,
+      service_date: String(serviceDate || ""),
+      tipo: String(formData.get("tipo") || "carro"),
+      placa: String(formData.get("placa") || ""),
+      color: String(formData.get("color") || ""),
+      lugares: Number(formData.get("lugares") || 0),
+      tolerance: Number(formData.get("tolerance") || 0),
+    };
+
+    if (serviceScope === "extra") {
+      payload.route_kind = String(formData.get("route_kind") || selectedRouteKind || "home_to_work");
+      return payload;
+    }
+
+    if (serviceScope === "weekend") {
+      payload.every_weekend = Boolean(formData.get("every_weekend"));
+    }
+
+    return payload;
   }
 
   function mapVehicleTypeLabel(value) {
@@ -878,17 +934,7 @@
       vehicleForm.addEventListener("submit", function (event) {
         event.preventDefault();
         const formData = new FormData(vehicleForm);
-        const payload = {
-          service_scope: String(formData.get("service_scope") || "regular"),
-          service_date: getCurrentServiceDateIso(),
-          tipo: String(formData.get("tipo") || "carro"),
-          placa: String(formData.get("placa") || ""),
-          color: String(formData.get("color") || ""),
-          lugares: Number(formData.get("lugares") || 0),
-          tolerance: Number(formData.get("tolerance") || 0),
-          route_kind: String(formData.get("route_kind") || getSelectedRouteKind()),
-          every_weekend: Boolean(formData.get("every_weekend")),
-        };
+        const payload = buildVehicleCreatePayload(formData, getCurrentServiceDateIso(), getSelectedRouteKind());
 
         requestJson("/api/transport/vehicles", {
           method: "POST",
@@ -1447,8 +1493,11 @@
   }
 
   const transportPageApi = {
+    buildVehicleCreatePayload,
     clampValue,
     createTransportDateStore,
+    extractApiMessage,
+    formatApiErrorMessage,
     formatTransportDate,
     formatIsoDate,
     getTransportDateState,

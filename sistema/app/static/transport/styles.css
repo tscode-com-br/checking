@@ -153,7 +153,7 @@ button {
 
 .transport-topbar-auth {
   display: grid;
-  grid-template-columns: repeat(2, minmax(86px, auto));
+  grid-template-columns: repeat(2, 120px);
   gap: 10px;
   align-items: end;
 }
@@ -161,6 +161,7 @@ button {
 .transport-auth-field {
   display: grid;
   gap: 4px;
+  width: 120px;
 }
 
 .transport-auth-label {
@@ -168,18 +169,20 @@ button {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--transport-text-soft);
-  text-align: left;
+  text-align: center;
 }
 
 .transport-auth-shell {
   --transport-auth-background: rgba(9, 9, 9, 0.88);
   --transport-auth-text-color: var(--transport-text);
+  position: relative;
   min-height: 36px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 109, 84, 0.55);
+  justify-content: center;
+  padding: 0 12px;
+  border: 2px solid rgba(255, 109, 84, 0.55);
   border-radius: 12px;
   background: var(--transport-auth-background);
   transition:
@@ -192,16 +195,25 @@ button {
 .transport-auth-shell.is-authenticated {
   --transport-auth-text-color: #74ffbe;
   border-color: rgba(76, 209, 147, 0.7);
-  box-shadow: 0 0 0 1px rgba(76, 209, 147, 0.18);
+  box-shadow: 0 0 0 1px rgba(76, 209, 147, 0.24), 0 0 14px rgba(76, 209, 147, 0.18);
 }
 
 .transport-auth-shell.is-logged-out {
   --transport-auth-text-color: #ff8d7c;
-  border-color: rgba(255, 109, 84, 0.58);
+  border-color: #ff544f;
+  box-shadow: 0 0 0 1px rgba(255, 84, 79, 0.36), 0 0 16px rgba(255, 84, 79, 0.22);
 }
 
 .transport-auth-shell:focus-within {
   box-shadow: 0 0 0 2px rgba(72, 212, 206, 0.24);
+}
+
+.transport-auth-shell.is-logged-out:focus-within {
+  box-shadow: 0 0 0 2px rgba(255, 84, 79, 0.42), 0 0 18px rgba(255, 84, 79, 0.28);
+}
+
+.transport-auth-shell[data-transport-auth-shell="key"] {
+  padding-right: 36px;
 }
 
 .transport-auth-input {
@@ -216,7 +228,12 @@ button {
   caret-color: var(--transport-auth-text-color);
   -webkit-text-fill-color: var(--transport-auth-text-color);
   font-weight: 600;
+  text-align: center;
   text-transform: uppercase;
+}
+
+.transport-auth-shell[data-transport-auth-shell="key"] .transport-auth-input {
+  padding-left: 18px;
 }
 
 .transport-auth-input,
@@ -248,9 +265,12 @@ button {
 }
 
 .transport-auth-plus {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 22px;
   height: 22px;
-  flex: 0 0 auto;
   border: none;
   border-radius: 999px;
   display: inline-flex;
@@ -264,7 +284,7 @@ button {
 }
 
 .transport-auth-plus:hover {
-  transform: translateY(-1px);
+  transform: translateY(-50%) scale(1.04);
 }
 
 .transport-route-toggle {

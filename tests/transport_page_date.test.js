@@ -120,3 +120,73 @@ test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five 
     ]
   );
 });
+
+test('buildVehicleCreatePayload only sends route_kind for extra vehicles', () => {
+  const regularFormData = new FormData();
+  regularFormData.set('service_scope', 'regular');
+  regularFormData.set('tipo', 'carro');
+  regularFormData.set('placa', 'ABC1234');
+  regularFormData.set('color', 'Black');
+  regularFormData.set('lugares', '4');
+  regularFormData.set('tolerance', '12');
+  regularFormData.set('route_kind', 'work_to_home');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(regularFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'regular',
+      service_date: '2026-04-18',
+      tipo: 'carro',
+      placa: 'ABC1234',
+      color: 'Black',
+      lugares: 4,
+      tolerance: 12,
+    }
+  );
+
+  const extraFormData = new FormData();
+  extraFormData.set('service_scope', 'extra');
+  extraFormData.set('tipo', 'van');
+  extraFormData.set('placa', 'XYZ9000');
+  extraFormData.set('color', 'White');
+  extraFormData.set('lugares', '10');
+  extraFormData.set('tolerance', '18');
+  extraFormData.set('route_kind', 'work_to_home');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(extraFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'extra',
+      service_date: '2026-04-18',
+      tipo: 'van',
+      placa: 'XYZ9000',
+      color: 'White',
+      lugares: 10,
+      tolerance: 18,
+      route_kind: 'work_to_home',
+    }
+  );
+});
+
+test('formatApiErrorMessage extracts readable messages from FastAPI validation payloads', () => {
+  assert.equal(
+    transportPage.formatApiErrorMessage(
+      {
+        detail: [
+          {
+            type: 'value_error',
+            loc: ['body'],
+            msg: 'Value error, route_kind is only allowed for extra vehicles',
+          },
+        ],
+      },
+      422
+    ),
+    'Value error, route_kind is only allowed for extra vehicles'
+  );
+
+  assert.equal(
+    transportPage.formatApiErrorMessage({ detail: 'Vehicle already exists.' }, 409),
+    'Vehicle already exists.'
+  );
+});
