@@ -539,7 +539,7 @@
   }
 
   function closePasswordDialog() {
-    if (!passwordDialog || !passwordDialogBackdrop) {
+    if (!passwordDialog || !passwordDialogBackdrop || passwordDialog.hidden) {
       return;
     }
 
@@ -572,7 +572,7 @@
   }
 
   function closeRegistrationDialog() {
-    if (!registrationDialog || !registrationDialogBackdrop) {
+    if (!registrationDialog || !registrationDialogBackdrop || registrationDialog.hidden) {
       return;
     }
 
@@ -2168,6 +2168,61 @@
     restorePersistedUserSettingsForChave(chaveInput.value);
   }
 
+  function prepareChaveInputForNewEntry() {
+    const hasVisibleValue = Boolean(chaveInput.value || passwordInput.value);
+    if (!hasVisibleValue) {
+      return;
+    }
+
+    chaveInput.value = '';
+    passwordInput.value = '';
+    writePersistedChave('');
+
+    if (authStatusAbortController) {
+      authStatusAbortController.abort();
+      authStatusAbortController = null;
+    }
+
+    authState.statusLoading = false;
+    authState.chave = '';
+    authState.found = false;
+    authState.hasPassword = false;
+    clearTypedPasswordAuthentication();
+    authState.statusResolved = false;
+    clearProtectedClientState();
+    syncFormControlStates();
+    setAuthenticationPrompt();
+
+    void logoutWebSession({ silent: true });
+  }
+
+  function preparePasswordInputForNewEntry() {
+    if (!passwordInput.value) {
+      return;
+    }
+
+    passwordInput.value = '';
+    authState.statusLoading = false;
+    applyAuthenticationLockedState({
+      chave: getActiveChave(),
+      found: authState.found,
+      hasPassword: authState.hasPassword,
+      message: authState.hasPassword ? 'Digite sua senha para iniciar.' : undefined,
+    });
+
+    if (authState.hasPassword || authState.passwordVerified || authState.authenticated) {
+      void logoutWebSession({ silent: true });
+    }
+  }
+
+  chaveInput.addEventListener('pointerdown', () => {
+    prepareChaveInputForNewEntry();
+  });
+
+  passwordInput.addEventListener('pointerdown', () => {
+    preparePasswordInputForNewEntry();
+  });
+
   chaveInput.addEventListener('input', () => {
     const previousChave = authState.chave;
     const sanitized = sanitizeChave(chaveInput.value);
@@ -2176,7 +2231,16 @@
     }
     writePersistedChave(sanitized);
 
-    if (sanitized !== previousChave) {
+    const shouldResetResolvedKeyState = sanitized !== previousChave && (
+      previousChave.length === 4
+      || Boolean(passwordInput.value)
+      || authState.hasPassword
+      || authState.authenticated
+      || authState.passwordVerified
+      || authState.statusResolved
+    );
+
+    if (shouldResetResolvedKeyState) {
       clearTypedPasswordAuthentication();
       authState.found = false;
       authState.hasPassword = false;
@@ -2193,6 +2257,10 @@
       void refreshAuthenticationStatus(sanitized, {
         schedulePasswordVerification: true,
       });
+
+      if (document.activeElement === chaveInput) {
+        dismissActiveKeyboard();
+      }
       return;
     }
 
