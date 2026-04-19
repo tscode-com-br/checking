@@ -1,6 +1,6 @@
 """add transport request weekday selections and extra departure time
 
-Revision ID: 0028_transport_request_days_and_extra_departure
+Revision ID: 0028_transport_req_extra_depart
 Revises: 0027_transport_last_update_time
 Create Date: 2026-04-19 22:40:00
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0028_transport_request_days_and_extra_departure"
+revision = "0028_transport_req_extra_depart"
 down_revision = "0027_transport_last_update_time"
 branch_labels = None
 depends_on = None
