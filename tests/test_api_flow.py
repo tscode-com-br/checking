@@ -3755,7 +3755,7 @@ def test_web_password_change_replaces_previous_password():
         assert new_login.json()["has_password"] is True
 
 
-def test_web_transport_vehicle_request_requires_same_day_checkin_and_returns_pending_state(monkeypatch):
+def test_web_transport_vehicle_request_returns_pending_state_without_same_day_checkin_requirement(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 7, 30, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
@@ -3776,15 +3776,6 @@ def test_web_transport_vehicle_request_requires_same_day_checkin_and_returns_pen
             ensure_user_exists=False,
         )
         assert registered.status_code == 200
-
-        blocked = client.post(
-            "/api/web/transport/vehicle-request",
-            json={"chave": "WT11", "request_kind": "regular"},
-        )
-        assert blocked.status_code == 409
-        assert blocked.json()["detail"] == "Realize um check-in hoje para solicitar transporte"
-
-        set_user_checkin_state(chave="WT11", event_time=fixed_now, local="Workplace Gate")
 
         created = client.post(
             "/api/web/transport/vehicle-request",

@@ -167,12 +167,6 @@ def _resolve_web_transport_state(*, db: Session, user: User) -> WebTransportStat
     )
 
 
-def _require_same_day_checkin_for_transport(*, db: Session, user: User) -> None:
-    history_state = build_web_check_history_state(db, chave=user.chave)
-    if history_state.last_checkin_at is None or not is_same_singapore_day(history_state.last_checkin_at, now_sgt()):
-        raise HTTPException(status_code=409, detail="Realize um check-in hoje para solicitar transporte")
-
-
 def _require_owned_transport_request(*, user: User, db: Session, request_id: int):
     transport_request = db.get(TransportRequest, request_id)
     if transport_request is None or transport_request.user_id != user.id or transport_request.status != "active":
@@ -214,7 +208,6 @@ def _create_web_transport_request_response(
     db: Session,
 ) -> WebTransportActionResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
-    _require_same_day_checkin_for_transport(db=db, user=user)
 
     service_date = now_sgt().date()
     existing_request = _find_existing_web_transport_request(

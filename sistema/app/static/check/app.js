@@ -351,7 +351,7 @@
     const authBusy = isPasswordActionBusy();
     const dialogOpen = isAnyDialogOpen();
     const unlocked = isApplicationUnlocked();
-    const transportAvailable = unlocked && clientState.hasCurrentDayCheckIn(latestHistoryState, new Date());
+    const transportAvailable = unlocked;
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
@@ -953,11 +953,6 @@
 
     if (!isApplicationUnlocked()) {
       setStatus('Digite sua chave e valide a senha para acessar Transporte.', 'error');
-      return;
-    }
-
-    if (!clientState.hasCurrentDayCheckIn(latestHistoryState, new Date())) {
-      setStatus('Realize um check-in hoje para acessar Transporte.', 'error');
       return;
     }
 
