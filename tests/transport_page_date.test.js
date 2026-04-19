@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const transportPage = require('../sistema/app/static/transport/app.js');
 
@@ -178,6 +180,45 @@ test('getDefaultVehicleSeatCount matches the configured defaults for each vehicl
   assert.equal(transportPage.getDefaultVehicleSeatCount('van'), 10);
   assert.equal(transportPage.getDefaultVehicleSeatCount('onibus'), 40);
   assert.equal(transportPage.getDefaultVehicleSeatCount('unknown'), 3);
+});
+
+test('getDefaultVehicleFormValues returns the prefilled create-modal defaults', () => {
+  assert.deepEqual(transportPage.getDefaultVehicleFormValues('carro'), {
+    tipo: 'carro',
+    lugares: 3,
+    tolerance: 5,
+  });
+  assert.deepEqual(transportPage.getDefaultVehicleFormValues('minivan'), {
+    tipo: 'minivan',
+    lugares: 6,
+    tolerance: 5,
+  });
+  assert.deepEqual(transportPage.getDefaultVehicleFormValues('van'), {
+    tipo: 'van',
+    lugares: 10,
+    tolerance: 5,
+  });
+  assert.deepEqual(transportPage.getDefaultVehicleFormValues('onibus'), {
+    tipo: 'onibus',
+    lugares: 40,
+    tolerance: 5,
+  });
+  assert.deepEqual(transportPage.getDefaultVehicleFormValues('unknown'), {
+    tipo: 'carro',
+    lugares: 3,
+    tolerance: 5,
+  });
+});
+
+test('vehicle modal markup includes the default places and tolerance values', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+
+  assert.match(transportHtml, /<option value="carro" selected>Car<\/option>/);
+  assert.match(transportHtml, /<input type="number" name="lugares" min="1" max="99" value="3" required \/>/);
+  assert.match(transportHtml, /<input type="number" name="tolerance" min="0" max="240" value="5" required \/>/);
 });
 
 test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {

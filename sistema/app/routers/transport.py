@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import date
 from typing import Literal
 
@@ -71,6 +72,41 @@ from ..services.user_sync import find_user_by_chave
 
 
 router = APIRouter(prefix="/api/transport", tags=["transport"])
+logger = logging.getLogger(__name__)
+
+
+def _dispatch_transport_notification_and_build_suffix(
+    *,
+    db: Session,
+    queued_notification: TransportNotification | None,
+    success_suffix: str,
+    failure_suffix: str,
+    configuration_suffix: str,
+    unexpected_suffix: str,
+) -> str:
+    if queued_notification is None:
+        return ""
+
+    try:
+        dispatch_result = whatsapp_meta.dispatch_pending_transport_notifications(
+            db,
+            notification_ids=[queued_notification.id],
+            limit=1,
+        )
+        if dispatch_result.sent > 0:
+            return success_suffix
+        if dispatch_result.failed > 0:
+            return failure_suffix
+    except whatsapp_meta.WhatsAppConfigurationError:
+        return configuration_suffix
+    except Exception:
+        logger.exception(
+            "Unexpected error while dispatching transport WhatsApp notification",
+            extra={"notification_id": queued_notification.id},
+        )
+        return unexpected_suffix
+
+    return ""
 
 
 def build_transport_identity(user: User) -> TransportIdentity:
@@ -330,20 +366,14 @@ def save_transport_assignment(
         )
 
     db.commit()
-    notification_message_suffix = ""
-    if queued_notification is not None:
-        try:
-            dispatch_result = whatsapp_meta.dispatch_pending_transport_notifications(
-                db,
-                notification_ids=[queued_notification.id],
-                limit=1,
-            )
-            if dispatch_result.sent > 0:
-                notification_message_suffix = " WhatsApp notification sent."
-            elif dispatch_result.failed > 0:
-                notification_message_suffix = " Assignment saved, but WhatsApp delivery failed and the notification is still pending."
-        except whatsapp_meta.WhatsAppConfigurationError:
-            notification_message_suffix = " Assignment saved; the WhatsApp notification is pending because the Cloud API is not configured."
+    notification_message_suffix = _dispatch_transport_notification_and_build_suffix(
+        db=db,
+        queued_notification=queued_notification,
+        success_suffix=" WhatsApp notification sent.",
+        failure_suffix=" Assignment saved, but WhatsApp delivery failed and the notification is still pending.",
+        configuration_suffix=" Assignment saved; the WhatsApp notification is pending because the Cloud API is not configured.",
+        unexpected_suffix=" Assignment saved; the WhatsApp notification failed unexpectedly.",
+    )
 
     notify_admin_data_changed("event")
     return AdminActionResponse(ok=True, message=f"Transport assignment saved successfully.{notification_message_suffix}")
@@ -383,20 +413,14 @@ def reject_transport_request(
         )
 
     db.commit()
-    notification_message_suffix = ""
-    if queued_notification is not None:
-        try:
-            dispatch_result = whatsapp_meta.dispatch_pending_transport_notifications(
-                db,
-                notification_ids=[queued_notification.id],
-                limit=1,
-            )
-            if dispatch_result.sent > 0:
-                notification_message_suffix = " WhatsApp notification sent."
-            elif dispatch_result.failed > 0:
-                notification_message_suffix = " Request rejected, but WhatsApp delivery failed and the notification is still pending."
-        except whatsapp_meta.WhatsAppConfigurationError:
-            notification_message_suffix = " Request rejected; the WhatsApp notification is pending because the Cloud API is not configured."
+    notification_message_suffix = _dispatch_transport_notification_and_build_suffix(
+        db=db,
+        queued_notification=queued_notification,
+        success_suffix=" WhatsApp notification sent.",
+        failure_suffix=" Request rejected, but WhatsApp delivery failed and the notification is still pending.",
+        configuration_suffix=" Request rejected; the WhatsApp notification is pending because the Cloud API is not configured.",
+        unexpected_suffix=" Request rejected; the WhatsApp notification failed unexpectedly.",
+    )
 
     notify_admin_data_changed("event")
     return AdminActionResponse(

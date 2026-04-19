@@ -289,7 +289,7 @@
           <label class="transport-field">
             <span>Type</span>
             <select name="tipo" required>
-              <option value="carro">Car</option>
+              <option value="carro" selected>Car</option>
               <option value="minivan">Minivan</option>
               <option value="van">Van</option>
               <option value="onibus">Bus</option>
@@ -308,12 +308,12 @@
 
           <label class="transport-field">
             <span>Places</span>
-            <input type="number" name="lugares" min="1" max="99" required />
+            <input type="number" name="lugares" min="1" max="99" value="3" required />
           </label>
 
           <label class="transport-field">
             <span>Tolerance (minutes)</span>
-            <input type="number" name="tolerance" min="0" max="240" required />
+            <input type="number" name="tolerance" min="0" max="240" value="5" required />
           </label>
 
           <label class="transport-field" data-extra-departure-field hidden>

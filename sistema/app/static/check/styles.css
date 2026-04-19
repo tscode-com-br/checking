@@ -865,11 +865,11 @@ header {
 
 .transport-request-builder-label {
   margin: 0;
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #0f766e;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #334155;
+  text-align: left;
 }
 
 .transport-request-weekday-options {
@@ -884,7 +884,7 @@ header {
   gap: 10px;
   min-height: 48px;
   padding: 12px 14px;
-  border: 1px solid rgba(15, 118, 110, 0.16);
+  border: 1px solid rgba(15, 118, 110, 0.14);
   border-radius: 16px;
   background: rgba(240, 253, 250, 0.88);
   color: #0f172a;
@@ -892,8 +892,8 @@ header {
 }
 
 .transport-request-day-chip input {
+  flex: 0 0 auto;
   margin-top: 2px;
-  accent-color: #0f766e;
 }
 
 .transport-request-day-chip span {
@@ -947,7 +947,7 @@ header {
 .transport-request-card {
   width: 100%;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding: 14px 16px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-left: 4px solid transparent;
@@ -1008,6 +1008,9 @@ header {
   font-size: var(--body-size);
   font-weight: 800;
   line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transport-request-card-status {
@@ -1018,6 +1021,7 @@ header {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .transport-request-card-status.is-pending {
@@ -1036,29 +1040,43 @@ header {
   background: rgba(248, 113, 113, 0.14);
 }
 
-.transport-request-card-details {
+.transport-request-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.transport-request-card-date-time {
+  min-width: 0;
   color: #475569;
-  font-size: 0.88rem;
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transport-request-card-actions {
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .transport-request-card-cancel-button {
-  min-height: 32px;
-  padding: 6px 12px;
+  min-height: 26px;
+  padding: 4px 10px;
   border: 1px solid rgba(220, 38, 38, 0.24);
   border-radius: 999px;
   background: rgba(254, 226, 226, 0.92);
   color: #b91c1c;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 800;
   line-height: 1;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .transport-request-card-cancel-button:hover {
@@ -1259,11 +1277,6 @@ header {
     width: 100%;
     min-height: 46px;
     padding: 11px 14px;
-  }
-
-  .transport-request-card-header {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .transport-request-history-list {

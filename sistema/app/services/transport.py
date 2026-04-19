@@ -213,6 +213,22 @@ def _resolve_web_transport_confirmation_deadline_time(
     return active_request.requested_time
 
 
+def _resolve_web_transport_request_item_boarding_time(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date | None,
+    boarding_time: str | None,
+) -> str | None:
+    if service_date is None:
+        return boarding_time
+
+    if transport_request.request_kind in {"regular", "weekend"}:
+        return get_transport_work_to_home_time_for_date(db, service_date=service_date)
+
+    return boarding_time
+
+
 def _resolve_vehicle_departure_time(
     *,
     route_kind: str,
@@ -959,6 +975,13 @@ def _build_web_transport_request_items(
                 request_status = "cancelled"
         else:
             request_status = "rejected" if latest_assignment is not None and latest_assignment.status == "rejected" else "cancelled"
+
+        boarding_time = _resolve_web_transport_request_item_boarding_time(
+            db,
+            transport_request=transport_request,
+            service_date=item_service_date,
+            boarding_time=boarding_time,
+        )
 
         request_items.append(
             WebTransportRequestItemResponse(

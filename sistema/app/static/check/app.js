@@ -260,6 +260,18 @@
   let passwordVerificationRequestToken = 0;
   let lastVerifiedPassword = '';
   let lastObservedPasswordFieldValue = '';
+
+  function resolveTransportEventTargetElement(event) {
+    const target = event ? event.target : null;
+    if (target instanceof Element) {
+      return target;
+    }
+    if (typeof Node !== 'undefined' && target instanceof Node && target.parentElement instanceof Element) {
+      return target.parentElement;
+    }
+    return null;
+  }
+
   const authState = {
     chave: '',
     found: false,
@@ -269,10 +281,12 @@
     statusResolved: false,
     statusLoading: false,
   };
+
   const notificationState = {
     message: '',
     tone: null,
   };
+
   const transportState = {
     status: 'available',
     requestId: null,
@@ -291,6 +305,7 @@
     awarenessConfirmed: false,
     requests: [],
   };
+
   const transportUiState = {
     addressEditorOpen: false,
     requestBuilderKind: null,
@@ -1252,37 +1267,32 @@
     return Number.isNaN(parsedDate.getTime()) ? serviceDateValue : dateFormatter.format(parsedDate);
   }
 
-  function formatTransportRequestCardDetails(requestItem) {
-    const detailParts = [];
-    if (requestItem.requestKind === 'extra') {
-      const serviceDateLabel = formatTransportRequestServiceDate(requestItem.serviceDate);
-      if (serviceDateLabel) {
-        detailParts.push(serviceDateLabel);
-      }
-    } else {
-      const weekdaysLabel = formatTransportRequestWeekdays(requestItem.selectedWeekdays);
-      if (weekdaysLabel) {
-        detailParts.push(weekdaysLabel);
-      }
+  function formatTransportRequestCardTime(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      return '';
     }
 
-    if (requestItem.status === 'confirmed') {
-      if (requestItem.vehiclePlate) {
-        detailParts.push(requestItem.vehiclePlate);
-      }
-      if (requestItem.boardingTime || requestItem.requestedTime) {
-        detailParts.push(formatTransportTimeLabel(requestItem.boardingTime || requestItem.requestedTime));
-      }
-    } else {
-      if (requestItem.requestedTime) {
-        detailParts.push(formatTransportTimeLabel(requestItem.requestedTime));
-      }
-      if (requestItem.status === 'pending' && requestItem.confirmationDeadlineTime) {
-        detailParts.push(`até ${requestItem.confirmationDeadlineTime}`);
-      }
+    const matchedTime = normalizedValue.match(/^(\d{2}:\d{2})/);
+    return matchedTime ? matchedTime[1] : normalizedValue;
+  }
+
+  function formatTransportRequestCardDateTime(requestItem) {
+    const dateLabel = formatTransportRequestServiceDate(requestItem.serviceDate);
+    const timeLabel = formatTransportRequestCardTime(requestItem.boardingTime || requestItem.requestedTime);
+
+    if (dateLabel && timeLabel) {
+      return `${dateLabel} ${timeLabel}`;
+    }
+    if (dateLabel) {
+      return dateLabel;
+    }
+    if (timeLabel) {
+      return timeLabel;
     }
 
-    return detailParts.join(' • ');
+    const weekdaysLabel = formatTransportRequestWeekdays(requestItem.selectedWeekdays);
+    return weekdaysLabel || '--';
   }
 
   function createTransportRequestCard(requestItem) {
@@ -1290,7 +1300,8 @@
     const cardHeader = document.createElement('span');
     const cardTitle = document.createElement('span');
     const cardStatus = document.createElement('span');
-    const cardDetails = document.createElement('span');
+    const cardMeta = document.createElement('div');
+    const cardDateTime = document.createElement('span');
     const cardActions = document.createElement('div');
     const cancelButton = document.createElement('button');
     const transportBusy = transportStateLoading
@@ -1318,8 +1329,10 @@
     cardHeader.appendChild(cardTitle);
     cardHeader.appendChild(cardStatus);
 
-    cardDetails.className = 'transport-request-card-details';
-    cardDetails.textContent = formatTransportRequestCardDetails(requestItem);
+    cardMeta.className = 'transport-request-card-meta';
+
+    cardDateTime.className = 'transport-request-card-date-time';
+    cardDateTime.textContent = formatTransportRequestCardDateTime(requestItem);
 
     cardActions.className = 'transport-request-card-actions';
 
@@ -1334,10 +1347,11 @@
     }
 
     cardElement.appendChild(cardHeader);
-    cardElement.appendChild(cardDetails);
+    cardMeta.appendChild(cardDateTime);
     if (cardActions.childElementCount > 0) {
-      cardElement.appendChild(cardActions);
+      cardMeta.appendChild(cardActions);
     }
+    cardElement.appendChild(cardMeta);
     return cardElement;
   }
 
@@ -1657,7 +1671,7 @@
       applyTransportStatePayload(payload.state || {});
       transportUiState.requestBuilderKind = null;
       transportUiState.acknowledgementChecked = false;
-      clearTransportInlineStatus();
+      setTransportInlineStatus(payload.message || 'Solicitação de transporte cancelada.', 'success');
     } catch (error) {
       if (error && error.isAuthExpired) {
         closeTransportScreen();
@@ -3797,8 +3811,9 @@
 
   if (transportRequestHistoryList) {
     transportRequestHistoryList.addEventListener('click', (event) => {
-      const cancelButton = event.target instanceof Element
-        ? event.target.closest('[data-transport-request-cancel="true"][data-request-id]')
+      const targetElement = resolveTransportEventTargetElement(event);
+      const cancelButton = targetElement
+        ? targetElement.closest('[data-transport-request-cancel="true"][data-request-id]')
         : null;
       if (cancelButton) {
         const requestId = Number(cancelButton.getAttribute('data-request-id'));
@@ -3808,8 +3823,8 @@
         return;
       }
 
-      const requestButton = event.target instanceof Element
-        ? event.target.closest('.transport-request-card[data-request-id]')
+      const requestButton = targetElement
+        ? targetElement.closest('.transport-request-card[data-request-id]')
         : null;
       if (!requestButton) {
         return;
@@ -3827,15 +3842,16 @@
     });
 
     transportRequestHistoryList.addEventListener('keydown', (event) => {
-      const cancelButton = event.target instanceof Element
-        ? event.target.closest('[data-transport-request-cancel="true"][data-request-id]')
+      const targetElement = resolveTransportEventTargetElement(event);
+      const cancelButton = targetElement
+        ? targetElement.closest('[data-transport-request-cancel="true"][data-request-id]')
         : null;
       if (cancelButton) {
         return;
       }
 
-      const requestCard = event.target instanceof Element
-        ? event.target.closest('.transport-request-card[data-request-id]')
+      const requestCard = targetElement
+        ? targetElement.closest('.transport-request-card[data-request-id]')
         : null;
       if (!requestCard || (event.key !== 'Enter' && event.key !== ' ')) {
         return;

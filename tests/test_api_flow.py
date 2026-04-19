@@ -5077,6 +5077,176 @@ def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
         db.commit()
 
 
+def test_web_transport_request_history_uses_next_service_date_and_effective_departure_time(monkeypatch):
+    current_now = {"value": datetime(2026, 4, 18, 9, 10, tzinfo=ZoneInfo(settings.tz_name))}
+    monday = current_now["value"].date() + timedelta(days=2)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: current_now["value"])
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: current_now["value"])
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        location_settings_module.upsert_transport_work_to_home_time_for_date(
+            db,
+            service_date=monday,
+            work_to_home_time="18:10",
+        )
+        db.commit()
+
+    ensure_web_user_exists(chave="WH18", projeto="P80", nome="History Departure Rider")
+    set_user_checkin_state(chave="WH18", event_time=current_now["value"], local="Weekend Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WH18",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WH18", "request_kind": "regular"},
+        )
+        assert created.status_code == 200
+
+        state_response = client.get("/api/web/transport/state", params={"chave": "WH18"})
+        assert state_response.status_code == 200
+
+    state_payload = state_response.json()
+    assert state_payload["requests"]
+    assert state_payload["requests"][0]["status"] == "pending"
+    assert state_payload["requests"][0]["service_date"] == monday.isoformat()
+    assert state_payload["requests"][0]["boarding_time"] == "18:10"
+
+
+def test_web_transport_cancel_pending_request_marks_history_item_cancelled(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 8, 35, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT31", projeto="P80", nome="Pending Cancel Rider")
+    set_user_checkin_state(chave="WT31", event_time=fixed_now, local="Pending Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT31",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT31", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        cancelled = client.post(
+            "/api/web/transport/cancel",
+            json={"chave": "WT31", "request_id": request_id},
+        )
+        assert cancelled.status_code == 200
+
+    cancelled_payload = cancelled.json()
+    assert cancelled_payload["state"]["status"] == "available"
+    assert cancelled_payload["state"]["requests"]
+    assert cancelled_payload["state"]["requests"][0]["request_id"] == request_id
+    assert cancelled_payload["state"]["requests"][0]["status"] == "cancelled"
+    assert cancelled_payload["state"]["requests"][0]["is_active"] is False
+
+
+def test_transport_dashboard_reject_survives_unexpected_whatsapp_dispatch_error(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 9, 5, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    def fail_dispatch(*args, **kwargs):
+        raise RuntimeError("simulated unexpected dispatch failure")
+
+    monkeypatch.setattr(whatsapp_meta_module, "dispatch_pending_transport_notifications", fail_dispatch)
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Reject Fail Hub", address="5 Reject Road", zip="505050", country="Singapore"))
+        user = User(
+            rfid=None,
+            nome="Reject Fail Rider",
+            chave="WR17",
+            projeto="P82",
+            workplace="Reject Fail Hub",
+            end_rua="17 Reject Street",
+            zip="171717",
+            local=None,
+            checkin=True,
+            time=fixed_now,
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:00",
+            single_date=None,
+            created_via="web",
+            status="active",
+            created_at=fixed_now,
+            updated_at=fixed_now,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+
+        db.add(
+            TransportBotSession(
+                chat_id="5511999999999",
+                user_id=user.id,
+                chave=user.chave,
+                state="ready",
+                context_json=None,
+                created_at=fixed_now,
+                updated_at=fixed_now,
+                last_message_at=fixed_now,
+            )
+        )
+        db.commit()
+        request_id = request_row.id
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        rejected = admin_client.post(
+            "/api/transport/requests/reject",
+            json={
+                "request_id": request_id,
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+            },
+        )
+
+    assert rejected.status_code == 200
+    assert "failed unexpectedly" in rejected.json()["message"]
+
+    with SessionLocal() as db:
+        request_row = db.get(TransportRequest, request_id)
+        assignments = db.execute(
+            select(TransportAssignment)
+            .where(TransportAssignment.request_id == request_id)
+            .order_by(TransportAssignment.route_kind, TransportAssignment.service_date)
+        ).scalars().all()
+
+    assert request_row is not None
+    assert request_row.status == "cancelled"
+    assert assignments
+    assert all(row.status == "rejected" for row in assignments)
+
+
 def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_dashboard(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 8, 20, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)

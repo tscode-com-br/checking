@@ -33,6 +33,7 @@
   const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
+  const VEHICLE_DEFAULT_TOLERANCE_MINUTES = 5;
   const VEHICLE_DEFAULT_SEAT_COUNT = {
     carro: 3,
     minivan: 6,
@@ -691,6 +692,22 @@
     return VEHICLE_DEFAULT_SEAT_COUNT[vehicleType] || VEHICLE_DEFAULT_SEAT_COUNT.carro;
   }
 
+  function getDefaultVehicleToleranceMinutes() {
+    return VEHICLE_DEFAULT_TOLERANCE_MINUTES;
+  }
+
+  function getDefaultVehicleFormValues(vehicleType) {
+    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(VEHICLE_DEFAULT_SEAT_COUNT, vehicleType)
+      ? vehicleType
+      : "carro";
+
+    return {
+      tipo: normalizedVehicleType,
+      lugares: getDefaultVehicleSeatCount(normalizedVehicleType),
+      tolerance: getDefaultVehicleToleranceMinutes(),
+    };
+  }
+
   function normalizeVehicleScope(scope) {
     const normalizedScope = String(scope || "").trim().toLowerCase();
     if (normalizedScope === "regular" || normalizedScope === "weekend" || normalizedScope === "extra") {
@@ -704,6 +721,24 @@
       return;
     }
     vehicleForm.elements.lugares.value = String(getDefaultVehicleSeatCount(vehicleType));
+  }
+
+  function applyVehicleFormDefaults(vehicleType) {
+    if (!vehicleForm || !vehicleForm.elements) {
+      return;
+    }
+
+    const defaults = getDefaultVehicleFormValues(vehicleType);
+
+    if (vehicleForm.elements.tipo) {
+      vehicleForm.elements.tipo.value = defaults.tipo;
+    }
+    if (vehicleForm.elements.lugares) {
+      vehicleForm.elements.lugares.value = String(defaults.lugares);
+    }
+    if (vehicleForm.elements.tolerance) {
+      vehicleForm.elements.tolerance.value = String(defaults.tolerance);
+    }
   }
 
   function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
@@ -2131,8 +2166,7 @@
       vehicleForm.reset();
       clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = normalizedScope;
-      applyVehicleSeatDefault(String(vehicleForm.elements.tipo.value || "carro"));
-      vehicleForm.elements.tolerance.value = "5";
+      applyVehicleFormDefaults("carro");
       if (vehicleForm.elements.departure_time) {
         vehicleForm.elements.departure_time.value = "";
       }
@@ -3022,7 +3056,9 @@
     getOrdinalSuffix,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,
+    getDefaultVehicleFormValues,
     getDefaultVehicleSeatCount,
+    getDefaultVehicleToleranceMinutes,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,
     parseStoredTransportDate,
