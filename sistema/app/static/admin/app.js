@@ -31,6 +31,7 @@ let pendingUsersTotal = 0;
 let administratorsTotal = 0;
 let eventsTotal = 0;
 let lastDashboardRefreshAt = null;
+let userTextareaRefreshFrame = null;
 
 const PRESENCE_TABLE_CONFIGS = {
   checkin: {
@@ -299,6 +300,23 @@ function bindAutoTextareaHeight(textarea) {
   }
   updateAutoTextareaHeight(textarea);
   textarea.addEventListener("input", () => updateAutoTextareaHeight(textarea));
+}
+
+function refreshUserFieldTextareaHeights() {
+  document.querySelectorAll(".user-field-textarea").forEach((textarea) => {
+    updateAutoTextareaHeight(textarea);
+  });
+}
+
+function scheduleUserFieldTextareaRefresh() {
+  if (userTextareaRefreshFrame !== null) {
+    window.cancelAnimationFrame(userTextareaRefreshFrame);
+  }
+
+  userTextareaRefreshFrame = window.requestAnimationFrame(() => {
+    userTextareaRefreshFrame = null;
+    refreshUserFieldTextareaHeights();
+  });
 }
 
 function formatDateTime(value) {
@@ -1563,6 +1581,7 @@ function setRegisteredUserEditingState(userId, editing) {
   if (passwordButton) {
     passwordButton.disabled = editing;
   }
+  scheduleUserFieldTextareaRefresh();
   if (editing) {
     rfid.focus();
   }
@@ -1641,6 +1660,7 @@ async function loadRegisteredUsers() {
   applyResponsiveLabels("usersBody");
   syncUserTitles();
   updateDashboardSummary();
+  scheduleUserFieldTextareaRefresh();
 }
 
 async function loadEvents() {
@@ -2278,6 +2298,7 @@ function bindActions() {
       }
     }
   });
+  window.addEventListener("resize", scheduleUserFieldTextareaRefresh);
 
   document.getElementById("eventArchivesBody").addEventListener("click", (event) => {
     const target = event.target;
