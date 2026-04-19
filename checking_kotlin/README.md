@@ -17,6 +17,7 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Estado atual
 
+- Fase 7 concluída: captura real de localização em foreground com Fused Location Provider
 - Fase 6 concluída: permissões runtime Android e configurações de background
 - Fase 5 concluída: API, fluxos manuais e UI Compose funcional
 - scaffold Android nativo criado
@@ -31,6 +32,8 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - controller nativo com sync de histórico, refresh de catálogo e envio manual
 - ViewModel funcional conectado à UI Compose
 - permissões runtime conectadas para localização precisa, localização em segundo plano, notificações Android 13+, bateria e Auto-Start OEM
+- stream foreground conectado ao Fused Location Provider quando a busca por localização está ativa
+- resolução de local capturado, match de local monitorado, filtro de precisão e deduplicação de leituras
 - lint reduzido de 18 para 2 warnings restantes de Hilt/AGP
 - baseline da migração documentado em `docs/migration-phase-0-baseline.md`
 - decisão de identidade documentada em `docs/migration-phase-1-identity.md`
@@ -39,6 +42,7 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - controller documentado em `docs/migration-phase-4-controller.md`
 - UI Compose documentada em `docs/migration-phase-5-compose-ui.md`
 - permissões Android documentadas em `docs/migration-phase-6-permissions.md`
+- localização foreground documentada em `docs/migration-phase-7-foreground-location.md`
 
 ## Comandos
 
@@ -49,6 +53,6 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Próximos passos
 
-1. Implementar captura real de localização em foreground.
-2. Conectar automação de localização ao foreground service.
-3. Validar permissões/background em dispositivo físico Android 13, 14 e 15+.
+1. Conectar automação de localização ao foreground service.
+2. Implementar automação completa de check-in/check-out em background.
+3. Validar permissões/background/localização em dispositivo físico Android 13, 14 e 15+.

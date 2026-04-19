@@ -103,6 +103,33 @@ class CheckingLocationLogicTest {
     }
 
     @Test
+    fun resolveCapturedLocationLabel_reproducesSpecialForegroundLabels() {
+        val checkoutLocation = buildScenarioLocations().last()
+
+        assertEquals(
+            CheckingLocationLogic.checkoutZoneCapturedLocation,
+            CheckingLocationLogic.resolveCapturedLocationLabel(
+                location = checkoutLocation,
+                nearestWorkplaceDistanceMeters = 10.0,
+            ),
+        )
+        assertEquals(
+            CheckingLocationLogic.outsideWorkplaceCapturedLocation,
+            CheckingLocationLogic.resolveCapturedLocationLabel(
+                location = null,
+                nearestWorkplaceDistanceMeters = 2_500.0,
+            ),
+        )
+        assertEquals(
+            CheckingLocationLogic.uncatalogedCapturedLocation,
+            CheckingLocationLogic.resolveCapturedLocationLabel(
+                location = null,
+                nearestWorkplaceDistanceMeters = 500.0,
+            ),
+        )
+    }
+
+    @Test
     fun recordLocationFetchHistory_deduplicatesConsecutiveCoordinates() {
         var history = emptyList<LocationFetchEntry>()
         history = CheckingLocationLogic.recordLocationFetchHistory(

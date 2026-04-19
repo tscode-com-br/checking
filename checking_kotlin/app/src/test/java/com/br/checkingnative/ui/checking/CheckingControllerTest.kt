@@ -15,6 +15,7 @@ import com.br.checkingnative.data.remote.CheckingApiService
 import com.br.checkingnative.data.remote.CheckingHttpRequest
 import com.br.checkingnative.data.remote.CheckingHttpResponse
 import com.br.checkingnative.data.remote.CheckingHttpTransport
+import com.br.checkingnative.domain.model.CheckingLocationSample
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
@@ -268,6 +269,80 @@ class CheckingControllerTest {
             "Base Catalogo",
             fixture.locationRepository.loadLocations().single().local,
         )
+    }
+
+    @Test
+    fun processForegroundLocationUpdate_updatesDetectedMatchAndHistory() = runBlocking {
+        val fixture = createFixture("controller_foreground_location.preferences_pb")
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                locationSharingEnabled = true,
+                locationAccuracyThresholdMeters = 30,
+                isLoading = false,
+            ),
+        )
+        fixture.dao.replaceAll(listOf(buildControllerLocation(id = 1).toEntity()))
+        fixture.controller.initialize()
+
+        val processed = fixture.controller.processForegroundLocationUpdate(
+            CheckingLocationSample(
+                timestamp = Instant.parse("2026-04-19T10:00:00Z"),
+                latitude = -23.0,
+                longitude = -44.0,
+                accuracyMeters = 12.0,
+            ),
+        )
+
+        val state = fixture.controller.uiState.value.state
+        assertTrue(processed)
+        assertEquals("Base 1", state.lastDetectedLocation)
+        assertEquals("Base 1", state.lastMatchedLocation)
+        assertEquals(Instant.parse("2026-04-19T10:00:00Z"), state.lastLocationUpdateAt)
+        assertEquals(1, state.locationFetchHistory.size)
+    }
+
+    @Test
+    fun processForegroundLocationUpdate_rejectsPoorAccuracyAndDuplicates() = runBlocking {
+        val fixture = createFixture("controller_location_filters.preferences_pb")
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                locationSharingEnabled = true,
+                locationAccuracyThresholdMeters = 30,
+                isLoading = false,
+            ),
+        )
+        fixture.dao.replaceAll(listOf(buildControllerLocation(id = 1).toEntity()))
+        fixture.controller.initialize()
+
+        val poorAccuracyProcessed = fixture.controller.processForegroundLocationUpdate(
+            CheckingLocationSample(
+                timestamp = Instant.parse("2026-04-19T10:00:00Z"),
+                latitude = -23.0,
+                longitude = -44.0,
+                accuracyMeters = 80.0,
+            ),
+        )
+        val firstProcessed = fixture.controller.processForegroundLocationUpdate(
+            CheckingLocationSample(
+                timestamp = Instant.parse("2026-04-19T10:00:01Z"),
+                latitude = -23.0,
+                longitude = -44.0,
+                accuracyMeters = 12.0,
+            ),
+        )
+        val duplicateProcessed = fixture.controller.processForegroundLocationUpdate(
+            CheckingLocationSample(
+                timestamp = Instant.parse("2026-04-19T10:00:01.500Z"),
+                latitude = -23.0,
+                longitude = -44.0,
+                accuracyMeters = 12.0,
+            ),
+        )
+
+        assertFalse(poorAccuracyProcessed)
+        assertTrue(firstProcessed)
+        assertFalse(duplicateProcessed)
+        assertEquals(1, fixture.controller.uiState.value.state.locationFetchHistory.size)
     }
 
     @Test

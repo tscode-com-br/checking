@@ -65,7 +65,7 @@ Implementar flags derivadas: canEnableLocationSharing, CheckingPermissionSetting
 Garantir que switches voltem para off quando permissões forem revogadas.
 Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
-Fase 7 - Localização Em Foreground
+Fase 7 - Localização Em Foreground (já implementada)
 
 Adicionar dependência de localização nativa, idealmente Fused Location Provider.
 Capturar posição atual ao ativar busca por localização.
@@ -74,6 +74,7 @@ Rejeitar leituras com precisão pior que threshold.
 Deduplicar leituras repetidas dentro de 1 segundo e mesma coordenada.
 Atualizar lastDetectedLocation, lastMatchedLocation, lastLocationUpdateAt e histórico das últimas 10 posições.
 Reproduzir labels especiais: Zona de Check-Out, Fora do Ambiente de Trabalho, Localização não Cadastrada.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
 Fase 8 - Automação Background
 

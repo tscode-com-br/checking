@@ -8,6 +8,7 @@ import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.data.remote.CheckingApiException
+import com.br.checkingnative.domain.model.CheckingLocationSample
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -149,6 +150,17 @@ class CheckingViewModel @Inject constructor(
         viewModelScope.launch {
             controller.initialize()
             controller.setOemBackgroundSetupEnabled(value, setupResult)
+        }
+    }
+
+    fun shouldRunForegroundLocationStream(): Boolean {
+        return controller.shouldRunForegroundLocationStream(backgroundServiceRunning = false)
+    }
+
+    fun processForegroundLocationUpdate(sample: CheckingLocationSample) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.processForegroundLocationUpdate(sample)
         }
     }
 

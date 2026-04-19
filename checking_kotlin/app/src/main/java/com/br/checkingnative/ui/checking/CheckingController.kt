@@ -8,6 +8,7 @@ import com.br.checkingnative.domain.logic.CheckingLocationLogic
 import com.br.checkingnative.domain.logic.CheckingRuntimeLogic
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
+import com.br.checkingnative.domain.model.CheckingLocationSample
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.ProjetoType
@@ -34,6 +35,7 @@ class CheckingController @Inject constructor(
 ) {
     private val random = Random.Default
     private val _uiState = MutableStateFlow(CheckingUiState())
+    private var processingForegroundLocationUpdate = false
 
     val uiState: StateFlow<CheckingUiState> = _uiState.asStateFlow()
 
@@ -461,6 +463,73 @@ class CheckingController @Inject constructor(
                 },
             ),
         )
+    }
+
+    fun shouldRunForegroundLocationStream(backgroundServiceRunning: Boolean = false): Boolean {
+        return currentState.locationSharingEnabled &&
+            !backgroundServiceRunning &&
+            !CheckingLocationLogic.isNightModeAfterCheckoutActive(state = currentState)
+    }
+
+    suspend fun processForegroundLocationUpdate(sample: CheckingLocationSample): Boolean {
+        if (
+            processingForegroundLocationUpdate ||
+            !currentState.locationSharingEnabled ||
+            CheckingLocationLogic.isNightModeAfterCheckoutActive(state = currentState)
+        ) {
+            return false
+        }
+
+        if (
+            !CheckingLocationLogic.isLocationAccuracyPreciseEnough(
+                accuracyMeters = sample.accuracyMeters,
+                maxAccuracyMeters = currentState.locationAccuracyThresholdMeters.toDouble(),
+            )
+        ) {
+            return false
+        }
+
+        if (
+            CheckingLocationLogic.shouldSkipDuplicateLocationFetch(
+                history = currentState.locationFetchHistory,
+                timestamp = sample.timestamp,
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+            )
+        ) {
+            return false
+        }
+
+        processingForegroundLocationUpdate = true
+        return try {
+            val matchResult = CheckingLocationLogic.resolveLocationMatch(
+                managedLocations = _uiState.value.managedLocations,
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+            )
+            val matchedLocation = matchResult.matchedLocation
+            val capturedLocationLabel = CheckingLocationLogic.resolveCapturedLocationLabel(
+                location = matchedLocation,
+                nearestWorkplaceDistanceMeters = matchResult.nearestWorkplaceDistanceMeters,
+            )
+            val locationFetchHistory = CheckingLocationLogic.recordLocationFetchHistory(
+                history = currentState.locationFetchHistory,
+                timestamp = sample.timestamp,
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+            )
+            updateAndPersist(
+                currentState.copy(
+                    lastMatchedLocation = matchedLocation?.automationAreaLabel,
+                    lastDetectedLocation = capturedLocationLabel,
+                    lastLocationUpdateAt = sample.timestamp,
+                    locationFetchHistory = locationFetchHistory,
+                ),
+            )
+            true
+        } finally {
+            processingForegroundLocationUpdate = false
+        }
     }
 
     suspend fun refreshAfterEnteringForeground() {

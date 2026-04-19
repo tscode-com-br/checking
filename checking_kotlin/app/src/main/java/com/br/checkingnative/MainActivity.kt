@@ -1,6 +1,8 @@
 package com.br.checkingnative
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.location.Location
 import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
@@ -11,23 +13,36 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.br.checkingnative.domain.model.CheckingLocationSample
 import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.ui.checking.CheckingApp
 import com.br.checkingnative.ui.checking.CheckingViewModel
 import com.br.checkingnative.ui.theme.CheckingKotlinTheme
+import com.google.android.gms.location.CurrentLocationRequest
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import dagger.hilt.android.AndroidEntryPoint
+import java.time.Instant
 import java.util.Locale
+import kotlin.math.max
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -37,6 +52,17 @@ class MainActivity : ComponentActivity() {
     private var pendingAfterForegroundLocationPermission: (() -> Unit)? = null
     private var pendingAfterBackgroundLocationPermission: (() -> Unit)? = null
     private var pendingAfterNotificationPermission: (() -> Unit)? = null
+    private val fusedLocationClient: FusedLocationProviderClient by lazy {
+        LocationServices.getFusedLocationProviderClient(this)
+    }
+    private var foregroundLocationUpdatesStarted = false
+    private var foregroundLocationIntervalMillis: Long? = null
+
+    private val foregroundLocationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.locations.forEach(::handleNativeLocation)
+        }
+    }
 
     private val foregroundLocationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -75,6 +101,14 @@ class MainActivity : ComponentActivity() {
         handleGeoActionIntent(intent)
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            LaunchedEffect(
+                uiState.state.locationSharingEnabled,
+                uiState.state.locationUpdateIntervalSeconds,
+                uiState.state.locationAccuracyThresholdMeters,
+                uiState.state.nightModeAfterCheckoutUntil,
+            ) {
+                syncForegroundLocationStream(captureImmediately = uiState.state.locationSharingEnabled)
+            }
             CheckingKotlinTheme {
                 CheckingApp(
                     uiState = uiState,
@@ -105,11 +139,17 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshAndroidPermissionState(updateStatus = false)
+        syncForegroundLocationStream(captureImmediately = false)
         if (initialResumeHandled) {
             viewModel.refreshAfterEnteringForeground()
         } else {
             initialResumeHandled = true
         }
+    }
+
+    override fun onPause() {
+        stopForegroundLocationStream()
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -143,6 +183,7 @@ class MainActivity : ComponentActivity() {
             requestNotificationPermissionIfNeeded {
                 requestIgnoreBatteryOptimizationIfNeeded {
                     viewModel.enableLocationSharingAfterPermissionFlow(readPermissionSnapshot())
+                    syncForegroundLocationStream(captureImmediately = true)
                 }
             }
         }
@@ -351,6 +392,105 @@ class MainActivity : ComponentActivity() {
             notificationsEnabled = areNotificationsEnabled(),
             batteryOptimizationIgnored = isIgnoringBatteryOptimizations(),
             backgroundServiceSupported = true,
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun syncForegroundLocationStream(captureImmediately: Boolean) {
+        if (
+            !viewModel.shouldRunForegroundLocationStream() ||
+            !isLocationServiceEnabled() ||
+            !hasPreciseLocationPermission()
+        ) {
+            stopForegroundLocationStream()
+            return
+        }
+
+        val intervalMillis = resolveForegroundLocationIntervalMillis()
+        if (
+            foregroundLocationUpdatesStarted &&
+            foregroundLocationIntervalMillis == intervalMillis
+        ) {
+            if (captureImmediately) {
+                captureCurrentLocationOnce()
+            }
+            return
+        }
+
+        stopForegroundLocationStream()
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            intervalMillis,
+        )
+            .setMinUpdateIntervalMillis(max(1_000L, intervalMillis / 2))
+            .setMinUpdateDistanceMeters(0f)
+            .setWaitForAccurateLocation(false)
+            .build()
+
+        foregroundLocationIntervalMillis = intervalMillis
+        fusedLocationClient
+            .requestLocationUpdates(request, foregroundLocationCallback, Looper.getMainLooper())
+            .addOnSuccessListener {
+                foregroundLocationUpdatesStarted = true
+                if (captureImmediately) {
+                    captureCurrentLocationOnce()
+                }
+            }
+            .addOnFailureListener {
+                foregroundLocationUpdatesStarted = false
+                foregroundLocationIntervalMillis = null
+            }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun captureCurrentLocationOnce() {
+        if (!isLocationServiceEnabled() || !hasPreciseLocationPermission()) {
+            return
+        }
+
+        val request = CurrentLocationRequest.Builder()
+            .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+            .build()
+        val cancellationToken = CancellationTokenSource()
+        fusedLocationClient
+            .getCurrentLocation(request, cancellationToken.token)
+            .addOnSuccessListener { location ->
+                if (location != null) {
+                    handleNativeLocation(location)
+                }
+            }
+    }
+
+    private fun stopForegroundLocationStream() {
+        if (!foregroundLocationUpdatesStarted) {
+            foregroundLocationIntervalMillis = null
+            return
+        }
+
+        fusedLocationClient.removeLocationUpdates(foregroundLocationCallback)
+        foregroundLocationUpdatesStarted = false
+        foregroundLocationIntervalMillis = null
+    }
+
+    private fun resolveForegroundLocationIntervalMillis(): Long {
+        val seconds = viewModel.uiState.value.state.locationUpdateIntervalSeconds
+        return max(1_000L, seconds * 1_000L)
+    }
+
+    private fun handleNativeLocation(location: Location) {
+        viewModel.processForegroundLocationUpdate(
+            CheckingLocationSample(
+                timestamp = Instant.ofEpochMilli(
+                    location.time.takeIf { value -> value > 0L } ?: System.currentTimeMillis(),
+                ),
+                latitude = location.latitude,
+                longitude = location.longitude,
+                accuracyMeters = if (location.hasAccuracy()) {
+                    location.accuracy.toDouble()
+                } else {
+                    null
+                },
+            ),
         )
     }
 
