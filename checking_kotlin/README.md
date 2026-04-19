@@ -18,6 +18,7 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 ## Estado atual
 
 - Fase 10 implementada localmente: testes de paridade unitários e instrumentados compiláveis
+- Fase 11 implementada como infraestrutura de release: versionamento, assinatura obrigatória, R8/shrink, scripts AAB/preflight e checklist Play Console
 - Fase 9 concluída: UI Compose final alinhada ao Flutter
 - Fase 8 concluída: foreground service nativo com automação de localização em background
 - Fase 7 concluída: captura real de localização em foreground com Fused Location Provider
@@ -45,6 +46,9 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - bottom sheets de automação/configurações com controles, wheels de frequência/horário e histórico de localizações
 - testes unitários ampliados para estado legado, automação, regras de runtime e ViewModel com coroutines test
 - testes instrumentados adicionados para permissões/manifest, Room real/migração e baseline visual Compose
+- versão alvo Kotlin alinhada ao Flutter de referência: `1.4.1+16`
+- release configurado com assinatura obrigatória por upload key, minify, shrink resources e R8 mapping
+- scripts de release adicionados para gerar AAB, rodar preflight e arquivar artefatos
 - lint reduzido de 18 para 2 warnings restantes de Hilt/AGP
 - baseline da migração documentado em `docs/migration-phase-0-baseline.md`
 - decisão de identidade documentada em `docs/migration-phase-1-identity.md`
@@ -57,6 +61,8 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - automação background documentada em `docs/migration-phase-8-background-automation.md`
 - UI Compose final documentada em `docs/migration-phase-9-compose-final.md`
 - testes de paridade documentados em `docs/migration-phase-10-parity-tests.md`
+- release documentado em `docs/migration-phase-11-release.md`
+- checklist Play Console documentado em `docs/google-play-submission-checklist.md`
 
 ## Comandos
 
@@ -65,10 +71,14 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 .\gradlew.bat testDebugUnitTest
 .\gradlew.bat assembleDebugAndroidTest
 .\gradlew.bat lintDebug
+pwsh ./scripts/play-release-preflight.ps1 -BuildName 1.4.1 -BuildNumber 16
+pwsh ./scripts/build-play-aab.ps1 -BuildName 1.4.1 -BuildNumber 16
 ```
+
+Para release assinado, copie `keystore.properties.example` para `keystore.properties`, preencha os dados reais da upload key e mantenha `keystore.properties`/`keys/` fora do Git.
 
 ## Próximos passos
 
 1. Executar os testes instrumentados em dispositivo físico Android 13, 14 e 15+.
-2. Fazer validação manual de background location, permissões e upgrade antes de release.
-3. Prosseguir para a Fase 11: versão, assinatura, AAB e preflight de publicação.
+2. Preencher política de privacidade, Data Safety, screenshots e declarações de background location no Play Console.
+3. Gerar o AAB assinado com a upload key real e validar fresh install/upgrade conforme a decisão de identidade.

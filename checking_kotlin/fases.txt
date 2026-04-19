@@ -112,7 +112,7 @@ Testar em dispositivo real Android 13, 14 e 15+.
 Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebugAndroidTest, assembleDebug e lintDebug.
 Observação: a execução real em dispositivos Android 13, 14 e 15+ continua obrigatória antes da release, porque assembleDebugAndroidTest apenas compila o APK de testes instrumentados.
 
-Fase 11 - Release
+Fase 11 - Release (infraestrutura implementada)
 
 Ajustar versionCode/versionName para a versão alvo real.
 Configurar release assinado, minify, shrink resources e ProGuard/R8.
@@ -120,5 +120,7 @@ Criar scripts equivalentes aos do Flutter para AAB e preflight.
 Atualizar README/docs específicos do Kotlin.
 Revisar política de background location, Data Safety, screenshots e release notes.
 Gerar AAB e validar instalação/upgrade.
+Implementado com versionName 1.4.1 e versionCode 16, assinatura obrigatória por keystore.properties, R8/shrink, scripts PowerShell e checklist Play Console.
+Observação: o AAB assinado final depende de upload key real local e a validação de instalação/upgrade depende de dispositivo Android físico. Esses arquivos sensíveis não devem ser versionados.
 Critério Final
 O Kotlin só deve ser considerado “perfeito conforme Flutter” quando passar build, lint, testes de paridade, teste real de localização em background, teste de upgrade/migração e comparação visual das telas principais. Hoje ele está saudável como base técnica, mas ainda está antes da parte mais importante: virar o aplicativo operacional de fato.

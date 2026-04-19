@@ -9,3 +9,4 @@ keys/
 *.jks
 *.keystore
 app/release/
+.kotlin/
