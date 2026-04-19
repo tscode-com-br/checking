@@ -29,6 +29,7 @@ from ..schemas import (
     TransportSettingsResponse,
     TransportSettingsUpdateRequest,
     TransportSessionResponse,
+    TransportRequestReject,
     TransportWhatsAppDispatchResponse,
     TransportVehicleCreate,
     TransportWorkplaceUpsert,
@@ -61,6 +62,7 @@ from ..services.transport import (
     list_workplaces,
     process_bot_message,
     queue_assignment_notification,
+    reject_transport_request_and_assignments,
     request_applies_to_date,
     upsert_transport_assignment_with_persistence,
 )
@@ -345,6 +347,62 @@ def save_transport_assignment(
 
     notify_admin_data_changed("event")
     return AdminActionResponse(ok=True, message=f"Transport assignment saved successfully.{notification_message_suffix}")
+
+
+@router.post("/requests/reject", response_model=AdminActionResponse)
+def reject_transport_request(
+    payload: TransportRequestReject,
+    db: Session = Depends(get_db),
+    current_transport_user: User = Depends(require_transport_session),
+) -> AdminActionResponse:
+    transport_request = db.get(TransportRequest, payload.request_id)
+    if transport_request is None or transport_request.status != "active":
+        raise HTTPException(status_code=404, detail="Transport request not found.")
+    if not request_applies_to_date(transport_request, payload.service_date):
+        raise HTTPException(status_code=400, detail="The transport request does not apply to the selected date.")
+
+    assignment, is_update = reject_transport_request_and_assignments(
+        db,
+        transport_request=transport_request,
+        service_date=payload.service_date,
+        route_kind=payload.route_kind,
+        response_message=payload.response_message,
+        admin_user_id=current_transport_user.id,
+    )
+
+    user = db.get(User, transport_request.user_id)
+    queued_notification = None
+    if user is not None:
+        queued_notification = queue_assignment_notification(
+            db,
+            transport_request=transport_request,
+            assignment=assignment,
+            user=user,
+            vehicle=None,
+            is_update=is_update,
+        )
+
+    db.commit()
+    notification_message_suffix = ""
+    if queued_notification is not None:
+        try:
+            dispatch_result = whatsapp_meta.dispatch_pending_transport_notifications(
+                db,
+                notification_ids=[queued_notification.id],
+                limit=1,
+            )
+            if dispatch_result.sent > 0:
+                notification_message_suffix = " WhatsApp notification sent."
+            elif dispatch_result.failed > 0:
+                notification_message_suffix = " Request rejected, but WhatsApp delivery failed and the notification is still pending."
+        except whatsapp_meta.WhatsAppConfigurationError:
+            notification_message_suffix = " Request rejected; the WhatsApp notification is pending because the Cloud API is not configured."
+
+    notify_admin_data_changed("event")
+    return AdminActionResponse(
+        ok=True,
+        message=f"Transport request rejected successfully.{notification_message_suffix}",
+    )
 
 
 @router.post(

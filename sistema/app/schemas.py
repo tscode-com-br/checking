@@ -672,6 +672,18 @@ class TransportAssignmentUpsert(BaseModel):
         return _normalize_optional_text(value, "A resposta", max_length=255)
 
 
+class TransportRequestReject(BaseModel):
+    request_id: int = Field(ge=1)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    response_message: str | None = Field(default=None, max_length=255)
+
+    @field_validator("response_message", mode="before")
+    @classmethod
+    def validate_reject_response_message(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A resposta", max_length=255)
+
+
 class TransportRequestRow(BaseModel):
     id: int
     request_kind: str
@@ -1145,6 +1157,26 @@ class WebPasswordActionResponse(BaseModel):
     message: str
 
 
+class WebTransportRequestItemResponse(BaseModel):
+    request_id: int
+    request_kind: Literal["regular", "weekend", "extra"]
+    status: Literal["pending", "confirmed", "rejected", "cancelled"]
+    is_active: bool = False
+    service_date: date | None = None
+    requested_time: str | None = None
+    selected_weekdays: list[int] = Field(default_factory=list)
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    boarding_time: str | None = None
+    confirmation_deadline_time: str | None = None
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
+    vehicle_plate: str | None = None
+    tolerance_minutes: int | None = Field(default=None, ge=0, le=240)
+    awareness_required: bool = False
+    awareness_confirmed: bool = False
+    response_message: str | None = None
+    created_at: datetime
+
+
 class WebTransportStateResponse(BaseModel):
     chave: str
     end_rua: str | None = None
@@ -1162,6 +1194,7 @@ class WebTransportStateResponse(BaseModel):
     tolerance_minutes: int | None = Field(default=None, ge=0, le=240)
     awareness_required: bool = False
     awareness_confirmed: bool = False
+    requests: list[WebTransportRequestItemResponse] = Field(default_factory=list)
 
 
 class WebTransportActionResponse(BaseModel):

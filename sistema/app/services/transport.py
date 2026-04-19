@@ -4,7 +4,7 @@ import calendar
 import hashlib
 import json
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,7 @@ from ..schemas import (
     TransportVehicleCreate,
     TransportVehicleManagementRow,
     TransportVehicleRow,
+    WebTransportRequestItemResponse,
     WebTransportStateResponse,
     WorkplaceRow,
 )
@@ -149,6 +150,45 @@ def get_transport_request_selected_weekdays(transport_request: TransportRequest)
     return set(_DEFAULT_REQUEST_SELECTED_WEEKDAYS.get(transport_request.request_kind, ()))
 
 
+def _find_next_request_service_date(reference_date: date, selected_weekdays: set[int]) -> date | None:
+    if not selected_weekdays:
+        return None
+
+    for day_offset in range(0, 7):
+        candidate = reference_date + timedelta(days=day_offset)
+        if candidate.weekday() in selected_weekdays:
+            return candidate
+    return None
+
+
+def resolve_transport_request_dashboard_service_date(
+    transport_request: TransportRequest,
+    dashboard_service_date: date,
+) -> date | None:
+    if transport_request.status != "active":
+        return None
+
+    if request_applies_to_date(transport_request, dashboard_service_date):
+        return dashboard_service_date
+
+    if transport_request.request_kind == "regular":
+        request_weekdays = get_transport_request_selected_weekdays(transport_request)
+        if request_weekdays and dashboard_service_date.weekday() >= 5:
+            return dashboard_service_date
+        return None
+
+    if transport_request.request_kind == "weekend":
+        return _find_next_request_service_date(
+            dashboard_service_date,
+            get_transport_request_selected_weekdays(transport_request),
+        )
+
+    if transport_request.request_kind == "extra":
+        return transport_request.single_date
+
+    return None
+
+
 def _resolve_web_transport_boarding_time(
     db: Session,
     *,
@@ -251,26 +291,30 @@ def build_transport_dashboard(
     )
     vehicle_schedule_cache: dict[tuple[int, date, str], TransportVehicleSchedule | None] = {}
 
-    def find_available_schedule_for_date(target_vehicle: Vehicle) -> TransportVehicleSchedule | None:
-        cache_key = (target_vehicle.id, service_date, route_kind)
+    def find_available_schedule_for_date(
+        target_vehicle: Vehicle,
+        target_service_date: date,
+    ) -> TransportVehicleSchedule | None:
+        cache_key = (target_vehicle.id, target_service_date, route_kind)
         if cache_key not in vehicle_schedule_cache:
             vehicle_schedule_cache[cache_key] = find_transport_vehicle_schedule(
                 db,
                 vehicle=target_vehicle,
-                service_date=service_date,
+                service_date=target_service_date,
                 route_kind=route_kind,
             )
         return vehicle_schedule_cache[cache_key]
 
     for transport_request, user in requests:
-        if not request_is_visible_on_service_date(transport_request, service_date):
+        row_service_date = resolve_transport_request_dashboard_service_date(transport_request, service_date)
+        if row_service_date is None:
             continue
 
         assigned_vehicle = None
         assignment_status = "pending"
         response_message = None
         awareness_status = "pending"
-        assignment = explicit_assignments_by_key.get((transport_request.id, service_date, route_kind))
+        assignment = explicit_assignments_by_key.get((transport_request.id, row_service_date, route_kind))
         if assignment is not None:
             assignment_status = assignment.status
             response_message = assignment.response_message
@@ -281,10 +325,10 @@ def build_transport_dashboard(
                 if assigned_vehicle is None and explicit_vehicle is not None:
                     assigned_vehicle = _build_vehicle_row(explicit_vehicle)
         elif transport_request.request_kind in {"regular", "weekend"}:
-            recurring_assignment = recurring_assignment_templates.get((transport_request.id, service_date.weekday()))
+            recurring_assignment = recurring_assignment_templates.get((transport_request.id, row_service_date.weekday()))
             if recurring_assignment is not None:
                 template_assignment, template_vehicle = recurring_assignment
-                if find_available_schedule_for_date(template_vehicle) is not None:
+                if find_available_schedule_for_date(template_vehicle, row_service_date) is not None:
                     assignment_status = "confirmed"
                     response_message = template_assignment.response_message
                     assigned_vehicle = vehicle_rows_by_id.get(template_vehicle.id) or _build_vehicle_row(template_vehicle)
@@ -294,7 +338,7 @@ def build_transport_dashboard(
                 id=transport_request.id,
                 request_kind=transport_request.request_kind,
                 requested_time=transport_request.requested_time,
-                service_date=service_date,
+                service_date=row_service_date,
                 user_id=user.id,
                 chave=user.chave,
                 nome=user.nome,
@@ -310,7 +354,7 @@ def build_transport_dashboard(
         )
 
     for rows in request_rows.values():
-        rows.sort(key=lambda item: (item.requested_time, item.nome.lower(), item.chave))
+        rows.sort(key=lambda item: (item.service_date, item.requested_time, item.nome.lower(), item.chave))
 
     vehicle_registry = _build_transport_vehicle_registry_rows(
         active_schedule_rows=active_schedule_rows,
@@ -555,9 +599,13 @@ def upsert_transport_request(
 
     if request_kind != "extra":
         for existing in existing_requests:
-            existing.status = "cancelled"
-            existing.cancelled_at = timestamp
-            existing.updated_at = timestamp
+            _close_transport_request_assignments(
+                db,
+                transport_request=existing,
+                timestamp=timestamp,
+                assignment_status="cancelled",
+                response_message="Cancelled by newer transport request",
+            )
 
     transport_request = TransportRequest(
         user_id=user.id,
@@ -610,11 +658,65 @@ def cancel_transport_requests(db: Session, *, user: User, request_kind: str, ref
     for transport_request in requests:
         if request_kind == "extra" and transport_request.single_date is not None and transport_request.single_date < reference_date:
             continue
-        transport_request.status = "cancelled"
-        transport_request.cancelled_at = timestamp
-        transport_request.updated_at = timestamp
+        _close_transport_request_assignments(
+            db,
+            transport_request=transport_request,
+            timestamp=timestamp,
+            assignment_status="cancelled",
+            response_message="Cancelled by user",
+        )
         cancelled += 1
     return cancelled
+
+
+def _close_transport_request(transport_request: TransportRequest, *, timestamp) -> None:
+    transport_request.status = "cancelled"
+    transport_request.cancelled_at = timestamp
+    transport_request.updated_at = timestamp
+
+
+def _resolve_transport_assignment(
+    assignment: TransportAssignment,
+    *,
+    status: str,
+    response_message: str | None,
+    timestamp,
+    admin_user_id: int | None,
+) -> None:
+    assignment.vehicle_id = None
+    assignment.status = status
+    assignment.response_message = response_message
+    assignment.acknowledged_by_user = False
+    assignment.acknowledged_at = None
+    assignment.updated_at = timestamp
+    assignment.notified_at = None
+    if admin_user_id is not None:
+        assignment.assigned_by_admin_id = admin_user_id
+
+
+def _close_transport_request_assignments(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    timestamp,
+    assignment_status: str,
+    response_message: str | None,
+    admin_user_id: int | None = None,
+) -> list[TransportAssignment]:
+    _close_transport_request(transport_request, timestamp=timestamp)
+
+    assignments = db.execute(
+        select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
+    ).scalars().all()
+    for assignment in assignments:
+        _resolve_transport_assignment(
+            assignment,
+            status=assignment_status,
+            response_message=response_message,
+            timestamp=timestamp,
+            admin_user_id=admin_user_id,
+        )
+    return assignments
 
 
 def cancel_transport_request_and_assignments(
@@ -623,21 +725,63 @@ def cancel_transport_request_and_assignments(
     transport_request: TransportRequest,
 ) -> None:
     timestamp = now_sgt()
-    transport_request.status = "cancelled"
-    transport_request.cancelled_at = timestamp
-    transport_request.updated_at = timestamp
+    _close_transport_request_assignments(
+        db,
+        transport_request=transport_request,
+        timestamp=timestamp,
+        assignment_status="cancelled",
+        response_message="Cancelled by web user",
+    )
 
-    assignments = db.execute(
-        select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
-    ).scalars().all()
-    for assignment in assignments:
-        assignment.vehicle_id = None
-        assignment.status = "cancelled"
-        assignment.response_message = "Cancelled by web user"
-        assignment.acknowledged_by_user = False
-        assignment.acknowledged_at = None
-        assignment.updated_at = timestamp
-        assignment.notified_at = None
+
+def reject_transport_request_and_assignments(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    service_date: date,
+    route_kind: str,
+    response_message: str | None = None,
+    admin_user_id: int | None = None,
+) -> tuple[TransportAssignment, bool]:
+    timestamp = now_sgt()
+    resolved_response_message = response_message or "Rejected by transport admin"
+    assignments = _close_transport_request_assignments(
+        db,
+        transport_request=transport_request,
+        timestamp=timestamp,
+        assignment_status="rejected",
+        response_message=resolved_response_message,
+        admin_user_id=admin_user_id,
+    )
+
+    target_assignment = next(
+        (
+            assignment
+            for assignment in assignments
+            if assignment.service_date == service_date and assignment.route_kind == route_kind
+        ),
+        None,
+    )
+    if target_assignment is not None:
+        return target_assignment, True
+
+    target_assignment = TransportAssignment(
+        request_id=transport_request.id,
+        service_date=service_date,
+        route_kind=route_kind,
+        vehicle_id=None,
+        status="rejected",
+        response_message=resolved_response_message,
+        acknowledged_by_user=False,
+        acknowledged_at=None,
+        assigned_by_admin_id=admin_user_id,
+        created_at=timestamp,
+        updated_at=timestamp,
+        notified_at=None,
+    )
+    db.add(target_assignment)
+    db.flush()
+    return target_assignment, False
 
 
 def acknowledge_transport_assignments(
@@ -669,6 +813,178 @@ def acknowledge_transport_assignments(
     return acknowledged
 
 
+def _resolve_transport_request_reference_service_date(
+    transport_request: TransportRequest,
+    *,
+    reference_date: date,
+) -> date | None:
+    if transport_request.request_kind == "extra":
+        return transport_request.single_date
+
+    return _find_next_request_service_date(
+        reference_date,
+        get_transport_request_selected_weekdays(transport_request),
+    )
+
+
+def _build_web_transport_request_items(
+    db: Session,
+    *,
+    user: User,
+    service_date: date,
+    preferred_route_kind: str | None,
+) -> list[WebTransportRequestItemResponse]:
+    transport_requests = db.execute(
+        select(TransportRequest)
+        .where(TransportRequest.user_id == user.id)
+        .order_by(TransportRequest.created_at.desc(), TransportRequest.id.desc())
+    ).scalars().all()
+    if not transport_requests:
+        return []
+
+    request_ids = [transport_request.id for transport_request in transport_requests]
+    requests_by_id = {transport_request.id: transport_request for transport_request in transport_requests}
+    assignments = _list_transport_assignments_for_requests(db, request_ids=request_ids)
+    assignments_by_request_id: dict[int, list[TransportAssignment]] = {}
+    explicit_assignments_by_key: dict[tuple[int, date, str], TransportAssignment] = {}
+    for assignment in assignments:
+        assignments_by_request_id.setdefault(assignment.request_id, []).append(assignment)
+        explicit_assignments_by_key[(assignment.request_id, assignment.service_date, assignment.route_kind)] = assignment
+
+    vehicle_ids = {assignment.vehicle_id for assignment in assignments if assignment.vehicle_id is not None}
+    vehicles_by_id = {
+        vehicle.id: vehicle
+        for vehicle in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars().all()
+    } if vehicle_ids else {}
+    schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids=vehicle_ids)
+    recurring_assignment_templates = _build_recurring_assignment_template_index(
+        assignments=assignments,
+        requests_by_id=requests_by_id,
+        vehicles_by_id=vehicles_by_id,
+        schedules_by_vehicle_id=schedules_by_vehicle_id,
+    )
+    route_order = _resolve_web_transport_route_order(preferred_route_kind)
+
+    request_items: list[WebTransportRequestItemResponse] = []
+    for transport_request in transport_requests:
+        selected_weekdays = sorted(get_transport_request_selected_weekdays(transport_request))
+        request_assignments = assignments_by_request_id.get(transport_request.id, [])
+        latest_assignment = max(
+            request_assignments,
+            key=lambda assignment: (assignment.updated_at, assignment.id),
+            default=None,
+        )
+        item_service_date = _resolve_transport_request_reference_service_date(
+            transport_request,
+            reference_date=service_date,
+        )
+        resolved_route_kind = latest_assignment.route_kind if latest_assignment is not None else (
+            preferred_route_kind if preferred_route_kind in _ROUTE_KIND_TO_LABEL else None
+        )
+        response_message = latest_assignment.response_message if latest_assignment is not None else None
+        boarding_time = None
+        vehicle_type = None
+        vehicle_plate = None
+        tolerance_minutes = None
+        awareness_required = False
+        awareness_confirmed = False
+        confirmation_deadline_time = None
+
+        if transport_request.status == "active":
+            request_status = "pending"
+            confirmation_deadline_time = _resolve_web_transport_confirmation_deadline_time(
+                db,
+                user=user,
+                active_request=transport_request,
+            )
+            confirmed_assignments: list[tuple[TransportAssignment, Vehicle, bool, str]] = []
+            rejected_assignment = None
+            cancelled_assignment = None
+            if item_service_date is not None:
+                for target_route_kind in route_order:
+                    assignment = explicit_assignments_by_key.get((transport_request.id, item_service_date, target_route_kind))
+                    if assignment is not None:
+                        if assignment.status == "confirmed" and assignment.vehicle_id is not None:
+                            confirmed_vehicle = vehicles_by_id.get(assignment.vehicle_id)
+                            if confirmed_vehicle is not None:
+                                confirmed_assignments.append((assignment, confirmed_vehicle, False, target_route_kind))
+                        elif assignment.status == "rejected" and rejected_assignment is None:
+                            rejected_assignment = (assignment, target_route_kind)
+                        elif assignment.status == "cancelled" and cancelled_assignment is None:
+                            cancelled_assignment = (assignment, target_route_kind)
+                        continue
+
+                    recurring_assignment = recurring_assignment_templates.get((transport_request.id, item_service_date.weekday()))
+                    if recurring_assignment is None:
+                        continue
+
+                    template_assignment, template_vehicle = recurring_assignment
+                    if find_transport_vehicle_schedule(
+                        db,
+                        vehicle=template_vehicle,
+                        service_date=item_service_date,
+                        route_kind=target_route_kind,
+                    ) is None:
+                        continue
+                    confirmed_assignments.append((template_assignment, template_vehicle, True, target_route_kind))
+
+            if confirmed_assignments:
+                confirmed_assignment = confirmed_assignments[0][0]
+                confirmed_vehicle = confirmed_assignments[0][1]
+                resolved_route_kind = confirmed_assignments[0][3]
+                boarding_time = _resolve_web_transport_boarding_time(
+                    db,
+                    active_request=transport_request,
+                    service_date=item_service_date or service_date,
+                    route_kind=resolved_route_kind,
+                    vehicle=confirmed_vehicle,
+                )
+                vehicle_type = confirmed_vehicle.tipo
+                vehicle_plate = confirmed_vehicle.placa
+                tolerance_minutes = confirmed_vehicle.tolerance
+                awareness_required = True
+                awareness_confirmed = all(
+                    (not is_synthetic) and assignment.acknowledged_by_user
+                    for assignment, _, is_synthetic, _ in confirmed_assignments
+                )
+                response_message = confirmed_assignment.response_message
+                request_status = "confirmed"
+            elif rejected_assignment is not None:
+                response_message = rejected_assignment[0].response_message
+                resolved_route_kind = rejected_assignment[1]
+                request_status = "rejected"
+            elif cancelled_assignment is not None:
+                response_message = cancelled_assignment[0].response_message
+                resolved_route_kind = cancelled_assignment[1]
+                request_status = "cancelled"
+        else:
+            request_status = "rejected" if latest_assignment is not None and latest_assignment.status == "rejected" else "cancelled"
+
+        request_items.append(
+            WebTransportRequestItemResponse(
+                request_id=transport_request.id,
+                request_kind=transport_request.request_kind,
+                status=request_status,
+                is_active=transport_request.status == "active",
+                service_date=item_service_date,
+                requested_time=transport_request.requested_time,
+                selected_weekdays=selected_weekdays,
+                route_kind=resolved_route_kind,
+                boarding_time=boarding_time,
+                confirmation_deadline_time=confirmation_deadline_time,
+                vehicle_type=vehicle_type,
+                vehicle_plate=vehicle_plate,
+                tolerance_minutes=tolerance_minutes,
+                awareness_required=awareness_required,
+                awareness_confirmed=awareness_confirmed,
+                response_message=response_message,
+                created_at=transport_request.created_at,
+            )
+        )
+
+    return request_items
+
+
 def build_web_transport_state(
     db: Session,
     *,
@@ -676,6 +992,12 @@ def build_web_transport_state(
     service_date: date,
     preferred_route_kind: str | None = None,
 ) -> WebTransportStateResponse:
+    request_items = _build_web_transport_request_items(
+        db,
+        user=user,
+        service_date=service_date,
+        preferred_route_kind=preferred_route_kind,
+    )
     active_requests = db.execute(
         select(TransportRequest)
         .where(
@@ -694,6 +1016,7 @@ def build_web_transport_state(
             end_rua=user.end_rua,
             zip=user.zip,
             status="available",
+            requests=request_items,
         )
 
     assignments = _list_transport_assignments_for_requests(db, request_ids=[active_request.id])
@@ -778,6 +1101,7 @@ def build_web_transport_state(
             tolerance_minutes=confirmed_vehicle.tolerance,
             awareness_required=True,
             awareness_confirmed=awareness_confirmed,
+            requests=request_items,
         )
 
     return WebTransportStateResponse(
@@ -793,6 +1117,7 @@ def build_web_transport_state(
         confirmation_deadline_time=confirmation_deadline_time,
         awareness_required=False,
         awareness_confirmed=False,
+        requests=request_items,
     )
 
 

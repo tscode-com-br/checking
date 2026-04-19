@@ -88,22 +88,13 @@
   const transportRequestBuilderSubmitButton = document.getElementById('transportRequestBuilderSubmitButton');
   const transportRequestWeekdayInputs = Array.from(document.querySelectorAll('input[name="transport_selected_weekday"]'));
   const transportRequestWeekdayOptions = Array.from(document.querySelectorAll('[data-transport-weekday-option]'));
-  const transportPendingPanel = document.getElementById('transportPendingPanel');
-  const transportPendingDeadlineLine = document.getElementById('transportPendingDeadlineLine');
-  const transportConfirmedPanel = document.getElementById('transportConfirmedPanel');
-  const transportConfirmedTypeLine = document.getElementById('transportConfirmedTypeLine');
-  const transportConfirmedPlateLine = document.getElementById('transportConfirmedPlateLine');
-  const transportConfirmedBoardingLine = document.getElementById('transportConfirmedBoardingLine');
-  const transportConfirmedToleranceLine = document.getElementById('transportConfirmedToleranceLine');
+  const transportRequestHistorySection = document.getElementById('transportRequestHistorySection');
+  const transportRequestHistoryList = document.getElementById('transportRequestHistoryList');
   const transportAcknowledgementSection = document.getElementById('transportAcknowledgementSection');
   const transportAcknowledgementCheckbox = document.getElementById('transportAcknowledgementCheckbox');
   const transportAcknowledgementButton = document.getElementById('transportAcknowledgementButton');
-  const transportPendingFooterActions = document.getElementById('transportPendingFooterActions');
-  const transportCancelPendingButton = document.getElementById('transportCancelPendingButton');
-  const transportPendingBackButton = document.getElementById('transportPendingBackButton');
-  const transportConfirmedFooterActions = document.getElementById('transportConfirmedFooterActions');
-  const transportConfirmedBackButton = document.getElementById('transportConfirmedBackButton');
-  const transportCancelConfirmedButton = document.getElementById('transportCancelConfirmedButton');
+  const transportSelectedRequestActions = document.getElementById('transportSelectedRequestActions');
+  const transportSelectedRequestCancelButton = document.getElementById('transportSelectedRequestCancelButton');
   const transportInlineStatus = document.getElementById('transportInlineStatus');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
@@ -153,10 +144,7 @@
     ...transportRequestWeekdayInputs,
     transportAcknowledgementCheckbox,
     transportAcknowledgementButton,
-    transportCancelPendingButton,
-    transportPendingBackButton,
-    transportConfirmedBackButton,
-    transportCancelConfirmedButton,
+    transportSelectedRequestCancelButton,
     transportScreenHeaderBackButton,
   ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
@@ -197,6 +185,21 @@
     regular: 'Transporte Rotineiro',
     weekend: 'Transporte Fim de Semana',
     extra: 'Transporte Extra',
+  };
+  const transportRequestStatusLabels = {
+    pending: 'Pendente',
+    confirmed: 'Confirmado',
+    rejected: 'Rejeitado',
+    cancelled: 'Cancelado',
+  };
+  const transportRequestWeekdayLabels = {
+    0: 'Seg',
+    1: 'Ter',
+    2: 'Qua',
+    3: 'Qui',
+    4: 'Sex',
+    5: 'Sáb',
+    6: 'Dom',
   };
   const transportRequestBuilderConfigs = {
     regular: {
@@ -289,10 +292,12 @@
     toleranceMinutes: null,
     awarenessRequired: false,
     awarenessConfirmed: false,
+    requests: [],
   };
   const transportUiState = {
     addressEditorOpen: false,
     requestBuilderKind: null,
+    selectedRequestId: null,
     acknowledgementChecked: false,
     inlineMessage: '',
     inlineTone: null,
@@ -349,16 +354,41 @@
     }
   }
 
+  function getTransportRequests() {
+    return Array.isArray(transportState.requests) ? transportState.requests : [];
+  }
+
+  function findTransportRequestById(requestId) {
+    const normalizedRequestId = Number(requestId);
+    if (!Number.isFinite(normalizedRequestId)) {
+      return null;
+    }
+
+    return getTransportRequests().find((requestItem) => Number(requestItem.requestId) === normalizedRequestId) || null;
+  }
+
+  function getTransportSelectedRequest() {
+    return findTransportRequestById(transportUiState.selectedRequestId);
+  }
+
+  function shouldAutoRefreshTransportRequest(requestItem) {
+    return Boolean(
+      requestItem
+      && requestItem.isActive
+      && (requestItem.status === 'pending' || (requestItem.status === 'confirmed' && !requestItem.awarenessConfirmed))
+    );
+  }
+
   function shouldAutoRefreshTransportState() {
     return isTransportScreenOpen()
       && isApplicationUnlocked()
+      && !transportUiState.requestBuilderKind
       && !transportStateLoading
       && !transportAddressSaveInProgress
       && !transportRequestInProgress
       && !transportCancelInProgress
       && !transportAcknowledgeInProgress
-      && transportState.status !== 'available'
-      && (transportState.status === 'pending' || !transportState.awarenessConfirmed);
+      && getTransportRequests().some(shouldAutoRefreshTransportRequest);
   }
 
   function scheduleTransportAutoRefresh() {
@@ -914,18 +944,22 @@
     transportState.status = 'available';
     transportState.requestId = null;
     transportState.requestKind = null;
+    transportState.routeKind = null;
     transportState.serviceDate = null;
     transportState.endRua = '';
     transportState.zip = '';
     transportState.requestedTime = '';
+    transportState.boardingTime = '';
     transportState.confirmationDeadlineTime = '';
     transportState.vehicleType = '';
     transportState.vehiclePlate = '';
     transportState.toleranceMinutes = null;
     transportState.awarenessRequired = false;
     transportState.awarenessConfirmed = false;
+    transportState.requests = [];
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
+    transportUiState.selectedRequestId = null;
     transportUiState.acknowledgementChecked = false;
     clearTransportInlineStatus();
     renderTransportScreen();
@@ -1060,36 +1094,251 @@
     return payload;
   }
 
-  function applyTransportStatePayload(payload) {
-    transportState.status = String(payload && payload.status || 'available');
-    transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
+  function normalizeTransportRequestItem(payload) {
+    const requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
       ? Number(payload.request_id)
       : null;
-    transportState.requestKind = payload && payload.request_kind ? String(payload.request_kind) : null;
-    transportState.routeKind = payload && payload.route_kind ? String(payload.route_kind) : null;
-    transportState.serviceDate = payload && payload.service_date ? String(payload.service_date) : null;
+
+    return {
+      requestId,
+      requestKind: payload && payload.request_kind ? String(payload.request_kind) : null,
+      status: String(payload && payload.status || 'pending'),
+      isActive: Boolean(payload && payload.is_active),
+      serviceDate: payload && payload.service_date ? String(payload.service_date) : null,
+      requestedTime: String(payload && payload.requested_time || ''),
+      selectedWeekdays: Array.isArray(payload && payload.selected_weekdays)
+        ? payload.selected_weekdays.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+        : [],
+      routeKind: payload && payload.route_kind ? String(payload.route_kind) : null,
+      boardingTime: String(payload && payload.boarding_time || ''),
+      confirmationDeadlineTime: String(payload && payload.confirmation_deadline_time || ''),
+      vehicleType: String(payload && payload.vehicle_type || ''),
+      vehiclePlate: String(payload && payload.vehicle_plate || ''),
+      toleranceMinutes: payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
+        ? Number(payload.tolerance_minutes)
+        : null,
+      awarenessRequired: Boolean(payload && payload.awareness_required),
+      awarenessConfirmed: Boolean(payload && payload.awareness_confirmed),
+      responseMessage: String(payload && payload.response_message || ''),
+      createdAt: String(payload && payload.created_at || ''),
+    };
+  }
+
+  function createTransportFallbackRequest(payload) {
+    const requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
+      ? Number(payload.request_id)
+      : null;
+    if (!requestId) {
+      return [];
+    }
+
+    return [normalizeTransportRequestItem({
+      request_id: requestId,
+      request_kind: payload && payload.request_kind,
+      status: payload && payload.status || 'pending',
+      is_active: payload && payload.status !== 'available',
+      service_date: payload && payload.service_date,
+      requested_time: payload && payload.requested_time,
+      route_kind: payload && payload.route_kind,
+      boarding_time: payload && payload.boarding_time,
+      confirmation_deadline_time: payload && payload.confirmation_deadline_time,
+      vehicle_type: payload && payload.vehicle_type,
+      vehicle_plate: payload && payload.vehicle_plate,
+      tolerance_minutes: payload && payload.tolerance_minutes,
+      awareness_required: payload && payload.awareness_required,
+      awareness_confirmed: payload && payload.awareness_confirmed,
+    })];
+  }
+
+  function resolveDefaultSelectedTransportRequestId() {
+    const requests = getTransportRequests();
+    const preferredRequest = requests.find((requestItem) => requestItem.isActive)
+      || requests[0]
+      || null;
+    return preferredRequest ? preferredRequest.requestId : null;
+  }
+
+  function syncSelectedTransportRequestState(payload) {
+    const selectedRequest = getTransportSelectedRequest();
+    const fallbackStatus = String(payload && payload.status || 'available');
+
+    if (!selectedRequest) {
+      transportState.status = fallbackStatus;
+      transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
+        ? Number(payload.request_id)
+        : null;
+      transportState.requestKind = payload && payload.request_kind ? String(payload.request_kind) : null;
+      transportState.routeKind = payload && payload.route_kind ? String(payload.route_kind) : null;
+      transportState.serviceDate = payload && payload.service_date ? String(payload.service_date) : null;
+      transportState.requestedTime = String(payload && payload.requested_time || '');
+      transportState.boardingTime = String(payload && payload.boarding_time || payload && payload.requested_time || '');
+      transportState.confirmationDeadlineTime = String(payload && payload.confirmation_deadline_time || payload && payload.requested_time || '');
+      transportState.vehicleType = String(payload && payload.vehicle_type || '');
+      transportState.vehiclePlate = String(payload && payload.vehicle_plate || '');
+      transportState.toleranceMinutes = payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
+        ? Number(payload.tolerance_minutes)
+        : null;
+      transportState.awarenessRequired = Boolean(payload && payload.awareness_required);
+      transportState.awarenessConfirmed = Boolean(payload && payload.awareness_confirmed);
+      return;
+    }
+
+    transportState.status = selectedRequest.status;
+    transportState.requestId = selectedRequest.requestId;
+    transportState.requestKind = selectedRequest.requestKind;
+    transportState.routeKind = selectedRequest.routeKind;
+    transportState.serviceDate = selectedRequest.serviceDate;
+    transportState.requestedTime = selectedRequest.requestedTime;
+    transportState.boardingTime = selectedRequest.boardingTime || selectedRequest.requestedTime;
+    transportState.confirmationDeadlineTime = selectedRequest.confirmationDeadlineTime || selectedRequest.requestedTime;
+    transportState.vehicleType = selectedRequest.vehicleType;
+    transportState.vehiclePlate = selectedRequest.vehiclePlate;
+    transportState.toleranceMinutes = selectedRequest.toleranceMinutes;
+    transportState.awarenessRequired = selectedRequest.awarenessRequired;
+    transportState.awarenessConfirmed = selectedRequest.awarenessConfirmed;
+  }
+
+  function applyTransportStatePayload(payload) {
     transportState.endRua = String(payload && payload.end_rua || '');
     transportState.zip = String(payload && payload.zip || '');
-    transportState.requestedTime = String(payload && payload.requested_time || '');
-    transportState.boardingTime = String(payload && payload.boarding_time || payload && payload.requested_time || '');
-    transportState.confirmationDeadlineTime = String(payload && payload.confirmation_deadline_time || payload && payload.requested_time || '');
-    transportState.vehicleType = String(payload && payload.vehicle_type || '');
-    transportState.vehiclePlate = String(payload && payload.vehicle_plate || '');
-    transportState.toleranceMinutes = payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
-      ? Number(payload.tolerance_minutes)
-      : null;
-    transportState.awarenessRequired = Boolean(payload && payload.awareness_required);
-    transportState.awarenessConfirmed = Boolean(payload && payload.awareness_confirmed);
-    if (transportState.status !== 'available') {
+    transportState.requests = Array.isArray(payload && payload.requests) && payload.requests.length
+      ? payload.requests.map(normalizeTransportRequestItem).filter((requestItem) => Number.isFinite(requestItem.requestId))
+      : createTransportFallbackRequest(payload);
+    if (transportUiState.selectedRequestId === null || !findTransportRequestById(transportUiState.selectedRequestId)) {
+      transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
+    }
+    syncSelectedTransportRequestState(payload);
+    if (String(payload && payload.status || 'available') !== 'available') {
       transportUiState.requestBuilderKind = null;
     }
-    transportUiState.acknowledgementChecked = Boolean(payload && payload.awareness_confirmed);
+    transportUiState.acknowledgementChecked = false;
     syncTransportAddressFormValues();
     renderTransportScreen();
   }
 
+  function isTransportServiceDateToday(serviceDateValue) {
+    return Boolean(serviceDateValue && serviceDateValue === formatDateInputValue(new Date()));
+  }
+
+  function canAcknowledgeSelectedTransportRequest() {
+    return transportState.status === 'confirmed'
+      && transportState.awarenessRequired
+      && !transportState.awarenessConfirmed
+      && isTransportServiceDateToday(transportState.serviceDate);
+  }
+
+  function canCancelSelectedTransportRequest() {
+    const selectedRequest = getTransportSelectedRequest();
+    return Boolean(
+      selectedRequest
+      && selectedRequest.isActive
+      && (selectedRequest.status === 'pending' || selectedRequest.status === 'confirmed')
+    );
+  }
+
+  function formatTransportRequestWeekdays(selectedWeekdays) {
+    if (!Array.isArray(selectedWeekdays) || selectedWeekdays.length === 0) {
+      return '';
+    }
+
+    return selectedWeekdays
+      .map((weekdayValue) => transportRequestWeekdayLabels[weekdayValue])
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  function formatTransportRequestServiceDate(serviceDateValue) {
+    if (!serviceDateValue) {
+      return '';
+    }
+
+    const parsedDate = new Date(`${serviceDateValue}T00:00:00`);
+    return Number.isNaN(parsedDate.getTime()) ? serviceDateValue : dateFormatter.format(parsedDate);
+  }
+
+  function formatTransportRequestCardDetails(requestItem) {
+    const detailParts = [];
+    if (requestItem.requestKind === 'extra') {
+      const serviceDateLabel = formatTransportRequestServiceDate(requestItem.serviceDate);
+      if (serviceDateLabel) {
+        detailParts.push(serviceDateLabel);
+      }
+    } else {
+      const weekdaysLabel = formatTransportRequestWeekdays(requestItem.selectedWeekdays);
+      if (weekdaysLabel) {
+        detailParts.push(weekdaysLabel);
+      }
+    }
+
+    if (requestItem.status === 'confirmed') {
+      if (requestItem.vehiclePlate) {
+        detailParts.push(requestItem.vehiclePlate);
+      }
+      if (requestItem.boardingTime || requestItem.requestedTime) {
+        detailParts.push(formatTransportTimeLabel(requestItem.boardingTime || requestItem.requestedTime));
+      }
+    } else {
+      if (requestItem.requestedTime) {
+        detailParts.push(formatTransportTimeLabel(requestItem.requestedTime));
+      }
+      if (requestItem.status === 'pending' && requestItem.confirmationDeadlineTime) {
+        detailParts.push(`até ${requestItem.confirmationDeadlineTime}`);
+      }
+    }
+
+    return detailParts.join(' • ');
+  }
+
+  function createTransportRequestCard(requestItem) {
+    const cardButton = document.createElement('button');
+    const cardHeader = document.createElement('span');
+    const cardTitle = document.createElement('span');
+    const cardStatus = document.createElement('span');
+    const cardDetails = document.createElement('span');
+    const transportBusy = transportStateLoading
+      || transportAddressSaveInProgress
+      || transportRequestInProgress
+      || transportCancelInProgress
+      || transportAcknowledgeInProgress;
+
+    cardButton.type = 'button';
+    cardButton.className = `transport-request-card is-${requestItem.status}`;
+    cardButton.dataset.requestId = String(requestItem.requestId);
+    cardButton.disabled = transportBusy;
+    cardButton.classList.toggle('is-selected', Number(transportUiState.selectedRequestId) === Number(requestItem.requestId));
+
+    cardHeader.className = 'transport-request-card-header';
+    cardTitle.className = 'transport-request-card-title';
+    cardTitle.textContent = transportRequestKindLabels[requestItem.requestKind] || 'Transporte';
+
+    cardStatus.className = `transport-request-card-status is-${requestItem.status}`;
+    cardStatus.textContent = transportRequestStatusLabels[requestItem.status] || 'Pendente';
+
+    cardHeader.appendChild(cardTitle);
+    cardHeader.appendChild(cardStatus);
+
+    cardDetails.className = 'transport-request-card-details';
+    cardDetails.textContent = formatTransportRequestCardDetails(requestItem);
+
+    cardButton.appendChild(cardHeader);
+    cardButton.appendChild(cardDetails);
+    return cardButton;
+  }
+
+  function renderTransportRequestHistory() {
+    if (!transportRequestHistoryList) {
+      return;
+    }
+
+    transportRequestHistoryList.replaceChildren();
+    getTransportRequests().forEach((requestItem) => {
+      transportRequestHistoryList.appendChild(createTransportRequestCard(requestItem));
+    });
+  }
+
   function renderTransportScreen() {
     const activeBuilderConfig = getTransportRequestBuilderConfig(transportUiState.requestBuilderKind);
+    const hasRequests = getTransportRequests().length > 0;
 
     if (transportAddressSummaryValue) {
       transportAddressSummaryValue.textContent = formatTransportAddressSummary(transportState.endRua, transportState.zip);
@@ -1101,13 +1350,13 @@
     }
 
     if (transportOptionButtons) {
-      const showOptions = transportState.status === 'available' && !activeBuilderConfig;
+      const showOptions = !transportUiState.addressEditorOpen;
       transportOptionButtons.hidden = !showOptions;
       transportOptionButtons.classList.toggle('is-hidden', !showOptions);
     }
 
     if (transportRequestBuilderPanel) {
-      const showRequestBuilder = transportState.status === 'available' && Boolean(activeBuilderConfig);
+      const showRequestBuilder = !transportUiState.addressEditorOpen && Boolean(activeBuilderConfig);
       transportRequestBuilderPanel.hidden = !showRequestBuilder;
       transportRequestBuilderPanel.classList.toggle('is-hidden', !showRequestBuilder);
     }
@@ -1141,40 +1390,17 @@
       optionElement.classList.toggle('is-hidden', !showOption);
     });
 
-    if (transportPendingPanel) {
-      const showPending = transportState.status === 'pending';
-      transportPendingPanel.hidden = !showPending;
-      transportPendingPanel.classList.toggle('is-hidden', !showPending);
-    }
-
-    if (transportPendingDeadlineLine) {
-      transportPendingDeadlineLine.textContent = `Aguarde a confirmação até as ${transportState.confirmationDeadlineTime || '--:--'}.`;
-    }
-
-    if (transportConfirmedPanel) {
-      const showConfirmed = transportState.status === 'confirmed';
-      transportConfirmedPanel.hidden = !showConfirmed;
-      transportConfirmedPanel.classList.toggle('is-hidden', !showConfirmed);
-    }
-
-    if (transportConfirmedTypeLine) {
-      transportConfirmedTypeLine.textContent = `Tipo de transporte: ${clientState.formatTransportVehicleType(transportState.vehicleType) || '--'}`;
-    }
-    if (transportConfirmedPlateLine) {
-      transportConfirmedPlateLine.textContent = `Placa do Veículo: ${transportState.vehiclePlate || '--'}`;
-    }
-    if (transportConfirmedBoardingLine) {
-      transportConfirmedBoardingLine.textContent = `Horário de Embarque: ${formatTransportTimeLabel(transportState.boardingTime)}`;
-    }
-    if (transportConfirmedToleranceLine) {
-      const toleranceLabel = Number.isFinite(transportState.toleranceMinutes)
-        ? `${transportState.toleranceMinutes} minutos`
-        : '--';
-      transportConfirmedToleranceLine.textContent = `Tolerância: ${toleranceLabel}`;
+    if (transportRequestHistorySection) {
+      const showHistory = !transportUiState.addressEditorOpen && hasRequests;
+      transportRequestHistorySection.hidden = !showHistory;
+      transportRequestHistorySection.classList.toggle('is-hidden', !showHistory);
+      if (showHistory) {
+        renderTransportRequestHistory();
+      }
     }
 
     if (transportAcknowledgementSection) {
-      const showAcknowledgement = transportState.status === 'confirmed' && transportState.awarenessRequired && !transportState.awarenessConfirmed;
+      const showAcknowledgement = !transportUiState.addressEditorOpen && !activeBuilderConfig && canAcknowledgeSelectedTransportRequest();
       transportAcknowledgementSection.hidden = !showAcknowledgement;
       transportAcknowledgementSection.classList.toggle('is-hidden', !showAcknowledgement);
     }
@@ -1183,19 +1409,26 @@
       transportAcknowledgementCheckbox.checked = transportUiState.acknowledgementChecked;
     }
 
-    if (transportPendingFooterActions) {
-      const showPendingFooter = transportState.status === 'pending';
-      transportPendingFooterActions.hidden = !showPendingFooter;
-      transportPendingFooterActions.classList.toggle('is-hidden', !showPendingFooter);
-    }
-
-    if (transportConfirmedFooterActions) {
-      const showConfirmedFooter = transportState.status === 'confirmed' && transportState.awarenessConfirmed;
-      transportConfirmedFooterActions.hidden = !showConfirmedFooter;
-      transportConfirmedFooterActions.classList.toggle('is-hidden', !showConfirmedFooter);
+    if (transportSelectedRequestActions) {
+      const showSelectedRequestActions = !transportUiState.addressEditorOpen && !activeBuilderConfig && canCancelSelectedTransportRequest();
+      transportSelectedRequestActions.hidden = !showSelectedRequestActions;
+      transportSelectedRequestActions.classList.toggle('is-hidden', !showSelectedRequestActions);
     }
 
     scheduleTransportAutoRefresh();
+  }
+
+  function selectTransportRequest(requestId) {
+    const selectedRequest = findTransportRequestById(requestId);
+    if (!selectedRequest) {
+      return;
+    }
+
+    transportUiState.selectedRequestId = selectedRequest.requestId;
+    transportUiState.acknowledgementChecked = false;
+    syncSelectedTransportRequestState({ status: selectedRequest.status });
+    renderTransportScreen();
+    syncFormControlStates();
   }
 
   function closeTransportAddressEditor() {
@@ -1361,6 +1594,11 @@
         request_kind: requestKind,
         ...requestPayload,
       });
+      if (payload && payload.state && Array.isArray(payload.state.requests) && payload.state.requests.length > 0) {
+        transportUiState.selectedRequestId = Number(payload.state.requests[0].request_id);
+      } else if (payload && payload.state && payload.state.request_id !== null && payload.state.request_id !== undefined) {
+        transportUiState.selectedRequestId = Number(payload.state.request_id);
+      }
       applyTransportStatePayload(payload.state || {});
       clearTransportInlineStatus();
     } catch (error) {
@@ -1393,7 +1631,8 @@
 
   async function cancelActiveTransportRequest() {
     const normalizedChave = getActiveChave();
-    if (!transportState.requestId) {
+    const selectedRequest = getTransportSelectedRequest();
+    if (!selectedRequest || !selectedRequest.requestId) {
       return;
     }
 
@@ -1403,7 +1642,7 @@
     try {
       const payload = await postTransportPayload(transportCancelEndpoint, {
         chave: normalizedChave,
-        request_id: transportState.requestId,
+        request_id: selectedRequest.requestId,
       });
       applyTransportStatePayload(payload.state || {});
       transportUiState.requestBuilderKind = null;
@@ -1423,7 +1662,8 @@
 
   async function acknowledgeTransportInformation() {
     const normalizedChave = getActiveChave();
-    if (!transportState.requestId) {
+    const selectedRequest = getTransportSelectedRequest();
+    if (!selectedRequest || !selectedRequest.requestId) {
       return;
     }
 
@@ -1433,7 +1673,7 @@
     try {
       const payload = await postTransportPayload(transportAcknowledgeEndpoint, {
         chave: normalizedChave,
-        request_id: transportState.requestId,
+        request_id: selectedRequest.requestId,
       });
       applyTransportStatePayload(payload.state || {});
       clearTransportInlineStatus();
@@ -3545,24 +3785,28 @@
     });
   }
 
-  if (transportCancelPendingButton) {
-    transportCancelPendingButton.addEventListener('click', () => {
+  if (transportSelectedRequestCancelButton) {
+    transportSelectedRequestCancelButton.addEventListener('click', () => {
       void cancelActiveTransportRequest();
     });
   }
 
-  if (transportCancelConfirmedButton) {
-    transportCancelConfirmedButton.addEventListener('click', () => {
-      void cancelActiveTransportRequest();
+  if (transportRequestHistoryList) {
+    transportRequestHistoryList.addEventListener('click', (event) => {
+      const requestButton = event.target instanceof Element
+        ? event.target.closest('.transport-request-card[data-request-id]')
+        : null;
+      if (!requestButton) {
+        return;
+      }
+
+      const requestId = Number(requestButton.getAttribute('data-request-id'));
+      if (!Number.isFinite(requestId)) {
+        return;
+      }
+
+      selectTransportRequest(requestId);
     });
-  }
-
-  if (transportPendingBackButton) {
-    transportPendingBackButton.addEventListener('click', closeTransportScreen);
-  }
-
-  if (transportConfirmedBackButton) {
-    transportConfirmedBackButton.addEventListener('click', closeTransportScreen);
   }
 
   if (transportScreenHeaderBackButton) {

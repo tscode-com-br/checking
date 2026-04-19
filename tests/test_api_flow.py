@@ -4280,6 +4280,228 @@ def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypa
     assert any(row["chave"] == "WT14" for row in dashboard.json()["extra_requests"])
 
 
+def test_web_transport_weekend_and_extra_requests_remain_visible_before_their_target_date(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
+    saturday = fixed_now.date() + timedelta(days=1)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT24", projeto="P83", nome="Upcoming Weekend Rider")
+    set_user_checkin_state(chave="WT24", event_time=fixed_now, local="Friday Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT24",
+            senha="abc123",
+            projeto="P83",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        weekend_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT24", "request_kind": "weekend", "selected_weekdays": [5]},
+        )
+        assert weekend_created.status_code == 200
+        assert weekend_created.json()["state"]["status"] == "pending"
+
+        extra_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT24",
+                "request_kind": "extra",
+                "requested_date": saturday.isoformat(),
+                "requested_time": "18:10",
+            },
+        )
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    weekend_row = next(row for row in dashboard.json()["weekend_requests"] if row["chave"] == "WT24")
+    extra_row = next(row for row in dashboard.json()["extra_requests"] if row["chave"] == "WT24")
+
+    assert weekend_row["service_date"] == saturday.isoformat()
+    assert weekend_row["assignment_status"] == "pending"
+    assert extra_row["service_date"] == saturday.isoformat()
+    assert extra_row["requested_time"] == "18:10"
+    assert extra_row["assignment_status"] == "pending"
+
+
+def test_web_transport_state_accumulates_requests_and_cancels_replaced_regular_assignments(monkeypatch):
+    clock = {"now": datetime(2026, 4, 20, 7, 30, tzinfo=ZoneInfo(settings.tz_name))}
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: clock["now"])
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: clock["now"])
+
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="HST2501", tipo="van", color="White", lugares=10, tolerance=5, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    ensure_web_user_exists(chave="WT25", projeto="P80", nome="History Transport Rider")
+    set_user_checkin_state(chave="WT25", event_time=clock["now"], local="History Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT25",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        first_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT25", "request_kind": "regular", "selected_weekdays": [0, 1]},
+        )
+        assert first_created.status_code == 200
+        first_request_id = first_created.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": first_request_id,
+                    "service_date": clock["now"].date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        clock["now"] = clock["now"] + timedelta(minutes=5)
+
+        second_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT25", "request_kind": "regular", "selected_weekdays": [2, 3]},
+        )
+        assert second_created.status_code == 200
+
+        state_response = client.get("/api/web/transport/state", params={"chave": "WT25"})
+        assert state_response.status_code == 200
+        state_payload = state_response.json()
+
+    assert [item["request_id"] for item in state_payload["requests"][:2]] == [
+        second_created.json()["state"]["requests"][0]["request_id"],
+        first_request_id,
+    ]
+    assert state_payload["requests"][0]["status"] == "pending"
+    assert state_payload["requests"][0]["selected_weekdays"] == [2, 3]
+    assert state_payload["requests"][1]["status"] == "cancelled"
+    assert state_payload["requests"][1]["is_active"] is False
+
+    with SessionLocal() as db:
+        first_request = db.get(TransportRequest, first_request_id)
+        assert first_request is not None
+        assert first_request.status == "cancelled"
+
+        first_assignments = db.execute(
+            select(TransportAssignment)
+            .where(TransportAssignment.request_id == first_request_id)
+            .order_by(TransportAssignment.route_kind, TransportAssignment.service_date)
+        ).scalars().all()
+
+    assert first_assignments
+    assert all(row.status == "cancelled" for row in first_assignments)
+    assert all(row.vehicle_id is None for row in first_assignments)
+
+
+def test_transport_dashboard_reject_marks_web_request_as_rejected(monkeypatch):
+    fixed_now = datetime(2026, 4, 21, 8, 10, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT26", projeto="P82", nome="Rejected Transport Rider")
+    set_user_checkin_state(chave="WT26", event_time=fixed_now, local="Reject Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT26",
+            senha="abc123",
+            projeto="P82",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT26", "request_kind": "regular"},
+        )
+        assert created.status_code == 200
+        request_id = created.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            rejected = admin_client.post(
+                "/api/transport/requests/reject",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                },
+            )
+            assert rejected.status_code == 200
+
+            dashboard = admin_client.get(
+                "/api/transport/dashboard",
+                params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+            )
+            assert dashboard.status_code == 200
+
+        state_response = client.get("/api/web/transport/state", params={"chave": "WT26"})
+        assert state_response.status_code == 200
+        state_payload = state_response.json()
+
+    assert state_payload["status"] == "available"
+    assert state_payload["requests"][0]["request_id"] == request_id
+    assert state_payload["requests"][0]["status"] == "rejected"
+    assert state_payload["requests"][0]["is_active"] is False
+    assert all(row["chave"] != "WT26" for row in dashboard.json()["regular_requests"])
+
+    with SessionLocal() as db:
+        request_row = db.get(TransportRequest, request_id)
+        assert request_row is not None
+        assert request_row.status == "cancelled"
+
+        assignments = db.execute(
+            select(TransportAssignment)
+            .where(TransportAssignment.request_id == request_id)
+            .order_by(TransportAssignment.route_kind, TransportAssignment.service_date)
+        ).scalars().all()
+
+    assert assignments
+    assert all(row.status == "rejected" for row in assignments)
+    assert all(row.vehicle_id is None for row in assignments)
+
+
 def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkeypatch):
     fixed_now = datetime(2026, 4, 19, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)

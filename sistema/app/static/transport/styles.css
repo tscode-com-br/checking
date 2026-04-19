@@ -902,9 +902,13 @@ button {
   padding-right: 4px;
 }
 
+.transport-request-row-shell {
+  position: relative;
+}
+
 .transport-request-row {
   width: 100%;
-  padding: 12px 14px;
+  padding: 12px 48px 12px 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 5px;
@@ -934,6 +938,14 @@ button {
   cursor: grabbing;
 }
 
+.transport-request-row.is-readonly {
+  cursor: default;
+}
+
+.transport-request-row.is-readonly:hover {
+  transform: none;
+}
+
 .transport-request-row.is-previewing {
   border-color: rgba(72, 212, 206, 0.44);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
@@ -950,6 +962,34 @@ button {
 .transport-request-row.is-rejected,
 .transport-request-row.is-cancelled {
   border-left-color: var(--transport-warning);
+}
+
+.transport-request-reject-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.9);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.22);
+}
+
+.transport-request-reject-button:hover {
+  background: rgba(185, 28, 28, 0.96);
+}
+
+.transport-request-reject-button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
 }
 
 .transport-request-primary {

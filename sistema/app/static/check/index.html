@@ -522,21 +522,10 @@
                 </form>
               </section>
 
-              <section id="transportPendingPanel" class="transport-message-panel is-hidden" hidden>
-                <p class="transport-message-line">Sua solicitação foi enviada.</p>
-                <p id="transportPendingDeadlineLine" class="transport-message-line"></p>
-                <p class="transport-message-line">A confirmação aparecerá aqui.</p>
-              </section>
+              <section id="transportRequestHistorySection" class="transport-request-history-section is-hidden" hidden>
+                <p class="transport-request-history-label">Solicitações registradas</p>
 
-              <section id="transportConfirmedPanel" class="transport-message-panel is-hidden" hidden>
-                <p class="transport-message-line">Seu transporte foi confirmado.</p>
-
-                <div class="transport-confirmation-details">
-                  <p id="transportConfirmedTypeLine" class="transport-detail-line"></p>
-                  <p id="transportConfirmedPlateLine" class="transport-detail-line"></p>
-                  <p id="transportConfirmedBoardingLine" class="transport-detail-line transport-detail-line-separator"></p>
-                  <p id="transportConfirmedToleranceLine" class="transport-detail-line"></p>
-                </div>
+                <div id="transportRequestHistoryList" class="transport-request-history-list" role="list"></div>
               </section>
 
               <section id="transportAcknowledgementSection" class="transport-acknowledgement-section is-hidden" hidden>
@@ -547,14 +536,8 @@
                 <button id="transportAcknowledgementButton" type="button" class="submit-button">CONFIRMAR CIÊNCIA</button>
               </section>
 
-              <section id="transportPendingFooterActions" class="transport-footer-actions is-hidden" hidden>
-                <button id="transportCancelPendingButton" type="button" class="submit-button transport-cancel-button">Cancelar Solicitação</button>
-                <button id="transportPendingBackButton" type="button" class="secondary-button">Voltar</button>
-              </section>
-
-              <section id="transportConfirmedFooterActions" class="transport-footer-actions is-hidden" hidden>
-                <button id="transportConfirmedBackButton" type="button" class="secondary-button">Voltar</button>
-                <button id="transportCancelConfirmedButton" type="button" class="submit-button transport-cancel-button">Cancelar Solicitação</button>
+              <section id="transportSelectedRequestActions" class="transport-footer-actions is-hidden" hidden>
+                <button id="transportSelectedRequestCancelButton" type="button" class="submit-button transport-cancel-button">Cancelar Solicitação</button>
               </section>
             </div>
 

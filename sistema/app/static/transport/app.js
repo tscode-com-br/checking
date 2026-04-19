@@ -676,6 +676,7 @@
       "Transport access granted.": "status.accessGranted",
       "Vehicle saved successfully.": "status.vehicleSaved",
       "Vehicle deleted from the database.": "status.vehicleDeleted",
+      "Transport request rejected successfully.": "status.requestRejected",
       "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": "warnings.weekendPersistence",
       "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
       "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
@@ -2437,6 +2438,13 @@
 
     function createRequestMetaLine(requestRow) {
       const metaParts = [];
+      if (requestRow.service_date) {
+        const parsedServiceDate = parseStoredTransportDate(requestRow.service_date);
+        metaParts.push(parsedServiceDate ? formatTransportDate(parsedServiceDate) : String(requestRow.service_date));
+      }
+      if (requestRow.requested_time) {
+        metaParts.push(String(requestRow.requested_time));
+      }
       if (requestRow.assigned_vehicle) {
         metaParts.push(t("misc.assignedTo", { plate: requestRow.assigned_vehicle.placa }));
       }
@@ -2444,6 +2452,18 @@
         metaParts.push(requestRow.response_message);
       }
       return metaParts.join(" | ");
+    }
+
+    function clearRequestRowStateClass(className) {
+      Object.values(requestContainers).forEach(function (container) {
+        if (!container) {
+          return;
+        }
+
+        container.querySelectorAll(`.transport-request-row.${className}`).forEach(function (rowElement) {
+          rowElement.classList.remove(className);
+        });
+      });
     }
 
     function renderRequestTables() {
@@ -2466,10 +2486,15 @@
         }
 
         requestRows.forEach(function (requestRow) {
-          const rowButton = createNode("button", `transport-request-row is-${requestRow.assignment_status}`);
-          rowButton.type = "button";
-          rowButton.draggable = true;
+          const rowShell = createNode("div", "transport-request-row-shell");
+          const rowButton = createNode("div", `transport-request-row is-${requestRow.assignment_status}`);
+          const rejectButton = createNode("button", "transport-request-reject-button", "X");
+          const requestMatchesSelectedDate = !state.dashboard
+            || String(requestRow.service_date || "") === String(state.dashboard.selected_date || "");
+          const metaLine = createRequestMetaLine(requestRow);
+          rowButton.draggable = requestMatchesSelectedDate;
           rowButton.dataset.requestId = String(requestRow.id);
+          rowButton.classList.toggle("is-readonly", !requestMatchesSelectedDate);
           rowButton.classList.toggle("is-dragging", Number(state.dragRequestId) === Number(requestRow.id));
           rowButton.classList.toggle(
             "is-previewing",
@@ -2487,25 +2512,42 @@
           rowButton.appendChild(nameCell);
           rowButton.appendChild(addressCell);
           rowButton.appendChild(zipCell);
+          if (metaLine) {
+            rowButton.appendChild(createNode("span", "transport-request-meta", metaLine));
+          }
+
+          rejectButton.type = "button";
+          rejectButton.setAttribute("aria-label", t("misc.reject"));
+          rejectButton.title = t("misc.reject");
+          rejectButton.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            void rejectRequestRow(requestRow);
+          });
 
           rowButton.addEventListener("dragstart", function (event) {
             state.pendingAssignmentPreview = null;
+            clearRequestRowStateClass("is-previewing");
+            clearRequestRowStateClass("is-dragging");
             state.dragRequestId = requestRow.id;
+            rowButton.classList.add("is-dragging");
             if (event.dataTransfer) {
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("text/plain", String(requestRow.id));
             }
-            renderRequestTables();
             renderVehiclePanels();
           });
 
           rowButton.addEventListener("dragend", function () {
+            rowButton.classList.remove("is-dragging");
             state.dragRequestId = null;
             renderRequestTables();
             renderVehiclePanels();
           });
 
-          container.appendChild(rowButton);
+          rowShell.appendChild(rowButton);
+          rowShell.appendChild(rejectButton);
+          container.appendChild(rowShell);
         });
       });
     }
@@ -2536,6 +2578,30 @@
         return loadDashboard(dateStore.getValue(), { announce: false });
       }).catch(function (error) {
         if (handleProtectedRequestError(error, t("status.couldNotUpdateAllocation"))) {
+          return null;
+        }
+        throw error;
+      });
+    }
+
+    function rejectRequestRow(requestRow) {
+      if (!requestRow || !requestRow.id || !requestRow.service_date) {
+        setStatus(t("status.couldNotRejectSelectedRequest"), "error");
+        return Promise.resolve();
+      }
+
+      return requestJson("/api/transport/requests/reject", {
+        method: "POST",
+        body: JSON.stringify({
+          request_id: requestRow.id,
+          service_date: requestRow.service_date,
+          route_kind: getSelectedRouteKind(),
+        }),
+      }).then(function () {
+        setStatus(t("status.requestRejected"), "success");
+        return loadDashboard(dateStore.getValue(), { announce: false });
+      }).catch(function (error) {
+        if (handleProtectedRequestError(error, t("status.couldNotRejectSelectedRequest"))) {
           return null;
         }
         throw error;
@@ -2635,7 +2701,7 @@
         toggleVehicleDetails(scope, vehicle.id);
       });
 
-      vehicleButton.addEventListener("dragover", function (event) {
+      function handleVehicleDragOver(event) {
         if (!canRequestBeDroppedOnVehicle(getDraggedRequest(), scope, vehicle, getSelectedRouteKind())) {
           return;
         }
@@ -2643,9 +2709,9 @@
         if (event.dataTransfer) {
           event.dataTransfer.dropEffect = "move";
         }
-      });
+      }
 
-      vehicleButton.addEventListener("drop", function (event) {
+      function handleVehicleDrop(event) {
         const droppedRequestId = Number(
           state.dragRequestId !== null
             ? state.dragRequestId
@@ -2672,14 +2738,18 @@
         state.dragRequestId = null;
         renderRequestTables();
         renderVehiclePanels();
-      });
+      }
 
-      vehicleButton.addEventListener("dragenter", function (event) {
+      function handleVehicleDragEnter(event) {
         if (!canRequestBeDroppedOnVehicle(getDraggedRequest(), scope, vehicle, getSelectedRouteKind())) {
           return;
         }
         event.preventDefault();
-      });
+      }
+
+      tileElement.addEventListener("dragover", handleVehicleDragOver);
+      tileElement.addEventListener("drop", handleVehicleDrop);
+      tileElement.addEventListener("dragenter", handleVehicleDragEnter);
 
       tileElement.appendChild(vehicleButton);
       if (isExpanded) {
