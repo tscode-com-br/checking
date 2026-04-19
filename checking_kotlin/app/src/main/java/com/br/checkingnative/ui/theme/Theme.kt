@@ -6,19 +6,21 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 private val LightColorScheme = lightColorScheme(
-    primary = CheckingBlue,
+    primary = CheckingPrimary,
     onPrimary = CheckingCard,
-    primaryContainer = CheckingBlueLight,
+    primaryContainer = CheckingPrimarySoft,
     onPrimaryContainer = CheckingText,
-    background = CheckingSurface,
+    background = CheckingBackground,
     onBackground = CheckingText,
     surface = CheckingCard,
     onSurface = CheckingText,
     onSurfaceVariant = CheckingMuted,
+    outline = CheckingBorder,
+    error = CheckingError,
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = CheckingBlueLight,
+    primary = CheckingPrimarySoft,
 )
 
 @Composable
@@ -31,4 +33,3 @@ fun CheckingKotlinTheme(
         content = content,
     )
 }
-

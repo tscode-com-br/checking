@@ -279,6 +279,44 @@ test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five 
   );
 });
 
+test('buildVehiclePassengerAwarenessRows keeps overflow passengers while preserving the first five visible rows', () => {
+  assert.deepEqual(
+    transportPage.buildVehiclePassengerAwarenessRows(
+      [
+        { nome: 'Alice Rider' },
+        { nome: 'Bob Rider', awareness_status: 'aware' },
+        { nome: 'Carol Rider' },
+        { nome: 'Daniel Rider' },
+        { nome: 'Evelyn Rider' },
+        { nome: 'Frank Rider' },
+      ],
+      5
+    ),
+    [
+      { name: 'Alice Rider', awarenessState: 'pending' },
+      { name: 'Bob Rider', awarenessState: 'aware' },
+      { name: 'Carol Rider', awarenessState: 'pending' },
+      { name: 'Daniel Rider', awarenessState: 'pending' },
+      { name: 'Evelyn Rider', awarenessState: 'pending' },
+      { name: 'Frank Rider', awarenessState: 'pending' },
+    ]
+  );
+});
+
+test('transport page request section titles are rendered as links that control each user list', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+
+  assert.match(transportHtml, /data-toggle-request-section="extra"/);
+  assert.match(transportHtml, /data-toggle-request-section="weekend"/);
+  assert.match(transportHtml, /data-toggle-request-section="regular"/);
+  assert.match(transportHtml, /id="transportRequestScopeExtra"/);
+  assert.match(transportHtml, /id="transportRequestScopeWeekend"/);
+  assert.match(transportHtml, /id="transportRequestScopeRegular"/);
+});
+
 test('buildVehiclePassengerPreviewRows keeps the dragged passenger visible in the preview table', () => {
   assert.deepEqual(
     transportPage.buildVehiclePassengerPreviewRows(

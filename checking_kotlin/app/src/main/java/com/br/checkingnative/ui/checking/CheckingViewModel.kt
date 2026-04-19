@@ -153,8 +153,10 @@ class CheckingViewModel @Inject constructor(
         }
     }
 
-    fun shouldRunForegroundLocationStream(): Boolean {
-        return controller.shouldRunForegroundLocationStream(backgroundServiceRunning = false)
+    fun shouldRunForegroundLocationStream(backgroundServiceRunning: Boolean): Boolean {
+        return controller.shouldRunForegroundLocationStream(
+            backgroundServiceRunning = backgroundServiceRunning,
+        )
     }
 
     fun processForegroundLocationUpdate(sample: CheckingLocationSample) {

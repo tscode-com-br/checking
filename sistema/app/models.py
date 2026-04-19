@@ -164,7 +164,7 @@ class TransportAssignment(Base):
             name="ck_transport_assignments_route_allowed",
         ),
         CheckConstraint(
-            "status IN ('confirmed', 'rejected', 'cancelled')",
+            "status IN ('confirmed', 'rejected', 'cancelled', 'pending')",
             name="ck_transport_assignments_status_allowed",
         ),
     )

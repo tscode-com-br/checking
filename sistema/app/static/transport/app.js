@@ -889,24 +889,28 @@
   }
 
   function buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow, maxRows) {
-    const normalizedMaxRows = Math.max(1, Number(maxRows) || VEHICLE_DETAILS_MAX_ROWS);
     const rows = Array.isArray(assignedRows)
       ? assignedRows.filter(function (requestRow) {
           return !previewRequestRow || Number(requestRow.id) !== Number(previewRequestRow.id);
         })
       : [];
 
-    if (!previewRequestRow) {
-      return rows.slice(0, normalizedMaxRows);
+    const previewRows = previewRequestRow ? [previewRequestRow].concat(rows) : rows;
+    const normalizedMaxRows = Number.isFinite(Number(maxRows)) && Number(maxRows) > 0
+      ? Math.max(1, Number(maxRows))
+      : null;
+
+    if (normalizedMaxRows === null) {
+      return previewRows;
     }
 
-    return [previewRequestRow].concat(rows).slice(0, normalizedMaxRows);
+    return previewRows.slice(0, normalizedMaxRows);
   }
 
   function buildVehiclePassengerAwarenessRows(assignedRows, maxRows) {
     const normalizedMaxRows = Math.max(1, Number(maxRows) || VEHICLE_DETAILS_MAX_ROWS);
     const rows = Array.isArray(assignedRows)
-      ? assignedRows.slice(0, normalizedMaxRows).map(function (requestRow) {
+      ? assignedRows.map(function (requestRow) {
           return {
             name: String((requestRow && requestRow.nome) || ""),
             awarenessState: getPassengerAwarenessState(requestRow),
@@ -984,6 +988,12 @@
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
       routeTimeEditorOpen: false,
       routeTimeSaving: false,
+      requestSectionCollapsedByKind: {
+        extra: false,
+        weekend: false,
+        regular: false,
+      },
+      requestRowCollapseOverrides: {},
     };
     const statusMessage = document.querySelector("[data-status-message]");
     const projectListToggle = document.querySelector("[data-project-list-toggle]");
@@ -1027,16 +1037,31 @@
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
     const authPasswordShell = document.querySelector('[data-transport-auth-shell="password"]');
     const requestUserButton = document.querySelector("[data-request-user-link]");
+    const requestSectionToggleLinks = {};
     const vehicleViewToggleLinks = {};
 
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
+    });
+    document.querySelectorAll("[data-toggle-request-section]").forEach(function (element) {
+      requestSectionToggleLinks[element.dataset.toggleRequestSection] = element;
     });
     document.querySelectorAll("[data-vehicle-scope]").forEach(function (element) {
       vehicleContainers[element.dataset.vehicleScope] = element;
     });
     document.querySelectorAll("[data-toggle-vehicle-view]").forEach(function (element) {
       vehicleViewToggleLinks[element.dataset.toggleVehicleView] = element;
+    });
+
+    Object.keys(requestSectionToggleLinks).forEach(function (scope) {
+      const toggleLink = requestSectionToggleLinks[scope];
+      if (!toggleLink) {
+        return;
+      }
+      toggleLink.addEventListener("click", function (event) {
+        event.preventDefault();
+        toggleRequestSectionCollapsed(scope);
+      });
     });
 
     Object.keys(vehicleViewToggleLinks).forEach(function (scope) {
@@ -1078,7 +1103,7 @@
       const supportKicker = document.querySelector(".transport-topbar-support .transport-topbar-kicker");
       const routeLabels = document.querySelectorAll(".transport-topbar-route-toggle .transport-route-option span");
       const authLabels = document.querySelectorAll(".transport-auth-label");
-      const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title");
+      const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title-link");
       const paneLinks = document.querySelectorAll(".transport-pane-title-link");
       const addVehicleButtons = document.querySelectorAll("[data-open-vehicle-modal]");
       const modalFieldLabels = vehicleForm ? vehicleForm.querySelectorAll(".transport-field > span") : [];
@@ -1313,6 +1338,72 @@
 
       refreshDatePanelLabels();
       syncVehicleModalFields(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
+    }
+
+    function clearRequestCollapseOverridesForKind(kind) {
+      getRequestsForKind(kind).forEach(function (requestRow) {
+        delete state.requestRowCollapseOverrides[String(requestRow.id)];
+      });
+    }
+
+    function getRequestSectionCollapsedState(kind) {
+      return Boolean(state.requestSectionCollapsedByKind[kind]);
+    }
+
+    function getRequestRowCollapsedState(requestRow) {
+      if (!requestRow || requestRow.id === undefined || requestRow.id === null) {
+        return false;
+      }
+
+      const requestIdKey = String(requestRow.id);
+      if (Object.prototype.hasOwnProperty.call(state.requestRowCollapseOverrides, requestIdKey)) {
+        return Boolean(state.requestRowCollapseOverrides[requestIdKey]);
+      }
+
+      return getRequestSectionCollapsedState(requestRow.request_kind);
+    }
+
+    function setRequestRowCollapsedState(requestRow, collapsed) {
+      if (!requestRow || requestRow.id === undefined || requestRow.id === null) {
+        return;
+      }
+
+      const requestIdKey = String(requestRow.id);
+      const defaultCollapsed = getRequestSectionCollapsedState(requestRow.request_kind);
+      if (collapsed === defaultCollapsed) {
+        delete state.requestRowCollapseOverrides[requestIdKey];
+        return;
+      }
+
+      state.requestRowCollapseOverrides[requestIdKey] = Boolean(collapsed);
+    }
+
+    function toggleRequestRowCollapsed(requestRow) {
+      if (!requestRow) {
+        return;
+      }
+
+      setRequestRowCollapsedState(requestRow, !getRequestRowCollapsedState(requestRow));
+      renderRequestTables();
+    }
+
+    function syncRequestSectionToggleState() {
+      Object.keys(requestSectionToggleLinks).forEach(function (kind) {
+        const toggleLink = requestSectionToggleLinks[kind];
+        if (!toggleLink) {
+          return;
+        }
+
+        const isExpanded = !getRequestSectionCollapsedState(kind);
+        toggleLink.setAttribute("aria-expanded", String(isExpanded));
+        toggleLink.classList.toggle("is-collapsed", !isExpanded);
+      });
+    }
+
+    function toggleRequestSectionCollapsed(kind) {
+      state.requestSectionCollapsedByKind[kind] = !getRequestSectionCollapsedState(kind);
+      clearRequestCollapseOverridesForKind(kind);
+      renderRequestTables();
     }
 
     function populateLanguageOptions() {
@@ -2398,53 +2489,62 @@
       renderVehiclePanels();
     }
 
-    function createAwarenessIndicator(awarenessState) {
-      const indicator = createNode("span", "transport-awareness-indicator");
-      if (!awarenessState) {
-        indicator.classList.add("is-empty");
-        indicator.setAttribute("aria-hidden", "true");
-        return indicator;
-      }
+    function createPassengerRemoveButton(requestRow, routeKind) {
+      const removeButton = createNode("button", "transport-passenger-remove-button", "×");
+      const normalizedRouteKind = routeKind || getSelectedRouteKind();
+      const removeLabel = t("misc.removeFromVehicle", { name: String(requestRow && requestRow.nome || "") });
 
-      indicator.classList.add(`is-${awarenessState}`);
-      if (awarenessState === "aware") {
-        indicator.textContent = "✓";
-        indicator.setAttribute("aria-label", t("misc.passengerAwareAria"));
-        return indicator;
-      }
-
-      indicator.textContent = "◷";
-      indicator.setAttribute("aria-label", t("misc.passengerPendingAria"));
-      return indicator;
+      removeButton.type = "button";
+      removeButton.setAttribute("aria-label", removeLabel);
+      removeButton.title = removeLabel;
+      removeButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        void returnRequestRowToPending(requestRow, normalizedRouteKind);
+      });
+      return removeButton;
     }
 
     function createVehicleDetailsPanel(vehicle, assignedRows, options) {
       const detailOptions = options || {};
       const previewRequestRow = detailOptions.previewRequestRow || null;
       const detailsPanel = createNode("div", "transport-vehicle-details");
+      const passengerTableShell = createNode("div", "transport-vehicle-passenger-table-shell");
       const passengerTable = createNode("table", "transport-vehicle-passenger-table");
       const tableBody = createNode("tbody");
+      const passengerSourceRows = buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow);
 
       buildVehiclePassengerAwarenessRows(
-        buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow, VEHICLE_DETAILS_MAX_ROWS),
+        passengerSourceRows,
         VEHICLE_DETAILS_MAX_ROWS
-      ).forEach(function (row) {
+      ).forEach(function (row, index) {
         const tableRow = createNode("tr", "transport-vehicle-passenger-row");
         const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
         const statusCell = createNode("td", "transport-vehicle-passenger-status");
+        const sourceRequestRow = passengerSourceRows[index] || null;
+        const isPreviewRow = Boolean(
+          previewRequestRow
+          && sourceRequestRow
+          && Number(sourceRequestRow.id) === Number(previewRequestRow.id)
+        );
 
         if (!row.name) {
           nameCell.innerHTML = "&nbsp;";
         }
 
-        statusCell.appendChild(createAwarenessIndicator(row.awarenessState));
+        if (sourceRequestRow && !isPreviewRow) {
+          statusCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
+        } else {
+          statusCell.innerHTML = "&nbsp;";
+        }
         tableRow.appendChild(nameCell);
         tableRow.appendChild(statusCell);
         tableBody.appendChild(tableRow);
       });
 
       passengerTable.appendChild(tableBody);
-      detailsPanel.appendChild(passengerTable);
+      passengerTableShell.appendChild(passengerTable);
+      detailsPanel.appendChild(passengerTableShell);
 
       if (previewRequestRow) {
         const previewActions = createNode("div", "transport-vehicle-preview-actions");
@@ -2605,6 +2705,11 @@
             "is-previewing",
             !!state.pendingAssignmentPreview && Number(state.pendingAssignmentPreview.requestId) === Number(requestRow.id)
           );
+          rowButton.classList.toggle("is-collapsed", getRequestRowCollapsedState(requestRow));
+          rowButton.tabIndex = 0;
+          rowButton.setAttribute("role", "button");
+          rowButton.setAttribute("aria-expanded", String(!getRequestRowCollapsedState(requestRow)));
+          rowShell.classList.toggle("is-collapsed", getRequestRowCollapsedState(requestRow));
 
           const nameCell = createNode("span", "transport-request-primary", requestRow.nome);
           const addressCell = createNode("span", "transport-request-secondary", requestRow.end_rua || t("misc.addressPending"));
@@ -2650,11 +2755,25 @@
             renderVehiclePanels();
           });
 
+          rowButton.addEventListener("click", function () {
+            toggleRequestRowCollapsed(requestRow);
+          });
+
+          rowButton.addEventListener("keydown", function (event) {
+            if (event.key !== "Enter" && event.key !== " ") {
+              return;
+            }
+            event.preventDefault();
+            toggleRequestRowCollapsed(requestRow);
+          });
+
           rowShell.appendChild(rowButton);
           rowShell.appendChild(rejectButton);
           container.appendChild(rowShell);
         });
       });
+
+      syncRequestSectionToggleState();
     }
 
     function groupAssignedRequestsByVehicle(scope) {
@@ -2711,6 +2830,28 @@
         }
         throw error;
       });
+    }
+
+    function returnRequestRowToPending(requestRow, routeKind) {
+      if (!requestRow || !requestRow.id || !requestRow.service_date) {
+        setStatus(t("status.couldNotUpdateAllocation"), "error");
+        return Promise.resolve();
+      }
+
+      return submitAssignment({
+        request_id: requestRow.id,
+        service_date: requestRow.service_date,
+        route_kind: routeKind || getSelectedRouteKind(),
+        status: "pending",
+      }).then(function (result) {
+        if (result === null) {
+          return null;
+        }
+        state.pendingAssignmentPreview = null;
+        renderRequestTables();
+        renderVehiclePanels();
+        return result;
+      }).catch(function () {});
     }
 
     function removeVehicleFromRoute(vehicle) {
@@ -2975,6 +3116,7 @@
       renderProjectList();
       renderRequestTables();
       renderVehiclePanels();
+      syncRequestSectionToggleState();
     }
 
     function clearDashboard() {
@@ -3000,6 +3142,7 @@
       state.pendingAssignmentPreview = null;
       state.dragRequestId = null;
       syncVehicleViewToggleState();
+      syncRequestSectionToggleState();
       syncRouteTimeControls();
     }
 

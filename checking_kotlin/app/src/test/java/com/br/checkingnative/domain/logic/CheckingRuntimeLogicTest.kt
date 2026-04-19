@@ -102,6 +102,24 @@ class CheckingRuntimeLogicTest {
     }
 
     @Test
+    fun foregroundDecision_pausesDuringConfiguredNightPeriod() {
+        val state = CheckingState.initial().copy(
+            locationSharingEnabled = true,
+            nightUpdatesDisabled = true,
+            nightPeriodStartMinutes = 22 * 60,
+            nightPeriodEndMinutes = 6 * 60,
+        )
+
+        assertFalse(
+            CheckingRuntimeLogic.shouldRunForegroundLocationStream(
+                state = state,
+                backgroundServiceSupported = false,
+                referenceTime = Instant.parse("2026-04-20T15:30:00Z"),
+            ),
+        )
+    }
+
+    @Test
     fun resolveControlFlagAfterSnapshot_neverReEnablesDisabledToggle() {
         assertFalse(
             CheckingRuntimeLogic.resolveControlFlagAfterSnapshot(
@@ -115,5 +133,42 @@ class CheckingRuntimeLogicTest {
                 snapshotLocationSharingEnabled = false,
             ),
         )
+    }
+
+    @Test
+    fun submitRefreshDecision_matchesFlutterAutomationRules() {
+        assertFalse(
+            CheckingRuntimeLogic.shouldRefreshLocationTrackingAfterSubmit(
+                state = CheckingState.initial(),
+            ),
+        )
+        assertTrue(
+            CheckingRuntimeLogic.shouldRefreshLocationTrackingAfterSubmit(
+                state = CheckingState.initial().copy(
+                    locationSharingEnabled = true,
+                    autoCheckInEnabled = true,
+                ),
+            ),
+        )
+        assertTrue(
+            CheckingRuntimeLogic.shouldRefreshLocationTrackingAfterSubmit(
+                state = CheckingState.initial().copy(
+                    locationSharingEnabled = true,
+                    nightModeAfterCheckoutEnabled = true,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun automaticToggleState_matchesLocationSharingAndBusyFlags() {
+        val offState = CheckingState.initial().copy(locationSharingEnabled = false)
+        val readyState = offState.copy(locationSharingEnabled = true)
+        val busyState = readyState.copy(isAutomaticCheckingUpdating = true)
+
+        assertFalse(CheckingRuntimeLogic.isAutomaticCheckingEnabledInUi(offState))
+        assertFalse(CheckingRuntimeLogic.isAutomaticCheckingToggleInteractive(offState))
+        assertTrue(CheckingRuntimeLogic.isAutomaticCheckingToggleInteractive(readyState))
+        assertFalse(CheckingRuntimeLogic.isAutomaticCheckingToggleInteractive(busyState))
     }
 }

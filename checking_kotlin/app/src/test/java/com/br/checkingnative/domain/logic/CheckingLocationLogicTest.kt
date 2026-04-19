@@ -103,6 +103,161 @@ class CheckingLocationLogicTest {
     }
 
     @Test
+    fun foregroundSituation_reentersMonitoredLocationAfterCheckoutAndChecksIn() {
+        val matchResult = CheckingLocationLogic.resolveLocationMatch(
+            managedLocations = buildScenarioLocations(),
+            latitude = 1.249494,
+            longitude = 103.614345,
+        )
+        val matchedLocation = matchResult.matchedLocation
+
+        assertEquals("Escritorio Principal", matchedLocation?.local)
+        assertEquals(
+            RegistroType.CHECK_IN,
+            CheckingLocationLogic.resolveAutomaticActionForLocation(
+                remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_OUT),
+                location = matchedLocation!!,
+                autoCheckInEnabled = true,
+                autoCheckOutEnabled = true,
+                lastCheckInLocation = null,
+            ),
+        )
+    }
+
+    @Test
+    fun foregroundSituation_changesBetweenRegularLocationsAndChecksInAgain() {
+        val matchResult = CheckingLocationLogic.resolveLocationMatch(
+            managedLocations = buildScenarioLocations(),
+            latitude = 1.251290,
+            longitude = 103.613386,
+        )
+        val matchedLocation = matchResult.matchedLocation
+
+        assertEquals("Em Deslocamento", matchedLocation?.local)
+        assertEquals(
+            RegistroType.CHECK_IN,
+            CheckingLocationLogic.resolveAutomaticActionForLocation(
+                remoteState = buildScenarioRemoteState(
+                    lastAction = RegistroType.CHECK_IN,
+                    currentLocal = "Escritorio Principal",
+                ),
+                location = matchedLocation!!,
+                autoCheckInEnabled = true,
+                autoCheckOutEnabled = true,
+                lastCheckInLocation = "Escritorio Principal",
+            ),
+        )
+    }
+
+    @Test
+    fun foregroundSituation_outOfRangeCheckoutUsesAutomaticWorkplaceLocal() {
+        val matchResult = CheckingLocationLogic.resolveLocationMatch(
+            managedLocations = buildScenarioLocations(),
+            latitude = 1.328550,
+            longitude = 103.708420,
+        )
+
+        assertNull(matchResult.matchedLocation)
+        assertTrue(
+            matchResult.nearestWorkplaceDistanceMeters!! >
+                CheckingLocationLogic.outOfRangeCheckoutDistanceMeters,
+        )
+        assertEquals(
+            RegistroType.CHECK_OUT,
+            CheckingLocationLogic.resolveAutomaticActionOutOfRange(
+                remoteState = buildScenarioRemoteState(
+                    lastAction = RegistroType.CHECK_IN,
+                    currentLocal = "Escritorio Principal",
+                ),
+                nearestDistanceMeters = matchResult.nearestWorkplaceDistanceMeters,
+                autoCheckOutEnabled = true,
+            ),
+        )
+        assertEquals(
+            CheckingLocationLogic.automaticCheckoutLocation,
+            CheckingLocationLogic.resolveAutomaticEventLocal(action = RegistroType.CHECK_OUT),
+        )
+    }
+
+    @Test
+    fun regularLocations_doNotRepeatCheckInInSameLocationButUseApiCurrentLocal() {
+        val regularLocation = buildScenarioLocations().first()
+        val repeatedAction = CheckingLocationLogic.resolveAutomaticActionForLocation(
+            remoteState = buildScenarioRemoteState(
+                lastAction = RegistroType.CHECK_IN,
+                currentLocal = "Escritorio Principal",
+            ),
+            location = regularLocation,
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+            lastCheckInLocation = null,
+        )
+        val changedByApiCurrentLocal = CheckingLocationLogic.resolveAutomaticActionForLocation(
+            remoteState = buildScenarioRemoteState(
+                lastAction = RegistroType.CHECK_IN,
+                currentLocal = "Base P80",
+            ),
+            location = regularLocation,
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+            lastCheckInLocation = "Escritorio Principal",
+        )
+
+        assertNull(repeatedAction)
+        assertEquals(RegistroType.CHECK_IN, changedByApiCurrentLocal)
+    }
+
+    @Test
+    fun outOfRangeCheckout_onlyHappensBeyondTwoKilometersAfterCheckIn() {
+        assertEquals(
+            RegistroType.CHECK_OUT,
+            CheckingLocationLogic.resolveAutomaticActionOutOfRange(
+                remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_IN),
+                nearestDistanceMeters = 2100.0,
+                autoCheckOutEnabled = true,
+            ),
+        )
+        assertNull(
+            CheckingLocationLogic.resolveAutomaticActionOutOfRange(
+                remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_IN),
+                nearestDistanceMeters = 1950.0,
+                autoCheckOutEnabled = true,
+            ),
+        )
+        assertNull(
+            CheckingLocationLogic.resolveAutomaticActionOutOfRange(
+                remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_OUT),
+                nearestDistanceMeters = 2100.0,
+                autoCheckOutEnabled = true,
+            ),
+        )
+        assertNull(
+            CheckingLocationLogic.resolveAutomaticActionOutOfRange(
+                remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_IN),
+                nearestDistanceMeters = 2100.0,
+                autoCheckOutEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun recordLocationFetchHistory_capsHistoryToNewestTenEntries() {
+        var history = emptyList<LocationFetchEntry>()
+        repeat(12) { index ->
+            history = CheckingLocationLogic.recordLocationFetchHistory(
+                history = history,
+                timestamp = Instant.parse("2026-04-18T08:00:00Z").plusSeconds(index.toLong() * 2),
+                latitude = 1.249494 + index,
+                longitude = 103.614345 + index,
+            )
+        }
+
+        assertEquals(10, history.size)
+        assertEquals(Instant.parse("2026-04-18T08:00:22Z"), history.first().timestamp)
+        assertEquals(Instant.parse("2026-04-18T08:00:04Z"), history.last().timestamp)
+    }
+
+    @Test
     fun resolveCapturedLocationLabel_reproducesSpecialForegroundLabels() {
         val checkoutLocation = buildScenarioLocations().last()
 

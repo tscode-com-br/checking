@@ -37,6 +37,10 @@ object CheckingRuntimeLogic {
         referenceTime: Instant? = null,
     ): Boolean {
         return state.locationSharingEnabled &&
+            CheckingLocationLogic.shouldRunBackgroundActivityNow(
+                state = state,
+                referenceTime = referenceTime,
+            ) &&
             !shouldRunBackgroundLocationService(
                 state = state,
                 backgroundServiceSupported = backgroundServiceSupported,

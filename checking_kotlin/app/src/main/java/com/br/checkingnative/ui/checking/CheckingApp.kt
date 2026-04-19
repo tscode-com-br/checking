@@ -1,13 +1,18 @@
 package com.br.checkingnative.ui.checking
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -17,23 +22,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.rounded.GpsFixed
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -43,30 +50,33 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -74,6 +84,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.br.checkingnative.R
 import com.br.checkingnative.domain.logic.CheckingLocationLogic
 import com.br.checkingnative.domain.logic.CheckingRuntimeLogic
@@ -85,17 +96,21 @@ import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.domain.model.StatusTone
 import com.br.checkingnative.ui.theme.CheckingBorder
-import com.br.checkingnative.ui.theme.CheckingCard
 import com.br.checkingnative.ui.theme.CheckingError
+import com.br.checkingnative.ui.theme.CheckingInputFill
 import com.br.checkingnative.ui.theme.CheckingMuted
+import com.br.checkingnative.ui.theme.CheckingPrimarySoft
 import com.br.checkingnative.ui.theme.CheckingSuccess
 import com.br.checkingnative.ui.theme.CheckingSurface
 import com.br.checkingnative.ui.theme.CheckingText
 import com.br.checkingnative.ui.theme.CheckingWarning
+import com.br.checkingnative.ui.theme.CheckingWheelSurface
+import com.br.checkingnative.ui.theme.CheckingBlue
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import kotlin.math.roundToInt
+import kotlin.math.max
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,8 +123,6 @@ fun CheckingApp(
     onInformeChanged: (InformeType) -> Unit,
     onProjetoChanged: (ProjetoType) -> Unit,
     onSubmit: () -> Unit,
-    onSyncHistory: () -> Unit,
-    onRefreshCatalog: () -> Unit,
     onLocationSharingChanged: (Boolean) -> Unit,
     onBackgroundAccessChanged: (Boolean) -> Unit,
     onNotificationsChanged: (Boolean) -> Unit,
@@ -123,9 +136,15 @@ fun CheckingApp(
     onNightEndChanged: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showPresentation by rememberSaveable { mutableStateOf(true) }
     val snackbarHostState = remember { SnackbarHostState() }
     var showLocationSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(PRESENTATION_DURATION_MILLIS)
+        showPresentation = false
+    }
 
     LaunchedEffect(messages) {
         messages.collect { message ->
@@ -133,36 +152,57 @@ fun CheckingApp(
         }
     }
 
-    Scaffold(
+    Crossfade(
+        targetState = showPresentation,
+        label = "checking-presentation",
         modifier = modifier.fillMaxSize(),
-        contentWindowInsets = WindowInsets.safeDrawing,
-        containerColor = CheckingSurface,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    ) { innerPadding ->
-        CheckingMainContent(
-            uiState = uiState,
-            onOpenLocationSheet = { showLocationSheet = true },
-            onOpenSettingsSheet = { showSettingsSheet = true },
-            onChaveChanged = onChaveChanged,
-            onRegistroChanged = onRegistroChanged,
-            onInformeChanged = onInformeChanged,
-            onProjetoChanged = onProjetoChanged,
-            onSubmit = onSubmit,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .imePadding(),
-        )
+    ) { showingPresentation ->
+        if (showingPresentation) {
+            PresentationScreen()
+            return@Crossfade
+        }
+
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets.safeDrawing,
+            containerColor = CheckingSurface,
+            snackbarHost = {
+                SnackbarHost(hostState = snackbarHostState) { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        containerColor = Color.Black.copy(alpha = 0.82f),
+                        contentColor = Color.White,
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                }
+            },
+        ) { innerPadding ->
+            CheckingMainContent(
+                uiState = uiState,
+                onOpenLocationSheet = { showLocationSheet = true },
+                onOpenSettingsSheet = { showSettingsSheet = true },
+                onChaveChanged = onChaveChanged,
+                onRegistroChanged = onRegistroChanged,
+                onInformeChanged = onInformeChanged,
+                onProjetoChanged = onProjetoChanged,
+                onSubmit = onSubmit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .imePadding(),
+            )
+        }
     }
 
     if (showLocationSheet) {
         ModalBottomSheet(
             onDismissRequest = { showLocationSheet = false },
             containerColor = CheckingSurface,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = { SheetHandle() },
         ) {
             LocationAutomationSheet(
                 state = uiState.state,
-                managedLocationCount = uiState.managedLocationCount,
                 onAutomaticCheckingChanged = onAutomaticCheckingChanged,
                 onClose = { showLocationSheet = false },
             )
@@ -173,6 +213,8 @@ fun CheckingApp(
         ModalBottomSheet(
             onDismissRequest = { showSettingsSheet = false },
             containerColor = CheckingSurface,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = { SheetHandle() },
         ) {
             SettingsSheet(
                 state = uiState.state,
@@ -182,8 +224,6 @@ fun CheckingApp(
                 onNotificationsChanged = onNotificationsChanged,
                 onBatteryOptimizationChanged = onBatteryOptimizationChanged,
                 onOemBackgroundSetupChanged = onOemBackgroundSetupChanged,
-                onSyncHistory = onSyncHistory,
-                onRefreshCatalog = onRefreshCatalog,
                 onLocationUpdateIntervalChanged = onLocationUpdateIntervalChanged,
                 onNightUpdatesChanged = onNightUpdatesChanged,
                 onNightModeAfterCheckoutChanged = onNightModeAfterCheckoutChanged,
@@ -193,6 +233,79 @@ fun CheckingApp(
             )
         }
     }
+}
+
+@Composable
+private fun PresentationScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .padding(horizontal = 24.dp),
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = (-160).dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val logoWidth = maxWidth * 0.5f
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.app_icon_3x),
+                    contentDescription = "Checking",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.width(logoWidth),
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Checking",
+                    color = CheckingBlue,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.width(logoWidth),
+                )
+            }
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 50.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Dilnei Schmidt (CYMQ)",
+                color = Color.Black,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Light,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Tamer Salmem (HR70)",
+                color = Color.Black,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Light,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SheetHandle() {
+    Box(
+        modifier = Modifier
+            .padding(top = 12.dp, bottom = 6.dp)
+            .size(width = 44.dp, height = 4.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(CheckingBorder),
+    )
 }
 
 @Composable
@@ -217,39 +330,44 @@ private fun CheckingMainContent(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 560.dp)
-                .padding(horizontal = 16.dp, vertical = 24.dp),
+                .padding(start = 16.dp, top = 24.dp, end = 16.dp, bottom = 36.dp),
         ) {
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 TopLogo()
+                Spacer(modifier = Modifier.height(20.dp))
                 Header(
                     onOpenLocationSheet = onOpenLocationSheet,
                     onOpenSettingsSheet = onOpenSettingsSheet,
                 )
                 HistorySection(state = state)
+                Spacer(modifier = Modifier.height(8.dp))
                 StatusLabel(state = state)
+                Spacer(modifier = Modifier.height(20.dp))
                 ChaveInputField(
                     value = state.chave,
                     onValueChange = onChaveChanged,
                 )
-                SegmentedSelector(
+                Spacer(modifier = Modifier.height(12.dp))
+                RadioGroupSelector(
                     value = state.registro,
                     options = RegistroType.entries,
                     label = RegistroType::label,
                     onValueChange = onRegistroChanged,
                 )
-                SegmentedSelector(
+                Spacer(modifier = Modifier.height(12.dp))
+                RadioGroupSelector(
                     value = state.informe,
                     options = InformeType.entries,
                     label = InformeType::label,
                     onValueChange = onInformeChanged,
                 )
                 if (state.registro == RegistroType.CHECK_IN) {
-                    SegmentedSelector(
+                    Spacer(modifier = Modifier.height(12.dp))
+                    RadioGroupSelector(
                         value = state.projeto,
                         options = ProjetoType.entries,
                         label = ProjetoType::apiValue,
@@ -257,15 +375,16 @@ private fun CheckingMainContent(
                     )
                 }
                 if (state.isSyncing || state.isLoading) {
+                    Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = onSubmit,
                 enabled = CheckingController.isRegisterActionInteractive(state),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -289,22 +408,21 @@ private fun CheckingMainContent(
 
 @Composable
 private fun TopLogo() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(84.dp),
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
-        Surface(
-            color = CheckingCard,
-            shape = RoundedCornerShape(8.dp),
-            shadowElevation = 1.dp,
+        Box(
+            modifier = Modifier
+                .width(maxWidth * 0.82f)
+                .heightIn(max = 90.dp),
+            contentAlignment = Alignment.Center,
         ) {
             Image(
-                painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                painter = painterResource(id = R.drawable.app_icon),
                 contentDescription = "Checking",
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.size(76.dp),
+                modifier = Modifier.heightIn(max = 90.dp),
             )
         }
     }
@@ -315,43 +433,51 @@ private fun Header(
     onOpenLocationSheet: () -> Unit,
     onOpenSettingsSheet: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 20.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 text = "Checking",
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = "TBY - Autodeclaração de Presença.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = CheckingMuted,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HeaderIconButton(
+                    onClick = onOpenLocationSheet,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GpsFixed,
+                        contentDescription = "Automação por localização",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                HeaderIconButton(
+                    onClick = onOpenSettingsSheet,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Settings,
+                        contentDescription = "Configurações do aplicativo",
+                        tint = CheckingText,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
         }
-        HeaderIconButton(
-            onClick = onOpenLocationSheet,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.LocationOn,
-                contentDescription = "Automação por localização",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-        HeaderIconButton(
-            onClick = onOpenSettingsSheet,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Settings,
-                contentDescription = "Configurações do aplicativo",
-                tint = CheckingText,
-            )
-        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "TBY - Autodeclaração de Presença.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = CheckingMuted,
+        )
     }
 }
 
@@ -361,9 +487,9 @@ private fun HeaderIconButton(
     content: @Composable () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(12.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, CheckingBorder),
-        color = CheckingCard,
+        color = CheckingSurface,
     ) {
         IconButton(
             onClick = onClick,
@@ -452,19 +578,30 @@ private fun ChaveInputField(
     onValueChange: (String) -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val interactionSource = remember { MutableInteractionSource() }
+
+    LaunchedEffect(interactionSource, value) {
+        interactionSource.interactions.collect { interaction ->
+            if (interaction is PressInteraction.Press && value.isNotEmpty()) {
+                onValueChange("")
+            }
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = "Chave Petrobras",
             style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
         )
-        OutlinedTextField(
+        TextField(
             value = value,
             onValueChange = { rawValue ->
                 val normalized = normalizeKey(rawValue)
                 onValueChange(normalized)
                 if (normalized.length == 4) {
                     focusManager.clearFocus()
+                    keyboardController?.hide()
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -474,67 +611,97 @@ private fun ChaveInputField(
                 capitalization = KeyboardCapitalization.Characters,
                 keyboardType = KeyboardType.Ascii,
             ),
-            shape = RoundedCornerShape(8.dp),
+            interactionSource = interactionSource,
+            shape = RoundedCornerShape(12.dp),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = CheckingInputFill,
+                unfocusedContainerColor = CheckingInputFill,
+                disabledContainerColor = CheckingInputFill,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
+            ),
         )
     }
 }
 
 @Composable
-private fun <T> SegmentedSelector(
+private fun <T> RadioGroupSelector(
     value: T,
     options: List<T>,
     label: (T) -> String,
     onValueChange: (T) -> Unit,
 ) {
-    Surface(
+    GroupBox(
         modifier = Modifier.fillMaxWidth(),
-        color = CheckingCard,
-        shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, CheckingBorder),
+        contentPadding = PaddingValues(8.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 50.dp),
+                .heightIn(min = 46.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            options.forEachIndexed { index, option ->
-                val selected = option == value
-                Box(
+            options.forEach { option ->
+                RadioOptionTile(
+                    selected = option == value,
+                    label = label(option),
+                    onTap = { onValueChange(option) },
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight()
-                        .background(
-                            if (selected) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                            } else {
-                                Color.Transparent
-                            },
-                        )
-                        .clickable { onValueChange(option) }
-                        .padding(horizontal = 8.dp, vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label(option),
-                        color = if (selected) MaterialTheme.colorScheme.primary else CheckingText,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (index != options.lastIndex) {
-                    VerticalDivider(color = CheckingBorder)
-                }
+                        .fillMaxHeight(),
+                )
             }
         }
     }
 }
 
 @Composable
+private fun RadioOptionTile(
+    selected: Boolean,
+    label: String,
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else CheckingBorder,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .background(if (selected) CheckingPrimarySoft else CheckingSurface)
+            .clickable(onClick = onTap)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onTap,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = MaterialTheme.colorScheme.primary,
+                unselectedColor = CheckingMuted,
+            ),
+        )
+        Spacer(modifier = Modifier.width(2.dp))
+        Text(
+            text = label,
+            color = if (selected) MaterialTheme.colorScheme.primary else CheckingText,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
 private fun LocationAutomationSheet(
     state: CheckingState,
-    managedLocationCount: Int,
     onAutomaticCheckingChanged: (Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -554,10 +721,10 @@ private fun LocationAutomationSheet(
         )
         OutlinedButton(
             onClick = { showHistoryDialog = true },
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(imageVector = Icons.Filled.History, contentDescription = null)
+            Icon(imageVector = Icons.Rounded.History, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("Últimas Localizações")
         }
@@ -568,9 +735,8 @@ private fun LocationAutomationSheet(
                 configuredIntervalSeconds = state.locationUpdateIntervalSeconds,
             ),
         )
-        DetailRow("Locais monitorados", managedLocationCount.toString())
         CapturedLocationBox(state.lastDetectedLocation)
-        SheetCloseButton(onClose)
+        DangerCloseButton(onClose)
     }
 
     if (showHistoryDialog) {
@@ -590,8 +756,6 @@ private fun SettingsSheet(
     onNotificationsChanged: (Boolean) -> Unit,
     onBatteryOptimizationChanged: (Boolean) -> Unit,
     onOemBackgroundSetupChanged: (Boolean) -> Unit,
-    onSyncHistory: () -> Unit,
-    onRefreshCatalog: () -> Unit,
     onLocationUpdateIntervalChanged: (Int) -> Unit,
     onNightUpdatesChanged: (Boolean) -> Unit,
     onNightModeAfterCheckoutChanged: (Boolean) -> Unit,
@@ -614,19 +778,19 @@ private fun SettingsSheet(
                 },
             )
             SwitchRow(
-                label = "Acesso em 2º plano:",
+                label = "Acesso em 2º Plano:",
                 value = permissionSettings.backgroundAccessEnabled,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = onBackgroundAccessChanged,
             )
             SwitchRow(
-                label = "Permitir notificações:",
+                label = "Permitir Notificações:",
                 value = permissionSettings.notificationsEnabled,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = onNotificationsChanged,
             )
             SwitchRow(
-                label = "Sem restrições de bateria:",
+                label = "Sem Restrições de Bateria:",
                 value = permissionSettings.batteryOptimizationIgnored,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = onBatteryOptimizationChanged,
@@ -642,55 +806,39 @@ private fun SettingsSheet(
                 },
             )
         }
-        SectionTitle("Sincronização")
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OutlinedButton(
-                onClick = onSyncHistory,
-                enabled = !state.isSyncing,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(imageVector = Icons.Filled.Refresh, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Histórico")
-            }
-            OutlinedButton(
-                onClick = onRefreshCatalog,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(imageVector = Icons.Filled.Refresh, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Catálogo")
-            }
-        }
         SectionTitle("Ajustes Gerais")
         GroupBox {
-            IntervalSlider(
-                intervalSeconds = state.locationUpdateIntervalSeconds,
+            Text(
+                text = "Frequência de Atividades",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            FrequencyWheelSelector(
+                selectedMinutes = state.locationUpdateIntervalSeconds / 60,
                 onChanged = onLocationUpdateIntervalChanged,
             )
+            Text(
+                text = "Aplicado imediatamente em primeiro e segundo plano.",
+                style = MaterialTheme.typography.bodySmall,
+                color = CheckingMuted,
+            )
             SwitchRow(
-                label = "Modo noturno após check-out:",
+                label = "Modo Noturno Após Check-out:",
                 value = state.nightModeAfterCheckoutEnabled,
                 onCheckedChange = onNightModeAfterCheckoutChanged,
             )
             if (!state.nightModeAfterCheckoutEnabled) {
                 SwitchRow(
-                    label = "Desativar atualização noturna:",
+                    label = "Desativar Atualização Noturna:",
                     value = state.nightUpdatesDisabled,
                     onCheckedChange = onNightUpdatesChanged,
                 )
                 if (state.nightUpdatesDisabled) {
-                    MinutesStepper(
+                    MinutesOfDayWheelField(
                         label = "De",
                         value = state.nightPeriodStartMinutes,
                         onChanged = onNightStartChanged,
                     )
-                    MinutesStepper(
+                    MinutesOfDayWheelField(
                         label = "Até",
                         value = state.nightPeriodEndMinutes,
                         onChanged = onNightEndChanged,
@@ -698,7 +846,7 @@ private fun SettingsSheet(
                 }
             }
         }
-        SheetCloseButton(onClose)
+        DangerCloseButton(onClose)
     }
 }
 
@@ -766,35 +914,94 @@ private fun SwitchRow(
             Switch(
                 checked = value,
                 onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                    uncheckedThumbColor = CheckingMuted,
+                    uncheckedTrackColor = CheckingBorder,
+                    disabledCheckedThumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.42f),
+                    disabledUncheckedThumbColor = CheckingMuted.copy(alpha = 0.42f),
+                ),
             )
         }
     }
 }
 
 @Composable
-private fun IntervalSlider(
-    intervalSeconds: Int,
+private fun FrequencyWheelSelector(
+    selectedMinutes: Int,
     onChanged: (Int) -> Unit,
 ) {
-    var sliderValue by remember(intervalSeconds) {
-        mutableFloatStateOf((intervalSeconds / 60f).coerceIn(15f, 60f))
-    }
+    val safeMinutes = selectedMinutes.coerceIn(
+        CheckingLocationLogic.minLocationUpdateIntervalMinutes,
+        CheckingLocationLogic.maxLocationUpdateIntervalMinutes,
+    )
+    val values = (
+        CheckingLocationLogic.minLocationUpdateIntervalMinutes..
+            CheckingLocationLogic.maxLocationUpdateIntervalMinutes
+        ).toList()
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        DetailRow("Frequência de Atividades", "${sliderValue.roundToInt()} min")
-        Slider(
-            value = sliderValue,
-            onValueChange = { value ->
-                sliderValue = value
-            },
-            onValueChangeFinished = {
-                onChanged(sliderValue.roundToInt())
-            },
-            valueRange = 15f..60f,
-            steps = 2,
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        WheelSelector(
+            itemCount = values.size,
+            selectedIndex = safeMinutes - CheckingLocationLogic.minLocationUpdateIntervalMinutes,
+            itemLabel = { index -> "${values[index]} min" },
+            onSelectedIndex = { index -> onChanged(values[index]) },
+            modifier = Modifier.width(136.dp),
         )
+    }
+}
+
+@Composable
+private fun MinutesOfDayWheelField(
+    label: String,
+    value: Int,
+    onChanged: (Int) -> Unit,
+) {
+    val safeValue = normalizeMinutesOfDay(value)
+    val selectedHour = safeValue / 60
+    val selectedMinute = safeValue % 60
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         Text(
-            text = "Aplicado imediatamente em primeiro e segundo plano.",
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(164.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(CheckingWheelSurface)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WheelSelector(
+                itemCount = 24,
+                selectedIndex = selectedHour,
+                itemLabel = { index -> index.toString().padStart(2, '0') },
+                onSelectedIndex = { hour -> onChanged((hour * 60) + selectedMinute) },
+                modifier = Modifier.width(68.dp),
+            )
+            WheelSelector(
+                itemCount = 60,
+                selectedIndex = selectedMinute,
+                itemLabel = { index -> index.toString().padStart(2, '0') },
+                onSelectedIndex = { minute -> onChanged((selectedHour * 60) + minute) },
+                modifier = Modifier.width(68.dp),
+            )
+        }
+        Text(
+            text = formatMinutesOfDay(safeValue),
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End,
             style = MaterialTheme.typography.bodySmall,
             color = CheckingMuted,
         )
@@ -802,38 +1009,50 @@ private fun IntervalSlider(
 }
 
 @Composable
-private fun MinutesStepper(
-    label: String,
-    value: Int,
-    onChanged: (Int) -> Unit,
+private fun WheelSelector(
+    itemCount: Int,
+    selectedIndex: Int,
+    itemLabel: (Int) -> String,
+    onSelectedIndex: (Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.width(42.dp),
-            fontWeight = FontWeight.SemiBold,
-        )
-        OutlinedButton(
-            onClick = { onChanged(shiftMinutes(value, -30)) },
-            shape = RoundedCornerShape(8.dp),
-        ) {
-            Text("-")
+    val safeSelectedIndex = selectedIndex.coerceIn(0, max(0, itemCount - 1))
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = safeSelectedIndex)
+
+    LaunchedEffect(safeSelectedIndex) {
+        if (listState.firstVisibleItemIndex != safeSelectedIndex) {
+            listState.animateScrollToItem(safeSelectedIndex)
         }
-        Text(
-            text = formatMinutesOfDay(value),
-            modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Center,
-            fontWeight = FontWeight.Bold,
-        )
-        OutlinedButton(
-            onClick = { onChanged(shiftMinutes(value, 30)) },
-            shape = RoundedCornerShape(8.dp),
-        ) {
-            Text("+")
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .height(150.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(CheckingWheelSurface),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        contentPadding = PaddingValues(vertical = 18.dp),
+    ) {
+        items(itemCount) { index ->
+            val selected = index == safeSelectedIndex
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp)
+                    .clickable { onSelectedIndex(index) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = itemLabel(index),
+                    fontSize = if (selected) 20.sp else 16.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selected) MaterialTheme.colorScheme.primary else CheckingMuted,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -875,7 +1094,7 @@ private fun CapturedLocationBox(locationName: String?) {
             color = CheckingText,
         )
         Text(
-            text = locationName?.takeIf { it.isNotBlank() } ?: "--",
+            text = locationName?.takeIf { it.isNotBlank() } ?: "",
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyLarge,
@@ -886,28 +1105,36 @@ private fun CapturedLocationBox(locationName: String?) {
 }
 
 @Composable
-private fun GroupBox(content: @Composable ColumnScope.() -> Unit) {
+private fun GroupBox(
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(12.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, CheckingBorder, RoundedCornerShape(8.dp))
-            .background(CheckingCard)
-            .padding(12.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, CheckingBorder, RoundedCornerShape(12.dp))
+            .background(CheckingSurface)
+            .padding(contentPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         content = content,
     )
 }
 
 @Composable
-private fun SheetCloseButton(onClose: () -> Unit) {
+private fun DangerCloseButton(onClose: () -> Unit) {
     Button(
         onClick = onClose,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = CheckingError,
+            contentColor = Color.White,
+            disabledContainerColor = CheckingError.copy(alpha = 0.42f),
+            disabledContentColor = Color.White.copy(alpha = 0.72f),
+        ),
     ) {
-        Icon(imageVector = Icons.Filled.Close, contentDescription = null)
-        Spacer(modifier = Modifier.width(8.dp))
         Text("Fechar")
     }
 }
@@ -1033,17 +1260,18 @@ private fun formatCoordinatePair(entry: LocationFetchEntry): String {
 }
 
 private fun formatMinutesOfDay(totalMinutes: Int): String {
-    val safeMinutes = ((totalMinutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+    val safeMinutes = normalizeMinutesOfDay(totalMinutes)
     val hours = safeMinutes / 60
     val minutes = safeMinutes % 60
     return "${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}"
 }
 
-private fun shiftMinutes(totalMinutes: Int, delta: Int): Int {
-    return ((totalMinutes + delta) % MINUTES_PER_DAY + MINUTES_PER_DAY) % MINUTES_PER_DAY
+private fun normalizeMinutesOfDay(totalMinutes: Int): Int {
+    return ((totalMinutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
 }
 
 private const val MINUTES_PER_DAY = 24 * 60
+private const val PRESENTATION_DURATION_MILLIS = 2_000L
 
 private val userZone: ZoneId = ZoneId.systemDefault()
 private val dateFormatter: DateTimeFormatter =

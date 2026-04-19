@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     }
     private var foregroundLocationUpdatesStarted = false
     private var foregroundLocationIntervalMillis: Long? = null
+    private var backgroundLocationServiceRequested = false
 
     private val foregroundLocationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -103,11 +104,16 @@ class MainActivity : ComponentActivity() {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             LaunchedEffect(
                 uiState.state.locationSharingEnabled,
+                uiState.state.autoCheckInEnabled,
+                uiState.state.autoCheckOutEnabled,
                 uiState.state.locationUpdateIntervalSeconds,
                 uiState.state.locationAccuracyThresholdMeters,
+                uiState.state.nightUpdatesDisabled,
+                uiState.state.nightPeriodStartMinutes,
+                uiState.state.nightPeriodEndMinutes,
                 uiState.state.nightModeAfterCheckoutUntil,
             ) {
-                syncForegroundLocationStream(captureImmediately = uiState.state.locationSharingEnabled)
+                syncLocationTracking(captureImmediately = uiState.state.locationSharingEnabled)
             }
             CheckingKotlinTheme {
                 CheckingApp(
@@ -118,8 +124,6 @@ class MainActivity : ComponentActivity() {
                     onInformeChanged = viewModel::updateInforme,
                     onProjetoChanged = viewModel::updateProjeto,
                     onSubmit = viewModel::submitCurrent,
-                    onSyncHistory = viewModel::syncHistory,
-                    onRefreshCatalog = viewModel::refreshLocationsCatalog,
                     onLocationSharingChanged = ::requestLocationSharingChange,
                     onBackgroundAccessChanged = ::requestBackgroundAccessChange,
                     onNotificationsChanged = ::requestNotificationsChange,
@@ -139,7 +143,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshAndroidPermissionState(updateStatus = false)
-        syncForegroundLocationStream(captureImmediately = false)
+        syncLocationTracking(captureImmediately = false)
         if (initialResumeHandled) {
             viewModel.refreshAfterEnteringForeground()
         } else {
@@ -183,7 +187,7 @@ class MainActivity : ComponentActivity() {
             requestNotificationPermissionIfNeeded {
                 requestIgnoreBatteryOptimizationIfNeeded {
                     viewModel.enableLocationSharingAfterPermissionFlow(readPermissionSnapshot())
-                    syncForegroundLocationStream(captureImmediately = true)
+                    syncLocationTracking(captureImmediately = true)
                 }
             }
         }
@@ -395,10 +399,61 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun syncLocationTracking(captureImmediately: Boolean) {
+        val shouldKeepBackgroundService = shouldKeepBackgroundLocationService()
+        syncBackgroundLocationService(shouldKeepBackgroundService)
+        if (shouldKeepBackgroundService) {
+            stopForegroundLocationStream()
+            return
+        }
+
+        syncForegroundLocationStream(
+            captureImmediately = captureImmediately,
+            backgroundServiceRunning = false,
+        )
+    }
+
+    private fun shouldKeepBackgroundLocationService(): Boolean {
+        val state = viewModel.uiState.value.state
+        return state.locationSharingEnabled && state.hasAnyLocationAutomation
+    }
+
+    private fun syncBackgroundLocationService(shouldStart: Boolean) {
+        if (shouldStart) {
+            runCatching {
+                ContextCompat.startForegroundService(
+                    this,
+                    Intent(this, CheckingLocationForegroundService::class.java).apply {
+                        action = CheckingLocationForegroundService.ACTION_START
+                    },
+                )
+            }.onSuccess {
+                backgroundLocationServiceRequested = true
+            }
+            return
+        }
+
+        if (!backgroundLocationServiceRequested && !viewModel.uiState.value.initialized) {
+            return
+        }
+
+        runCatching {
+            startService(
+                Intent(this, CheckingLocationForegroundService::class.java).apply {
+                    action = CheckingLocationForegroundService.ACTION_STOP
+                },
+            )
+        }
+        backgroundLocationServiceRequested = false
+    }
+
     @SuppressLint("MissingPermission")
-    private fun syncForegroundLocationStream(captureImmediately: Boolean) {
+    private fun syncForegroundLocationStream(
+        captureImmediately: Boolean,
+        backgroundServiceRunning: Boolean,
+    ) {
         if (
-            !viewModel.shouldRunForegroundLocationStream() ||
+            !viewModel.shouldRunForegroundLocationStream(backgroundServiceRunning) ||
             !isLocationServiceEnabled() ||
             !hasPreciseLocationPermission()
         ) {

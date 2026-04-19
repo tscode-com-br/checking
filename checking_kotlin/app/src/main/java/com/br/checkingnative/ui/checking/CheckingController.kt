@@ -1,5 +1,6 @@
 package com.br.checkingnative.ui.checking
 
+import com.br.checkingnative.data.background.CheckingBackgroundSnapshotRepository
 import com.br.checkingnative.data.local.repository.ManagedLocationRepository
 import com.br.checkingnative.data.preferences.CheckingStateStore
 import com.br.checkingnative.data.remote.CheckingApiException
@@ -21,20 +22,29 @@ import javax.inject.Singleton
 import kotlin.math.min
 import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 @Singleton
 class CheckingController @Inject constructor(
     private val checkingStateStore: CheckingStateStore,
     private val apiService: CheckingApiService,
     private val locationRepository: ManagedLocationRepository,
+    private val backgroundSnapshotRepository: CheckingBackgroundSnapshotRepository =
+        CheckingBackgroundSnapshotRepository(),
 ) {
     private val random = Random.Default
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _uiState = MutableStateFlow(CheckingUiState())
+    private var backgroundSnapshotObserver: Job? = null
     private var processingForegroundLocationUpdate = false
 
     val uiState: StateFlow<CheckingUiState> = _uiState.asStateFlow()
@@ -81,6 +91,8 @@ class CheckingController @Inject constructor(
                 )
             }
         }
+
+        startBackgroundSnapshotObserver()
     }
 
     suspend fun updateChave(
@@ -466,9 +478,10 @@ class CheckingController @Inject constructor(
     }
 
     fun shouldRunForegroundLocationStream(backgroundServiceRunning: Boolean = false): Boolean {
-        return currentState.locationSharingEnabled &&
-            !backgroundServiceRunning &&
-            !CheckingLocationLogic.isNightModeAfterCheckoutActive(state = currentState)
+        return CheckingRuntimeLogic.shouldRunForegroundLocationStream(
+            state = currentState,
+            backgroundServiceSupported = backgroundServiceRunning,
+        ) && !backgroundServiceRunning
     }
 
     suspend fun processForegroundLocationUpdate(sample: CheckingLocationSample): Boolean {
@@ -900,6 +913,39 @@ class CheckingController @Inject constructor(
         _uiState.update { current ->
             current.copy(state = nextState)
         }
+    }
+
+    private fun startBackgroundSnapshotObserver() {
+        if (backgroundSnapshotObserver != null) {
+            return
+        }
+
+        backgroundSnapshotObserver = controllerScope.launch {
+            backgroundSnapshotRepository.snapshots.collect { snapshot ->
+                _uiState.update { current ->
+                    current.copy(
+                        state = mergeBackgroundSnapshot(
+                            currentState = current.state,
+                            snapshot = snapshot,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun mergeBackgroundSnapshot(
+        currentState: CheckingState,
+        snapshot: CheckingState,
+    ): CheckingState {
+        return snapshot.copy(
+            canEnableLocationSharing = currentState.canEnableLocationSharing,
+            isLoading = false,
+            isSubmitting = currentState.isSubmitting,
+            isSyncing = currentState.isSyncing,
+            isLocationUpdating = currentState.isLocationUpdating,
+            isAutomaticCheckingUpdating = currentState.isAutomaticCheckingUpdating,
+        )
     }
 
     private fun normalizeKey(value: String): String {

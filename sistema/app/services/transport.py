@@ -1424,6 +1424,28 @@ def update_transport_assignment(
     return assignment, is_update
 
 
+def _reset_transport_request_assignments_to_pending(
+    db: Session,
+    *,
+    transport_request: TransportRequest,
+    response_message: str | None,
+    admin_user_id: int | None,
+) -> None:
+    timestamp = now_sgt()
+    assignments = db.execute(
+        select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
+    ).scalars().all()
+
+    for assignment in assignments:
+        _resolve_transport_assignment(
+            assignment,
+            status="pending",
+            response_message=response_message,
+            timestamp=timestamp,
+            admin_user_id=admin_user_id,
+        )
+
+
 def upsert_transport_assignment_with_persistence(
     db: Session,
     *,
@@ -1443,6 +1465,27 @@ def upsert_transport_assignment_with_persistence(
         )
     ).scalar_one_or_none()
     is_update = existing_assignment is not None
+
+    if status == "pending":
+        if transport_request.request_kind in {"regular", "weekend"}:
+            _reset_transport_request_assignments_to_pending(
+                db,
+                transport_request=transport_request,
+                response_message=response_message,
+                admin_user_id=admin_user_id,
+            )
+
+        assignment, _ = update_transport_assignment(
+            db,
+            transport_request=transport_request,
+            service_date=service_date,
+            route_kind=route_kind,
+            status=status,
+            vehicle=vehicle,
+            response_message=response_message,
+            admin_user_id=admin_user_id,
+        )
+        return assignment, is_update
 
     if status == "confirmed" and vehicle is not None and transport_request.request_kind in {"regular", "weekend"}:
         _propagate_confirmed_recurring_assignment(

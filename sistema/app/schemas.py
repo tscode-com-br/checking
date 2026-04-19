@@ -658,7 +658,7 @@ class TransportAssignmentUpsert(BaseModel):
     request_id: int = Field(ge=1)
     service_date: date
     route_kind: Literal["home_to_work", "work_to_home"]
-    status: Literal["confirmed", "rejected", "cancelled"]
+    status: Literal["confirmed", "rejected", "cancelled", "pending"]
     vehicle_id: int | None = Field(default=None, ge=1)
     response_message: str | None = Field(default=None, max_length=255)
 

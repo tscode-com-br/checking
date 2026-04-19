@@ -3,6 +3,7 @@ package com.br.checkingnative.ui.checking
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import com.br.checkingnative.data.background.CheckingBackgroundSnapshotRepository
 import com.br.checkingnative.data.local.db.ManagedLocationDao
 import com.br.checkingnative.data.local.db.ManagedLocationEntity
 import com.br.checkingnative.data.local.db.toEntity
@@ -35,7 +36,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -402,6 +405,44 @@ class CheckingControllerTest {
         assertEquals(StatusTone.WARNING, state.statusTone)
     }
 
+    @Test
+    fun backgroundSnapshot_updatesUiAndKeepsPermissionDerivedFlags() = runBlocking {
+        val fixture = createFixture("controller_background_snapshot.preferences_pb")
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                canEnableLocationSharing = true,
+                locationSharingEnabled = true,
+                isLoading = false,
+            ),
+        )
+        fixture.controller.initialize()
+
+        fixture.backgroundSnapshotRepository.publish(
+            CheckingState.initial().copy(
+                chave = "AB12",
+                locationSharingEnabled = true,
+                canEnableLocationSharing = false,
+                lastCheckIn = Instant.parse("2026-04-19T08:00:00Z"),
+                statusMessage = "Check-In automático enviado para Base 1.",
+                statusTone = StatusTone.SUCCESS,
+                isLocationUpdating = true,
+            ),
+        )
+
+        withTimeout(1_000L) {
+            while (fixture.controller.uiState.value.state.lastCheckIn == null) {
+                delay(10L)
+            }
+        }
+
+        val state = fixture.controller.uiState.value.state
+        assertEquals("AB12", state.chave)
+        assertEquals(Instant.parse("2026-04-19T08:00:00Z"), state.lastCheckIn)
+        assertEquals("Check-In automático enviado para Base 1.", state.statusMessage)
+        assertTrue(state.canEnableLocationSharing)
+        assertFalse(state.isLocationUpdating)
+    }
+
     private fun createFixture(fileName: String): ControllerFixture {
         val cacheDataStore = createDataStore("cache_$fileName")
         val stateStore = FakeCheckingStateStore()
@@ -410,10 +451,12 @@ class CheckingControllerTest {
         val locationRepository = ManagedLocationRepository(dao, cacheRepository)
         val transport = FakeCheckingHttpTransport()
         val apiService = CheckingApiService(transport)
+        val backgroundSnapshotRepository = CheckingBackgroundSnapshotRepository()
         val controller = CheckingController(
             checkingStateStore = stateStore,
             apiService = apiService,
             locationRepository = locationRepository,
+            backgroundSnapshotRepository = backgroundSnapshotRepository,
         )
         return ControllerFixture(
             controller = controller,
@@ -421,6 +464,7 @@ class CheckingControllerTest {
             locationRepository = locationRepository,
             dao = dao,
             transport = transport,
+            backgroundSnapshotRepository = backgroundSnapshotRepository,
         )
     }
 
@@ -439,6 +483,7 @@ private data class ControllerFixture(
     val locationRepository: ManagedLocationRepository,
     val dao: FakeManagedLocationDao,
     val transport: FakeCheckingHttpTransport,
+    val backgroundSnapshotRepository: CheckingBackgroundSnapshotRepository,
 )
 
 private class FakeCheckingStateStore : CheckingStateStore {

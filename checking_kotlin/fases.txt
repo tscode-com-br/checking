@@ -76,7 +76,7 @@ Atualizar lastDetectedLocation, lastMatchedLocation, lastLocationUpdateAt e hist
 Reproduzir labels especiais: Zona de Check-Out, Fora do Ambiente de Trabalho, Localização não Cadastrada.
 Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
-Fase 8 - Automação Background
+Fase 8 - Automação Background (já implementada)
 
 Criar foreground service nativo com notification channel “Checking em segundo plano”.
 Manter serviço vivo com stopWithTask=false, wake lock e restart em boot/update quando habilitado.
@@ -86,8 +86,9 @@ Implementar automação completa: check-in ao entrar em local, check-out em zona
 Evitar evento duplicado no mesmo local.
 Cachear estado remoto por janela curta, como o Flutter faz.
 Sincronizar snapshots do serviço com a UI via repository/Flow.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
-Fase 9 - UI Compose Final
+Fase 9 - UI Compose Final (já implementada)
 
 Recriar splash/presentation de 2s com logo e nomes.
 Recriar tela principal: logo, header, botões GPS/settings, histórico, status, chave, radio groups e botão registrar.
@@ -98,6 +99,7 @@ Recriar seletores de frequência e horários noturnos.
 Recriar diálogo de últimas localizações.
 Recriar snackbars, disabled states, loading spinners e cores do AppTheme.
 Validar layout em telas pequenas e grandes.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
 Fase 10 - Testes De Paridade
 

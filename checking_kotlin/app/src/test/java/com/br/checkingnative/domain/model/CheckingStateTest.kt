@@ -1,7 +1,9 @@
 package com.br.checkingnative.domain.model
 
+import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,6 +50,119 @@ class CheckingStateTest {
         assertEquals(1, state.locationFetchHistory.size)
         assertEquals("secret-key", state.apiSharedKey)
         assertFalse(state.isLoading)
+    }
+
+    @Test
+    fun fromPersistedJsonString_restoresScheduleSettingsAndOemFlag() {
+        val state = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "locationUpdateIntervalSeconds": 2700,
+                  "nightUpdatesDisabled": true,
+                  "nightPeriodStartMinutes": 1380,
+                  "nightPeriodEndMinutes": 300,
+                  "nightModeAfterCheckoutEnabled": true,
+                  "nightModeAfterCheckoutUntil": "2026-04-17T22:00:00Z",
+                  "oemBackgroundSetupEnabled": true
+                }
+            """.trimIndent(),
+        )
+
+        assertEquals(45 * 60, state.locationUpdateIntervalSeconds)
+        assertTrue(state.nightUpdatesDisabled)
+        assertEquals(23 * 60, state.nightPeriodStartMinutes)
+        assertEquals(5 * 60, state.nightPeriodEndMinutes)
+        assertTrue(state.nightModeAfterCheckoutEnabled)
+        assertEquals(
+            Instant.parse("2026-04-17T22:00:00Z"),
+            state.nightModeAfterCheckoutUntil,
+        )
+        assertTrue(state.oemBackgroundSetupEnabled)
+    }
+
+    @Test
+    fun fromPersistedJsonString_keepsLegacyAutomationFlagsAndTurnsThemOffWithLocationSharing() {
+        val legacyEnabled = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "locationSharingEnabled": true
+                }
+            """.trimIndent(),
+        )
+        val explicitlyDisabled = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "locationSharingEnabled": true,
+                  "autoCheckInEnabled": false,
+                  "autoCheckOutEnabled": false
+                }
+            """.trimIndent(),
+        )
+        val locationSharingOff = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "locationSharingEnabled": false,
+                  "autoCheckInEnabled": true,
+                  "autoCheckOutEnabled": true
+                }
+            """.trimIndent(),
+        )
+
+        assertTrue(legacyEnabled.autoCheckInEnabled)
+        assertTrue(legacyEnabled.autoCheckOutEnabled)
+        assertFalse(explicitlyDisabled.automaticCheckInOutEnabled)
+        assertFalse(locationSharingOff.autoCheckInEnabled)
+        assertFalse(locationSharingOff.autoCheckOutEnabled)
+    }
+
+    @Test
+    fun fromPersistedJsonString_restoresLegacyLocationFetchHistoryWithoutCoordinates() {
+        val state = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "locationFetchHistory": ["2026-04-10T07:45:30Z"]
+                }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, state.locationFetchHistory.size)
+        assertEquals(
+            Instant.parse("2026-04-10T07:45:30Z"),
+            state.locationFetchHistory.first().timestamp,
+        )
+        assertNull(state.locationFetchHistory.first().latitude)
+        assertNull(state.locationFetchHistory.first().longitude)
+    }
+
+    @Test
+    fun fromPersistedJsonString_ignoresPersistedRemoteHistoryTimestamps() {
+        val state = CheckingState.fromPersistedJsonString(
+            raw = """
+                {
+                  "chave": "AB12",
+                  "lastCheckIn": "2026-04-09T08:00:00Z",
+                  "lastCheckOut": "2026-04-09T18:00:00Z"
+                }
+            """.trimIndent(),
+        )
+
+        assertNull(state.lastCheckIn)
+        assertNull(state.lastCheckOut)
+    }
+
+    @Test
+    fun lastRecordedAction_usesTheLatestRemoteTimestamp() {
+        val checkedInState = CheckingState.initial().copy(
+            lastCheckIn = Instant.parse("2026-04-10T08:00:00Z"),
+            lastCheckOut = Instant.parse("2026-04-09T18:00:00Z"),
+        )
+        val checkedOutState = CheckingState.initial().copy(
+            lastCheckIn = Instant.parse("2026-04-09T08:00:00Z"),
+            lastCheckOut = Instant.parse("2026-04-10T18:00:00Z"),
+        )
+
+        assertEquals(RegistroType.CHECK_IN, checkedInState.lastRecordedAction)
+        assertEquals(RegistroType.CHECK_OUT, checkedOutState.lastRecordedAction)
     }
 
     @Test

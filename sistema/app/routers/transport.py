@@ -355,7 +355,7 @@ def save_transport_assignment(
 
     user = db.get(User, transport_request.user_id)
     queued_notification = None
-    if user is not None:
+    if user is not None and payload.status != "pending":
         queued_notification = queue_assignment_notification(
             db,
             transport_request=transport_request,
