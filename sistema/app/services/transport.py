@@ -181,7 +181,7 @@ def build_transport_dashboard(
         return vehicle_schedule_cache[cache_key]
 
     for transport_request, user in requests:
-        if not request_applies_to_date(transport_request, service_date):
+        if not request_is_visible_on_service_date(transport_request, service_date):
             continue
 
         assigned_vehicle = None
@@ -278,6 +278,18 @@ def request_applies_to_date(transport_request: TransportRequest, service_date: d
     if transport_request.recurrence_kind == "weekend":
         return service_date.weekday() >= 5
     return transport_request.single_date == service_date
+
+
+def request_is_visible_on_service_date(transport_request: TransportRequest, service_date: date) -> bool:
+    if request_applies_to_date(transport_request, service_date):
+        return True
+
+    return (
+        transport_request.status == "active"
+        and transport_request.request_kind == "regular"
+        and transport_request.recurrence_kind == "weekday"
+        and service_date.weekday() >= 5
+    )
 
 
 def vehicle_schedule_applies_to_date(schedule: TransportVehicleSchedule, service_date: date) -> bool:
@@ -583,7 +595,7 @@ def build_web_transport_state(
         .order_by(TransportRequest.updated_at.desc(), TransportRequest.id.desc())
     ).scalars().all()
     active_request = next(
-        (candidate for candidate in active_requests if request_applies_to_date(candidate, service_date)),
+        (candidate for candidate in active_requests if request_is_visible_on_service_date(candidate, service_date)),
         None,
     )
     if active_request is None:

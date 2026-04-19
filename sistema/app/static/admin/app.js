@@ -27,6 +27,10 @@ let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let locationAccuracyThresholdMeters = 30;
 let locationSettingsDirty = false;
+let pendingUsersTotal = 0;
+let administratorsTotal = 0;
+let eventsTotal = 0;
+let lastDashboardRefreshAt = null;
 
 const PRESENCE_TABLE_CONFIGS = {
   checkin: {
@@ -64,6 +68,13 @@ const presenceTableStates = Object.fromEntries(
     createPresenceTableState(tableKey, config),
   ]),
 );
+const TAB_LABELS = {
+  checkin: "Check-In",
+  checkout: "Check-Out",
+  inactive: "Inativos",
+  cadastro: "Cadastro",
+  eventos: "Eventos",
+};
 
 function createPresenceFilterState(filterColumns) {
   return Object.fromEntries(filterColumns.map((key) => [key, ""]));
@@ -99,9 +110,110 @@ function clearStatus() {
   statusLine.className = "";
 }
 
+function setTextContentIfPresent(id, value) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.textContent = value;
+  }
+}
+
+function formatDashboardRefreshTime(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    return "Sem atualização";
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(value);
+}
+
+function updateOperationalChrome() {
+  const currentTabLabel = TAB_LABELS[activeTab] || "Painel";
+  let realtimeLabel = "Aguardando sessão";
+  let realtimeTone = "waiting";
+  let connectionSummary = "Aguardando autenticação";
+
+  if (isAuthenticated && realtimeConnected) {
+    realtimeLabel = "Tempo real ativo";
+    realtimeTone = "live";
+    connectionSummary = "Sincronização em tempo real";
+  } else if (isAuthenticated) {
+    realtimeLabel = "Atualização periódica";
+    realtimeTone = "polling";
+    connectionSummary = "Fallback por polling a cada 5 s";
+  }
+
+  const realtimeBadge = document.getElementById("realtimeStatusBadge");
+  if (realtimeBadge) {
+    realtimeBadge.textContent = realtimeLabel;
+    realtimeBadge.className = `topbar-pill topbar-pill-live is-${realtimeTone}`;
+  }
+
+  const lastRefreshLabel = lastDashboardRefreshAt
+    ? `Atualizado às ${formatDashboardRefreshTime(lastDashboardRefreshAt)}`
+    : "Sem atualização";
+
+  setTextContentIfPresent("lastRefreshBadge", lastRefreshLabel);
+  setTextContentIfPresent("activeTabBadge", `Aba atual: ${currentTabLabel}`);
+  setTextContentIfPresent("heroMetricConnection", connectionSummary);
+  setTextContentIfPresent("heroMetricRefresh", lastRefreshLabel);
+  setTextContentIfPresent("heroMetricCurrentTab", currentTabLabel);
+  setTextContentIfPresent(
+    "heroMetricCoverage",
+    registeredUsersTotal === 1 ? "1 usuário monitorado" : `${registeredUsersTotal} usuários monitorados`,
+  );
+}
+
+function updateDashboardSummary() {
+  const counts = {
+    checkin: presenceTableStates.checkin.rawRows.length,
+    checkout: presenceTableStates.checkout.rawRows.length,
+    inactive: presenceTableStates.inactive.rawRows.length,
+    pending: pendingUsersTotal,
+    users: registeredUsersTotal,
+    events: eventsTotal,
+    missingCheckout: presenceTableStates.missingCheckout.rawRows.length,
+    cadastro: registeredUsersTotal,
+    eventos: eventsTotal,
+  };
+
+  Object.entries(counts).forEach(([key, value]) => {
+    document.querySelectorAll(`[data-dashboard-stat-value="${key}"]`).forEach((element) => {
+      element.textContent = String(value);
+    });
+    document.querySelectorAll(`[data-tab-count-for="${key}"]`).forEach((element) => {
+      element.textContent = String(value);
+    });
+  });
+
+  const criticalPendingLabel = counts.missingCheckout === 0
+    ? "Nenhuma pendência crítica"
+    : counts.missingCheckout === 1
+      ? "1 check-out pendente"
+      : `${counts.missingCheckout} check-outs pendentes`;
+
+  const adminCoverageLabel = administratorsTotal === 0
+    ? "Sem administradores visíveis"
+    : administratorsTotal === 1
+      ? "1 administrador visível"
+      : `${administratorsTotal} administradores visíveis`;
+
+  setTextContentIfPresent("heroMetricPending", criticalPendingLabel);
+  setTextContentIfPresent("heroMetricAdminCoverage", adminCoverageLabel);
+  updateOperationalChrome();
+}
+
+function markDashboardRefreshed() {
+  lastDashboardRefreshAt = new Date();
+  updateOperationalChrome();
+}
+
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
   locationSettingsDirty = false;
+  lastDashboardRefreshAt = null;
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
   sessionBar.classList.add("hidden");
@@ -109,6 +221,7 @@ function showAuthShell(message = "", kind = "info") {
   stopAutoRefresh();
   setAuthStatus(message, kind);
   clearStatus();
+  updateOperationalChrome();
 }
 
 function showAdminShell(admin) {
@@ -118,6 +231,7 @@ function showAdminShell(admin) {
   sessionBar.classList.remove("hidden");
   sessionUserLabel.textContent = `${admin.nome_completo} (${admin.chave})`;
   setAuthStatus("");
+  updateOperationalChrome();
 }
 
 function applyResponsiveLabels(tbodyId) {
@@ -423,6 +537,7 @@ function switchTab(tab) {
   document.querySelector(`.tabs button[data-tab="${tab}"]`).classList.add("active");
   document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
   document.getElementById(`tab-${tab}`).classList.add("active");
+  updateOperationalChrome();
   refreshActiveTab().catch((error) => setStatus(error.message, false));
 }
 
@@ -490,6 +605,7 @@ function countRenderedDataRows(bodyId) {
 function syncUserTitles() {
   updateUserTitle("checkinBody", countRenderedDataRows("checkinBody"), registeredUsersTotal);
   updateUserTitle("checkoutBody", countRenderedDataRows("checkoutBody"), registeredUsersTotal);
+  updateDashboardSummary();
 }
 
 function getSingaporeCalendarDayDiff(value) {
@@ -1320,6 +1436,7 @@ async function loadLocations() {
   );
   renderLocations();
   renderLocationSettings();
+  updateDashboardSummary();
 }
 
 function makePendingRow(row) {
@@ -1472,6 +1589,7 @@ async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
   presenceTableStates.checkin.rawRows = Array.isArray(rows) ? rows : [];
   applyPresenceTableState("checkin");
+  updateDashboardSummary();
 }
 
 async function loadCheckout() {
@@ -1483,28 +1601,35 @@ async function loadCheckout() {
   presenceTableStates.missingCheckout.rawRows = Array.isArray(missingCheckoutRows) ? missingCheckoutRows : [];
   applyPresenceTableState("checkout");
   applyPresenceTableState("missingCheckout");
+  updateDashboardSummary();
 }
 
 async function loadInactive() {
   const rows = await fetchJson("/api/admin/inactive");
   presenceTableStates.inactive.rawRows = Array.isArray(rows) ? rows : [];
   applyPresenceTableState("inactive");
+  updateDashboardSummary();
 }
 
 async function loadPending() {
   const rows = await fetchJson("/api/admin/pending");
+  pendingUsersTotal = Array.isArray(rows) ? rows.length : 0;
   const body = document.getElementById("pendingBody");
   body.innerHTML = "";
   rows.forEach((row) => body.appendChild(makePendingRow(row)));
   applyResponsiveLabels("pendingBody");
+  updateDashboardSummary();
 }
 
 async function loadAdministrators() {
   const rows = await fetchJson("/api/admin/administrators");
+  const adminRows = rows.filter((row) => row.row_type === "admin");
+  administratorsTotal = adminRows.length;
   const body = document.getElementById("administratorsBody");
   body.innerHTML = "";
-  rows.filter((row) => row.row_type === "admin").forEach((row) => body.appendChild(makeAdministratorRow(row)));
+  adminRows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
   applyResponsiveLabels("administratorsBody");
+  updateDashboardSummary();
 }
 
 async function loadRegisteredUsers() {
@@ -1515,10 +1640,12 @@ async function loadRegisteredUsers() {
   rows.forEach((user) => body.appendChild(makeRegisteredUserRow(user)));
   applyResponsiveLabels("usersBody");
   syncUserTitles();
+  updateDashboardSummary();
 }
 
 async function loadEvents() {
   const rows = await fetchJson("/api/admin/events");
+  eventsTotal = Array.isArray(rows) ? rows.length : 0;
   const body = document.getElementById("eventsBody");
   body.innerHTML = "";
   rows.forEach((row) => {
@@ -1532,28 +1659,34 @@ async function loadEvents() {
     body.appendChild(tr);
   });
   applyResponsiveLabels("eventsBody");
+  updateDashboardSummary();
 }
 
 async function refreshActiveTab() {
   if (activeTab === "checkin") {
     await loadCheckin();
+    markDashboardRefreshed();
     return;
   }
   if (activeTab === "checkout") {
     await loadCheckout();
+    markDashboardRefreshed();
     return;
   }
   if (activeTab === "inactive") {
     await loadInactive();
+    markDashboardRefreshed();
     return;
   }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers(), loadLocations()]);
     }
+    markDashboardRefreshed();
     return;
   }
   await loadEvents();
+  markDashboardRefreshed();
 }
 
 async function refreshAllTables() {
@@ -1564,6 +1697,7 @@ async function refreshAllTables() {
     jobs.push(loadLocations());
   }
   await Promise.all(jobs);
+  markDashboardRefreshed();
 }
 
 function startAutoRefresh() {
@@ -1598,13 +1732,16 @@ function startRealtimeUpdates() {
   eventStream = new EventSource("/api/admin/stream");
   eventStream.onopen = () => {
     realtimeConnected = true;
+    updateOperationalChrome();
   };
   eventStream.onmessage = () => {
     realtimeConnected = true;
+    updateOperationalChrome();
     requestRefreshAllTables();
   };
   eventStream.onerror = () => {
     realtimeConnected = false;
+    updateOperationalChrome();
   };
 }
 
@@ -1614,6 +1751,7 @@ function stopRealtimeUpdates() {
     eventStream = null;
   }
   realtimeConnected = false;
+  updateOperationalChrome();
 }
 
 function parseDownloadFileName(contentDisposition, fallbackName) {
@@ -2254,6 +2392,8 @@ function bindActions() {
 
 async function bootstrap() {
   bindActions();
+  updateOperationalChrome();
+  updateDashboardSummary();
   try {
     await bootstrapAdmin();
   } catch (error) {

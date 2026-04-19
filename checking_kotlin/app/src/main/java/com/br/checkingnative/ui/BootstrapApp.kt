@@ -107,13 +107,13 @@ private fun HeaderSection(uiState: BootstrapUiState) {
             }
 
             Text(
-                text = "API e dominio puro portados para Kotlin",
+                text = "Controller funcional portado para Kotlin",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
 
             Text(
-                text = "${uiState.phaseLabel}. A persistencia, o cliente de API e as regras puras de automacao agora vivem no app Kotlin.",
+                text = "${uiState.phaseLabel}. O app Kotlin agora hidrata estado local, sincroniza historico, atualiza catalogo e envia registros manuais pela API nativa.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -132,7 +132,7 @@ private fun EnvironmentCard(uiState: BootstrapUiState) {
 
 @Composable
 private fun ReadinessCard(uiState: BootstrapUiState) {
-    InfoCard(title = "Estado da Fase 3") {
+    InfoCard(title = "Estado da Fase 4") {
         StatusRow(
             label = "Compose e Activity",
             value = "Configurados",
@@ -173,6 +173,26 @@ private fun ReadinessCard(uiState: BootstrapUiState) {
             value = if (uiState.domainLogicReady) "Portadas" else "Pendente",
             success = uiState.domainLogicReady,
         )
+        StatusRow(
+            label = "Controller Kotlin",
+            value = if (uiState.controllerReady) "Inicializado" else "Carregando",
+            success = uiState.controllerReady,
+        )
+        StatusRow(
+            label = "Sync de historico",
+            value = if (uiState.manualHistorySyncReady) "Conectado a API" else "Pendente",
+            success = uiState.manualHistorySyncReady,
+        )
+        StatusRow(
+            label = "Envio manual",
+            value = if (uiState.manualSubmitReady) "Conectado a API" else "Pendente",
+            success = uiState.manualSubmitReady,
+        )
+        StatusRow(
+            label = "Catalogo de locais",
+            value = if (uiState.catalogSyncReady) "Conectado a API e cache" else "Pendente",
+            success = uiState.catalogSyncReady,
+        )
     }
 }
 
@@ -201,6 +221,21 @@ private fun PersistedStateCard(uiState: BootstrapUiState) {
             label = "Locais no banco",
             value = uiState.managedLocationCount.toString(),
         )
+        DetailRow(
+            label = "Sync ativo",
+            value = if (uiState.isSyncing) "Sim" else "Nao",
+        )
+        DetailRow(
+            label = "Envio ativo",
+            value = if (uiState.isSubmitting) "Sim" else "Nao",
+        )
+        if (uiState.currentStatusMessage.isNotBlank()) {
+            Text(
+                text = uiState.currentStatusMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

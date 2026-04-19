@@ -2507,9 +2507,9 @@ def test_transport_page_is_served_on_transport_path():
         response = client.get("/transport")
         assert response.status_code == 200
         assert "User List" in response.text
-        assert "Extra Car Requests" in response.text
-        assert "Weekend Car Requests" in response.text
-        assert "Regular Car Requests" in response.text
+        assert ">EXTRA<" in response.text
+        assert ">WEEKEND<" in response.text
+        assert ">REGULAR<" in response.text
         assert "Regular Transport List" in response.text
         assert "Weekend Transport List" in response.text
         assert "Extra Transport List" in response.text
@@ -2714,7 +2714,9 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert friday_payload["extra_vehicle_registry"][0]["route_kind"] == "home_to_work"
     assert friday_payload["selected_route"] == "home_to_work"
 
-    assert saturday_payload["regular_requests"] == []
+    assert [row["chave"] for row in saturday_payload["regular_requests"]] == ["TD01"]
+    assert saturday_payload["regular_requests"][0]["assignment_status"] == "pending"
+    assert saturday_payload["regular_requests"][0]["assigned_vehicle"] is None
     assert [row["chave"] for row in saturday_payload["weekend_requests"]] == ["TD02"]
     assert saturday_payload["extra_requests"] == []
     assert [row["placa"] for row in saturday_payload["weekend_vehicles"]] == ["WKD9001"]
@@ -3600,6 +3602,42 @@ def test_admin_page_is_served_on_admin_path():
         assert response.status_code == 200
         assert "Checking Admin" in response.text
         assert "Acesso Administrativo" in response.text
+def test_gerencia_page_is_served_on_gerencia_path():
+    with TestClient(app) as client:
+        response = client.get("/gerencia")
+        assert response.status_code == 200
+        assert "Checking Gerência" in response.text
+        assert "Entrar na gerência" in response.text
+        assert 'id="realtimeStatusBadge"' in response.text
+        assert 'data-dashboard-stat-value="checkin"' in response.text
+        assert '../admin/app.js' in response.text
+
+
+def test_gerencia_trailing_slash_redirects_to_canonical_path():
+    with TestClient(app) as client:
+        response = client.get("/gerencia/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "../gerencia"
+
+
+
+
+def test_gerencia_page_is_served_on_gerencia_path():
+    with TestClient(app) as client:
+        response = client.get("/gerencia")
+        assert response.status_code == 200
+        assert "Checking Gerência" in response.text
+        assert "Entrar na gerência" in response.text
+        assert 'id="realtimeStatusBadge"' in response.text
+        assert 'data-dashboard-stat-value="checkin"' in response.text
+        assert '../admin/app.js' in response.text
+
+
+def test_gerencia_trailing_slash_redirects_to_canonical_path():
+    with TestClient(app) as client:
+        response = client.get("/gerencia/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "../gerencia"
 
 
 def test_web_password_registration_requires_existing_key_and_hashes_password():
@@ -3875,6 +3913,50 @@ def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypa
     assert dashboard.status_code == 200
     assert any(row["chave"] == "WT14" for row in dashboard.json()["weekend_requests"])
     assert any(row["chave"] == "WT14" for row in dashboard.json()["extra_requests"])
+
+
+def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkeypatch):
+    fixed_now = datetime(2026, 4, 19, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT18", projeto="P80", nome="Regular Weekend Rider")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT18")
+        user.end_rua = "40 Weekend Avenue"
+        user.zip = "654321"
+        db.commit()
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT18",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT18", "request_kind": "regular"},
+        )
+        assert created.status_code == 200
+        assert created.json()["state"]["status"] == "pending"
+        assert created.json()["state"]["request_kind"] == "regular"
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    regular_rows = [row for row in dashboard.json()["regular_requests"] if row["chave"] == "WT18"]
+    assert len(regular_rows) == 1
+    assert regular_rows[0]["nome"] == "Regular Weekend Rider"
 
 
 def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashboard(monkeypatch):

@@ -28,6 +28,7 @@
     regular: "modal.notes.regular",
   };
   const TRANSPORT_LANGUAGE_STORAGE_KEY = "checking.transport.dashboard.language";
+  const TRANSPORT_SELECTED_DATE_STORAGE_KEY = "checking.transport.dashboard.selectedDate";
   const transportI18n = globalScope.CheckingTransportI18n || {};
   const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
@@ -200,6 +201,55 @@
   function formatIsoDate(value) {
     const date = startOfLocalDay(value);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function parseStoredTransportDate(value) {
+    const rawValue = String(value || "").trim();
+    const match = rawValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const dayOfMonth = Number(match[3]);
+    const parsedDate = new Date(year, monthIndex, dayOfMonth);
+    if (
+      Number.isNaN(parsedDate.getTime())
+      || parsedDate.getFullYear() !== year
+      || parsedDate.getMonth() !== monthIndex
+      || parsedDate.getDate() !== dayOfMonth
+    ) {
+      return null;
+    }
+
+    return startOfLocalDay(parsedDate);
+  }
+
+  function resolveStoredTransportDate(referenceValue) {
+    const fallbackDate = startOfLocalDay(referenceValue || new Date());
+    if (!globalScope.localStorage) {
+      return fallbackDate;
+    }
+
+    try {
+      const storedValue = globalScope.localStorage.getItem(TRANSPORT_SELECTED_DATE_STORAGE_KEY);
+      return parseStoredTransportDate(storedValue) || fallbackDate;
+    } catch (error) {
+      return fallbackDate;
+    }
+  }
+
+  function setStoredTransportDate(value) {
+    if (!globalScope.localStorage) {
+      return;
+    }
+
+    try {
+      globalScope.localStorage.setItem(TRANSPORT_SELECTED_DATE_STORAGE_KEY, formatIsoDate(value));
+    } catch (error) {
+      // Ignore storage failures so the dashboard remains usable in restricted browsers.
+    }
   }
 
   function getTransportDateState(value, referenceValue) {
@@ -2535,7 +2585,7 @@
       return;
     }
 
-    const dateStore = createTransportDateStore(new Date());
+    const dateStore = createTransportDateStore(resolveStoredTransportDate(new Date()));
     document.querySelectorAll("[data-date-panel]").forEach(function (panelElement) {
       createDatePanelController(panelElement, dateStore);
     });
@@ -2546,6 +2596,7 @@
       pageController.refreshVehicleGridLayouts();
     });
     dateStore.subscribe(function (selectedDate) {
+      setStoredTransportDate(selectedDate);
       pageController.closeRouteTimePopover();
       pageController.loadDashboard(selectedDate);
     });
@@ -2568,6 +2619,9 @@
     formatVehicleOccupancyCount,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,
+    parseStoredTransportDate,
+    resolveStoredTransportDate,
+    setStoredTransportDate,
     shouldHighlightRequestName,
     mapVehicleIconPath,
     parsePositiveNumber,

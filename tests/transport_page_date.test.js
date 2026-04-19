@@ -52,6 +52,60 @@ test('createTransportDateStore shares one selected date across subscribers', () 
   assert.deepEqual(secondSubscriberDates, firstSubscriberDates);
 });
 
+test('resolveStoredTransportDate restores a previously selected dashboard date', () => {
+  const originalLocalStorage = global.localStorage;
+  global.localStorage = {
+    getItem(key) {
+      return key === 'checking.transport.dashboard.selectedDate' ? '2026-04-19' : null;
+    },
+    setItem() {},
+  };
+
+  try {
+    const restoredDate = transportPage.resolveStoredTransportDate(new Date(2026, 3, 17));
+    assert.equal(transportPage.formatIsoDate(restoredDate), '2026-04-19');
+  } finally {
+    global.localStorage = originalLocalStorage;
+  }
+});
+
+test('resolveStoredTransportDate falls back to the reference date for invalid storage values', () => {
+  const originalLocalStorage = global.localStorage;
+  global.localStorage = {
+    getItem() {
+      return '2026-99-99';
+    },
+    setItem() {},
+  };
+
+  try {
+    const restoredDate = transportPage.resolveStoredTransportDate(new Date(2026, 3, 17));
+    assert.equal(transportPage.formatIsoDate(restoredDate), '2026-04-17');
+  } finally {
+    global.localStorage = originalLocalStorage;
+  }
+});
+
+test('setStoredTransportDate persists the selected date as an ISO string', () => {
+  const originalLocalStorage = global.localStorage;
+  const writes = [];
+  global.localStorage = {
+    getItem() {
+      return null;
+    },
+    setItem(key, value) {
+      writes.push([key, value]);
+    },
+  };
+
+  try {
+    transportPage.setStoredTransportDate(new Date(2026, 3, 20));
+    assert.deepEqual(writes, [['checking.transport.dashboard.selectedDate', '2026-04-20']]);
+  } finally {
+    global.localStorage = originalLocalStorage;
+  }
+});
+
 test('resolvePanelSizes clamps resize positions to the configured limits', () => {
   assert.deepEqual(
     transportPage.resolvePanelSizes({

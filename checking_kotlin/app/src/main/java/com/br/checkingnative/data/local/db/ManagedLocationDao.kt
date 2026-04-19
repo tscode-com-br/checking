@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.br.checkingnative.data.legacy.LegacyFlutterStorageContract
 import kotlinx.coroutines.flow.Flow
 
@@ -18,9 +19,23 @@ interface ManagedLocationDao {
     )
     fun observeAll(): Flow<List<ManagedLocationEntity>>
 
+    @Query(
+        "SELECT * FROM ${LegacyFlutterStorageContract.locationsTableName} " +
+            "ORDER BY local COLLATE NOCASE ASC, id ASC",
+    )
+    suspend fun loadAllSnapshot(): List<ManagedLocationEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<ManagedLocationEntity>)
 
     @Query("DELETE FROM ${LegacyFlutterStorageContract.locationsTableName}")
     suspend fun clearAll()
+
+    @Transaction
+    suspend fun replaceAll(items: List<ManagedLocationEntity>) {
+        clearAll()
+        if (items.isNotEmpty()) {
+            upsertAll(items)
+        }
+    }
 }

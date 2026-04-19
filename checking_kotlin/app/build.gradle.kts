@@ -63,6 +63,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.12.4")
     implementation("com.google.android.material:material:1.13.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)

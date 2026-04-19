@@ -20,6 +20,8 @@
   const chaveInput = document.getElementById('chaveInput');
   const passwordInput = document.getElementById('passwordInput');
   const passwordActionButton = document.getElementById('passwordActionButton');
+  const chaveAuthField = chaveInput ? chaveInput.closest('.auth-field') : null;
+  const passwordAuthField = passwordInput ? passwordInput.closest('.auth-field') : null;
   const projectField = document.getElementById('projectField');
   const projectSelect = document.getElementById('projectSelect');
   const locationSelectField = document.getElementById('locationSelectField');
@@ -101,6 +103,7 @@
     refreshLocationButton,
   ].filter(Boolean);
   const authControls = [chaveInput, passwordInput, passwordActionButton].filter(Boolean);
+  const highlightedAuthFields = [chaveAuthField, passwordAuthField].filter(Boolean);
   const passwordDialogControls = [
     oldPasswordInput,
     newPasswordInput,
@@ -346,6 +349,14 @@
     authState.passwordVerified = false;
   }
 
+  function syncAuthenticationFieldHighlights() {
+    const authenticated = isApplicationUnlocked();
+    highlightedAuthFields.forEach((fieldElement) => {
+      fieldElement.classList.toggle('auth-field-pending', !authenticated);
+      fieldElement.classList.toggle('auth-field-authenticated', authenticated);
+    });
+  }
+
   function syncFormControlStates() {
     const lockActive = isUserInteractionLocked();
     const authBusy = isPasswordActionBusy();
@@ -356,6 +367,8 @@
       || transportRequestInProgress
       || transportCancelInProgress
       || transportAcknowledgeInProgress;
+
+    syncAuthenticationFieldHighlights();
 
     projectSelect.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordChangeInProgress || userSelfRegistrationInProgress;
 
@@ -818,6 +831,16 @@
     return normalizedValue ? `${normalizedValue}h` : '--';
   }
 
+  function formatTransportAddressSummary(endRua, zipCode) {
+    const normalizedAddress = String(endRua || '').trim();
+    const normalizedZipCode = String(zipCode || '').trim();
+
+    if (normalizedAddress && normalizedZipCode) {
+      return `${normalizedAddress}\n${normalizedZipCode}`;
+    }
+    return normalizedAddress || normalizedZipCode || '';
+  }
+
   function applyTransportStatePayload(payload) {
     transportState.status = String(payload && payload.status || 'available');
     transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
@@ -845,7 +868,7 @@
 
   function renderTransportScreen() {
     if (transportAddressSummaryValue) {
-      transportAddressSummaryValue.textContent = transportState.endRua || '';
+      transportAddressSummaryValue.textContent = formatTransportAddressSummary(transportState.endRua, transportState.zip);
     }
 
     if (transportAddressEditor) {

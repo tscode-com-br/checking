@@ -60,6 +60,7 @@ assets_dir = Path(__file__).resolve().parents[2] / "assets"
 if static_dir.exists():
     admin_dir = static_dir / "admin"
     check_dir = static_dir / "check"
+    gerencia_dir = static_dir / "gerencia"
     transport_dir = static_dir / "transport"
 
     if assets_dir.exists():
@@ -75,6 +76,17 @@ if static_dir.exists():
             return RedirectResponse(url="../admin", status_code=307)
 
         app.mount("/admin", StaticFiles(directory=admin_dir), name="admin")
+
+    if gerencia_dir.exists():
+        @app.get("/gerencia", include_in_schema=False)
+        def gerencia_page() -> FileResponse:
+            return FileResponse(gerencia_dir / "index.html")
+
+        @app.get("/gerencia/", include_in_schema=False)
+        def gerencia_page_trailing_slash() -> RedirectResponse:
+            return RedirectResponse(url="../gerencia", status_code=307)
+
+        app.mount("/gerencia", StaticFiles(directory=gerencia_dir), name="gerencia")
 
     if check_dir.exists():
         @app.get("/user", include_in_schema=False)

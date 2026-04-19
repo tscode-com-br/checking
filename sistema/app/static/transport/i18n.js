@@ -33,9 +33,9 @@
       },
       requests: {
         titles: {
-          extra: "Extra Car Requests",
-          weekend: "Weekend Car Requests",
-          regular: "Regular Car Requests",
+          extra: "EXTRA",
+          weekend: "WEEKEND",
+          regular: "REGULAR",
         },
         labels: {
           extra: "EXTRA",
@@ -203,9 +203,9 @@
       },
       requests: {
         titles: {
-          extra: "Solicitações de carro extra",
-          weekend: "Solicitações de carro de fim de semana",
-          regular: "Solicitações de carro rotineiro",
+          extra: "EXTRA",
+          weekend: "WEEKEND",
+          regular: "REGULAR",
         },
         labels: {
           extra: "EXTRA",
@@ -373,9 +373,9 @@
       },
       requests: {
         titles: {
-          extra: "额外车辆请求",
-          weekend: "周末车辆请求",
-          regular: "常规车辆请求",
+          extra: "EXTRA",
+          weekend: "WEEKEND",
+          regular: "REGULAR",
         },
         labels: {
           extra: "额外",
@@ -541,9 +541,9 @@
       },
       requests: {
         titles: {
-          extra: "Permintaan kereta tambahan",
-          weekend: "Permintaan kereta hujung minggu",
-          regular: "Permintaan kereta biasa",
+          extra: "EXTRA",
+          weekend: "WEEKEND",
+          regular: "REGULAR",
         },
         labels: {
           extra: "TAMBAHAN",
@@ -709,9 +709,9 @@
       },
       requests: {
         titles: {
-          extra: "Mga request para sa extra na sasakyan",
-          weekend: "Mga request para sa weekend na sasakyan",
-          regular: "Mga request para sa regular na sasakyan",
+          extra: "EXTRA",
+          weekend: "WEEKEND",
+          regular: "REGULAR",
         },
         labels: {
           extra: "EXTRA",

@@ -18,10 +18,12 @@ class LegacyFlutterMigrationCoordinator @Inject constructor(
         val sourceAppInstalled = isSourceAppInstalled()
         val report = if (sourceAppInstalled) {
             LegacyFlutterMigrationReport(
-                status = LegacyFlutterMigrationStatus.AUTOMATIC_IMPORT_BLOCKED,
+                status = LegacyFlutterMigrationStatus.MANUAL_ONBOARDING_REQUIRED,
                 message = "O app Flutter foi detectado com o package " +
                     "${LegacyFlutterStorageContract.sourceApplicationId}, " +
-                    "mas o sandbox interno dele nao pode ser lido por um app separado.",
+                    "mas o app Kotlin e separado e nao pode ler o sandbox interno dele. " +
+                    "Prossiga com onboarding manual: informe a chave novamente, " +
+                    "conceda as permissoes e sincronize os dados pela API.",
                 sourceAppInstalled = true,
             )
         } else {
@@ -29,7 +31,8 @@ class LegacyFlutterMigrationCoordinator @Inject constructor(
                 status = LegacyFlutterMigrationStatus.SOURCE_APP_NOT_INSTALLED,
                 message = "Nenhuma instalacao ativa de " +
                     "${LegacyFlutterStorageContract.sourceApplicationId} " +
-                    "foi detectada neste dispositivo.",
+                    "foi detectada neste dispositivo. O app Kotlin deve seguir " +
+                    "com onboarding manual.",
                 sourceAppInstalled = false,
             )
         }

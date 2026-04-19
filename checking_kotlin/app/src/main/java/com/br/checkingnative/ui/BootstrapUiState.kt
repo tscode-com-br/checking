@@ -3,7 +3,7 @@ package com.br.checkingnative.ui
 data class BootstrapUiState(
     val applicationId: String = "com.br.checkingnative",
     val namespace: String = "com.br.checkingnative",
-    val phaseLabel: String = "Fase 3 - API e dominio puro",
+    val phaseLabel: String = "Fase 4 - controller funcional",
     val coexistenceMode: String = "App Kotlin separado do Flutter",
     val dataStoreReady: Boolean = false,
     val roomReady: Boolean = false,
@@ -11,6 +11,10 @@ data class BootstrapUiState(
     val legacySchemaReady: Boolean = false,
     val apiClientReady: Boolean = false,
     val domainLogicReady: Boolean = false,
+    val controllerReady: Boolean = false,
+    val manualHistorySyncReady: Boolean = false,
+    val manualSubmitReady: Boolean = false,
+    val catalogSyncReady: Boolean = false,
     val managedLocationCount: Int = 0,
     val hasPersistedState: Boolean = false,
     val chavePreview: String = "Nao definida",
@@ -18,13 +22,16 @@ data class BootstrapUiState(
     val locationIntervalSeconds: Int = 15 * 60,
     val locationSharingEnabled: Boolean = false,
     val automaticCheckInOutEnabled: Boolean = false,
+    val currentStatusMessage: String = "",
+    val isSubmitting: Boolean = false,
+    val isSyncing: Boolean = false,
     val legacyMigrationStatus: String = "Nao verificada",
     val legacyMigrationMessage: String =
         "A verificacao da migracao legada ainda nao foi executada.",
     val legacySourceInstalled: Boolean = false,
     val nextSteps: List<String> = listOf(
-        "Implementar localizacao e background Android em Kotlin.",
-        "Ligar a automacao nativa ao cliente de API e ao dominio puro.",
         "Substituir a UI de bootstrap pela tela funcional em Compose.",
+        "Implementar permissoes runtime e captura real de localizacao.",
+        "Conectar automacao de localizacao ao foreground service.",
     ),
 )

@@ -44,7 +44,7 @@ object AppModule {
             context,
             CheckingDatabase::class.java,
             LegacyFlutterStorageContract.locationsDatabaseName,
-        ).fallbackToDestructiveMigration(dropAllTables = true).build()
+        ).addMigrations(CheckingDatabase.MIGRATION_1_2).build()
     }
 
     @Provides

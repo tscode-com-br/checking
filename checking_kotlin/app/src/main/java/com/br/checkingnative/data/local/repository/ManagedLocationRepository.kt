@@ -13,6 +13,7 @@ import javax.inject.Singleton
 @Singleton
 class ManagedLocationRepository @Inject constructor(
     private val dao: ManagedLocationDao,
+    private val cacheRepository: ManagedLocationCacheRepository,
 ) {
     val locationCount: Flow<Int> = dao.observeLocationCount()
 
@@ -21,10 +22,37 @@ class ManagedLocationRepository @Inject constructor(
             items.map(ManagedLocationEntity::toDomainModel)
         }
 
+    suspend fun loadLocations(preferCache: Boolean = false): List<ManagedLocation> {
+        val preferredCache = if (preferCache) {
+            cacheRepository.readLocations()
+        } else {
+            emptyList()
+        }
+        if (preferredCache.isNotEmpty()) {
+            return preferredCache
+        }
+
+        return try {
+            val loadedLocations = dao.loadAllSnapshot().map(ManagedLocationEntity::toDomainModel)
+            cacheRepository.saveLocations(loadedLocations)
+            loadedLocations
+        } catch (_: Exception) {
+            cacheRepository.readLocations()
+        }
+    }
+
     suspend fun replaceAll(items: List<ManagedLocation>) {
-        dao.clearAll()
-        if (items.isNotEmpty()) {
-            dao.upsertAll(items.map(ManagedLocation::toEntity))
+        val cacheResult = runCatching {
+            cacheRepository.saveLocations(items)
+        }
+        val databaseResult = runCatching {
+            dao.replaceAll(items.map(ManagedLocation::toEntity))
+        }
+
+        if (cacheResult.isFailure && databaseResult.isFailure) {
+            throw databaseResult.exceptionOrNull()
+                ?: cacheResult.exceptionOrNull()
+                ?: IllegalStateException("Falha ao atualizar o catalogo local.")
         }
     }
 }
