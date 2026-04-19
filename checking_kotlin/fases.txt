@@ -54,7 +54,7 @@ Tratar erros HTTP com as mesmas mensagens amigáveis do Flutter.
 Testar fallback https://www.tscode.com.br.
 Validado em 2026-04-19 com testDebugUnitTest, assembleDebug e lintDebug.
 
-Fase 6 - Permissões E Configurações
+Fase 6 - Permissões E Configurações (já implementada)
 
 Implementar checagem e request de localização precisa.
 Implementar request de localização em segundo plano.
@@ -63,6 +63,7 @@ Implementar fluxo de ignorar otimização de bateria.
 Implementar helper OEM Xiaomi/HyperOS, Samsung e Motorola.
 Implementar flags derivadas: canEnableLocationSharing, CheckingPermissionSettingsState.
 Garantir que switches voltem para off quando permissões forem revogadas.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
 Fase 7 - Localização Em Foreground
 
