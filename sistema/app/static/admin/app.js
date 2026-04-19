@@ -9,6 +9,8 @@ const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
 const ARCHIVE_PAGE_SIZE = 8;
 const DATABASE_EVENTS_PAGE_SIZE = 50;
+const DATABASE_EVENT_DEFAULT_SORT_KEY = "event_time";
+const DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc";
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -57,6 +59,16 @@ const databaseEventsState = {
   total: 0,
   totalPages: 1,
   filters: createDefaultDatabaseEventFilters(),
+  sortKey: DATABASE_EVENT_DEFAULT_SORT_KEY,
+  sortDirection: DATABASE_EVENT_DEFAULT_SORT_DIRECTION,
+  filterOptions: {
+    action: [],
+    chave: [],
+    rfid: [],
+    project: [],
+    source: [],
+    status: [],
+  },
 };
 
 function getProjectCatalogNames() {
@@ -99,36 +111,12 @@ function buildProjectOptionsHtml(selectedValue, options = {}) {
     .join("");
 }
 
-function syncDatabaseProjectFilterOptions() {
-  const selectElement = document.getElementById("databaseEventsProject");
-  if (!(selectElement instanceof HTMLSelectElement)) {
-    return;
-  }
-
-  const currentValue = String(databaseEventsState.filters.project || "").trim().toUpperCase();
-  const optionValues = getProjectOptions(currentValue, { includeDetachedValue: Boolean(currentValue) });
-  const fragment = document.createDocumentFragment();
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = "Todos";
-  fragment.appendChild(defaultOption);
-  optionValues.forEach((projectName) => {
-    const option = document.createElement("option");
-    option.value = projectName;
-    option.textContent = projectName;
-    fragment.appendChild(option);
-  });
-  selectElement.replaceChildren(fragment);
-  selectElement.value = optionValues.includes(currentValue) ? currentValue : "";
-}
-
 function setProjectCatalog(rows) {
   projectCatalog = Array.isArray(rows)
     ? rows
       .filter((row) => row && typeof row.name === "string" && row.name.trim())
       .map((row) => ({ id: row.id, name: row.name.trim() }))
     : [];
-  syncDatabaseProjectFilterOptions();
 }
 
 const PRESENCE_TABLE_CONFIGS = {
@@ -325,7 +313,19 @@ function showAuthShell(message = "", kind = "info") {
   databaseEventsState.totalPages = 1;
   databaseEventsState.pageSize = DATABASE_EVENTS_PAGE_SIZE;
   databaseEventsState.filters = createDefaultDatabaseEventFilters();
+  databaseEventsState.sortKey = DATABASE_EVENT_DEFAULT_SORT_KEY;
+  databaseEventsState.sortDirection = DATABASE_EVENT_DEFAULT_SORT_DIRECTION;
+  databaseEventsState.filterOptions = {
+    action: [],
+    chave: [],
+    rfid: [],
+    project: [],
+    source: [],
+    status: [],
+  };
+  syncDatabaseEventFilterOptions();
   syncDatabaseEventFilterInputs();
+  syncDatabaseEventSortHeaders();
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
   sessionBar.classList.add("hidden");
@@ -355,7 +355,10 @@ function applyResponsiveLabels(tbodyId) {
   if (!table) {
     return;
   }
-  const headers = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+  const headers = Array.from(table.querySelectorAll("thead th")).map((th) => {
+    const sortableLabel = th.querySelector(".sortable-header span")?.textContent?.trim();
+    return sortableLabel || th.textContent.trim();
+  });
   body.querySelectorAll("tr").forEach((tr) => {
     Array.from(tr.children).forEach((cell, idx) => {
       if (cell.tagName === "TD") {
@@ -574,6 +577,8 @@ function buildDatabaseEventsQueryParams() {
   const params = new URLSearchParams();
   params.set("page", String(databaseEventsState.page));
   params.set("page_size", String(databaseEventsState.pageSize));
+  params.set("sort_by", databaseEventsState.sortKey);
+  params.set("sort_direction", databaseEventsState.sortDirection);
 
   const normalizedKey = databaseEventsState.filters.chave.trim().toUpperCase();
   const normalizedRfid = databaseEventsState.filters.rfid.trim();
@@ -615,24 +620,117 @@ function buildDatabaseEventsQueryParams() {
 }
 
 function syncDatabaseEventFilterInputs() {
-  const filterInputIds = {
+  const textInputIds = {
     search: "databaseEventsSearch",
+    fromDate: "databaseEventsFromDate",
+    toDate: "databaseEventsToDate",
+  };
+
+  Object.entries(textInputIds).forEach(([filterKey, elementId]) => {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.value = databaseEventsState.filters[filterKey] ?? "";
+    }
+  });
+
+  const selectFilterIds = {
     chave: "databaseEventsKey",
     rfid: "databaseEventsRfid",
     action: "databaseEventsAction",
     project: "databaseEventsProject",
     source: "databaseEventsSource",
     status: "databaseEventsStatus",
-    fromDate: "databaseEventsFromDate",
-    toDate: "databaseEventsToDate",
   };
 
-  Object.entries(filterInputIds).forEach(([filterKey, elementId]) => {
-    const element = document.getElementById(elementId);
-    if (element) {
-      element.value = databaseEventsState.filters[filterKey] ?? "";
+  Object.entries(selectFilterIds).forEach(([filterKey, elementId]) => {
+    const selectElement = document.getElementById(elementId);
+    if (selectElement instanceof HTMLSelectElement) {
+      selectElement.value = databaseEventsState.filters[filterKey] ?? "";
     }
   });
+}
+
+function syncDatabaseEventFilterOptions() {
+  const filterSelects = {
+    chave: "databaseEventsKey",
+    rfid: "databaseEventsRfid",
+    action: "databaseEventsAction",
+    project: "databaseEventsProject",
+    source: "databaseEventsSource",
+    status: "databaseEventsStatus",
+  };
+
+  Object.entries(filterSelects).forEach(([filterKey, elementId]) => {
+    const selectElement = document.getElementById(elementId);
+    if (!(selectElement instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const optionValues = Array.isArray(databaseEventsState.filterOptions[filterKey])
+      ? databaseEventsState.filterOptions[filterKey]
+      : [];
+    const currentValue = String(databaseEventsState.filters[filterKey] || "").trim();
+    const values = currentValue && !optionValues.includes(currentValue)
+      ? [currentValue, ...optionValues]
+      : optionValues;
+    const fragment = document.createDocumentFragment();
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Todos";
+    fragment.appendChild(defaultOption);
+    values.forEach((optionValue) => {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      fragment.appendChild(option);
+    });
+    selectElement.replaceChildren(fragment);
+    selectElement.value = values.includes(currentValue) ? currentValue : "";
+    if (!values.includes(currentValue)) {
+      databaseEventsState.filters[filterKey] = "";
+    }
+  });
+}
+
+function getDatabaseEventDefaultSortDirection(sortKey) {
+  if (["id", "event_time", "http_status"].includes(sortKey)) {
+    return "desc";
+  }
+  return "asc";
+}
+
+function syncDatabaseEventSortHeaders() {
+  document.querySelectorAll('.sortable-header[data-sort-table="databaseEvents"]').forEach((button) => {
+    const isActive = button.dataset.sortKey === databaseEventsState.sortKey;
+    button.classList.toggle("is-active", isActive);
+    const indicator = button.querySelector(".sort-indicator");
+    if (indicator) {
+      indicator.textContent = isActive ? (databaseEventsState.sortDirection === "asc" ? "↑" : "↓") : "↕";
+    }
+    const parentHeader = button.closest("th");
+    if (parentHeader) {
+      parentHeader.setAttribute(
+        "aria-sort",
+        isActive ? (databaseEventsState.sortDirection === "asc" ? "ascending" : "descending") : "none",
+      );
+    }
+  });
+}
+
+function applyDatabaseEventSort(sortKey) {
+  if (!sortKey) {
+    return;
+  }
+
+  if (databaseEventsState.sortKey === sortKey) {
+    databaseEventsState.sortDirection = databaseEventsState.sortDirection === "asc" ? "desc" : "asc";
+  } else {
+    databaseEventsState.sortKey = sortKey;
+    databaseEventsState.sortDirection = getDatabaseEventDefaultSortDirection(sortKey);
+  }
+
+  databaseEventsState.page = 1;
+  syncDatabaseEventSortHeaders();
 }
 
 function updateDatabaseEventsInsights(rows) {
@@ -739,7 +837,18 @@ async function loadDatabaseEvents() {
   databaseEventsState.page = Number(payload?.page) || 1;
   databaseEventsState.pageSize = Number(payload?.page_size) || DATABASE_EVENTS_PAGE_SIZE;
   databaseEventsState.totalPages = Math.max(1, Number(payload?.total_pages) || 1);
+  databaseEventsState.filterOptions = {
+    action: Array.isArray(payload?.filter_options?.action) ? payload.filter_options.action : [],
+    chave: Array.isArray(payload?.filter_options?.chave) ? payload.filter_options.chave : [],
+    rfid: Array.isArray(payload?.filter_options?.rfid) ? payload.filter_options.rfid : [],
+    project: Array.isArray(payload?.filter_options?.project) ? payload.filter_options.project : [],
+    source: Array.isArray(payload?.filter_options?.source) ? payload.filter_options.source : [],
+    status: Array.isArray(payload?.filter_options?.status) ? payload.filter_options.status : [],
+  };
 
+  syncDatabaseEventFilterOptions();
+  syncDatabaseEventFilterInputs();
+  syncDatabaseEventSortHeaders();
   renderDatabaseEvents(rows);
   updateDashboardSummary();
 }
@@ -2616,6 +2725,11 @@ function bindActions() {
 
     const tableKey = sortButton.dataset.sortTable;
     const sortKey = sortButton.dataset.sortKey;
+    if (tableKey === "databaseEvents") {
+      applyDatabaseEventSort(sortKey);
+      loadDatabaseEvents().catch((error) => setStatus(error.message, false));
+      return;
+    }
     const state = getPresenceTableState(tableKey);
     if (!state || !sortKey) {
       return;

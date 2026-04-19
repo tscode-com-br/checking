@@ -3747,10 +3747,17 @@ def test_gerencia_page_is_served_on_gerencia_path():
         assert response.status_code == 200
         assert "Checking Gerência" in response.text
         assert "Entrar na gerência" in response.text
-        assert "Painel de Administrador" in response.text
         assert "Banco de Dados" in response.text
+        assert "Operação administrativa" not in response.text
+        assert "Diretriz visual" not in response.text
+        assert "<span class=\"summary-kicker\">Risco</span>" not in response.text
+        assert '<select id="databaseEventsKey" data-database-event-filter="chave">' in response.text
+        assert '<select id="databaseEventsRfid" data-database-event-filter="rfid">' in response.text
+        assert '<select id="databaseEventsSource" data-database-event-filter="source">' in response.text
+        assert '<select id="databaseEventsStatus" data-database-event-filter="status">' in response.text
         assert 'id="realtimeStatusBadge"' in response.text
         assert 'data-dashboard-stat-value="checkin"' in response.text
+        assert 'data-dashboard-stat-value="users"' in response.text
         assert '../admin/app.js' in response.text
 
 
@@ -3900,6 +3907,14 @@ def test_database_events_endpoint_filters_and_paginates_check_events():
             assert first_payload["page"] == 1
             assert first_payload["page_size"] == 1
             assert first_payload["total_pages"] == 2
+            assert first_payload["filter_options"] == {
+                "action": ["checkin", "checkout"],
+                "chave": [primary_key, secondary_key],
+                "rfid": sorted([primary_rfid, secondary_rfid]),
+                "project": ["P80", "P82"],
+                "source": ["device", "forms", "mobile"],
+                "status": ["queued", "success"],
+            }
             assert len(first_payload["items"]) == 1
             assert first_payload["items"][0]["chave"] == primary_key
             assert first_payload["items"][0]["action"] == "checkout"
@@ -3913,6 +3928,33 @@ def test_database_events_endpoint_filters_and_paginates_check_events():
             assert second_payload["page"] == 2
             assert len(second_payload["items"]) == 1
             assert second_payload["items"][0]["action"] == "checkin"
+
+            key_sort_asc = client.get(
+                "/api/admin/database-events",
+                params={"sort_by": "chave", "sort_direction": "asc", "page_size": 10},
+            )
+            assert key_sort_asc.status_code == 200, key_sort_asc.text
+            key_sort_asc_payload = key_sort_asc.json()
+            assert [item["chave"] for item in key_sort_asc_payload["items"]] == [primary_key, primary_key, secondary_key]
+
+            key_sort_desc = client.get(
+                "/api/admin/database-events",
+                params={"sort_by": "chave", "sort_direction": "desc", "page_size": 10},
+            )
+            assert key_sort_desc.status_code == 200, key_sort_desc.text
+            key_sort_desc_payload = key_sort_desc.json()
+            assert [item["chave"] for item in key_sort_desc_payload["items"]] == [secondary_key, primary_key, primary_key]
+
+            message_sort_asc = client.get(
+                "/api/admin/database-events",
+                params={"chave": primary_key, "sort_by": "message", "sort_direction": "asc", "page_size": 10},
+            )
+            assert message_sort_asc.status_code == 200, message_sort_asc.text
+            message_sort_asc_payload = message_sort_asc.json()
+            assert [item["message"] for item in message_sort_asc_payload["items"]] == [
+                "Entrada liberada",
+                "Saida enviada pelo app",
+            ]
 
             search_response = client.get(
                 "/api/admin/database-events",
@@ -3942,6 +3984,25 @@ def test_database_events_endpoint_rejects_invalid_date_ranges():
         )
         assert response.status_code == 400
         assert response.json()["detail"] == "Intervalo de datas invalido para a consulta de eventos."
+
+
+def test_database_events_endpoint_rejects_invalid_sort_parameters():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        invalid_column = client.get(
+            "/api/admin/database-events",
+            params={"sort_by": "unexpected_column"},
+        )
+        assert invalid_column.status_code == 400
+        assert invalid_column.json()["detail"] == "Coluna invalida para ordenacao de eventos."
+
+        invalid_direction = client.get(
+            "/api/admin/database-events",
+            params={"sort_direction": "sideways"},
+        )
+        assert invalid_direction.status_code == 400
+        assert invalid_direction.json()["detail"] == "Direcao invalida para ordenacao de eventos."
 
 
 def test_web_password_registration_requires_existing_key_and_hashes_password():
@@ -4405,26 +4466,28 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         db.commit()
         vehicle_id = vehicle.id
 
-    ensure_web_user_exists(chave="WT18", projeto="P80", nome="Settings Boarding Rider")
-    set_user_checkin_state(chave="WT18", event_time=fixed_now, local="Settings Gate")
+    ensure_web_user_exists(chave="WT19", projeto="P80", nome="Settings Boarding Rider")
+    set_user_checkin_state(chave="WT19", event_time=fixed_now, local="Settings Gate")
 
     with TestClient(app) as admin_client:
         ensure_admin_session(admin_client)
         current_settings = admin_client.get("/api/transport/settings")
         assert current_settings.status_code == 200
         assert current_settings.json()["work_to_home_time"] == "16:45"
+        assert current_settings.json()["last_update_time"] == "16:00"
 
         updated_settings = admin_client.put(
             "/api/transport/settings",
-            json={"work_to_home_time": "18:10"},
+            json={"work_to_home_time": "18:10", "last_update_time": "16:20"},
         )
         assert updated_settings.status_code == 200
         assert updated_settings.json()["work_to_home_time"] == "18:10"
+        assert updated_settings.json()["last_update_time"] == "16:20"
 
     with TestClient(app) as client:
         registered = register_web_password(
             client,
-            chave="WT18",
+            chave="WT19",
             senha="abc123",
             projeto="P80",
             ensure_user_exists=False,
@@ -4433,10 +4496,15 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
 
         requested = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT18", "request_kind": "regular"},
+            json={"chave": "WT19", "request_kind": "regular"},
         )
         assert requested.status_code == 200
         request_id = requested.json()["state"]["request_id"]
+
+        pending_state = client.get("/api/web/transport/state", params={"chave": "WT19"})
+        assert pending_state.status_code == 200
+        assert pending_state.json()["status"] == "pending"
+        assert pending_state.json()["confirmation_deadline_time"] == "16:20"
 
         with TestClient(app) as admin_client:
             ensure_admin_session(admin_client)
@@ -4452,14 +4520,16 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
             )
             assert assigned.status_code == 200
 
-        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT18"})
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT19"})
         assert confirmed_state.status_code == 200
         assert confirmed_state.json()["status"] == "confirmed"
         assert confirmed_state.json()["route_kind"] == "work_to_home"
         assert confirmed_state.json()["boarding_time"] == "18:10"
+        assert confirmed_state.json()["confirmation_deadline_time"] == "16:20"
 
     with SessionLocal() as db:
         location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        location_settings_module.upsert_transport_last_update_time(db, last_update_time="16:00")
         db.commit()
 
 

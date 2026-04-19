@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import delete, desc, func, or_, select, update
+from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -24,6 +24,7 @@ from ..models import (
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
+    DatabaseEventFilterOptions,
     DatabaseEventListResponse,
     AdminIdentity,
     AdminLocationsResponse,
@@ -93,6 +94,24 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 EVENT_KEY_FIELDS = ("approved_by", "rejected_by", "revoked_by", "updated_by", "chave")
 DATABASE_EVENT_ACTIONS = ("checkin", "checkout")
 DATABASE_EVENT_PAGE_SIZE = 50
+DATABASE_EVENT_DEFAULT_SORT_BY = "event_time"
+DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc"
+DATABASE_EVENT_SQL_SORT_FIELDS = {
+    "id": CheckEvent.id,
+    "event_time": CheckEvent.event_time,
+    "action": func.lower(func.coalesce(CheckEvent.action, "")),
+    "rfid": func.lower(func.coalesce(CheckEvent.rfid, "")),
+    "project": func.lower(func.coalesce(CheckEvent.project, "")),
+    "local": func.lower(func.coalesce(CheckEvent.local, "")),
+    "source": func.lower(func.coalesce(CheckEvent.source, "")),
+    "status": func.lower(func.coalesce(CheckEvent.status, "")),
+    "http_status": func.coalesce(CheckEvent.http_status, -1),
+    "device_id": func.lower(func.coalesce(CheckEvent.device_id, "")),
+    "message": func.lower(func.coalesce(CheckEvent.message, "")),
+    "details": func.lower(func.coalesce(CheckEvent.details, "")),
+}
+DATABASE_EVENT_SORTABLE_FIELDS = frozenset((*DATABASE_EVENT_SQL_SORT_FIELDS.keys(), "chave"))
+DATABASE_EVENT_SORT_DIRECTIONS = frozenset(("asc", "desc"))
 
 
 def format_assiduidade_label(ontime: bool | None) -> str:
@@ -161,6 +180,107 @@ def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRo
         )
         for row in rows
     ]
+
+
+def get_database_event_sort_value(row: EventRow, sort_by: str) -> object:
+    if sort_by == "id":
+        return row.id
+    if sort_by == "event_time":
+        return row.event_time
+    if sort_by == "http_status":
+        return row.http_status if row.http_status is not None else -1
+    if sort_by == "chave":
+        return (row.chave or "").upper()
+    if sort_by == "action":
+        return row.action or ""
+    if sort_by == "rfid":
+        return row.rfid or ""
+    if sort_by == "project":
+        return row.project or ""
+    if sort_by == "local":
+        return row.local or ""
+    if sort_by == "source":
+        return row.source or ""
+    if sort_by == "status":
+        return row.status or ""
+    if sort_by == "device_id":
+        return row.device_id or ""
+    if sort_by == "message":
+        return row.message or ""
+    if sort_by == "details":
+        return row.details or ""
+    return row.event_time
+
+
+def sort_database_event_payload(items: list[EventRow], sort_by: str, sort_direction: str) -> list[EventRow]:
+    reverse = sort_direction == "desc"
+    return sorted(
+        items,
+        key=lambda row: (get_database_event_sort_value(row, sort_by), row.id),
+        reverse=reverse,
+    )
+
+
+def build_database_event_filter_options(db: Session) -> DatabaseEventFilterOptions:
+    option_rows = db.execute(
+        select(
+            CheckEvent.rfid,
+            CheckEvent.details,
+            CheckEvent.action,
+            CheckEvent.project,
+            CheckEvent.source,
+            CheckEvent.status,
+        ).where(CheckEvent.action.in_(DATABASE_EVENT_ACTIONS))
+    ).all()
+
+    rfids = sorted({rfid for rfid, *_ in option_rows if rfid})
+    user_keys_by_rfid: dict[str, str] = {}
+    if rfids:
+        user_keys_by_rfid = {
+            rfid: chave
+            for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
+            if rfid is not None
+        }
+
+    actions: set[str] = set()
+    keys: set[str] = set()
+    seen_rfids: set[str] = set()
+    projects: set[str] = set()
+    sources: set[str] = set()
+    statuses: set[str] = set()
+
+    for rfid, details, action, project, source, status in option_rows:
+        if action:
+            actions.add(action)
+        if rfid:
+            seen_rfids.add(rfid)
+        if project:
+            projects.add(project)
+        if source:
+            sources.add(source)
+        if status:
+            statuses.add(status)
+
+        resolved_key = None
+        details_map = parse_event_details(details)
+        for field_name in EVENT_KEY_FIELDS:
+            field_value = details_map.get(field_name)
+            if field_value:
+                resolved_key = field_value.upper()
+                break
+        if resolved_key is None and rfid:
+            resolved_key = user_keys_by_rfid.get(rfid)
+        if resolved_key:
+            keys.add(resolved_key)
+
+    return DatabaseEventFilterOptions(
+        action=sorted(actions),
+        chave=sorted(keys),
+        rfid=sorted(seen_rfids),
+        project=sorted(projects),
+        source=sorted(sources),
+        status=sorted(statuses),
+    )
 
 
 def build_location_settings_log_message(
@@ -1453,6 +1573,8 @@ def list_database_events(
     search: str | None = Query(default=None, min_length=1, max_length=120),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
+    sort_by: str = Query(default=DATABASE_EVENT_DEFAULT_SORT_BY),
+    sort_direction: str = Query(default=DATABASE_EVENT_DEFAULT_SORT_DIRECTION),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=DATABASE_EVENT_PAGE_SIZE, ge=1, le=200),
 ) -> DatabaseEventListResponse:
@@ -1466,6 +1588,15 @@ def list_database_events(
     normalized_key = str(chave or "").strip().upper() or None
     normalized_rfid = str(rfid or "").strip() or None
     normalized_search = str(search or "").strip().lower() or None
+    normalized_sort_by = str(sort_by or "").strip().lower() or DATABASE_EVENT_DEFAULT_SORT_BY
+    normalized_sort_direction = str(sort_direction or "").strip().lower() or DATABASE_EVENT_DEFAULT_SORT_DIRECTION
+
+    if normalized_sort_by not in DATABASE_EVENT_SORTABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="Coluna invalida para ordenacao de eventos.")
+    if normalized_sort_direction not in DATABASE_EVENT_SORT_DIRECTIONS:
+        raise HTTPException(status_code=400, detail="Direcao invalida para ordenacao de eventos.")
+
+    filter_options = build_database_event_filter_options(db)
 
     if from_date and to_date and from_date > to_date:
         raise HTTPException(status_code=400, detail="Intervalo de datas invalido para a consulta de eventos.")
@@ -1517,9 +1648,29 @@ def list_database_events(
     total_pages = max(1, (total + page_size - 1) // page_size)
     current_page = min(page, total_pages)
 
+    if normalized_sort_by == "chave":
+        rows = db.execute(query).scalars().all()
+        sorted_items = sort_database_event_payload(
+            build_event_row_payload(rows, db),
+            sort_by=normalized_sort_by,
+            sort_direction=normalized_sort_direction,
+        )
+        offset = (current_page - 1) * page_size
+        paginated_items = sorted_items[offset: offset + page_size]
+        return DatabaseEventListResponse(
+            items=paginated_items,
+            total=total,
+            page=current_page,
+            page_size=page_size,
+            total_pages=total_pages,
+            filter_options=filter_options,
+        )
+
+    sort_expression = DATABASE_EVENT_SQL_SORT_FIELDS[normalized_sort_by]
+    sort_function = asc if normalized_sort_direction == "asc" else desc
     rows = db.execute(
         query
-        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
+        .order_by(sort_function(sort_expression), sort_function(CheckEvent.id))
         .offset((current_page - 1) * page_size)
         .limit(page_size)
     ).scalars().all()
@@ -1530,6 +1681,7 @@ def list_database_events(
         page=current_page,
         page_size=page_size,
         total_pages=total_pages,
+        filter_options=filter_options,
     )
 
 

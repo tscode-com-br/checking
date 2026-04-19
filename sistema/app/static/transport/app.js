@@ -32,6 +32,13 @@
   const transportI18n = globalScope.CheckingTransportI18n || {};
   const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
+  const DEFAULT_LAST_UPDATE_TIME = "16:00";
+  const VEHICLE_DEFAULT_SEAT_COUNT = {
+    carro: 3,
+    minivan: 6,
+    van: 10,
+    onibus: 40,
+  };
   const transportLanguages = Array.isArray(transportI18n.languages) && transportI18n.languages.length
     ? transportI18n.languages.slice()
     : [{ code: "en", label: "English", locale: "en-US" }];
@@ -678,6 +685,17 @@
     return messageKey ? t(messageKey) : normalizedMessage;
   }
 
+  function getDefaultVehicleSeatCount(vehicleType) {
+    return VEHICLE_DEFAULT_SEAT_COUNT[vehicleType] || VEHICLE_DEFAULT_SEAT_COUNT.carro;
+  }
+
+  function applyVehicleSeatDefault(vehicleType) {
+    if (!vehicleForm || !vehicleForm.elements || !vehicleForm.elements.lugares) {
+      return;
+    }
+    vehicleForm.elements.lugares.value = String(getDefaultVehicleSeatCount(vehicleType));
+  }
+
   function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
     const serviceScope = String(formData.get("service_scope") || "regular");
     const payload = {
@@ -692,6 +710,7 @@
 
     if (serviceScope === "extra") {
       payload.route_kind = String(formData.get("route_kind") || selectedRouteKind || "home_to_work");
+      payload.departure_time = String(formData.get("departure_time") || "");
       return payload;
     }
 
@@ -733,19 +752,26 @@
     return `${occupiedSeats}/${totalSeats}`;
   }
 
+  function isValidTransportTimeValue(value) {
+    return /^\d{2}:\d{2}$/.test(String(value || "").trim());
+  }
+
+  function normalizeTransportTimeValue(value, fallbackValue) {
+    return isValidTransportTimeValue(value) ? String(value || "").trim() : fallbackValue;
+  }
+
   function getEffectiveWorkToHomeDepartureTime(dashboard, fallbackTime) {
     const dashboardTime = String(dashboard && dashboard.work_to_home_departure_time || "").trim();
-    if (/^\d{2}:\d{2}$/.test(dashboardTime)) {
+    if (isValidTransportTimeValue(dashboardTime)) {
       return dashboardTime;
     }
 
-    const normalizedFallback = String(fallbackTime || "").trim();
-    return /^\d{2}:\d{2}$/.test(normalizedFallback) ? normalizedFallback : DEFAULT_WORK_TO_HOME_TIME;
+    return normalizeTransportTimeValue(fallbackTime, DEFAULT_WORK_TO_HOME_TIME);
   }
 
   function getVehicleDepartureTime(vehicle) {
     const departureTime = String(vehicle && vehicle.departure_time || "").trim();
-    return /^\d{2}:\d{2}$/.test(departureTime) ? departureTime : "";
+    return isValidTransportTimeValue(departureTime) ? departureTime : "";
   }
 
   function shouldHighlightRequestName(assignmentStatus) {
@@ -754,6 +780,42 @@
 
   function getPassengerAwarenessState(requestRow) {
     return requestRow && requestRow.awareness_status === "aware" ? "aware" : "pending";
+  }
+
+  function isRequestAssignedToVehicle(requestRow, vehicle) {
+    return Boolean(
+      requestRow
+      && requestRow.assigned_vehicle
+      && vehicle
+      && Number(requestRow.assigned_vehicle.id) === Number(vehicle.id)
+    );
+  }
+
+  function canRequestBeDroppedOnVehicle(requestRow, scope, vehicle, routeKind) {
+    if (!requestRow || !vehicle || requestRow.request_kind !== scope) {
+      return false;
+    }
+
+    if (isRequestAssignedToVehicle(requestRow, vehicle)) {
+      return false;
+    }
+
+    return scope !== "extra" || !vehicle.route_kind || vehicle.route_kind === routeKind;
+  }
+
+  function buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow, maxRows) {
+    const normalizedMaxRows = Math.max(1, Number(maxRows) || VEHICLE_DETAILS_MAX_ROWS);
+    const rows = Array.isArray(assignedRows)
+      ? assignedRows.filter(function (requestRow) {
+          return !previewRequestRow || Number(requestRow.id) !== Number(previewRequestRow.id);
+        })
+      : [];
+
+    if (!previewRequestRow) {
+      return rows.slice(0, normalizedMaxRows);
+    }
+
+    return [previewRequestRow].concat(rows).slice(0, normalizedMaxRows);
   }
 
   function buildVehiclePassengerAwarenessRows(assignedRows, maxRows) {
@@ -810,7 +872,8 @@
     const vehicleContainers = {};
     const state = {
       dashboard: null,
-      selectedRequestId: null,
+      pendingAssignmentPreview: null,
+      dragRequestId: null,
       isLoading: false,
       selectedRouteKind: "home_to_work",
       projectVisibility: {},
@@ -833,14 +896,11 @@
       settingsSaving: false,
       languageLoading: false,
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
+      lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
       routeTimeEditorOpen: false,
       routeTimeSaving: false,
     };
     const statusMessage = document.querySelector("[data-status-message]");
-    const selectionBanner = document.querySelector("[data-selection-banner]");
-    const selectionText = document.querySelector("[data-selection-text]");
-    const clearSelectionButton = document.querySelector("[data-clear-selection]");
-    const rejectSelectionButton = document.querySelector("[data-reject-selection]");
     const projectListToggle = document.querySelector("[data-project-list-toggle]");
     const projectListPanel = document.querySelector("[data-project-list-panel]");
     const projectListContainer = document.querySelector("[data-project-list]");
@@ -854,6 +914,8 @@
     const settingsLanguageSelect = document.querySelector("[data-settings-language-select]");
     const settingsTimeLabel = document.querySelector("[data-settings-time-label]");
     const settingsTimeInput = document.querySelector("[data-settings-work-to-home-time]");
+    const settingsLastUpdateLabel = document.querySelector("[data-settings-last-update-label]");
+    const settingsLastUpdateInput = document.querySelector("[data-settings-last-update-time]");
     const settingsTimeNote = document.querySelector("[data-settings-time-note]");
     const settingsCloseButton = document.querySelector("[data-settings-close-button]");
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
@@ -861,6 +923,7 @@
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
     const modalScopeNote = document.querySelector("[data-modal-scope-note]");
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
+    const extraDepartureField = document.querySelector("[data-extra-departure-field]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
     const routeSlot = document.querySelector("[data-route-slot]");
@@ -997,17 +1060,6 @@
         buttonElement.setAttribute("aria-label", t(`vehicles.addAria.${scope}`));
       });
 
-      const selectedRequestLabel = document.querySelector(".transport-selection-label");
-      if (selectedRequestLabel) {
-        selectedRequestLabel.textContent = t("selection.selectedRequest");
-      }
-      if (rejectSelectionButton) {
-        rejectSelectionButton.textContent = t("selection.rejectSelected");
-      }
-      if (clearSelectionButton) {
-        clearSelectionButton.textContent = t("selection.clear");
-      }
-
       if (modalScopeLabel) {
         modalScopeLabel.textContent = mapScopeTitle(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
       }
@@ -1038,7 +1090,10 @@
         modalFieldLabels[4].textContent = t("modal.fields.tolerance");
       }
       if (modalFieldLabels[5]) {
-        modalFieldLabels[5].textContent = t("modal.fields.route");
+        modalFieldLabels[5].textContent = t("modal.fields.departureTime");
+      }
+      if (modalFieldLabels[6]) {
+        modalFieldLabels[6].textContent = t("modal.fields.route");
       }
       if (typeOptions[0]) {
         typeOptions[0].text = t("modal.options.car");
@@ -1090,6 +1145,9 @@
       }
       if (settingsTimeLabel) {
         settingsTimeLabel.textContent = t("settings.workToHomeTime");
+      }
+      if (settingsLastUpdateLabel) {
+        settingsLastUpdateLabel.textContent = t("settings.lastUpdateTime");
       }
       if (settingsTimeNote) {
         settingsTimeNote.textContent = t("settings.workToHomeNote");
@@ -1192,8 +1250,12 @@
         settingsLanguageSelect.disabled = state.languageLoading;
       }
       if (settingsTimeInput) {
-        settingsTimeInput.value = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
+        settingsTimeInput.value = normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME);
         settingsTimeInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+      }
+      if (settingsLastUpdateInput) {
+        settingsLastUpdateInput.value = normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME);
+        settingsLastUpdateInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
       }
     }
 
@@ -1444,7 +1506,8 @@
 
       if (nextOptions.clearDashboard) {
         state.dashboard = null;
-        state.selectedRequestId = null;
+        state.pendingAssignmentPreview = null;
+        state.dragRequestId = null;
         state.expandedVehicleKey = null;
         clearDashboard();
       }
@@ -1483,6 +1546,7 @@
       const nextOptions = options || {};
       if (!state.isAuthenticated) {
         state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
+        state.lastUpdateTime = state.lastUpdateTime || DEFAULT_LAST_UPDATE_TIME;
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -1494,6 +1558,9 @@
           state.settingsLoaded = true;
           state.workToHomeTime = String(
             response && response.work_to_home_time ? response.work_to_home_time : DEFAULT_WORK_TO_HOME_TIME
+          );
+          state.lastUpdateTime = String(
+            response && response.last_update_time ? response.last_update_time : DEFAULT_LAST_UPDATE_TIME
           );
           return response;
         })
@@ -1511,9 +1578,18 @@
         });
     }
 
-    function saveTransportSettings(nextWorkToHomeTime) {
-      const normalizedTime = String(nextWorkToHomeTime || "").trim();
-      if (!/^\d{2}:\d{2}$/.test(normalizedTime)) {
+    function saveTransportSettings(nextValues) {
+      const previousWorkToHomeTime = state.workToHomeTime;
+      const previousLastUpdateTime = state.lastUpdateTime;
+      const normalizedTime = normalizeTransportTimeValue(
+        nextValues && nextValues.workToHomeTime,
+        normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME)
+      );
+      const normalizedLastUpdateTime = normalizeTransportTimeValue(
+        nextValues && nextValues.lastUpdateTime,
+        normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME)
+      );
+      if (!isValidTransportTimeValue(normalizedTime) || !isValidTransportTimeValue(normalizedLastUpdateTime)) {
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -1523,16 +1599,24 @@
         return Promise.resolve(null);
       }
 
+      state.workToHomeTime = normalizedTime;
+      state.lastUpdateTime = normalizedLastUpdateTime;
       state.settingsSaving = true;
       syncSettingsControls();
       return requestJson("/api/transport/settings", {
         method: "PUT",
-        body: JSON.stringify({ work_to_home_time: normalizedTime }),
+        body: JSON.stringify({
+          work_to_home_time: normalizedTime,
+          last_update_time: normalizedLastUpdateTime,
+        }),
       })
         .then(function (response) {
           state.settingsLoaded = true;
           state.workToHomeTime = String(
             response && response.work_to_home_time ? response.work_to_home_time : normalizedTime
+          );
+          state.lastUpdateTime = String(
+            response && response.last_update_time ? response.last_update_time : normalizedLastUpdateTime
           );
           return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
             setStatus(t("status.settingsSaved"), "success");
@@ -1540,6 +1624,8 @@
           });
         })
         .catch(function (error) {
+          state.workToHomeTime = previousWorkToHomeTime;
+          state.lastUpdateTime = previousLastUpdateTime;
           handleProtectedRequestError(error, t("status.couldNotSaveSettings"));
           return null;
         })
@@ -1701,7 +1787,19 @@
 
     if (settingsTimeInput) {
       settingsTimeInput.addEventListener("change", function () {
-        void saveTransportSettings(settingsTimeInput.value);
+        void saveTransportSettings({
+          workToHomeTime: settingsTimeInput.value,
+          lastUpdateTime: settingsLastUpdateInput ? settingsLastUpdateInput.value : state.lastUpdateTime,
+        });
+      });
+    }
+
+    if (settingsLastUpdateInput) {
+      settingsLastUpdateInput.addEventListener("change", function () {
+        void saveTransportSettings({
+          workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
+          lastUpdateTime: settingsLastUpdateInput.value,
+        });
       });
     }
 
@@ -1760,33 +1858,6 @@
       });
     });
 
-    if (clearSelectionButton) {
-      clearSelectionButton.addEventListener("click", function () {
-        state.selectedRequestId = null;
-        renderSelectionBanner();
-        renderVehiclePanels();
-        renderRequestTables();
-      });
-    }
-
-    if (rejectSelectionButton) {
-      rejectSelectionButton.addEventListener("click", function () {
-        const selectedRequest = getSelectedRequest();
-        if (!selectedRequest || !state.dashboard) {
-          return;
-        }
-
-        submitAssignment({
-          request_id: selectedRequest.id,
-          service_date: state.dashboard.selected_date,
-          route_kind: getSelectedRouteKind(),
-          status: "rejected",
-        }).catch(function (error) {
-          handleProtectedRequestError(error, t("status.couldNotRejectSelectedRequest"));
-        });
-      });
-    }
-
     if (settingsTrigger) {
       settingsTrigger.addEventListener("click", openSettingsModal);
     }
@@ -1822,6 +1893,12 @@
     }
 
     if (vehicleForm) {
+      if (vehicleForm.elements.tipo) {
+        vehicleForm.elements.tipo.addEventListener("change", function () {
+          applyVehicleSeatDefault(String(vehicleForm.elements.tipo.value || "carro"));
+        });
+      }
+
       vehicleForm.addEventListener("submit", function (event) {
         event.preventDefault();
         const formData = new FormData(vehicleForm);
@@ -1994,6 +2071,9 @@
       if (modalScopeNote) {
         modalScopeNote.textContent = getModalScopeNote(scope);
       }
+      if (extraDepartureField) {
+        extraDepartureField.hidden = scope !== "extra";
+      }
       if (extraRouteField) {
         extraRouteField.hidden = scope !== "extra";
       }
@@ -2002,6 +2082,12 @@
       });
       if (vehicleForm.elements.route_kind) {
         vehicleForm.elements.route_kind.value = getSelectedRouteKind();
+      }
+      if (vehicleForm.elements.departure_time) {
+        vehicleForm.elements.departure_time.required = scope === "extra";
+      }
+      if (vehicleForm.elements.departure_time && scope !== "extra") {
+        vehicleForm.elements.departure_time.value = "";
       }
       if (vehicleForm.elements.every_saturday) {
         vehicleForm.elements.every_saturday.checked = false;
@@ -2023,8 +2109,11 @@
       vehicleForm.reset();
       clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = scope;
-      vehicleForm.elements.lugares.value = "4";
-      vehicleForm.elements.tolerance.value = "10";
+      applyVehicleSeatDefault(String(vehicleForm.elements.tipo.value || "carro"));
+      vehicleForm.elements.tolerance.value = "5";
+      if (vehicleForm.elements.departure_time) {
+        vehicleForm.elements.departure_time.value = "";
+      }
       syncVehicleModalFields(scope);
     }
 
@@ -2121,15 +2210,50 @@
       }, []);
     }
 
-    function getSelectedRequest() {
-      if (state.selectedRequestId === null) {
-        return null;
-      }
+    function getRequestById(requestId) {
       return (
-        getAllVisibleRequests().find(function (row) {
-          return Number(row.id) === Number(state.selectedRequestId);
+        getAllRequests().find(function (row) {
+          return Number(row.id) === Number(requestId);
         }) || null
       );
+    }
+
+    function getDraggedRequest() {
+      if (state.dragRequestId === null) {
+        return null;
+      }
+      return getRequestById(state.dragRequestId);
+    }
+
+    function getVehicleByScopeAndId(scope, vehicleId) {
+      return (
+        getVehiclesForScope(scope).find(function (vehicle) {
+          return Number(vehicle.id) === Number(vehicleId);
+        }) || null
+      );
+    }
+
+    function getPendingAssignmentPreview() {
+      if (!state.pendingAssignmentPreview) {
+        return null;
+      }
+
+      const requestRow = getRequestById(state.pendingAssignmentPreview.requestId);
+      const vehicle = getVehicleByScopeAndId(
+        state.pendingAssignmentPreview.scope,
+        state.pendingAssignmentPreview.vehicleId
+      );
+
+      if (!requestRow || !vehicle) {
+        return null;
+      }
+
+      return {
+        requestRow,
+        vehicle,
+        scope: state.pendingAssignmentPreview.scope,
+        routeKind: state.pendingAssignmentPreview.routeKind,
+      };
     }
 
     function getVehicleDetailsKey(scope, vehicleId) {
@@ -2154,15 +2278,18 @@
 
     function toggleVehicleDetails(scope, vehicleId) {
       const vehicleKey = getVehicleDetailsKey(scope, vehicleId);
+      const pendingPreview = getPendingAssignmentPreview();
+      if (
+        pendingPreview
+        && pendingPreview.scope === scope
+        && Number(pendingPreview.vehicle.id) === Number(vehicleId)
+      ) {
+        state.expandedVehicleKey = vehicleKey;
+        renderVehiclePanels();
+        return;
+      }
       state.expandedVehicleKey = state.expandedVehicleKey === vehicleKey ? null : vehicleKey;
       renderVehiclePanels();
-    }
-
-    function ensureSelectedRequestStillExists() {
-      const selectedRequest = getSelectedRequest();
-      if (!selectedRequest) {
-        state.selectedRequestId = null;
-      }
     }
 
     function createAwarenessIndicator(awarenessState) {
@@ -2185,20 +2312,17 @@
       return indicator;
     }
 
-    function createVehicleDetailsPanel(vehicle, assignedRows) {
+    function createVehicleDetailsPanel(vehicle, assignedRows, options) {
+      const detailOptions = options || {};
+      const previewRequestRow = detailOptions.previewRequestRow || null;
       const detailsPanel = createNode("div", "transport-vehicle-details");
-      const deleteButton = createNode("button", "transport-vehicle-delete-button", t("misc.delete"));
       const passengerTable = createNode("table", "transport-vehicle-passenger-table");
       const tableBody = createNode("tbody");
 
-      deleteButton.type = "button";
-      deleteButton.addEventListener("click", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        removeVehicleFromRoute(vehicle);
-      });
-
-      buildVehiclePassengerAwarenessRows(assignedRows, VEHICLE_DETAILS_MAX_ROWS).forEach(function (row) {
+      buildVehiclePassengerAwarenessRows(
+        buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow, VEHICLE_DETAILS_MAX_ROWS),
+        VEHICLE_DETAILS_MAX_ROWS
+      ).forEach(function (row) {
         const tableRow = createNode("tr", "transport-vehicle-passenger-row");
         const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
         const statusCell = createNode("td", "transport-vehicle-passenger-status");
@@ -2214,8 +2338,63 @@
       });
 
       passengerTable.appendChild(tableBody);
-      detailsPanel.appendChild(deleteButton);
       detailsPanel.appendChild(passengerTable);
+
+      if (previewRequestRow) {
+        const previewActions = createNode("div", "transport-vehicle-preview-actions");
+        const cancelButton = createNode("button", "transport-secondary-button", t("modal.actions.cancel"));
+        const confirmButton = createNode("button", "transport-primary-button", t("misc.confirm"));
+
+        cancelButton.type = "button";
+        confirmButton.type = "button";
+
+        cancelButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          state.pendingAssignmentPreview = null;
+          renderRequestTables();
+          renderVehiclePanels();
+        });
+
+        confirmButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!state.dashboard) {
+            return;
+          }
+
+          submitAssignment({
+            request_id: previewRequestRow.id,
+            service_date: state.dashboard.selected_date,
+            route_kind: detailOptions.routeKind || getSelectedRouteKind(),
+            status: "confirmed",
+            vehicle_id: vehicle.id,
+          })
+            .then(function (result) {
+              if (result === null) {
+                return;
+              }
+              state.pendingAssignmentPreview = null;
+              renderRequestTables();
+              renderVehiclePanels();
+            })
+            .catch(function () {});
+        });
+
+        previewActions.appendChild(cancelButton);
+        previewActions.appendChild(confirmButton);
+        detailsPanel.appendChild(previewActions);
+        return detailsPanel;
+      }
+
+      const deleteButton = createNode("button", "transport-vehicle-delete-button", t("misc.delete"));
+      deleteButton.type = "button";
+      deleteButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeVehicleFromRoute(vehicle);
+      });
+      detailsPanel.insertBefore(deleteButton, passengerTable);
       return detailsPanel;
     }
 
@@ -2256,28 +2435,6 @@
       });
     }
 
-    function renderSelectionBanner() {
-      const selectedRequest = getSelectedRequest();
-      if (!selectionBanner || !selectionText) {
-        return;
-      }
-
-      if (!selectedRequest) {
-        selectionBanner.hidden = true;
-        selectionText.textContent = "--";
-        if (rejectSelectionButton) {
-          rejectSelectionButton.disabled = true;
-        }
-        return;
-      }
-
-      selectionBanner.hidden = false;
-      selectionText.textContent = `${getRequestLabel(selectedRequest.request_kind)} ${selectedRequest.requested_time} - ${selectedRequest.nome}`;
-      if (rejectSelectionButton) {
-        rejectSelectionButton.disabled = selectedRequest.assignment_status === "rejected";
-      }
-    }
-
     function createRequestMetaLine(requestRow) {
       const metaParts = [];
       if (requestRow.assigned_vehicle) {
@@ -2311,10 +2468,13 @@
         requestRows.forEach(function (requestRow) {
           const rowButton = createNode("button", `transport-request-row is-${requestRow.assignment_status}`);
           rowButton.type = "button";
+          rowButton.draggable = true;
           rowButton.dataset.requestId = String(requestRow.id);
-          if (Number(state.selectedRequestId) === Number(requestRow.id)) {
-            rowButton.classList.add("is-selected");
-          }
+          rowButton.classList.toggle("is-dragging", Number(state.dragRequestId) === Number(requestRow.id));
+          rowButton.classList.toggle(
+            "is-previewing",
+            !!state.pendingAssignmentPreview && Number(state.pendingAssignmentPreview.requestId) === Number(requestRow.id)
+          );
 
           const nameCell = createNode("span", "transport-request-primary", requestRow.nome);
           const addressCell = createNode("span", "transport-request-secondary", requestRow.end_rua || t("misc.addressPending"));
@@ -2327,9 +2487,20 @@
           rowButton.appendChild(nameCell);
           rowButton.appendChild(addressCell);
           rowButton.appendChild(zipCell);
-          rowButton.addEventListener("click", function () {
-            state.selectedRequestId = requestRow.id;
-            renderSelectionBanner();
+
+          rowButton.addEventListener("dragstart", function (event) {
+            state.pendingAssignmentPreview = null;
+            state.dragRequestId = requestRow.id;
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", String(requestRow.id));
+            }
+            renderRequestTables();
+            renderVehiclePanels();
+          });
+
+          rowButton.addEventListener("dragend", function () {
+            state.dragRequestId = null;
             renderRequestTables();
             renderVehiclePanels();
           });
@@ -2394,19 +2565,20 @@
         });
     }
 
-    function createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest) {
+    function createVehicleIconButton(scope, vehicle, assignedRows) {
       const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
       const departureTime = getVehicleDepartureTime(vehicle);
-      const isRouteCompatible =
-        scope !== "extra" || !vehicle.route_kind || vehicle.route_kind === getSelectedRouteKind();
-      const isSelectable = !!selectedRequest && selectedRequest.request_kind === scope && isRouteCompatible;
-      const isAssignedToSelection =
-        !!selectedRequest &&
-        !!selectedRequest.assigned_vehicle &&
-        Number(selectedRequest.assigned_vehicle.id) === Number(vehicle.id);
       const vehicleDetailsKey = getVehicleDetailsKey(scope, vehicle.id);
+      const draggedRequest = getDraggedRequest();
+      const pendingPreview = getPendingAssignmentPreview();
+      const previewRequestRow = pendingPreview
+        && pendingPreview.scope === scope
+        && Number(pendingPreview.vehicle.id) === Number(vehicle.id)
+        ? pendingPreview.requestRow
+        : null;
+      const isDropTarget = canRequestBeDroppedOnVehicle(draggedRequest, scope, vehicle, getSelectedRouteKind());
       const isExpanded = state.expandedVehicleKey === vehicleDetailsKey;
 
       vehicleButton.type = "button";
@@ -2417,11 +2589,11 @@
         occupancy: formatVehicleOccupancyLabel(vehicle, assignedCount),
       });
       vehicleButton.setAttribute("aria-label", vehicleButton.title);
-      vehicleButton.classList.toggle("is-selectable", isSelectable);
-      vehicleButton.classList.toggle("is-assigned", isAssignedToSelection);
+      vehicleButton.classList.toggle("is-selectable", isDropTarget);
+      vehicleButton.classList.toggle("is-preview-target", !!previewRequestRow);
       vehicleButton.classList.toggle("is-details-open", isExpanded);
       tileElement.classList.toggle("is-expanded", isExpanded);
-      if (!isSelectable) {
+      if (!isDropTarget && !previewRequestRow) {
         vehicleButton.classList.add("is-idle");
       }
 
@@ -2460,26 +2632,61 @@
         vehicleButton.appendChild(routeLabel);
       }
       vehicleButton.addEventListener("click", function () {
-        if (!selectedRequest || selectedRequest.request_kind !== scope || isAssignedToSelection || !isRouteCompatible) {
-          toggleVehicleDetails(scope, vehicle.id);
+        toggleVehicleDetails(scope, vehicle.id);
+      });
+
+      vehicleButton.addEventListener("dragover", function (event) {
+        if (!canRequestBeDroppedOnVehicle(getDraggedRequest(), scope, vehicle, getSelectedRouteKind())) {
+          return;
+        }
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+      });
+
+      vehicleButton.addEventListener("drop", function (event) {
+        const droppedRequestId = Number(
+          state.dragRequestId !== null
+            ? state.dragRequestId
+            : event.dataTransfer
+              ? event.dataTransfer.getData("text/plain")
+              : ""
+        );
+        const droppedRequest = getRequestById(droppedRequestId);
+        if (!canRequestBeDroppedOnVehicle(droppedRequest, scope, vehicle, getSelectedRouteKind())) {
+          state.dragRequestId = null;
+          renderRequestTables();
+          renderVehiclePanels();
           return;
         }
 
+        event.preventDefault();
         state.expandedVehicleKey = vehicleDetailsKey;
-        submitAssignment({
-          request_id: selectedRequest.id,
-          service_date: state.dashboard.selected_date,
-          route_kind: getSelectedRouteKind(),
-          status: "confirmed",
-          vehicle_id: vehicle.id,
-        }).catch(function (error) {
-          handleProtectedRequestError(error, t("status.couldNotConfirmSelectedRequest"));
-        });
+        state.pendingAssignmentPreview = {
+          requestId: droppedRequest.id,
+          vehicleId: vehicle.id,
+          scope,
+          routeKind: getSelectedRouteKind(),
+        };
+        state.dragRequestId = null;
+        renderRequestTables();
+        renderVehiclePanels();
+      });
+
+      vehicleButton.addEventListener("dragenter", function (event) {
+        if (!canRequestBeDroppedOnVehicle(getDraggedRequest(), scope, vehicle, getSelectedRouteKind())) {
+          return;
+        }
+        event.preventDefault();
       });
 
       tileElement.appendChild(vehicleButton);
       if (isExpanded) {
-        tileElement.appendChild(createVehicleDetailsPanel(vehicle, assignedRows));
+        tileElement.appendChild(createVehicleDetailsPanel(vehicle, assignedRows, {
+          previewRequestRow,
+          routeKind: pendingPreview ? pendingPreview.routeKind : getSelectedRouteKind(),
+        }));
       }
       return tileElement;
     }
@@ -2551,8 +2758,6 @@
     }
 
     function renderVehiclePanels() {
-      const selectedRequest = getSelectedRequest();
-
       syncVehicleViewToggleState();
 
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
@@ -2583,7 +2788,7 @@
 
         vehicles.forEach(function (vehicle) {
           const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
-          container.appendChild(createVehicleIconButton(scope, vehicle, assignedRows, selectedRequest));
+          container.appendChild(createVehicleIconButton(scope, vehicle, assignedRows));
         });
 
         updateVehicleGridLayout(container);
@@ -2591,10 +2796,8 @@
     }
 
     function renderDashboard() {
-      ensureSelectedRequestStillExists();
       ensureExpandedVehicleStillExists();
       renderProjectList();
-      renderSelectionBanner();
       renderRequestTables();
       renderVehiclePanels();
     }
@@ -2619,8 +2822,9 @@
         }
       });
       state.expandedVehicleKey = null;
+      state.pendingAssignmentPreview = null;
+      state.dragRequestId = null;
       syncVehicleViewToggleState();
-      renderSelectionBanner();
       syncRouteTimeControls();
     }
 
@@ -2629,12 +2833,13 @@
       const shouldAnnounce = loadOptions.announce !== false;
       if (!state.isAuthenticated) {
         state.dashboard = null;
-        state.selectedRequestId = null;
         clearDashboard();
         setStatus(getTransportLockedMessage(), "warning");
         return Promise.resolve(null);
       }
 
+      state.pendingAssignmentPreview = null;
+      state.dragRequestId = null;
       state.isLoading = true;
       syncRouteTimeControls();
       const serviceDate = formatIsoDate(selectedDate);
@@ -2658,7 +2863,6 @@
         })
         .catch(function (error) {
           state.dashboard = null;
-          state.selectedRequestId = null;
           clearDashboard();
           if (error && Number(error.status) === 401) {
             clearTransportSession(getTransportSessionExpiredMessage());
@@ -2720,6 +2924,7 @@
     getOrdinalSuffix,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,
+    getDefaultVehicleSeatCount,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,
     parseStoredTransportDate,
@@ -2727,6 +2932,8 @@
     setStoredTransportDate,
     shouldHighlightRequestName,
     mapVehicleIconPath,
+    buildVehiclePassengerPreviewRows,
+    canRequestBeDroppedOnVehicle,
     parsePositiveNumber,
     resolvePanelSizes,
     resolveResizeConfig,

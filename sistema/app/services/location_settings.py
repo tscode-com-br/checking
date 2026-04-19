@@ -10,6 +10,7 @@ from .time_utils import now_sgt
 DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS = 30
 DEFAULT_TRANSPORT_WORK_TO_HOME_TIME = "16:45"
+DEFAULT_TRANSPORT_LAST_UPDATE_TIME = "16:00"
 
 
 def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
@@ -22,6 +23,7 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             location_update_interval_seconds=DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS,
             location_accuracy_threshold_meters=DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS,
             transport_work_to_home_time=DEFAULT_TRANSPORT_WORK_TO_HOME_TIME,
+            transport_last_update_time=DEFAULT_TRANSPORT_LAST_UPDATE_TIME,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -44,6 +46,13 @@ def get_transport_work_to_home_time(db: Session) -> str:
     if settings is None or not settings.transport_work_to_home_time:
         return DEFAULT_TRANSPORT_WORK_TO_HOME_TIME
     return settings.transport_work_to_home_time
+
+
+def get_transport_last_update_time(db: Session) -> str:
+    settings = db.get(MobileAppSettings, 1)
+    if settings is None or not settings.transport_last_update_time:
+        return DEFAULT_TRANSPORT_LAST_UPDATE_TIME
+    return settings.transport_last_update_time
 
 
 def get_transport_work_to_home_time_for_date(
@@ -82,6 +91,20 @@ def upsert_transport_work_to_home_time(
     timestamp = now_sgt()
 
     settings.transport_work_to_home_time = work_to_home_time
+    settings.updated_at = timestamp
+    db.flush()
+    return settings
+
+
+def upsert_transport_last_update_time(
+    db: Session,
+    *,
+    last_update_time: str,
+) -> MobileAppSettings:
+    settings = _get_or_create_mobile_app_settings(db)
+    timestamp = now_sgt()
+
+    settings.transport_last_update_time = last_update_time
     settings.updated_at = timestamp
     db.flush()
     return settings

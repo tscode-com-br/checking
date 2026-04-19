@@ -76,6 +76,18 @@
   const transportRegularButton = document.getElementById('transportRegularButton');
   const transportWeekendButton = document.getElementById('transportWeekendButton');
   const transportExtraButton = document.getElementById('transportExtraButton');
+  const transportRequestBuilderPanel = document.getElementById('transportRequestBuilderPanel');
+  const transportRequestBuilderSubtitle = document.getElementById('transportRequestBuilderSubtitle');
+  const transportRequestBuilderForm = document.getElementById('transportRequestBuilderForm');
+  const transportRequestWeekdayGroup = document.getElementById('transportRequestWeekdayGroup');
+  const transportRequestDateGroup = document.getElementById('transportRequestDateGroup');
+  const transportRequestTimeGroup = document.getElementById('transportRequestTimeGroup');
+  const transportRequestDateInput = document.getElementById('transportRequestDateInput');
+  const transportRequestTimeInput = document.getElementById('transportRequestTimeInput');
+  const transportRequestBuilderBackButton = document.getElementById('transportRequestBuilderBackButton');
+  const transportRequestBuilderSubmitButton = document.getElementById('transportRequestBuilderSubmitButton');
+  const transportRequestWeekdayInputs = Array.from(document.querySelectorAll('input[name="transport_selected_weekday"]'));
+  const transportRequestWeekdayOptions = Array.from(document.querySelectorAll('[data-transport-weekday-option]'));
   const transportPendingPanel = document.getElementById('transportPendingPanel');
   const transportPendingDeadlineLine = document.getElementById('transportPendingDeadlineLine');
   const transportConfirmedPanel = document.getElementById('transportConfirmedPanel');
@@ -134,6 +146,11 @@
     transportRegularButton,
     transportWeekendButton,
     transportExtraButton,
+    transportRequestDateInput,
+    transportRequestTimeInput,
+    transportRequestBuilderBackButton,
+    transportRequestBuilderSubmitButton,
+    ...transportRequestWeekdayInputs,
     transportAcknowledgementCheckbox,
     transportAcknowledgementButton,
     transportCancelPendingButton,
@@ -148,6 +165,7 @@
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
+  const transportAutoRefreshIntervalMs = 10000;
   let allowedProjectValues = Array.from(projectSelect.options)
     .map((option) => String(option.value || '').trim().toUpperCase())
     .filter(Boolean);
@@ -180,6 +198,33 @@
     weekend: 'Transporte Fim de Semana',
     extra: 'Transporte Extra',
   };
+  const transportRequestBuilderConfigs = {
+    regular: {
+      subtitle: 'Selecione os dias úteis desejados para o transporte rotineiro.',
+      allowedWeekdays: [0, 1, 2, 3, 4],
+      defaultSelectedWeekdays: [0, 1, 2, 3, 4],
+      showWeekdays: true,
+      showDate: false,
+      showTime: false,
+    },
+    weekend: {
+      subtitle: 'Selecione os dias de fim de semana desejados para o transporte.',
+      allowedWeekdays: [5, 6],
+      defaultSelectedWeekdays: [5],
+      showWeekdays: true,
+      showDate: false,
+      showTime: false,
+    },
+    extra: {
+      subtitle: 'Confira a data e o horário do transporte extra antes de solicitar.',
+      allowedWeekdays: [],
+      defaultSelectedWeekdays: [],
+      showWeekdays: false,
+      showDate: true,
+      showTime: true,
+      defaultTime: '18:00',
+    },
+  };
 
   let historyRequestToken = 0;
   let historyAbortController = null;
@@ -203,6 +248,7 @@
   let transportRequestInProgress = false;
   let transportCancelInProgress = false;
   let transportAcknowledgeInProgress = false;
+  let transportAutoRefreshTimeoutId = null;
   let projectCatalogPromise = null;
   let projectCatalogLoading = false;
   let projectUpdateInProgress = false;
@@ -246,6 +292,7 @@
   };
   const transportUiState = {
     addressEditorOpen: false,
+    requestBuilderKind: null,
     acknowledgementChecked: false,
     inlineMessage: '',
     inlineTone: null,
@@ -293,6 +340,39 @@
 
   function isTransportScreenOpen() {
     return Boolean(transportScreen && !transportScreen.hidden);
+  }
+
+  function clearTransportAutoRefresh() {
+    if (transportAutoRefreshTimeoutId !== null) {
+      window.clearTimeout(transportAutoRefreshTimeoutId);
+      transportAutoRefreshTimeoutId = null;
+    }
+  }
+
+  function shouldAutoRefreshTransportState() {
+    return isTransportScreenOpen()
+      && isApplicationUnlocked()
+      && !transportStateLoading
+      && !transportAddressSaveInProgress
+      && !transportRequestInProgress
+      && !transportCancelInProgress
+      && !transportAcknowledgeInProgress
+      && transportState.status !== 'available'
+      && (transportState.status === 'pending' || !transportState.awarenessConfirmed);
+  }
+
+  function scheduleTransportAutoRefresh() {
+    clearTransportAutoRefresh();
+    if (!shouldAutoRefreshTransportState()) {
+      return;
+    }
+
+    transportAutoRefreshTimeoutId = window.setTimeout(() => {
+      transportAutoRefreshTimeoutId = null;
+      if (shouldAutoRefreshTransportState()) {
+        void loadTransportState();
+      }
+    }, transportAutoRefreshIntervalMs);
   }
 
   function isAnyDialogOpen() {
@@ -494,6 +574,12 @@
       if (control === transportAddressSubmitButton) {
         control.disabled = transportBusy;
         control.textContent = transportAddressSaveInProgress ? 'Cadastrando...' : 'Cadastrar';
+        return;
+      }
+
+      if (control === transportRequestBuilderSubmitButton) {
+        control.disabled = transportBusy;
+        control.textContent = transportRequestInProgress ? 'Solicitando...' : 'Solicitar Transporte';
         return;
       }
 
@@ -839,6 +925,7 @@
     transportState.awarenessRequired = false;
     transportState.awarenessConfirmed = false;
     transportUiState.addressEditorOpen = false;
+    transportUiState.requestBuilderKind = null;
     transportUiState.acknowledgementChecked = false;
     clearTransportInlineStatus();
     renderTransportScreen();
@@ -868,6 +955,111 @@
     return normalizedAddress || normalizedZipCode || '';
   }
 
+  function getTransportRequestBuilderConfig(requestKind) {
+    return requestKind && transportRequestBuilderConfigs[requestKind]
+      ? transportRequestBuilderConfigs[requestKind]
+      : null;
+  }
+
+  function formatDateInputValue(dateValue) {
+    if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) {
+      return '';
+    }
+
+    const year = String(dateValue.getFullYear());
+    const month = String(dateValue.getMonth() + 1).padStart(2, '0');
+    const day = String(dateValue.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatCurrentTransportRequestTime() {
+    const currentDate = new Date();
+    const hours = String(currentDate.getHours()).padStart(2, '0');
+    const minutes = String(currentDate.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }
+
+  function initializeTransportRequestBuilder(requestKind) {
+    const builderConfig = getTransportRequestBuilderConfig(requestKind);
+    if (!builderConfig) {
+      return;
+    }
+
+    transportUiState.requestBuilderKind = requestKind;
+    transportUiState.addressEditorOpen = false;
+
+    transportRequestWeekdayInputs.forEach((inputElement) => {
+      const weekdayValue = Number(inputElement.value);
+      inputElement.checked = builderConfig.defaultSelectedWeekdays.includes(weekdayValue);
+    });
+
+    if (transportRequestDateInput) {
+      transportRequestDateInput.value = formatDateInputValue(new Date());
+    }
+    if (transportRequestTimeInput) {
+      transportRequestTimeInput.value = builderConfig.defaultTime || '';
+    }
+
+    renderTransportScreen();
+    syncFormControlStates();
+    realignViewport();
+  }
+
+  function closeTransportRequestBuilder() {
+    if (!transportUiState.requestBuilderKind) {
+      return;
+    }
+
+    transportUiState.requestBuilderKind = null;
+    renderTransportScreen();
+    syncFormControlStates();
+    realignViewport();
+  }
+
+  function collectTransportRequestPayload(requestKind) {
+    const builderConfig = getTransportRequestBuilderConfig(requestKind);
+    if (!builderConfig) {
+      return null;
+    }
+
+    const payload = {
+      request_kind: requestKind,
+      requested_time: formatCurrentTransportRequestTime(),
+    };
+
+    if (builderConfig.showWeekdays) {
+      const selectedWeekdays = transportRequestWeekdayInputs
+        .filter((inputElement) => {
+          const weekdayValue = Number(inputElement.value);
+          return builderConfig.allowedWeekdays.includes(weekdayValue) && inputElement.checked;
+        })
+        .map((inputElement) => Number(inputElement.value));
+
+      if (selectedWeekdays.length === 0) {
+        setTransportInlineStatus('Selecione ao menos um dia para solicitar o transporte.', 'error');
+        return null;
+      }
+
+      payload.selected_weekdays = selectedWeekdays;
+      return payload;
+    }
+
+    const requestedDate = String(transportRequestDateInput && transportRequestDateInput.value || '').trim();
+    const requestedTime = String(transportRequestTimeInput && transportRequestTimeInput.value || '').trim();
+    if (!requestedDate) {
+      setTransportInlineStatus('Informe a data do transporte extra.', 'error');
+      return null;
+    }
+    if (!requestedTime) {
+      setTransportInlineStatus('Informe o horário do transporte extra.', 'error');
+      return null;
+    }
+
+    payload.requested_date = requestedDate;
+    payload.requested_time = requestedTime;
+    return payload;
+  }
+
   function applyTransportStatePayload(payload) {
     transportState.status = String(payload && payload.status || 'available');
     transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
@@ -888,12 +1080,17 @@
       : null;
     transportState.awarenessRequired = Boolean(payload && payload.awareness_required);
     transportState.awarenessConfirmed = Boolean(payload && payload.awareness_confirmed);
+    if (transportState.status !== 'available') {
+      transportUiState.requestBuilderKind = null;
+    }
     transportUiState.acknowledgementChecked = Boolean(payload && payload.awareness_confirmed);
     syncTransportAddressFormValues();
     renderTransportScreen();
   }
 
   function renderTransportScreen() {
+    const activeBuilderConfig = getTransportRequestBuilderConfig(transportUiState.requestBuilderKind);
+
     if (transportAddressSummaryValue) {
       transportAddressSummaryValue.textContent = formatTransportAddressSummary(transportState.endRua, transportState.zip);
     }
@@ -904,10 +1101,45 @@
     }
 
     if (transportOptionButtons) {
-      const showOptions = transportState.status === 'available';
+      const showOptions = transportState.status === 'available' && !activeBuilderConfig;
       transportOptionButtons.hidden = !showOptions;
       transportOptionButtons.classList.toggle('is-hidden', !showOptions);
     }
+
+    if (transportRequestBuilderPanel) {
+      const showRequestBuilder = transportState.status === 'available' && Boolean(activeBuilderConfig);
+      transportRequestBuilderPanel.hidden = !showRequestBuilder;
+      transportRequestBuilderPanel.classList.toggle('is-hidden', !showRequestBuilder);
+    }
+
+    if (transportRequestBuilderSubtitle) {
+      transportRequestBuilderSubtitle.textContent = activeBuilderConfig ? activeBuilderConfig.subtitle : '';
+    }
+
+    if (transportRequestWeekdayGroup) {
+      const showWeekdayGroup = Boolean(activeBuilderConfig && activeBuilderConfig.showWeekdays);
+      transportRequestWeekdayGroup.hidden = !showWeekdayGroup;
+      transportRequestWeekdayGroup.classList.toggle('is-hidden', !showWeekdayGroup);
+    }
+
+    if (transportRequestDateGroup) {
+      const showDateGroup = Boolean(activeBuilderConfig && activeBuilderConfig.showDate);
+      transportRequestDateGroup.hidden = !showDateGroup;
+      transportRequestDateGroup.classList.toggle('is-hidden', !showDateGroup);
+    }
+
+    if (transportRequestTimeGroup) {
+      const showTimeGroup = Boolean(activeBuilderConfig && activeBuilderConfig.showTime);
+      transportRequestTimeGroup.hidden = !showTimeGroup;
+      transportRequestTimeGroup.classList.toggle('is-hidden', !showTimeGroup);
+    }
+
+    transportRequestWeekdayOptions.forEach((optionElement) => {
+      const weekdayValue = Number(optionElement.dataset.weekday);
+      const showOption = Boolean(activeBuilderConfig && activeBuilderConfig.allowedWeekdays.includes(weekdayValue));
+      optionElement.hidden = !showOption;
+      optionElement.classList.toggle('is-hidden', !showOption);
+    });
 
     if (transportPendingPanel) {
       const showPending = transportState.status === 'pending';
@@ -962,6 +1194,8 @@
       transportConfirmedFooterActions.hidden = !showConfirmedFooter;
       transportConfirmedFooterActions.classList.toggle('is-hidden', !showConfirmedFooter);
     }
+
+    scheduleTransportAutoRefresh();
   }
 
   function closeTransportAddressEditor() {
@@ -982,12 +1216,14 @@
       return;
     }
 
+    clearTransportAutoRefresh();
     dismissActiveKeyboard();
     transportScreen.hidden = true;
     transportScreenBackdrop.hidden = true;
     transportScreen.classList.add('is-hidden');
     transportScreenBackdrop.classList.add('is-hidden');
     transportUiState.addressEditorOpen = false;
+    transportUiState.requestBuilderKind = null;
     clearTransportInlineStatus();
     syncFormControlStates();
     realignViewport();
@@ -1004,10 +1240,12 @@
     }
 
     transportUiState.addressEditorOpen = false;
+    transportUiState.requestBuilderKind = null;
     transportScreen.hidden = false;
     transportScreenBackdrop.hidden = false;
     transportScreen.classList.remove('is-hidden');
     transportScreenBackdrop.classList.remove('is-hidden');
+    clearTransportAutoRefresh();
     clearTransportInlineStatus();
     syncTransportAddressFormValues();
     renderTransportScreen();
@@ -1052,6 +1290,7 @@
       return null;
     }
 
+    clearTransportAutoRefresh();
     transportStateLoading = true;
     clearTransportInlineStatus();
     syncFormControlStates();
@@ -1105,7 +1344,7 @@
     }
   }
 
-  async function requestTransport(requestKind) {
+  async function requestTransport(requestKind, requestPayload = {}) {
     const normalizedChave = getActiveChave();
     const requestLabel = transportRequestKindLabels[requestKind] || 'Transporte';
     if (normalizedChave.length !== 4) {
@@ -1120,6 +1359,7 @@
       const payload = await postTransportPayload(transportRequestEndpoint, {
         chave: normalizedChave,
         request_kind: requestKind,
+        ...requestPayload,
       });
       applyTransportStatePayload(payload.state || {});
       clearTransportInlineStatus();
@@ -1133,6 +1373,22 @@
       transportRequestInProgress = false;
       syncFormControlStates();
     }
+  }
+
+  async function submitTransportRequestBuilder(event) {
+    event.preventDefault();
+
+    const requestKind = transportUiState.requestBuilderKind;
+    if (!requestKind) {
+      return;
+    }
+
+    const requestPayload = collectTransportRequestPayload(requestKind);
+    if (!requestPayload) {
+      return;
+    }
+
+    await requestTransport(requestKind, requestPayload);
   }
 
   async function cancelActiveTransportRequest() {
@@ -1150,6 +1406,7 @@
         request_id: transportState.requestId,
       });
       applyTransportStatePayload(payload.state || {});
+      transportUiState.requestBuilderKind = null;
       transportUiState.acknowledgementChecked = false;
       clearTransportInlineStatus();
     } catch (error) {
@@ -3251,20 +3508,28 @@
 
   if (transportRegularButton) {
     transportRegularButton.addEventListener('click', () => {
-      void requestTransport('regular');
+      initializeTransportRequestBuilder('regular');
     });
   }
 
   if (transportWeekendButton) {
     transportWeekendButton.addEventListener('click', () => {
-      void requestTransport('weekend');
+      initializeTransportRequestBuilder('weekend');
     });
   }
 
   if (transportExtraButton) {
     transportExtraButton.addEventListener('click', () => {
-      void requestTransport('extra');
+      initializeTransportRequestBuilder('extra');
     });
+  }
+
+  if (transportRequestBuilderBackButton) {
+    transportRequestBuilderBackButton.addEventListener('click', closeTransportRequestBuilder);
+  }
+
+  if (transportRequestBuilderForm) {
+    transportRequestBuilderForm.addEventListener('submit', submitTransportRequestBuilder);
   }
 
   if (transportAcknowledgementCheckbox) {

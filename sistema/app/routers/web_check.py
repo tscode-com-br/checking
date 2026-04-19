@@ -182,27 +182,6 @@ def _require_owned_transport_request(*, user: User, db: Session, request_id: int
     return transport_request
 
 
-def _find_existing_web_transport_request(
-    *,
-    db: Session,
-    user: User,
-    request_kind: str,
-    service_date,
-) -> TransportRequest | None:
-    statement = (
-        select(TransportRequest)
-        .where(
-            TransportRequest.user_id == user.id,
-            TransportRequest.request_kind == request_kind,
-            TransportRequest.status == "active",
-        )
-        .order_by(TransportRequest.updated_at.desc(), TransportRequest.id.desc())
-    )
-    if request_kind == "extra":
-        statement = statement.where(TransportRequest.single_date == service_date)
-    return db.execute(statement).scalars().first()
-
-
 def _build_web_transport_request_message(*, request_kind: str, created: bool) -> str:
     request_label = WEB_TRANSPORT_REQUEST_LABELS.get(request_kind, "Transporte")
     if created:
@@ -218,26 +197,23 @@ def _create_web_transport_request_response(
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
 
     service_date = now_sgt().date()
-    existing_request = _find_existing_web_transport_request(
-        db=db,
+    requested_time = payload.requested_time or now_sgt().strftime("%H:%M")
+    requested_date = payload.requested_date if payload.request_kind == "extra" else None
+    if payload.request_kind == "extra" and requested_date is None:
+        requested_date = service_date
+
+    _transport_request, created = upsert_transport_request(
+        db,
         user=user,
         request_kind=payload.request_kind,
-        service_date=service_date,
+        requested_time=requested_time,
+        requested_date=requested_date,
+        created_via="web",
+        selected_weekdays=payload.selected_weekdays,
     )
-
-    created = False
-    if existing_request is None:
-        upsert_transport_request(
-            db,
-            user=user,
-            request_kind=payload.request_kind,
-            requested_time=now_sgt().strftime("%H:%M"),
-            requested_date=(service_date if payload.request_kind == "extra" else None),
-            created_via="web",
-        )
+    if created:
         db.commit()
         notify_admin_data_changed("event")
-        created = True
 
     return WebTransportActionResponse(
         ok=True,

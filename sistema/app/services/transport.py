@@ -32,7 +32,11 @@ from ..schemas import (
     WebTransportStateResponse,
     WorkplaceRow,
 )
-from .location_settings import get_transport_work_to_home_time, get_transport_work_to_home_time_for_date
+from .location_settings import (
+    get_transport_last_update_time,
+    get_transport_work_to_home_time,
+    get_transport_work_to_home_time_for_date,
+)
 from .project_catalog import list_project_names, list_projects, normalize_project_name
 from .time_utils import now_sgt
 from .user_profiles import normalize_person_name
@@ -68,6 +72,10 @@ _ROUTE_KIND_TO_LABEL = {
     "home_to_work": "Home to Work",
     "work_to_home": "Work to Home",
 }
+_DEFAULT_REQUEST_SELECTED_WEEKDAYS = {
+    "regular": (0, 1, 2, 3, 4),
+    "weekend": (5, 6),
+}
 _PAIRED_ROUTE_KIND = {
     "home_to_work": "work_to_home",
     "work_to_home": "home_to_work",
@@ -84,6 +92,63 @@ def _resolve_web_transport_route_order(preferred_route_kind: str | None) -> list
     return ["home_to_work", "work_to_home"]
 
 
+def _normalize_request_selected_weekdays(selected_weekdays: list[int] | tuple[int, ...] | set[int] | None) -> tuple[int, ...]:
+    if not selected_weekdays:
+        return ()
+
+    normalized: list[int] = []
+    for item in selected_weekdays:
+        if isinstance(item, bool):
+            continue
+        try:
+            weekday = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= weekday <= 6:
+            normalized.append(weekday)
+
+    return tuple(sorted(dict.fromkeys(normalized)))
+
+
+def _resolve_request_selected_weekdays(
+    request_kind: str,
+    selected_weekdays: list[int] | tuple[int, ...] | set[int] | None,
+) -> tuple[int, ...]:
+    normalized = _normalize_request_selected_weekdays(selected_weekdays)
+    if normalized:
+        return normalized
+    return _DEFAULT_REQUEST_SELECTED_WEEKDAYS.get(request_kind, ())
+
+
+def _serialize_request_selected_weekdays(selected_weekdays: tuple[int, ...]) -> str | None:
+    if not selected_weekdays:
+        return None
+    return json.dumps(list(selected_weekdays), ensure_ascii=True, separators=(",", ":"))
+
+
+def _parse_request_selected_weekdays(raw_value: str | None) -> tuple[int, ...]:
+    normalized_raw_value = str(raw_value or "").strip()
+    if not normalized_raw_value:
+        return ()
+
+    try:
+        payload = json.loads(normalized_raw_value)
+    except json.JSONDecodeError:
+        return ()
+
+    if not isinstance(payload, list):
+        return ()
+
+    return _normalize_request_selected_weekdays(payload)
+
+
+def get_transport_request_selected_weekdays(transport_request: TransportRequest) -> set[int]:
+    parsed_weekdays = _parse_request_selected_weekdays(transport_request.selected_weekdays_json)
+    if parsed_weekdays:
+        return set(parsed_weekdays)
+    return set(_DEFAULT_REQUEST_SELECTED_WEEKDAYS.get(transport_request.request_kind, ()))
+
+
 def _resolve_web_transport_boarding_time(
     db: Session,
     *,
@@ -97,12 +162,27 @@ def _resolve_web_transport_boarding_time(
     return active_request.requested_time
 
 
+def _resolve_web_transport_confirmation_deadline_time(
+    db: Session,
+    *,
+    user: User,
+    active_request: TransportRequest,
+) -> str:
+    if user.checkin is True:
+        return get_transport_last_update_time(db)
+    return active_request.requested_time
+
+
 def _resolve_vehicle_departure_time(
     *,
     route_kind: str,
     service_scope: str | None,
     work_to_home_departure_time: str,
+    schedule: TransportVehicleSchedule | None = None,
 ) -> str | None:
+    if service_scope == "extra" and schedule is not None:
+        departure_time = str(schedule.departure_time or "").strip()
+        return departure_time or None
     if route_kind != "work_to_home" or service_scope not in {"regular", "weekend"}:
         return None
     return work_to_home_departure_time
@@ -165,7 +245,7 @@ def build_transport_dashboard(
 
     recurring_assignment_templates = _build_recurring_assignment_template_index(
         assignments=assignments,
-        request_kind_by_id=request_kind_by_id,
+        requests_by_id={transport_request.id: transport_request for transport_request, _ in requests},
         vehicles_by_id=vehicles_by_id,
         schedules_by_vehicle_id=schedules_by_vehicle_id,
     )
@@ -276,10 +356,8 @@ def list_workplaces(db: Session) -> list[WorkplaceRow]:
 def request_applies_to_date(transport_request: TransportRequest, service_date: date) -> bool:
     if transport_request.status != "active":
         return False
-    if transport_request.recurrence_kind == "weekday":
-        return service_date.weekday() < 5
-    if transport_request.recurrence_kind == "weekend":
-        return service_date.weekday() >= 5
+    if transport_request.recurrence_kind in {"weekday", "weekend"}:
+        return service_date.weekday() in get_transport_request_selected_weekdays(transport_request)
     return transport_request.single_date == service_date
 
 
@@ -290,7 +368,7 @@ def request_is_visible_on_service_date(transport_request: TransportRequest, serv
     return (
         transport_request.status == "active"
         and transport_request.request_kind == "regular"
-        and transport_request.recurrence_kind == "weekday"
+        and bool(get_transport_request_selected_weekdays(transport_request))
         and service_date.weekday() >= 5
     )
 
@@ -373,6 +451,7 @@ def create_transport_vehicle_registration(
             recurrence_kind=schedule_spec["recurrence_kind"],
             service_date=schedule_spec["service_date"],
             weekday=schedule_spec["weekday"],
+            departure_time=schedule_spec["departure_time"],
             is_active=True,
             created_at=timestamp,
             updated_at=timestamp,
@@ -444,9 +523,12 @@ def upsert_transport_request(
     requested_time: str,
     requested_date: date | None,
     created_via: str,
-) -> TransportRequest:
+    selected_weekdays: list[int] | tuple[int, ...] | set[int] | None = None,
+) -> tuple[TransportRequest, bool]:
     timestamp = now_sgt()
     recurrence_kind = _REQUEST_KIND_TO_RECURRENCE[request_kind]
+    resolved_selected_weekdays = _resolve_request_selected_weekdays(request_kind, selected_weekdays)
+    selected_weekdays_json = _serialize_request_selected_weekdays(resolved_selected_weekdays)
 
     existing_requests = db.execute(
         select(TransportRequest)
@@ -461,11 +543,15 @@ def upsert_transport_request(
     if request_kind == "extra":
         for existing in existing_requests:
             if existing.single_date == requested_date and existing.requested_time == requested_time:
-                return existing
+                return existing, False
     else:
         for existing in existing_requests:
-            if existing.requested_time == requested_time and existing.recurrence_kind == recurrence_kind:
-                return existing
+            if (
+                existing.requested_time == requested_time
+                and existing.recurrence_kind == recurrence_kind
+                and get_transport_request_selected_weekdays(existing) == set(resolved_selected_weekdays)
+            ):
+                return existing, False
 
     if request_kind != "extra":
         for existing in existing_requests:
@@ -478,6 +564,7 @@ def upsert_transport_request(
         request_kind=request_kind,
         recurrence_kind=recurrence_kind,
         requested_time=requested_time,
+        selected_weekdays_json=selected_weekdays_json,
         single_date=requested_date,
         created_via=created_via,
         status="active",
@@ -487,7 +574,7 @@ def upsert_transport_request(
     )
     db.add(transport_request)
     db.flush()
-    return transport_request
+    return transport_request, True
 
 
 def get_latest_active_transport_request(
@@ -599,7 +686,7 @@ def build_web_transport_state(
     ).scalars().all()
     active_request = next(
         (candidate for candidate in active_requests if request_is_visible_on_service_date(candidate, service_date)),
-        None,
+        active_requests[0] if active_requests else None,
     )
     if active_request is None:
         return WebTransportStateResponse(
@@ -622,7 +709,7 @@ def build_web_transport_state(
     schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids=vehicle_ids)
     recurring_assignment_templates = _build_recurring_assignment_template_index(
         assignments=assignments,
-        request_kind_by_id={active_request.id: active_request.request_kind},
+        requests_by_id={active_request.id: active_request},
         vehicles_by_id=vehicles_by_id,
         schedules_by_vehicle_id=schedules_by_vehicle_id,
     )
@@ -657,6 +744,11 @@ def build_web_transport_state(
     resolved_route_kind = confirmed_assignments[0][3] if confirmed_assignments else (
         preferred_route_kind if preferred_route_kind in _ROUTE_KIND_TO_LABEL else None
     )
+    confirmation_deadline_time = _resolve_web_transport_confirmation_deadline_time(
+        db,
+        user=user,
+        active_request=active_request,
+    )
     awareness_confirmed = bool(confirmed_assignments) and all(
         (not is_synthetic) and assignment.acknowledged_by_user
         for assignment, _, is_synthetic, _ in confirmed_assignments
@@ -680,7 +772,7 @@ def build_web_transport_state(
                 route_kind=resolved_route_kind,
                 vehicle=confirmed_vehicle,
             ),
-            confirmation_deadline_time=active_request.requested_time,
+            confirmation_deadline_time=confirmation_deadline_time,
             vehicle_type=confirmed_vehicle.tipo,
             vehicle_plate=confirmed_vehicle.placa,
             tolerance_minutes=confirmed_vehicle.tolerance,
@@ -698,7 +790,7 @@ def build_web_transport_state(
         route_kind=resolved_route_kind,
         service_date=service_date,
         requested_time=active_request.requested_time,
-        confirmation_deadline_time=active_request.requested_time,
+        confirmation_deadline_time=confirmation_deadline_time,
         awareness_required=False,
         awareness_confirmed=False,
     )
@@ -870,7 +962,7 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
             replies.append(TransportBotReplyMessage(text="Enter the time in hh:mm format."))
             return _save_bot_response(session, context, replies)
         user = _require_session_user(db, session)
-        transport_request = upsert_transport_request(
+        transport_request, _created = upsert_transport_request(
             db,
             user=user,
             request_kind=request_kind,
@@ -1046,6 +1138,7 @@ def _propagate_confirmed_recurring_assignment(
     timestamp = now_sgt()
     schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids={vehicle.id})
     target_weekdays = _resolve_assignment_template_weekdays(
+        transport_request=transport_request,
         vehicle=vehicle,
         schedules=schedules_by_vehicle_id.get(vehicle.id, []),
         reference_date=service_date,
@@ -1141,7 +1234,7 @@ def _materialize_recurring_assignments_for_date(
     schedules_by_vehicle_id = _load_active_schedules_by_vehicle_id(db, vehicle_ids=vehicle_ids)
     recurring_assignment_templates = _build_recurring_assignment_template_index(
         assignments=assignments,
-        request_kind_by_id={transport_request.id: transport_request.request_kind},
+        requests_by_id={transport_request.id: transport_request},
         vehicles_by_id=vehicles_by_id,
         schedules_by_vehicle_id=schedules_by_vehicle_id,
     )
@@ -1222,14 +1315,15 @@ def _load_active_schedules_by_vehicle_id(
 
 def _resolve_assignment_template_weekdays(
     *,
+    transport_request: TransportRequest | None,
     vehicle: Vehicle,
     schedules: list[TransportVehicleSchedule],
     reference_date: date,
 ) -> set[int]:
+    target_weekdays: set[int]
     if vehicle.service_scope == "regular":
-        return {0, 1, 2, 3, 4}
-
-    if vehicle.service_scope == "weekend":
+        target_weekdays = {0, 1, 2, 3, 4}
+    elif vehicle.service_scope == "weekend":
         matching_weekdays = {
             schedule.weekday
             for schedule in schedules
@@ -1238,16 +1332,29 @@ def _resolve_assignment_template_weekdays(
             and schedule.weekday is not None
         }
         if matching_weekdays:
-            return matching_weekdays
-        if reference_date.weekday() >= 5:
-            return {reference_date.weekday()}
-    return set()
+            target_weekdays = matching_weekdays
+        elif reference_date.weekday() >= 5:
+            target_weekdays = {reference_date.weekday()}
+        else:
+            target_weekdays = set()
+    else:
+        target_weekdays = set()
+
+    if transport_request is None or transport_request.request_kind not in {"regular", "weekend"}:
+        return target_weekdays
+
+    request_weekdays = get_transport_request_selected_weekdays(transport_request)
+    if not request_weekdays:
+        return target_weekdays
+    if not target_weekdays:
+        return request_weekdays
+    return target_weekdays & request_weekdays
 
 
 def _build_recurring_assignment_template_index(
     *,
     assignments: list[TransportAssignment],
-    request_kind_by_id: dict[int, str],
+    requests_by_id: dict[int, TransportRequest],
     vehicles_by_id: dict[int, Vehicle],
     schedules_by_vehicle_id: dict[int, list[TransportVehicleSchedule]],
 ) -> dict[tuple[int, int], tuple[TransportAssignment, Vehicle]]:
@@ -1257,7 +1364,8 @@ def _build_recurring_assignment_template_index(
         if assignment.status != "confirmed" or assignment.vehicle_id is None:
             continue
 
-        request_kind = request_kind_by_id.get(assignment.request_id)
+        transport_request = requests_by_id.get(assignment.request_id)
+        request_kind = transport_request.request_kind if transport_request is not None else None
         vehicle = vehicles_by_id.get(assignment.vehicle_id)
         if request_kind not in {"regular", "weekend"} or vehicle is None:
             continue
@@ -1265,6 +1373,7 @@ def _build_recurring_assignment_template_index(
             continue
 
         target_weekdays = _resolve_assignment_template_weekdays(
+            transport_request=transport_request,
             vehicle=vehicle,
             schedules=schedules_by_vehicle_id.get(vehicle.id, []),
             reference_date=assignment.service_date,
@@ -1327,6 +1436,7 @@ def _build_transport_vehicle_registry_rows(
                         route_kind=route_kind,
                         service_scope=schedule.service_scope,
                         work_to_home_departure_time=work_to_home_departure_time,
+                        schedule=schedule,
                     ),
                     assigned_count=len(
                         assigned_request_ids_by_vehicle_id.get(schedule.service_scope, {}).get(vehicle.id, set())
@@ -1352,6 +1462,12 @@ def _build_transport_vehicle_registry_rows(
                 assigned_count=len(extra_assigned_request_ids_by_schedule_key.get(schedule_key, set())),
                 service_date=schedule.service_date,
                 route_kind=schedule.route_kind,
+                departure_time=_resolve_vehicle_departure_time(
+                    route_kind=schedule.route_kind,
+                    service_scope=schedule.service_scope,
+                    work_to_home_departure_time=work_to_home_departure_time,
+                    schedule=schedule,
+                ),
             )
         )
 
@@ -1503,6 +1619,7 @@ def _build_vehicle_rows_for_dashboard(
                 route_kind=route_kind,
                 service_scope=schedule.service_scope,
                 work_to_home_departure_time=work_to_home_departure_time,
+                schedule=schedule,
             ),
         )
         vehicles_by_scope.setdefault(schedule.service_scope, []).append(vehicle_row)
@@ -1523,6 +1640,7 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
                 "recurrence_kind": "single_date",
                 "service_date": payload.service_date,
                 "weekday": None,
+                "departure_time": payload.departure_time,
             }
         ]
 
@@ -1540,6 +1658,7 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
                 "recurrence_kind": "matching_weekday",
                 "service_date": None,
                 "weekday": weekday,
+                "departure_time": None,
             }
             for weekday in selected_weekdays
             for route_kind in route_kinds
@@ -1552,6 +1671,7 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
             "recurrence_kind": "weekday",
             "service_date": None,
             "weekday": None,
+            "departure_time": None,
         }
         for route_kind in route_kinds
     ]

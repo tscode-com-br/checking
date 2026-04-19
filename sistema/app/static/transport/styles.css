@@ -920,6 +920,7 @@ button {
     border-color 160ms ease,
     background-color 160ms ease,
     box-shadow 160ms ease;
+  cursor: grab;
 }
 
 .transport-request-row:hover {
@@ -927,7 +928,13 @@ button {
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-.transport-request-row.is-selected {
+.transport-request-row.is-dragging {
+  opacity: 0.42;
+  transform: none;
+  cursor: grabbing;
+}
+
+.transport-request-row.is-previewing {
   border-color: rgba(72, 212, 206, 0.44);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
 }
@@ -1148,6 +1155,10 @@ button {
   filter: drop-shadow(0 12px 24px rgba(72, 212, 206, 0.28));
 }
 
+.transport-vehicle-button.is-preview-target {
+  filter: drop-shadow(0 14px 26px rgba(255, 210, 77, 0.3));
+}
+
 .transport-vehicle-details {
   position: absolute;
   top: 0;
@@ -1168,6 +1179,18 @@ button {
 
 .transport-vehicle-details .transport-vehicle-delete-button {
   justify-self: center;
+}
+
+.transport-vehicle-preview-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transport-vehicle-preview-actions .transport-primary-button,
+.transport-vehicle-preview-actions .transport-secondary-button {
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .transport-vehicle-delete-button {

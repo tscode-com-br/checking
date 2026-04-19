@@ -63,7 +63,7 @@ class Vehicle(Base):
     tipo: Mapped[str] = mapped_column(String(16), nullable=False)
     color: Mapped[str | None] = mapped_column(String(40), nullable=True)
     lugares: Mapped[int] = mapped_column(Integer, nullable=False)
-    tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     service_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="regular")
 
 
@@ -101,6 +101,7 @@ class TransportVehicleSchedule(Base):
     recurrence_kind: Mapped[str] = mapped_column(String(24), nullable=False)
     service_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    departure_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -145,6 +146,7 @@ class TransportRequest(Base):
     request_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     recurrence_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     requested_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    selected_weekdays_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     single_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     created_via: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
@@ -297,6 +299,7 @@ class MobileAppSettings(Base):
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     transport_work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
+    transport_last_update_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:00")
     coordinate_update_frequency_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -101,6 +101,29 @@ def _normalize_transport_time(value: str) -> str:
     return parsed.strftime("%H:%M")
 
 
+def _normalize_transport_weekday_list(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raise ValueError("Os dias selecionados devem ser enviados como lista")
+    if not isinstance(value, (list, tuple, set)):
+        raise ValueError("Os dias selecionados devem ser enviados como lista")
+
+    normalized: list[int] = []
+    for item in value:
+        if isinstance(item, bool):
+            raise ValueError("Os dias selecionados devem conter numeros entre 0 e 6")
+        try:
+            weekday = int(item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Os dias selecionados devem conter numeros entre 0 e 6") from exc
+        if weekday < 0 or weekday > 6:
+            raise ValueError("Os dias selecionados devem conter numeros entre 0 e 6")
+        normalized.append(weekday)
+
+    return sorted(dict.fromkeys(normalized))
+
+
 def _validate_web_password(value: str, field_name: str) -> str:
     password = str(value)
     if len(password) < 3 or len(password) > 10:
@@ -482,6 +505,7 @@ class TransportVehicleCreate(BaseModel):
     service_scope: Literal["regular", "weekend", "extra"]
     service_date: date
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    departure_time: str | None = None
     every_weekend: bool = False
     every_saturday: bool = False
     every_sunday: bool = False
@@ -503,6 +527,8 @@ class TransportVehicleCreate(BaseModel):
 
         if self.route_kind is not None:
             raise ValueError("route_kind is only allowed for extra vehicles")
+        if self.departure_time is not None:
+            raise ValueError("departure_time is only allowed for extra vehicles")
 
         if self.service_scope == "weekend":
             if self.service_date.weekday() < 5:
@@ -531,6 +557,13 @@ class TransportVehicleCreate(BaseModel):
     @classmethod
     def validate_vehicle_color(cls, value: str) -> str:
         return _normalize_required_label(value, "A cor", max_length=40)
+
+    @field_validator("departure_time")
+    @classmethod
+    def validate_vehicle_departure_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_transport_time(value)
 
 
 class TransportVehicleRow(BaseModel):
@@ -564,6 +597,7 @@ class TransportRequestCreate(BaseModel):
     request_kind: Literal["regular", "weekend", "extra"]
     requested_time: str = Field(min_length=5, max_length=5)
     requested_date: date | None = None
+    selected_weekdays: list[int] | None = None
 
     @model_validator(mode="after")
     def validate_target_identity(self):
@@ -573,6 +607,26 @@ class TransportRequestCreate(BaseModel):
             raise ValueError("requested_date is required for extra requests")
         if self.request_kind != "extra" and self.requested_date is not None:
             raise ValueError("requested_date is only allowed for extra requests")
+        if self.request_kind == "extra":
+            if self.selected_weekdays:
+                raise ValueError("selected_weekdays is only allowed for recurring requests")
+            return self
+
+        if self.request_kind == "regular":
+            if self.selected_weekdays is None:
+                self.selected_weekdays = [0, 1, 2, 3, 4]
+            if not self.selected_weekdays:
+                raise ValueError("selected_weekdays is required for regular requests")
+            if any(weekday >= 5 for weekday in self.selected_weekdays):
+                raise ValueError("regular requests only allow weekdays from Monday to Friday")
+            return self
+
+        if self.selected_weekdays is None:
+            self.selected_weekdays = [5, 6]
+        if not self.selected_weekdays:
+            raise ValueError("selected_weekdays is required for weekend requests")
+        if any(weekday < 5 for weekday in self.selected_weekdays):
+            raise ValueError("weekend requests only allow Saturday or Sunday")
         return self
 
     @field_validator("chave")
@@ -589,6 +643,11 @@ class TransportRequestCreate(BaseModel):
     @classmethod
     def validate_requested_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
+
+    @field_validator("selected_weekdays", mode="before")
+    @classmethod
+    def validate_selected_weekdays(cls, value: object) -> list[int] | None:
+        return _normalize_transport_weekday_list(value)
 
 
 class TransportAssignmentUpsert(BaseModel):
@@ -650,19 +709,31 @@ class TransportDashboardResponse(BaseModel):
 
 class TransportSettingsResponse(BaseModel):
     work_to_home_time: str = Field(min_length=5, max_length=5)
+    last_update_time: str = Field(min_length=5, max_length=5)
 
     @field_validator("work_to_home_time")
     @classmethod
     def validate_work_to_home_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
 
+    @field_validator("last_update_time")
+    @classmethod
+    def validate_last_update_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
 
 class TransportSettingsUpdateRequest(BaseModel):
     work_to_home_time: str = Field(min_length=5, max_length=5)
+    last_update_time: str = Field(min_length=5, max_length=5)
 
     @field_validator("work_to_home_time")
     @classmethod
     def validate_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("last_update_time")
+    @classmethod
+    def validate_last_update_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
 
 
@@ -773,12 +844,22 @@ class EventRow(BaseModel):
     event_time: datetime
 
 
+class DatabaseEventFilterOptions(BaseModel):
+    action: list[str] = Field(default_factory=list)
+    chave: list[str] = Field(default_factory=list)
+    rfid: list[str] = Field(default_factory=list)
+    project: list[str] = Field(default_factory=list)
+    source: list[str] = Field(default_factory=list)
+    status: list[str] = Field(default_factory=list)
+
+
 class DatabaseEventListResponse(BaseModel):
     items: list[EventRow]
     total: int
     page: int
     page_size: int
     total_pages: int
+    filter_options: DatabaseEventFilterOptions = Field(default_factory=DatabaseEventFilterOptions)
 
 
 class InactiveUserRow(BaseModel):
@@ -1119,6 +1200,9 @@ class WebTransportAddressUpdateRequest(BaseModel):
 class WebTransportRequestCreate(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     request_kind: Literal["regular", "weekend", "extra"]
+    requested_time: str | None = None
+    requested_date: date | None = None
+    selected_weekdays: list[int] | None = None
 
     @field_validator("chave")
     @classmethod
@@ -1127,6 +1211,45 @@ class WebTransportRequestCreate(BaseModel):
         if len(normalized) != 4 or not normalized.isalnum():
             raise ValueError("A chave deve ter 4 caracteres alfanumericos")
         return normalized
+
+    @field_validator("requested_time")
+    @classmethod
+    def validate_web_transport_requested_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_transport_time(value)
+
+    @field_validator("selected_weekdays", mode="before")
+    @classmethod
+    def validate_web_transport_selected_weekdays(cls, value: object) -> list[int] | None:
+        return _normalize_transport_weekday_list(value)
+
+    @model_validator(mode="after")
+    def validate_web_transport_request(self):
+        if self.request_kind != "extra" and self.requested_date is not None:
+            raise ValueError("requested_date is only allowed for extra requests")
+
+        if self.request_kind == "extra":
+            if self.selected_weekdays:
+                raise ValueError("selected_weekdays is only allowed for recurring requests")
+            return self
+
+        if self.request_kind == "regular":
+            if self.selected_weekdays is None:
+                self.selected_weekdays = [0, 1, 2, 3, 4]
+            if not self.selected_weekdays:
+                raise ValueError("selected_weekdays is required for regular requests")
+            if any(weekday >= 5 for weekday in self.selected_weekdays):
+                raise ValueError("regular requests only allow weekdays from Monday to Friday")
+            return self
+
+        if self.selected_weekdays is None:
+            self.selected_weekdays = [5, 6]
+        if not self.selected_weekdays:
+            raise ValueError("selected_weekdays is required for weekend requests")
+        if any(weekday < 5 for weekday in self.selected_weekdays):
+            raise ValueError("weekend requests only allow Saturday or Sunday")
+        return self
 
 
 class WebTransportRequestAction(BaseModel):

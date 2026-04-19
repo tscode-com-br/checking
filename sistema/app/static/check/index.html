@@ -456,6 +456,72 @@
                 <button id="transportExtraButton" type="button" class="secondary-button transport-option-button">Transporte Extra</button>
               </div>
 
+              <section id="transportRequestBuilderPanel" class="transport-request-builder is-hidden" hidden>
+                <p id="transportRequestBuilderSubtitle" class="transport-request-builder-subtitle"></p>
+
+                <form id="transportRequestBuilderForm" class="transport-request-builder-form" novalidate>
+                  <section id="transportRequestWeekdayGroup" class="transport-request-builder-group is-hidden" hidden>
+                    <p class="transport-request-builder-label">Selecione os dias:</p>
+
+                    <div class="transport-request-weekday-options">
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="0">
+                        <input type="checkbox" name="transport_selected_weekday" value="0" />
+                        <span>Segunda-feira</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="1">
+                        <input type="checkbox" name="transport_selected_weekday" value="1" />
+                        <span>Terça-feira</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="2">
+                        <input type="checkbox" name="transport_selected_weekday" value="2" />
+                        <span>Quarta-feira</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="3">
+                        <input type="checkbox" name="transport_selected_weekday" value="3" />
+                        <span>Quinta-feira</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="4">
+                        <input type="checkbox" name="transport_selected_weekday" value="4" />
+                        <span>Sexta-feira</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="5">
+                        <input type="checkbox" name="transport_selected_weekday" value="5" />
+                        <span>Sábado</span>
+                      </label>
+
+                      <label class="transport-request-day-chip" data-transport-weekday-option data-weekday="6">
+                        <input type="checkbox" name="transport_selected_weekday" value="6" />
+                        <span>Domingo</span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section id="transportRequestDateGroup" class="transport-request-builder-group is-hidden" hidden>
+                    <label class="check-field transport-inline-field" for="transportRequestDateInput">
+                      <span>Data:</span>
+                      <input id="transportRequestDateInput" name="transport_requested_date" type="date" required />
+                    </label>
+                  </section>
+
+                  <section id="transportRequestTimeGroup" class="transport-request-builder-group is-hidden" hidden>
+                    <label class="check-field transport-inline-field" for="transportRequestTimeInput">
+                      <span>Horário:</span>
+                      <input id="transportRequestTimeInput" name="transport_requested_time" type="time" required />
+                    </label>
+                  </section>
+
+                  <div class="password-dialog-actions transport-request-actions">
+                    <button id="transportRequestBuilderBackButton" type="button" class="secondary-button">Voltar</button>
+                    <button id="transportRequestBuilderSubmitButton" type="submit" class="submit-button">Solicitar Transporte</button>
+                  </div>
+                </form>
+              </section>
+
               <section id="transportPendingPanel" class="transport-message-panel is-hidden" hidden>
                 <p class="transport-message-line">Sua solicitação foi enviada.</p>
                 <p id="transportPendingDeadlineLine" class="transport-message-line"></p>

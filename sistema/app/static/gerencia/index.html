@@ -126,60 +126,14 @@
       </div>
 
       <div id="adminShell" class="admin-shell hidden">
-        <section class="hero-grid">
-          <div class="hero-card panel-surface">
-            <div class="hero-copy">
-              <span class="section-kicker">Operação administrativa</span>
-              <h1 class="hero-admin-title">Painel de Administrador</h1>
-              <p>
-                Presença, cadastro e auditoria em uma leitura mais limpa, com tabelas estáveis, filtros consistentes
-                e ações mais fáceis de operar durante o expediente.
-              </p>
-            </div>
-
-            <div class="hero-metrics">
-              <div class="hero-metric">
-                <span class="hero-metric-label">Sincronização</span>
-                <strong id="heroMetricConnection">Aguardando sessão</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">Última atualização</span>
-                <strong id="heroMetricRefresh">Sem atualização</strong>
-              </div>
-              <div class="hero-metric">
-                <span class="hero-metric-label">Cobertura</span>
-                <strong id="heroMetricCoverage">0 usuários monitorados</strong>
-              </div>
-            </div>
-          </div>
-
-          <aside class="hero-aside panel-surface">
-            <span class="section-kicker">Diretriz visual</span>
-            <p class="hero-aside-copy">
-              O layout novo prioriza alinhamento, respiro, contraste e responsividade para reduzir aparência amadora e
-              evitar falhas como bordas quebradas, botões cortados ou textos truncados.
-            </p>
-
-            <div class="hero-aside-metrics">
-              <div class="hero-aside-metric">
-                <span class="hero-aside-label">Aba em foco</span>
-                <strong id="heroMetricCurrentTab">Check-In</strong>
-              </div>
-              <div class="hero-aside-metric">
-                <span class="hero-aside-label">Pendência crítica</span>
-                <strong id="heroMetricPending">Nenhuma pendência crítica</strong>
-              </div>
-              <div class="hero-aside-metric">
-                <span class="hero-aside-label">Administradores</span>
-                <strong id="heroMetricAdminCoverage">Sem administradores visíveis</strong>
-              </div>
-            </div>
-          </aside>
-        </section>
-
         <p id="statusLine" aria-live="polite"></p>
 
         <section class="summary-grid" aria-label="Resumo operacional">
+          <article class="summary-card summary-card-users">
+            <span class="summary-kicker">Base</span>
+            <strong class="summary-value" data-dashboard-stat-value="users">0</strong>
+            <p class="summary-label">Usuários cadastrados.</p>
+          </article>
           <article class="summary-card summary-card-checkin">
             <span class="summary-kicker">Agora</span>
             <strong class="summary-value" data-dashboard-stat-value="checkin">0</strong>
@@ -190,20 +144,10 @@
             <strong class="summary-value" data-dashboard-stat-value="checkout">0</strong>
             <p class="summary-label">Usuários em check-out.</p>
           </article>
-          <article class="summary-card summary-card-inactive">
-            <span class="summary-kicker">Risco</span>
-            <strong class="summary-value" data-dashboard-stat-value="inactive">0</strong>
-            <p class="summary-label">Usuários inativos.</p>
-          </article>
           <article class="summary-card summary-card-pending">
             <span class="summary-kicker">Fila</span>
             <strong class="summary-value" data-dashboard-stat-value="pending">0</strong>
             <p class="summary-label">Pendências de RFID.</p>
-          </article>
-          <article class="summary-card summary-card-users">
-            <span class="summary-kicker">Base</span>
-            <strong class="summary-value" data-dashboard-stat-value="users">0</strong>
-            <p class="summary-label">Usuários cadastrados.</p>
           </article>
           <article class="summary-card summary-card-events">
             <span class="summary-kicker">Auditoria</span>
@@ -647,11 +591,15 @@
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>Chave</span>
-                    <input id="databaseEventsKey" data-database-event-filter="chave" type="text" maxlength="4" placeholder="HR70" />
+                    <select id="databaseEventsKey" data-database-event-filter="chave">
+                      <option value="">Todos</option>
+                    </select>
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>RFID</span>
-                    <input id="databaseEventsRfid" data-database-event-filter="rfid" type="text" maxlength="64" placeholder="RFID exato" />
+                    <select id="databaseEventsRfid" data-database-event-filter="rfid">
+                      <option value="">Todos</option>
+                    </select>
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>Ação</span>
@@ -672,11 +620,15 @@
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>Origem</span>
-                    <input id="databaseEventsSource" data-database-event-filter="source" type="text" maxlength="20" placeholder="device, admin, forms..." />
+                    <select id="databaseEventsSource" data-database-event-filter="source">
+                      <option value="">Todos</option>
+                    </select>
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>Status</span>
-                    <input id="databaseEventsStatus" data-database-event-filter="status" type="text" maxlength="16" placeholder="queued, success, failed..." />
+                    <select id="databaseEventsStatus" data-database-event-filter="status">
+                      <option value="">Todos</option>
+                    </select>
                   </label>
                   <label class="presence-control-field database-filter-field">
                     <span>De</span>
@@ -715,7 +667,21 @@
               <div class="table-wrap table-shell database-table-wrap">
                 <table class="responsive-table database-events-table">
                   <thead>
-                    <tr><th>ID</th><th>Horário</th><th>Ação</th><th>Chave</th><th>RFID</th><th>Projeto</th><th>Local</th><th>Origem</th><th>Status</th><th>HTTP</th><th>Device</th><th>Mensagem</th><th>Detalhes</th></tr>
+                    <tr>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="id"><span>ID</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="event_time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="action"><span>Ação</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="rfid"><span>RFID</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="project"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="local"><span>Local</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="source"><span>Origem</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="status"><span>Status</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="http_status"><span>HTTP</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="device_id"><span>Device</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="message"><span>Mensagem</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" class="sortable-header" data-sort-table="databaseEvents" data-sort-key="details"><span>Detalhes</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                    </tr>
                   </thead>
                   <tbody id="databaseEventsBody"></tbody>
                 </table>

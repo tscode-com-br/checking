@@ -45,7 +45,9 @@ from ..services.admin_auth import (
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.location_settings import (
+    get_transport_last_update_time,
     get_transport_work_to_home_time,
+    upsert_transport_last_update_time,
     upsert_transport_work_to_home_time,
     upsert_transport_work_to_home_time_for_date,
 )
@@ -174,7 +176,10 @@ def get_transport_dashboard(
 
 @router.get("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])
 def get_transport_settings(db: Session = Depends(get_db)) -> TransportSettingsResponse:
-    return TransportSettingsResponse(work_to_home_time=get_transport_work_to_home_time(db))
+    return TransportSettingsResponse(
+        work_to_home_time=get_transport_work_to_home_time(db),
+        last_update_time=get_transport_last_update_time(db),
+    )
 
 
 @router.put("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])
@@ -183,8 +188,12 @@ def update_transport_settings(
     db: Session = Depends(get_db),
 ) -> TransportSettingsResponse:
     settings_row = upsert_transport_work_to_home_time(db, work_to_home_time=payload.work_to_home_time)
+    upsert_transport_last_update_time(db, last_update_time=payload.last_update_time)
     db.commit()
-    return TransportSettingsResponse(work_to_home_time=settings_row.transport_work_to_home_time)
+    return TransportSettingsResponse(
+        work_to_home_time=settings_row.transport_work_to_home_time,
+        last_update_time=settings_row.transport_last_update_time,
+    )
 
 
 @router.put("/date-settings", response_model=TransportDateSettingsResponse, dependencies=[Depends(require_transport_session)])

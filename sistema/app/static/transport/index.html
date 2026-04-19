@@ -145,17 +145,6 @@
               <h1 class="transport-pane-title" data-user-list-title>User List</h1>
             </div>
 
-            <div class="transport-selection-banner" data-selection-banner hidden>
-              <div class="transport-selection-copy">
-                <span class="transport-selection-label">Selected Request</span>
-                <strong class="transport-selection-value" data-selection-text>--</strong>
-              </div>
-              <div class="transport-selection-actions">
-                <button type="button" class="transport-selection-reject" data-reject-selection>Reject Selected</button>
-                <button type="button" class="transport-selection-clear" data-clear-selection>Clear</button>
-              </div>
-            </div>
-
             <div class="transport-request-sections">
               <section class="transport-request-section" aria-label="Extra car requests">
                 <div class="transport-section-head">
@@ -301,7 +290,7 @@
             <span>Type</span>
             <select name="tipo" required>
               <option value="carro">Car</option>
-              <option value="minivan">Mini-Van</option>
+              <option value="minivan">Minivan</option>
               <option value="van">Van</option>
               <option value="onibus">Bus</option>
             </select>
@@ -325,6 +314,11 @@
           <label class="transport-field">
             <span>Tolerance (minutes)</span>
             <input type="number" name="tolerance" min="0" max="240" required />
+          </label>
+
+          <label class="transport-field" data-extra-departure-field hidden>
+            <span>Departure Time</span>
+            <input type="time" name="departure_time" />
           </label>
 
           <label class="transport-field" data-extra-route-field hidden>
@@ -386,6 +380,18 @@
                 step="60"
                 value="16:45"
                 data-settings-work-to-home-time
+              />
+            </label>
+
+            <label class="transport-settings-row" for="transportSettingsLastUpdateTime">
+              <span class="transport-settings-label" data-settings-last-update-label>Last Update Time:</span>
+              <input
+                id="transportSettingsLastUpdateTime"
+                class="transport-settings-time-input"
+                type="time"
+                step="60"
+                value="16:00"
+                data-settings-last-update-time
               />
             </label>
 

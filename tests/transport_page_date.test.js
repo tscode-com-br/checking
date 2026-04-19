@@ -172,6 +172,14 @@ test('getVehicleDepartureTime returns only valid departure times', () => {
   assert.equal(transportPage.getVehicleDepartureTime({}), '');
 });
 
+test('getDefaultVehicleSeatCount matches the configured defaults for each vehicle type', () => {
+  assert.equal(transportPage.getDefaultVehicleSeatCount('carro'), 3);
+  assert.equal(transportPage.getDefaultVehicleSeatCount('minivan'), 6);
+  assert.equal(transportPage.getDefaultVehicleSeatCount('van'), 10);
+  assert.equal(transportPage.getDefaultVehicleSeatCount('onibus'), 40);
+  assert.equal(transportPage.getDefaultVehicleSeatCount('unknown'), 3);
+});
+
 test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Alice Rider' }), 'pending');
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Bob Rider', awareness_status: 'aware' }), 'aware');
@@ -203,7 +211,65 @@ test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five 
   );
 });
 
-test('buildVehicleCreatePayload sends weekend persistence and only sends route_kind for extra vehicles', () => {
+test('buildVehiclePassengerPreviewRows keeps the dragged passenger visible in the preview table', () => {
+  assert.deepEqual(
+    transportPage.buildVehiclePassengerPreviewRows(
+      [
+        { id: 1, nome: 'Alice Rider' },
+        { id: 2, nome: 'Bob Rider' },
+        { id: 3, nome: 'Carol Rider' },
+      ],
+      { id: 99, nome: 'Dragged Rider' },
+      3
+    ),
+    [
+      { id: 99, nome: 'Dragged Rider' },
+      { id: 1, nome: 'Alice Rider' },
+      { id: 2, nome: 'Bob Rider' },
+    ]
+  );
+});
+
+test('canRequestBeDroppedOnVehicle only accepts compatible request and vehicle combinations', () => {
+  assert.equal(
+    transportPage.canRequestBeDroppedOnVehicle(
+      { id: 10, request_kind: 'regular' },
+      'regular',
+      { id: 8, route_kind: null },
+      'home_to_work'
+    ),
+    true
+  );
+  assert.equal(
+    transportPage.canRequestBeDroppedOnVehicle(
+      { id: 10, request_kind: 'regular' },
+      'weekend',
+      { id: 8, route_kind: null },
+      'home_to_work'
+    ),
+    false
+  );
+  assert.equal(
+    transportPage.canRequestBeDroppedOnVehicle(
+      { id: 10, request_kind: 'extra', assigned_vehicle: { id: 8 } },
+      'extra',
+      { id: 8, route_kind: 'work_to_home' },
+      'work_to_home'
+    ),
+    false
+  );
+  assert.equal(
+    transportPage.canRequestBeDroppedOnVehicle(
+      { id: 10, request_kind: 'extra' },
+      'extra',
+      { id: 8, route_kind: 'work_to_home' },
+      'home_to_work'
+    ),
+    false
+  );
+});
+
+test('buildVehicleCreatePayload sends weekend persistence and extra departure time only for extra vehicles', () => {
   const regularFormData = new FormData();
   regularFormData.set('service_scope', 'regular');
   regularFormData.set('tipo', 'carro');
@@ -257,6 +323,7 @@ test('buildVehicleCreatePayload sends weekend persistence and only sends route_k
   extraFormData.set('color', 'White');
   extraFormData.set('lugares', '10');
   extraFormData.set('tolerance', '18');
+  extraFormData.set('departure_time', '17:45');
   extraFormData.set('route_kind', 'work_to_home');
 
   assert.deepEqual(
@@ -269,6 +336,7 @@ test('buildVehicleCreatePayload sends weekend persistence and only sends route_k
       color: 'White',
       lugares: 10,
       tolerance: 18,
+      departure_time: '17:45',
       route_kind: 'work_to_home',
     }
   );
