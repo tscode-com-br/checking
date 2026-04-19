@@ -716,28 +716,68 @@
     return "regular";
   }
 
-  function applyVehicleSeatDefault(vehicleType) {
-    if (!vehicleForm || !vehicleForm.elements || !vehicleForm.elements.lugares) {
-      return;
+  function resolveVehicleForm(formElement) {
+    if (formElement && formElement.elements) {
+      return formElement;
     }
-    vehicleForm.elements.lugares.value = String(getDefaultVehicleSeatCount(vehicleType));
+
+    if (typeof document === "undefined") {
+      return null;
+    }
+
+    const resolvedForm = document.querySelector("[data-vehicle-form]");
+    if (!resolvedForm || !resolvedForm.elements) {
+      return null;
+    }
+
+    return resolvedForm;
   }
 
-  function applyVehicleFormDefaults(vehicleType) {
-    if (!vehicleForm || !vehicleForm.elements) {
+  function applyVehicleSeatDefault(vehicleType, formElement) {
+    const resolvedForm = resolveVehicleForm(formElement);
+    if (!resolvedForm || !resolvedForm.elements.lugares) {
+      return;
+    }
+    resolvedForm.elements.lugares.value = String(getDefaultVehicleSeatCount(vehicleType));
+  }
+
+  function syncVehicleTypeDependentDefaults(vehicleType, formElement) {
+    const resolvedForm = resolveVehicleForm(formElement);
+    if (!resolvedForm) {
+      return;
+    }
+
+    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(VEHICLE_DEFAULT_SEAT_COUNT, vehicleType)
+      ? vehicleType
+      : "carro";
+
+    if (resolvedForm.elements.tipo) {
+      resolvedForm.elements.tipo.value = normalizedVehicleType;
+    }
+
+    applyVehicleSeatDefault(normalizedVehicleType, resolvedForm);
+
+    if (resolvedForm.elements.tolerance) {
+      resolvedForm.elements.tolerance.value = String(getDefaultVehicleToleranceMinutes());
+    }
+  }
+
+  function applyVehicleFormDefaults(vehicleType, formElement) {
+    const resolvedForm = resolveVehicleForm(formElement);
+    if (!resolvedForm) {
       return;
     }
 
     const defaults = getDefaultVehicleFormValues(vehicleType);
 
-    if (vehicleForm.elements.tipo) {
-      vehicleForm.elements.tipo.value = defaults.tipo;
+    if (resolvedForm.elements.tipo) {
+      resolvedForm.elements.tipo.value = defaults.tipo;
     }
-    if (vehicleForm.elements.lugares) {
-      vehicleForm.elements.lugares.value = String(defaults.lugares);
+    if (resolvedForm.elements.lugares) {
+      resolvedForm.elements.lugares.value = String(defaults.lugares);
     }
-    if (vehicleForm.elements.tolerance) {
-      vehicleForm.elements.tolerance.value = String(defaults.tolerance);
+    if (resolvedForm.elements.tolerance) {
+      resolvedForm.elements.tolerance.value = String(defaults.tolerance);
     }
   }
 
@@ -1940,7 +1980,10 @@
     if (vehicleForm) {
       if (vehicleForm.elements.tipo) {
         vehicleForm.elements.tipo.addEventListener("change", function () {
-          applyVehicleSeatDefault(String(vehicleForm.elements.tipo.value || "carro"));
+          syncVehicleTypeDependentDefaults(String(vehicleForm.elements.tipo.value || "carro"), vehicleForm);
+          });
+          vehicleForm.elements.tipo.addEventListener("input", function () {
+          syncVehicleTypeDependentDefaults(String(vehicleForm.elements.tipo.value || "carro"), vehicleForm);
         });
       }
 
@@ -2166,7 +2209,7 @@
       vehicleForm.reset();
       clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = normalizedScope;
-      applyVehicleFormDefaults("carro");
+      applyVehicleFormDefaults("carro", vehicleForm);
       if (vehicleForm.elements.departure_time) {
         vehicleForm.elements.departure_time.value = "";
       }
@@ -3059,6 +3102,7 @@
     getDefaultVehicleFormValues,
     getDefaultVehicleSeatCount,
     getDefaultVehicleToleranceMinutes,
+    syncVehicleTypeDependentDefaults,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,
     parseStoredTransportDate,

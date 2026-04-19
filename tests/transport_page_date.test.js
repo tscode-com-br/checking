@@ -217,8 +217,35 @@ test('vehicle modal markup includes the default places and tolerance values', ()
   );
 
   assert.match(transportHtml, /<option value="carro" selected>Car<\/option>/);
-  assert.match(transportHtml, /<input type="number" name="lugares" min="1" max="99" value="3" required \/>/);
-  assert.match(transportHtml, /<input type="number" name="tolerance" min="0" max="240" value="5" required \/>/);
+  assert.match(transportHtml, /<input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" required \/>/);
+  assert.match(transportHtml, /<input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" required \/>/);
+});
+
+test('syncVehicleTypeDependentDefaults updates the vehicle type, places, and tolerance fields together', () => {
+  const formStub = {
+    elements: {
+      tipo: { value: 'carro' },
+      lugares: { value: '3' },
+      tolerance: { value: '5' },
+    },
+  };
+
+  transportPage.syncVehicleTypeDependentDefaults('minivan', formStub);
+  assert.deepEqual(formStub.elements, {
+    tipo: { value: 'minivan' },
+    lugares: { value: '6' },
+    tolerance: { value: '5' },
+  });
+
+  transportPage.syncVehicleTypeDependentDefaults('van', formStub);
+  assert.equal(formStub.elements.tipo.value, 'van');
+  assert.equal(formStub.elements.lugares.value, '10');
+  assert.equal(formStub.elements.tolerance.value, '5');
+
+  transportPage.syncVehicleTypeDependentDefaults('onibus', formStub);
+  assert.equal(formStub.elements.tipo.value, 'onibus');
+  assert.equal(formStub.elements.lugares.value, '40');
+  assert.equal(formStub.elements.tolerance.value, '5');
 });
 
 test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {

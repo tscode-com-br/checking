@@ -1422,6 +1422,18 @@ button {
   margin-top: 20px;
 }
 
+.transport-number-input-spinnerless {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.transport-number-input-spinnerless::-webkit-outer-spin-button,
+.transport-number-input-spinnerless::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .transport-modal-note {
   margin: 0;
   padding: 12px 14px;
