@@ -93,8 +93,6 @@
   const transportAcknowledgementSection = document.getElementById('transportAcknowledgementSection');
   const transportAcknowledgementCheckbox = document.getElementById('transportAcknowledgementCheckbox');
   const transportAcknowledgementButton = document.getElementById('transportAcknowledgementButton');
-  const transportSelectedRequestActions = document.getElementById('transportSelectedRequestActions');
-  const transportSelectedRequestCancelButton = document.getElementById('transportSelectedRequestCancelButton');
   const transportInlineStatus = document.getElementById('transportInlineStatus');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
@@ -144,7 +142,6 @@
     ...transportRequestWeekdayInputs,
     transportAcknowledgementCheckbox,
     transportAcknowledgementButton,
-    transportSelectedRequestCancelButton,
     transportScreenHeaderBackButton,
   ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
@@ -1227,12 +1224,11 @@
       && isTransportServiceDateToday(transportState.serviceDate);
   }
 
-  function canCancelSelectedTransportRequest() {
-    const selectedRequest = getTransportSelectedRequest();
+  function canCancelTransportRequestItem(requestItem) {
     return Boolean(
-      selectedRequest
-      && selectedRequest.isActive
-      && (selectedRequest.status === 'pending' || selectedRequest.status === 'confirmed')
+      requestItem
+      && requestItem.isActive
+      && (requestItem.status === 'pending' || requestItem.status === 'confirmed')
     );
   }
 
@@ -1290,22 +1286,27 @@
   }
 
   function createTransportRequestCard(requestItem) {
-    const cardButton = document.createElement('button');
+    const cardElement = document.createElement('div');
     const cardHeader = document.createElement('span');
     const cardTitle = document.createElement('span');
     const cardStatus = document.createElement('span');
     const cardDetails = document.createElement('span');
+    const cardActions = document.createElement('div');
+    const cancelButton = document.createElement('button');
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
       || transportCancelInProgress
       || transportAcknowledgeInProgress;
+    const canCancelRequest = canCancelTransportRequestItem(requestItem);
 
-    cardButton.type = 'button';
-    cardButton.className = `transport-request-card is-${requestItem.status}`;
-    cardButton.dataset.requestId = String(requestItem.requestId);
-    cardButton.disabled = transportBusy;
-    cardButton.classList.toggle('is-selected', Number(transportUiState.selectedRequestId) === Number(requestItem.requestId));
+    cardElement.className = `transport-request-card is-${requestItem.status}`;
+    cardElement.dataset.requestId = String(requestItem.requestId);
+    cardElement.setAttribute('role', 'button');
+    cardElement.setAttribute('aria-disabled', String(transportBusy));
+    cardElement.setAttribute('aria-pressed', String(Number(transportUiState.selectedRequestId) === Number(requestItem.requestId)));
+    cardElement.tabIndex = transportBusy ? -1 : 0;
+    cardElement.classList.toggle('is-selected', Number(transportUiState.selectedRequestId) === Number(requestItem.requestId));
 
     cardHeader.className = 'transport-request-card-header';
     cardTitle.className = 'transport-request-card-title';
@@ -1320,9 +1321,24 @@
     cardDetails.className = 'transport-request-card-details';
     cardDetails.textContent = formatTransportRequestCardDetails(requestItem);
 
-    cardButton.appendChild(cardHeader);
-    cardButton.appendChild(cardDetails);
-    return cardButton;
+    cardActions.className = 'transport-request-card-actions';
+
+    if (canCancelRequest) {
+      cancelButton.type = 'button';
+      cancelButton.className = 'transport-request-card-cancel-button';
+      cancelButton.dataset.transportRequestCancel = 'true';
+      cancelButton.dataset.requestId = String(requestItem.requestId);
+      cancelButton.disabled = transportBusy;
+      cancelButton.textContent = transportCancelInProgress ? 'Cancelando...' : 'Cancelar';
+      cardActions.appendChild(cancelButton);
+    }
+
+    cardElement.appendChild(cardHeader);
+    cardElement.appendChild(cardDetails);
+    if (cardActions.childElementCount > 0) {
+      cardElement.appendChild(cardActions);
+    }
+    return cardElement;
   }
 
   function renderTransportRequestHistory() {
@@ -1407,12 +1423,6 @@
 
     if (transportAcknowledgementCheckbox) {
       transportAcknowledgementCheckbox.checked = transportUiState.acknowledgementChecked;
-    }
-
-    if (transportSelectedRequestActions) {
-      const showSelectedRequestActions = !transportUiState.addressEditorOpen && !activeBuilderConfig && canCancelSelectedTransportRequest();
-      transportSelectedRequestActions.hidden = !showSelectedRequestActions;
-      transportSelectedRequestActions.classList.toggle('is-hidden', !showSelectedRequestActions);
     }
 
     scheduleTransportAutoRefresh();
@@ -1629,10 +1639,10 @@
     await requestTransport(requestKind, requestPayload);
   }
 
-  async function cancelActiveTransportRequest() {
+  async function cancelTransportRequest(requestId) {
     const normalizedChave = getActiveChave();
-    const selectedRequest = getTransportSelectedRequest();
-    if (!selectedRequest || !selectedRequest.requestId) {
+    const targetRequest = findTransportRequestById(requestId);
+    if (!targetRequest || !targetRequest.requestId) {
       return;
     }
 
@@ -1642,7 +1652,7 @@
     try {
       const payload = await postTransportPayload(transportCancelEndpoint, {
         chave: normalizedChave,
-        request_id: selectedRequest.requestId,
+        request_id: targetRequest.requestId,
       });
       applyTransportStatePayload(payload.state || {});
       transportUiState.requestBuilderKind = null;
@@ -3785,18 +3795,26 @@
     });
   }
 
-  if (transportSelectedRequestCancelButton) {
-    transportSelectedRequestCancelButton.addEventListener('click', () => {
-      void cancelActiveTransportRequest();
-    });
-  }
-
   if (transportRequestHistoryList) {
     transportRequestHistoryList.addEventListener('click', (event) => {
+      const cancelButton = event.target instanceof Element
+        ? event.target.closest('[data-transport-request-cancel="true"][data-request-id]')
+        : null;
+      if (cancelButton) {
+        const requestId = Number(cancelButton.getAttribute('data-request-id'));
+        if (Number.isFinite(requestId)) {
+          void cancelTransportRequest(requestId);
+        }
+        return;
+      }
+
       const requestButton = event.target instanceof Element
         ? event.target.closest('.transport-request-card[data-request-id]')
         : null;
       if (!requestButton) {
+        return;
+      }
+      if (requestButton.getAttribute('aria-disabled') === 'true') {
         return;
       }
 
@@ -3806,6 +3824,31 @@
       }
 
       selectTransportRequest(requestId);
+    });
+
+    transportRequestHistoryList.addEventListener('keydown', (event) => {
+      const cancelButton = event.target instanceof Element
+        ? event.target.closest('[data-transport-request-cancel="true"][data-request-id]')
+        : null;
+      if (cancelButton) {
+        return;
+      }
+
+      const requestCard = event.target instanceof Element
+        ? event.target.closest('.transport-request-card[data-request-id]')
+        : null;
+      if (!requestCard || (event.key !== 'Enter' && event.key !== ' ')) {
+        return;
+      }
+      if (requestCard.getAttribute('aria-disabled') === 'true') {
+        return;
+      }
+
+      event.preventDefault();
+      const requestId = Number(requestCard.getAttribute('data-request-id'));
+      if (Number.isFinite(requestId)) {
+        selectTransportRequest(requestId);
+      }
     });
   }
 

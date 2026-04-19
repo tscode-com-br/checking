@@ -17,7 +17,7 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Estado atual
 
-- Fase 5 concluída: UI Compose funcional para fluxos manuais
+- Fase 5 concluída: API, fluxos manuais e UI Compose funcional
 - scaffold Android nativo criado
 - tela inicial de bootstrap removida
 - tela principal funcional em Compose conectada ao controller

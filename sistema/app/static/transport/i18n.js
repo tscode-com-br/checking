@@ -134,6 +134,7 @@
         switchingLanguage: "Loading dashboard language.",
       },
       warnings: {
+        extraDepartureRequired: "Departure Time is required for extra vehicles.",
         regularWeekdayOnly: "Regular vehicles can only be created from Monday to Friday.",
         weekendWeekendOnly: "Weekend vehicles can only be created on Saturdays or Sundays.",
         weekendPersistence:
@@ -312,6 +313,7 @@
         switchingLanguage: "Carregando o idioma do painel.",
       },
       warnings: {
+        extraDepartureRequired: "O campo Departure Time é obrigatório para veículos extra.",
         regularWeekdayOnly: "Veículos rotineiros só podem ser criados de segunda a sexta-feira.",
         weekendWeekendOnly: "Veículos de fim de semana só podem ser criados aos sábados ou domingos.",
         weekendPersistence:
@@ -489,6 +491,7 @@
         switchingLanguage: "正在加载面板语言。",
       },
       warnings: {
+        extraDepartureRequired: "额外车辆必须填写发车时间。",
         regularWeekdayOnly: "常规车辆只能在周一到周五创建。",
         weekendWeekendOnly: "周末车辆只能在周六或周日创建。",
         weekendPersistence: "周末车辆必须是持久的。请选择每周六和/或每周日，或在额外运输列表中创建该车辆。",
@@ -665,6 +668,7 @@
         switchingLanguage: "Memuatkan bahasa papan pemuka.",
       },
       warnings: {
+        extraDepartureRequired: "Masa berlepas wajib diisi untuk kenderaan tambahan.",
         regularWeekdayOnly: "Kenderaan biasa hanya boleh dicipta dari Isnin hingga Jumaat.",
         weekendWeekendOnly: "Kenderaan hujung minggu hanya boleh dicipta pada Sabtu atau Ahad.",
         weekendPersistence: "Kenderaan hujung minggu mesti berterusan. Pilih Setiap Sabtu dan/atau Setiap Ahad, atau cipta kenderaan itu dalam Senarai Pengangkutan Tambahan.",
@@ -841,6 +845,7 @@
         switchingLanguage: "Nilo-load ang wika ng dashboard.",
       },
       warnings: {
+        extraDepartureRequired: "Kailangan ang Departure Time para sa extra na sasakyan.",
         regularWeekdayOnly: "Ang mga regular na sasakyan ay maaari lamang gawin mula Lunes hanggang Biyernes.",
         weekendWeekendOnly: "Ang mga weekend na sasakyan ay maaari lamang gawin tuwing Sabado o Linggo.",
         weekendPersistence: "Dapat persistent ang mga weekend na sasakyan. Piliin ang Tuwing Sabado at/o Tuwing Linggo, o gawin ang sasakyan sa Listahan ng Extra na Transport.",

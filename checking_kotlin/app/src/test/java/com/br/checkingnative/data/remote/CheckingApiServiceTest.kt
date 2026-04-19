@@ -117,7 +117,7 @@ class CheckingApiServiceTest {
             )
         } catch (error: CheckingApiException) {
             assertEquals(
-                "API indisponivel no momento (502 Bad Gateway).",
+                "API indisponível no momento (502 Bad Gateway).",
                 error.userMessage,
             )
             return@runBlocking

@@ -44,7 +44,7 @@ data class MobileSubmitResponse(
                 ok = json.getBooleanOrNull("ok") ?: false,
                 duplicate = json.getBooleanOrNull("duplicate") ?: false,
                 queuedForms = json.getBooleanOrNull("queued_forms") ?: true,
-                message = json.getStringOrNull("message") ?: "Operacao processada.",
+                message = json.getStringOrNull("message") ?: "Operação processada.",
                 state = json.getObjectOrNull("state")
                     ?.let(MobileStateResponse::fromJsonObject)
                     ?: MobileStateResponse.fromJsonObject(JsonObject()),

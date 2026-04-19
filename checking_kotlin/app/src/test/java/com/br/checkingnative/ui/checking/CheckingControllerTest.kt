@@ -128,8 +128,8 @@ class CheckingControllerTest {
         val message = fixture.controller.syncHistory()
 
         val state = fixture.controller.uiState.value.state
-        assertEquals("Historico sincronizado com a API.", message)
-        assertEquals("Historico sincronizado com a API.", state.statusMessage)
+        assertEquals("Histórico sincronizado com a API.", message)
+        assertEquals("Histórico sincronizado com a API.", state.statusMessage)
         assertEquals(StatusTone.SUCCESS, state.statusTone)
         assertEquals(Instant.parse("2026-04-18T08:00:00Z"), state.lastCheckIn)
         assertNull(state.lastCheckOut)
@@ -193,6 +193,31 @@ class CheckingControllerTest {
         assertNull(state.lastCheckInLocation)
         assertEquals(RegistroType.CHECK_OUT, state.registro)
         assertFalse(state.isSubmitting)
+    }
+
+    @Test
+    fun resolveInformeForSubmission_manualUsesSelectedAndAutomationUsesNormal() {
+        val state = CheckingState.initial().copy(
+            registro = RegistroType.CHECK_IN,
+            checkInInforme = InformeType.RETROATIVO,
+        )
+
+        assertEquals(
+            InformeType.RETROATIVO,
+            CheckingController.resolveInformeForSubmission(
+                state = state,
+                action = RegistroType.CHECK_IN,
+                source = CheckingController.SOURCE_MANUAL,
+            ),
+        )
+        assertEquals(
+            InformeType.NORMAL,
+            CheckingController.resolveInformeForSubmission(
+                state = state,
+                action = RegistroType.CHECK_IN,
+                source = CheckingController.SOURCE_LOCATION_AUTOMATION,
+            ),
+        )
     }
 
     @Test

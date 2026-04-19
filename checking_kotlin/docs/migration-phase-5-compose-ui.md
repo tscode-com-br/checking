@@ -1,13 +1,14 @@
-# Migracao Kotlin - Fase 5 UI Compose
+# Migração Kotlin - Fase 5 API E Fluxos Manuais
 
 Atualizado em: 2026-04-19
 
 ## Objetivo
 
-Substituir a tela tecnica de bootstrap pela primeira UI funcional em Jetpack
-Compose, conectada ao controller Kotlin criado na Fase 4.
+Concluir a integração dos fluxos manuais com `CheckingApiService` e expor
+esses fluxos na primeira UI funcional em Jetpack Compose, conectada ao
+controller Kotlin criado na Fase 4.
 
-Esta fase entrega a experiencia principal para os fluxos manuais do app:
+Esta fase entrega a experiência principal para os fluxos manuais do app:
 
 - visualizar ultimos check-in/check-out
 - informar chave Petrobras
@@ -19,6 +20,22 @@ Esta fase entrega a experiencia principal para os fluxos manuais do app:
 - atualizar catalogo de localizacoes
 - acessar configuracoes basicas
 - acessar painel de automacao por localizacao, ainda sem captura real nativa
+
+## API E Fluxos Manuais
+
+Foram conectados:
+
+- `CheckingViewModel` -> `CheckingController` -> `CheckingApiService`
+- `syncHistory`, com aplicação de último check-in/check-out remoto e sugestão
+  da próxima ação
+- `refreshLocationsCatalog`, com substituição de Room/cache e aplicação de
+  `location_accuracy_threshold_meters`
+- `submitCurrent`, com validação de chave/configuração, envio de
+  `client_event_id` e aplicação do estado remoto retornado
+- fallback para `https://www.tscode.com.br`
+- mensagens de erro HTTP amigáveis alinhadas ao Flutter
+- regra crítica de informe: manual usa o informe escolhido; automação por
+  localização sempre envia `normal`
 
 ## Tela Principal
 
@@ -150,6 +167,7 @@ Fase 5 e considerada concluida quando:
 
 Status atual:
 
+- API e fluxos manuais implementados
 - tela funcional implementada
 - bootstrap removido
 - warnings reduzidos de 18 para 2

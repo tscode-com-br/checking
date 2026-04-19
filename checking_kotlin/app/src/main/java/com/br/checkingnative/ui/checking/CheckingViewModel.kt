@@ -63,7 +63,7 @@ class CheckingViewModel @Inject constructor(
     fun refreshLocationsCatalog() {
         viewModelScope.launch {
             val count = controller.refreshLocationsCatalog(silent = true, updateStatus = true)
-            emitMessage("$count localizacoes atualizadas no aplicativo.")
+            emitMessage("$count localizações atualizadas no aplicativo.")
         }
     }
 
@@ -138,7 +138,7 @@ class CheckingViewModel @Inject constructor(
         return if (error is CheckingApiException) {
             error.userMessage
         } else {
-            error.message ?: "Falha ao executar a operacao."
+            error.message ?: "Falha ao executar a operação."
         }
     }
 }

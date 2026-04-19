@@ -957,6 +957,7 @@ header {
   text-align: left;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  cursor: pointer;
 }
 
 .transport-request-card:hover {
@@ -967,6 +968,14 @@ header {
 .transport-request-card:focus-visible {
   outline: 2px solid rgba(15, 118, 110, 0.24);
   outline-offset: 2px;
+}
+
+.transport-request-card[aria-disabled="true"] {
+  cursor: default;
+}
+
+.transport-request-card[aria-disabled="true"]:hover {
+  transform: none;
 }
 
 .transport-request-card.is-selected {
@@ -1034,6 +1043,38 @@ header {
   line-height: 1.4;
 }
 
+.transport-request-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transport-request-card-cancel-button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid rgba(220, 38, 38, 0.24);
+  border-radius: 999px;
+  background: rgba(254, 226, 226, 0.92);
+  color: #b91c1c;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.transport-request-card-cancel-button:hover {
+  background: rgba(254, 202, 202, 0.98);
+}
+
+.transport-request-card-cancel-button:focus-visible {
+  outline: 2px solid rgba(220, 38, 38, 0.22);
+  outline-offset: 2px;
+}
+
+.transport-request-card-cancel-button:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
 .transport-option-button {
   width: 100%;
   min-height: clamp(48px, 6vh, 56px);
@@ -1095,16 +1136,6 @@ header {
 .transport-acknowledgement-label input {
   margin-top: 2px;
   accent-color: #1592d2;
-}
-
-.transport-footer-actions {
-  display: grid;
-  gap: 10px;
-  margin-top: auto;
-}
-
-.transport-cancel-button {
-  background: linear-gradient(135deg, #dc2626, #b91c1c);
 }
 
 .transport-inline-status {

@@ -42,9 +42,9 @@ object CheckingLocationLogic {
     const val automaticCheckoutLocation: String = "Fora do Local de Trabalho"
     const val outsideWorkplaceCapturedLocation: String = "Fora do Ambiente de Trabalho"
     const val checkoutZoneCapturedLocation: String = "Zona de Check-Out"
-    const val uncatalogedCapturedLocation: String = "Localizacao nao Cadastrada"
+    const val uncatalogedCapturedLocation: String = "Localização não Cadastrada"
     const val postCheckoutNightModeStatusMessage: String =
-        "Modo noturno apos check-out ativo ate 06:00 do dia seguinte, no horario de Singapura."
+        "Modo noturno após check-out ativo até 06:00 do dia seguinte, no horário de Singapura."
 
     private val singaporeOffset: ZoneOffset = ZoneOffset.ofHours(8)
     private val systemZone: ZoneId

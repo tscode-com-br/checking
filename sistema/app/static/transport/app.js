@@ -677,6 +677,7 @@
       "Vehicle saved successfully.": "status.vehicleSaved",
       "Vehicle deleted from the database.": "status.vehicleDeleted",
       "Transport request rejected successfully.": "status.requestRejected",
+      "departure_time is required for extra vehicles": "warnings.extraDepartureRequired",
       "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": "warnings.weekendPersistence",
       "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
       "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
@@ -690,6 +691,14 @@
     return VEHICLE_DEFAULT_SEAT_COUNT[vehicleType] || VEHICLE_DEFAULT_SEAT_COUNT.carro;
   }
 
+  function normalizeVehicleScope(scope) {
+    const normalizedScope = String(scope || "").trim().toLowerCase();
+    if (normalizedScope === "regular" || normalizedScope === "weekend" || normalizedScope === "extra") {
+      return normalizedScope;
+    }
+    return "regular";
+  }
+
   function applyVehicleSeatDefault(vehicleType) {
     if (!vehicleForm || !vehicleForm.elements || !vehicleForm.elements.lugares) {
       return;
@@ -698,7 +707,7 @@
   }
 
   function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
-    const serviceScope = String(formData.get("service_scope") || "regular");
+    const serviceScope = normalizeVehicleScope(formData.get("service_scope") || "regular");
     const payload = {
       service_scope: serviceScope,
       service_date: String(serviceDate || ""),
@@ -711,7 +720,7 @@
 
     if (serviceScope === "extra") {
       payload.route_kind = String(formData.get("route_kind") || selectedRouteKind || "home_to_work");
-      payload.departure_time = String(formData.get("departure_time") || "");
+      payload.departure_time = String(formData.get("departure_time") || "").trim();
       return payload;
     }
 
@@ -1907,6 +1916,13 @@
         const submitButton = vehicleForm.querySelector('button[type="submit"]');
 
         clearVehicleModalFeedback();
+        if (payload.service_scope === "extra" && !String(payload.departure_time || "").trim()) {
+          setVehicleModalFeedback(t("warnings.extraDepartureRequired"), "error");
+          if (vehicleForm.elements.departure_time && typeof vehicleForm.elements.departure_time.focus === "function") {
+            vehicleForm.elements.departure_time.focus();
+          }
+          return;
+        }
         if (payload.service_scope === "weekend" && !payload.every_saturday && !payload.every_sunday) {
           setVehicleModalFeedback(
             t("warnings.weekendPersistence"),
@@ -2066,28 +2082,32 @@
         return;
       }
 
+      const normalizedScope = normalizeVehicleScope(scope);
+
       if (modalScopeLabel) {
-        modalScopeLabel.textContent = mapScopeTitle(scope);
+        modalScopeLabel.textContent = mapScopeTitle(normalizedScope);
       }
       if (modalScopeNote) {
-        modalScopeNote.textContent = getModalScopeNote(scope);
+        modalScopeNote.textContent = getModalScopeNote(normalizedScope);
       }
       if (extraDepartureField) {
-        extraDepartureField.hidden = scope !== "extra";
+        extraDepartureField.hidden = normalizedScope !== "extra";
       }
       if (extraRouteField) {
-        extraRouteField.hidden = scope !== "extra";
+        extraRouteField.hidden = normalizedScope !== "extra";
       }
       weekendPersistenceFields.forEach(function (fieldElement) {
-        fieldElement.hidden = scope !== "weekend";
+        fieldElement.hidden = normalizedScope !== "weekend";
       });
       if (vehicleForm.elements.route_kind) {
         vehicleForm.elements.route_kind.value = getSelectedRouteKind();
+        vehicleForm.elements.route_kind.disabled = normalizedScope !== "extra";
       }
       if (vehicleForm.elements.departure_time) {
-        vehicleForm.elements.departure_time.required = scope === "extra";
+        vehicleForm.elements.departure_time.required = normalizedScope === "extra";
+        vehicleForm.elements.departure_time.disabled = normalizedScope !== "extra";
       }
-      if (vehicleForm.elements.departure_time && scope !== "extra") {
+      if (vehicleForm.elements.departure_time && normalizedScope !== "extra") {
         vehicleForm.elements.departure_time.value = "";
       }
       if (vehicleForm.elements.every_saturday) {
@@ -2102,20 +2122,28 @@
       if (!vehicleModal || !vehicleForm) {
         return;
       }
-      if (!canOpenVehicleModal(scope)) {
+      const normalizedScope = normalizeVehicleScope(scope);
+      if (!canOpenVehicleModal(normalizedScope)) {
         return;
       }
       vehicleModal.hidden = false;
-      vehicleModal.dataset.scope = scope;
+      vehicleModal.dataset.scope = normalizedScope;
       vehicleForm.reset();
       clearVehicleModalFeedback();
-      vehicleForm.elements.service_scope.value = scope;
+      vehicleForm.elements.service_scope.value = normalizedScope;
       applyVehicleSeatDefault(String(vehicleForm.elements.tipo.value || "carro"));
       vehicleForm.elements.tolerance.value = "5";
       if (vehicleForm.elements.departure_time) {
         vehicleForm.elements.departure_time.value = "";
       }
-      syncVehicleModalFields(scope);
+      syncVehicleModalFields(normalizedScope);
+      if (
+        normalizedScope === "extra"
+        && vehicleForm.elements.departure_time
+        && typeof vehicleForm.elements.departure_time.focus === "function"
+      ) {
+        vehicleForm.elements.departure_time.focus();
+      }
     }
 
     function closeVehicleModal() {

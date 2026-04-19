@@ -2879,6 +2879,7 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
                 "service_scope": "extra",
                 "service_date": friday.isoformat(),
                 "route_kind": "work_to_home",
+                "departure_time": "17:45",
                 "tipo": "carro",
                 "placa": "EXT7001",
                 "color": "Red",
@@ -2953,6 +2954,29 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
     assert all(row.recurrence_kind == "weekday" for row in regular_schedules)
 
 
+def test_transport_extra_vehicle_registration_requires_departure_time():
+    friday = date(2026, 4, 17)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "extra",
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "tipo": "carro",
+                "placa": "EXT7011",
+                "color": "Gray",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "departure_time is required for extra vehicles" in json.dumps(response.json()["detail"])
+
+
 def test_transport_weekend_vehicle_registration_requires_persistent_weekday_selection():
     saturday = date(2026, 4, 18)
 
@@ -2987,6 +3011,7 @@ def test_transport_vehicle_registration_conflict_messages_are_in_english():
                 "service_scope": "extra",
                 "service_date": friday.isoformat(),
                 "route_kind": "work_to_home",
+                "departure_time": "17:45",
                 "tipo": "carro",
                 "placa": "EXT7010",
                 "color": "Red",
@@ -3028,6 +3053,7 @@ def test_transport_vehicle_registration_reuses_plate_after_past_single_date_sche
                 "service_scope": "extra",
                 "service_date": friday.isoformat(),
                 "route_kind": "work_to_home",
+                "departure_time": "17:45",
                 "tipo": "carro",
                 "placa": "AAA0000A",
                 "color": "Gray",

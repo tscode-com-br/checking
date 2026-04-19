@@ -43,7 +43,7 @@ Portar fila de persistência para não perder a última chave em updates rápido
 Portar estados transitórios: loading, submitting, syncing, locationUpdating, automaticCheckingUpdating.
 Garantir mensagens e tons iguais ao Flutter, inclusive acentos/textos de usuário.
 
-Fase 5 - API E Fluxos Manuais (crashed)
+Fase 5 - API E Fluxos Manuais (já implementada)
 
 Conectar UI/ViewModel ao CheckingApiService.
 Implementar syncHistory: buscar estado remoto, aplicar último check-in/out e sugerir próxima ação.
@@ -52,6 +52,7 @@ Implementar submitCurrent: validar chave/API, montar client_event_id, enviar eve
 Preservar regra crítica: envio manual usa o informe escolhido; automação sempre usa normal.
 Tratar erros HTTP com as mesmas mensagens amigáveis do Flutter.
 Testar fallback https://www.tscode.com.br.
+Validado em 2026-04-19 com testDebugUnitTest, assembleDebug e lintDebug.
 
 Fase 6 - Permissões E Configurações
 

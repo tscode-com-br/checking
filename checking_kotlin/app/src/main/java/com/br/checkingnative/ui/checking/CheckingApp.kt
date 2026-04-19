@@ -321,7 +321,7 @@ private fun Header(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "TBY - Autodeclaracao de Presenca.",
+                text = "TBY - Autodeclaração de Presença.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = CheckingMuted,
             )
@@ -331,7 +331,7 @@ private fun Header(
         ) {
             Icon(
                 imageVector = Icons.Filled.LocationOn,
-                contentDescription = "Automacao por localizacao",
+                contentDescription = "Automação por localização",
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -340,7 +340,7 @@ private fun Header(
         ) {
             Icon(
                 imageVector = Icons.Filled.Settings,
-                contentDescription = "Configuracoes do aplicativo",
+                contentDescription = "Configurações do aplicativo",
                 tint = CheckingText,
             )
         }
@@ -376,12 +376,12 @@ private fun HistorySection(state: CheckingState) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             HistoryItem(
-                label = "Ultimo Check-In",
+                label = "Último Check-In",
                 value = formatHistoryInstant(state.lastCheckIn),
                 modifier = Modifier.weight(1f),
             )
             HistoryItem(
-                label = "Ultimo Check-Out",
+                label = "Último Check-Out",
                 value = formatHistoryInstant(state.lastCheckOut),
                 modifier = Modifier.weight(1f),
             )
@@ -533,9 +533,9 @@ private fun LocationAutomationSheet(
     var showHistoryDialog by remember { mutableStateOf(false) }
 
     SheetContent {
-        SheetTitle("Automacao por Localizacao")
+        SheetTitle("Automação por Localização")
         SwitchRow(
-            label = "Check-in/Check-out automaticos:",
+            label = "Check-in/Check-out automáticos:",
             value = CheckingRuntimeLogic.isAutomaticCheckingEnabledInUi(state),
             isBusy = state.isAutomaticCheckingUpdating,
             onCheckedChange = if (CheckingRuntimeLogic.isAutomaticCheckingToggleInteractive(state)) {
@@ -551,11 +551,11 @@ private fun LocationAutomationSheet(
         ) {
             Icon(imageVector = Icons.Filled.History, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Ultimas Localizacoes")
+            Text("Últimas Localizações")
         }
-        DetailRow("Ultima Atualizacao", formatDetailedInstant(state.lastLocationUpdateAt))
+        DetailRow("Última Atualização", formatDetailedInstant(state.lastLocationUpdateAt))
         DetailRow(
-            "Atualizacoes",
+            "Atualizações",
             CheckingLocationLogic.describeLocationUpdateInterval(
                 configuredIntervalSeconds = state.locationUpdateIntervalSeconds,
             ),
@@ -588,11 +588,11 @@ private fun SettingsSheet(
     onClose: () -> Unit,
 ) {
     SheetContent {
-        SheetTitle("Configuracoes")
-        SectionTitle("Permissoes")
+        SheetTitle("Configurações")
+        SectionTitle("Permissões")
         GroupBox {
             SwitchRow(
-                label = "Compartilhar Localizacao:",
+                label = "Compartilhar Localização:",
                 value = state.locationSharingEnabled,
                 isBusy = state.isLocationUpdating,
                 onCheckedChange = if (CheckingRuntimeLogic.isLocationSharingToggleInteractive(state)) {
@@ -602,25 +602,25 @@ private fun SettingsSheet(
                 },
             )
             SwitchRow(
-                label = "Acesso em 2 plano:",
+                label = "Acesso em 2º plano:",
                 value = permissionSettings.backgroundAccessEnabled,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = null,
             )
             SwitchRow(
-                label = "Permitir notificacoes:",
+                label = "Permitir notificações:",
                 value = permissionSettings.notificationsEnabled,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = null,
             )
             SwitchRow(
-                label = "Sem restricoes de bateria:",
+                label = "Sem restrições de bateria:",
                 value = permissionSettings.batteryOptimizationIgnored,
                 isBusy = permissionSettings.isRefreshing,
                 onCheckedChange = null,
             )
         }
-        SectionTitle("Sincronizacao")
+        SectionTitle("Sincronização")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -633,7 +633,7 @@ private fun SettingsSheet(
             ) {
                 Icon(imageVector = Icons.Filled.Refresh, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Historico")
+                Text("Histórico")
             }
             OutlinedButton(
                 onClick = onRefreshCatalog,
@@ -642,7 +642,7 @@ private fun SettingsSheet(
             ) {
                 Icon(imageVector = Icons.Filled.Refresh, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Catalogo")
+                Text("Catálogo")
             }
         }
         SectionTitle("Ajustes Gerais")
@@ -652,13 +652,13 @@ private fun SettingsSheet(
                 onChanged = onLocationUpdateIntervalChanged,
             )
             SwitchRow(
-                label = "Modo noturno apos check-out:",
+                label = "Modo noturno após check-out:",
                 value = state.nightModeAfterCheckoutEnabled,
                 onCheckedChange = onNightModeAfterCheckoutChanged,
             )
             if (!state.nightModeAfterCheckoutEnabled) {
                 SwitchRow(
-                    label = "Desativar atualizacao noturna:",
+                    label = "Desativar atualização noturna:",
                     value = state.nightUpdatesDisabled,
                     onCheckedChange = onNightUpdatesChanged,
                 )
@@ -669,7 +669,7 @@ private fun SettingsSheet(
                         onChanged = onNightStartChanged,
                     )
                     MinutesStepper(
-                        label = "Ate",
+                        label = "Até",
                         value = state.nightPeriodEndMinutes,
                         onChanged = onNightEndChanged,
                     )
@@ -759,7 +759,7 @@ private fun IntervalSlider(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        DetailRow("Frequencia de Atividades", "${sliderValue.roundToInt()} min")
+        DetailRow("Frequência de Atividades", "${sliderValue.roundToInt()} min")
         Slider(
             value = sliderValue,
             onValueChange = { value ->
@@ -904,7 +904,7 @@ private fun RecentLocationHistoryDialog(
         },
         title = {
             Text(
-                text = "Ultimas Localizacoes",
+                text = "Últimas Localizações",
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )

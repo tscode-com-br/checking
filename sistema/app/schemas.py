@@ -521,6 +521,8 @@ class TransportVehicleCreate(BaseModel):
         if self.service_scope == "extra":
             if self.route_kind is None:
                 raise ValueError("route_kind is required for extra vehicles")
+            if self.departure_time is None:
+                raise ValueError("departure_time is required for extra vehicles")
             if self.every_weekend or self.every_saturday or self.every_sunday:
                 raise ValueError("weekend persistence is not allowed for extra vehicles")
             return self
@@ -558,10 +560,12 @@ class TransportVehicleCreate(BaseModel):
     def validate_vehicle_color(cls, value: str) -> str:
         return _normalize_required_label(value, "A cor", max_length=40)
 
-    @field_validator("departure_time")
+    @field_validator("departure_time", mode="before")
     @classmethod
     def validate_vehicle_departure_time(cls, value: str | None) -> str | None:
         if value is None:
+            return None
+        if not str(value).strip():
             return None
         return _normalize_transport_time(value)
 

@@ -165,7 +165,7 @@ class CheckingApiService @Inject constructor(
             }
         }
 
-        throw fallbackException(lastError, "Falha ao atualizar as localizacoes do aplicativo.")
+        throw fallbackException(lastError, "Falha ao atualizar as localizações do aplicativo.")
     }
 
     fun candidateBaseUrls(rawBaseUrl: String): List<String> {
@@ -199,7 +199,7 @@ class CheckingApiService @Inject constructor(
         }
 
         val url = runCatching { URL(normalized) }.getOrNull()
-            ?: throw CheckingApiException("A URL base da API e invalida.")
+            ?: throw CheckingApiException("A URL base da API é inválida.")
         if (url.protocol != "https") {
             throw CheckingApiException("A URL da API deve usar HTTPS.")
         }
@@ -258,9 +258,9 @@ class CheckingApiService @Inject constructor(
 
     private fun fallbackHttpMessage(statusCode: Int): String {
         return when (statusCode) {
-            502 -> "API indisponivel no momento (502 Bad Gateway)."
-            503 -> "API indisponivel no momento (503 Service Unavailable)."
-            504 -> "API nao respondeu a tempo (504 Gateway Timeout)."
+            502 -> "API indisponível no momento (502 Bad Gateway)."
+            503 -> "API indisponível no momento (503 Service Unavailable)."
+            504 -> "API não respondeu a tempo (504 Gateway Timeout)."
             else -> "Erro $statusCode ao acessar a API."
         }
     }

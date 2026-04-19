@@ -188,9 +188,9 @@ class CheckingController @Inject constructor(
 
         setStatus(
             if (value) {
-                "Modo noturno apos check-out ativado."
+                "Modo noturno após check-out ativado."
             } else {
-                "Modo noturno apos check-out desativado."
+                "Modo noturno após check-out desativado."
             },
             if (value) StatusTone.SUCCESS else StatusTone.WARNING,
         )
@@ -237,7 +237,7 @@ class CheckingController @Inject constructor(
                 ),
             )
             setStatus(
-                "Ative a busca por localizacao para habilitar o check-in/check-out automatico.",
+                "Ative a busca por localização para habilitar o check-in/check-out automático.",
                 StatusTone.WARNING,
             )
             return
@@ -254,9 +254,9 @@ class CheckingController @Inject constructor(
             )
             setStatus(
                 if (value) {
-                    "Check-in/Check-out automaticos ativados."
+                    "Check-in/Check-out automáticos ativados."
                 } else {
-                    "Check-in/Check-out automaticos desativados."
+                    "Check-in/Check-out automáticos desativados."
                 },
                 if (value) StatusTone.SUCCESS else StatusTone.WARNING,
             )
@@ -273,7 +273,7 @@ class CheckingController @Inject constructor(
 
         if (value && !state.canEnableLocationSharing) {
             setStatus(
-                "Permita localizacao precisa, localizacao em segundo plano e notificacoes para habilitar a busca por localizacao.",
+                "Permita localização precisa, localização em segundo plano e notificações para habilitar a busca por localização.",
                 StatusTone.ERROR,
             )
             return
@@ -288,7 +288,7 @@ class CheckingController @Inject constructor(
                     lastMatchedLocation = null,
                 ),
             )
-            setStatus("Busca por localizacao desativada.", StatusTone.WARNING)
+            setStatus("Busca por localização desativada.", StatusTone.WARNING)
             return
         }
 
@@ -298,7 +298,7 @@ class CheckingController @Inject constructor(
                 isLocationUpdating = false,
             ),
         )
-        setStatus("Busca por localizacao ativada.", StatusTone.SUCCESS)
+        setStatus("Busca por localização ativada.", StatusTone.SUCCESS)
     }
 
     suspend fun refreshAfterEnteringForeground() {
@@ -337,7 +337,7 @@ class CheckingController @Inject constructor(
                     lastCheckInLocation = null,
                     lastCheckIn = null,
                     lastCheckOut = null,
-                    statusMessage = "Atualizacao em andamento. Aguarde.",
+                    statusMessage = "Atualização em andamento. Aguarde.",
                     statusTone = StatusTone.WARNING,
                     isLoading = false,
                 ),
@@ -363,7 +363,7 @@ class CheckingController @Inject constructor(
 
             if (currentState.locationSharingEnabled) {
                 refreshLocationsCatalog(silent = true, updateStatus = false)
-                setStatus("Atividades e localizacoes atualizadas.", StatusTone.SUCCESS)
+                setStatus("Atividades e localizações atualizadas.", StatusTone.SUCCESS)
             } else {
                 setStateOnly(
                     currentState.copy(
@@ -402,7 +402,7 @@ class CheckingController @Inject constructor(
         if (!currentState.hasApiConfig) {
             if (updateStatus) {
                 setStatus(
-                    "A configuracao interna da API do aplicativo esta incompleta.",
+                    "A configuração interna da API do aplicativo está incompleta.",
                     StatusTone.WARNING,
                 )
             }
@@ -425,9 +425,9 @@ class CheckingController @Inject constructor(
             applyRemoteState(
                 response = response,
                 statusMessage = if (response.found) {
-                    "Historico sincronizado com a API."
+                    "Histórico sincronizado com a API."
                 } else {
-                    "Nenhum historico encontrado para a chave informada."
+                    "Nenhum histórico encontrado para a chave informada."
                 },
                 tone = if (response.found) StatusTone.SUCCESS else StatusTone.WARNING,
                 updateStatus = updateStatus,
@@ -457,7 +457,7 @@ class CheckingController @Inject constructor(
         if (!currentState.hasApiConfig) {
             if (updateStatus) {
                 setStatus(
-                    "A configuracao interna da API do aplicativo esta incompleta.",
+                    "A configuração interna da API do aplicativo está incompleta.",
                     StatusTone.WARNING,
                 )
             }
@@ -479,7 +479,7 @@ class CheckingController @Inject constructor(
                 if (updateStatus) {
                     resolvedState.copy(
                         statusMessage =
-                            "${response.items.size} localizacoes atualizadas no aplicativo.",
+                            "${response.items.size} localizações atualizadas no aplicativo.",
                         statusTone = StatusTone.SUCCESS,
                     )
                 } else {
@@ -498,7 +498,7 @@ class CheckingController @Inject constructor(
             }
             val message = userMessage(
                 error,
-                "Falha ao atualizar as localizacoes do aplicativo.",
+                "Falha ao atualizar as localizações do aplicativo.",
             )
             if (updateStatus) {
                 setStatus(message, StatusTone.ERROR)
@@ -535,7 +535,7 @@ class CheckingController @Inject constructor(
         }
         if (!currentState.hasApiConfig) {
             throw CheckingApiException(
-                "A configuracao interna da API do aplicativo esta incompleta.",
+                "A configuração interna da API do aplicativo está incompleta.",
             )
         }
 
@@ -588,7 +588,7 @@ class CheckingController @Inject constructor(
             }
             val message = userMessage(error, "Falha ao enviar evento pela API.")
             setStatus(
-                "$message (${if (source == SOURCE_MANUAL) "manual" else "automatico"})",
+                "$message (${if (source == SOURCE_MANUAL) "manual" else "automático"})",
                 StatusTone.ERROR,
             )
             throw error
@@ -640,7 +640,7 @@ class CheckingController @Inject constructor(
                 lastCheckIn = null,
                 lastCheckOut = null,
                 statusMessage = if (updateStatus) {
-                    "Informe a chave do usuario para sincronizar o historico."
+                    "Informe a chave do usuário para sincronizar o histórico."
                 } else {
                     currentState.statusMessage
                 },
