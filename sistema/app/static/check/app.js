@@ -351,7 +351,6 @@
     const authBusy = isPasswordActionBusy();
     const dialogOpen = isAnyDialogOpen();
     const unlocked = isApplicationUnlocked();
-    const transportAvailable = unlocked;
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
@@ -447,10 +446,8 @@
     });
 
     if (transportButton) {
-      const transportEnabled = !dialogOpen && !lockActive && transportAvailable;
-      transportButton.disabled = !transportEnabled;
-      transportButton.setAttribute('aria-disabled', String(!transportEnabled));
-      transportButton.classList.toggle('is-enabled', transportEnabled);
+      transportButton.disabled = false;
+      transportButton.setAttribute('aria-disabled', 'false');
     }
 
     transportScreenControls.forEach((control) => {

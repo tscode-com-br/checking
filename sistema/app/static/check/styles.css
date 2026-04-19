@@ -589,16 +589,6 @@ header {
 
 .transport-choice-button {
   appearance: none;
-  cursor: default;
-  background: #f8fafc;
-  color: #475569;
-}
-
-.transport-choice-button:disabled {
-  opacity: 1;
-}
-
-.transport-choice-button.is-enabled {
   cursor: pointer;
   border-color: #12a8b4;
   background: #18c7d4;
@@ -606,7 +596,7 @@ header {
   box-shadow: 0 10px 24px rgba(24, 199, 212, 0.28);
 }
 
-.transport-choice-button.is-enabled:hover {
+.transport-choice-button:hover {
   transform: translateY(-1px);
 }
 
