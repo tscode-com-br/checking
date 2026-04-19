@@ -1849,7 +1849,8 @@ def queue_assignment_notification(
         select(TransportBotSession)
         .where(TransportBotSession.user_id == user.id)
         .order_by(TransportBotSession.updated_at.desc(), TransportBotSession.id.desc())
-    ).scalar_one_or_none()
+        .limit(1)
+    ).scalars().first()
     if session is None:
         return None
 

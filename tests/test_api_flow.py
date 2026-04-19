@@ -5247,6 +5247,97 @@ def test_transport_dashboard_reject_survives_unexpected_whatsapp_dispatch_error(
     assert all(row.status == "rejected" for row in assignments)
 
 
+def test_transport_dashboard_reject_uses_latest_bot_session_when_user_has_multiple_sessions(monkeypatch):
+    fixed_now = datetime(2026, 4, 20, 10, 35, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Reject Multi Session Hub", address="19 Session Road", zip="191919", country="Singapore"))
+        user = User(
+            rfid=None,
+            nome="Reject Multi Session Rider",
+            chave="RM19",
+            projeto="P82",
+            workplace="Reject Multi Session Hub",
+            end_rua="19 Session Street",
+            zip="191919",
+            local=None,
+            checkin=True,
+            time=fixed_now,
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:00",
+            single_date=None,
+            created_via="web",
+            status="active",
+            created_at=fixed_now,
+            updated_at=fixed_now,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+
+        db.add_all([
+            TransportBotSession(
+                chat_id="559119190001",
+                user_id=user.id,
+                chave=user.chave,
+                state="ready",
+                context_json=None,
+                created_at=fixed_now - timedelta(days=1),
+                updated_at=fixed_now - timedelta(days=1),
+                last_message_at=fixed_now - timedelta(days=1),
+            ),
+            TransportBotSession(
+                chat_id="559119190002",
+                user_id=user.id,
+                chave=user.chave,
+                state="ready",
+                context_json=None,
+                created_at=fixed_now,
+                updated_at=fixed_now,
+                last_message_at=fixed_now,
+            ),
+        ])
+        db.commit()
+        request_id = request_row.id
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        rejected = admin_client.post(
+            "/api/transport/requests/reject",
+            json={
+                "request_id": request_id,
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+            },
+        )
+
+    assert rejected.status_code == 200
+
+    with SessionLocal() as db:
+        request_row = db.get(TransportRequest, request_id)
+        queued_notification = db.execute(
+            select(TransportNotification)
+            .where(TransportNotification.request_id == request_id)
+            .order_by(TransportNotification.id.desc())
+        ).scalars().first()
+
+    assert request_row is not None
+    assert request_row.status == "cancelled"
+    assert queued_notification is not None
+    assert queued_notification.chat_id == "559119190002"
+
+
 def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_dashboard(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 8, 20, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)

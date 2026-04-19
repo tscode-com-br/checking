@@ -313,6 +313,20 @@
     acknowledgementChecked: false,
     inlineMessage: '',
     inlineTone: null,
+    dismissedRequestIds: new Set(),
+  };
+
+  const transportRequestSwipeState = {
+    pointerId: null,
+    requestId: null,
+    startX: 0,
+    startY: 0,
+    deltaX: 0,
+    deltaY: 0,
+    isHorizontal: false,
+    hasMoved: false,
+    targetCard: null,
+    suppressedClickRequestId: null,
   };
 
   function isStandaloneShortcutMode() {
@@ -366,8 +380,18 @@
     }
   }
 
+  function clearDismissedTransportRequests() {
+    transportUiState.dismissedRequestIds.clear();
+  }
+
   function getTransportRequests() {
     return Array.isArray(transportState.requests) ? transportState.requests : [];
+  }
+
+  function getVisibleTransportRequests() {
+    return getTransportRequests().filter(
+      (requestItem) => !transportUiState.dismissedRequestIds.has(Number(requestItem.requestId))
+    );
   }
 
   function findTransportRequestById(requestId) {
@@ -379,8 +403,17 @@
     return getTransportRequests().find((requestItem) => Number(requestItem.requestId) === normalizedRequestId) || null;
   }
 
+  function findVisibleTransportRequestById(requestId) {
+    const normalizedRequestId = Number(requestId);
+    if (!Number.isFinite(normalizedRequestId)) {
+      return null;
+    }
+
+    return getVisibleTransportRequests().find((requestItem) => Number(requestItem.requestId) === normalizedRequestId) || null;
+  }
+
   function getTransportSelectedRequest() {
-    return findTransportRequestById(transportUiState.selectedRequestId);
+    return findVisibleTransportRequestById(transportUiState.selectedRequestId);
   }
 
   function shouldAutoRefreshTransportRequest(requestItem) {
@@ -973,6 +1006,8 @@
     transportUiState.requestBuilderKind = null;
     transportUiState.selectedRequestId = null;
     transportUiState.acknowledgementChecked = false;
+    clearDismissedTransportRequests();
+    resetTransportRequestSwipeState();
     clearTransportInlineStatus();
     renderTransportScreen();
   }
@@ -1163,11 +1198,208 @@
   }
 
   function resolveDefaultSelectedTransportRequestId() {
-    const requests = getTransportRequests();
+    const requests = getVisibleTransportRequests();
     const preferredRequest = requests.find((requestItem) => requestItem.isActive)
       || requests[0]
       || null;
     return preferredRequest ? preferredRequest.requestId : null;
+  }
+
+  function reconcileDismissedTransportRequestIds() {
+    const activeRequestIds = new Set(
+      getTransportRequests()
+        .map((requestItem) => Number(requestItem.requestId))
+        .filter((requestId) => Number.isFinite(requestId))
+    );
+
+    Array.from(transportUiState.dismissedRequestIds).forEach((requestId) => {
+      if (!activeRequestIds.has(requestId)) {
+        transportUiState.dismissedRequestIds.delete(requestId);
+      }
+    });
+  }
+
+  function buildTransportSelectionFallbackPayload() {
+    return {
+      status: transportState.status,
+      request_id: transportState.requestId,
+      request_kind: transportState.requestKind,
+      route_kind: transportState.routeKind,
+      service_date: transportState.serviceDate,
+      requested_time: transportState.requestedTime,
+      boarding_time: transportState.boardingTime,
+      confirmation_deadline_time: transportState.confirmationDeadlineTime,
+      vehicle_type: transportState.vehicleType,
+      vehicle_plate: transportState.vehiclePlate,
+      tolerance_minutes: transportState.toleranceMinutes,
+      awareness_required: transportState.awarenessRequired,
+      awareness_confirmed: transportState.awarenessConfirmed,
+    };
+  }
+
+  function dismissTransportRequestCard(requestId) {
+    const normalizedRequestId = Number(requestId);
+    if (!Number.isFinite(normalizedRequestId)) {
+      return;
+    }
+
+    transportUiState.dismissedRequestIds.add(normalizedRequestId);
+    if (!findVisibleTransportRequestById(transportUiState.selectedRequestId)) {
+      transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
+    }
+    syncSelectedTransportRequestState(buildTransportSelectionFallbackPayload());
+    renderTransportScreen();
+    syncFormControlStates();
+  }
+
+  function resetTransportRequestSwipeState(options) {
+    const preserveSuppressedClick = Boolean(options && options.preserveSuppressedClick);
+    transportRequestSwipeState.pointerId = null;
+    transportRequestSwipeState.requestId = null;
+    transportRequestSwipeState.startX = 0;
+    transportRequestSwipeState.startY = 0;
+    transportRequestSwipeState.deltaX = 0;
+    transportRequestSwipeState.deltaY = 0;
+    transportRequestSwipeState.isHorizontal = false;
+    transportRequestSwipeState.hasMoved = false;
+    transportRequestSwipeState.targetCard = null;
+    if (!preserveSuppressedClick) {
+      transportRequestSwipeState.suppressedClickRequestId = null;
+    }
+  }
+
+  function snapBackTransportRequestCard(cardElement) {
+    if (!cardElement) {
+      return;
+    }
+
+    cardElement.classList.remove('is-swiping');
+    cardElement.style.setProperty('--transport-request-swipe-offset', '0px');
+    cardElement.style.setProperty('--transport-request-swipe-opacity', '1');
+  }
+
+  function animateTransportRequestCardDismissal(cardElement, requestId) {
+    if (!cardElement) {
+      return;
+    }
+
+    cardElement.classList.remove('is-swiping');
+    cardElement.classList.add('is-dismissing');
+    window.setTimeout(() => {
+      dismissTransportRequestCard(requestId);
+    }, 220);
+  }
+
+  function beginTransportRequestSwipe(event) {
+    if (!transportRequestHistoryList || !event || event.pointerType === 'mouse') {
+      return;
+    }
+
+    const targetElement = resolveTransportEventTargetElement(event);
+    if (!targetElement || targetElement.closest('[data-transport-request-cancel="true"][data-request-id]')) {
+      return;
+    }
+
+    const requestCard = targetElement.closest('.transport-request-card[data-request-id]');
+    if (!requestCard || requestCard.getAttribute('aria-disabled') === 'true' || requestCard.classList.contains('is-dismissing')) {
+      return;
+    }
+
+    const requestId = Number(requestCard.getAttribute('data-request-id'));
+    if (!Number.isFinite(requestId)) {
+      return;
+    }
+
+    transportRequestSwipeState.pointerId = event.pointerId;
+    transportRequestSwipeState.requestId = requestId;
+    transportRequestSwipeState.startX = event.clientX;
+    transportRequestSwipeState.startY = event.clientY;
+    transportRequestSwipeState.deltaX = 0;
+    transportRequestSwipeState.deltaY = 0;
+    transportRequestSwipeState.isHorizontal = false;
+    transportRequestSwipeState.hasMoved = false;
+    transportRequestSwipeState.targetCard = requestCard;
+
+    if (typeof requestCard.setPointerCapture === 'function') {
+      try {
+        requestCard.setPointerCapture(event.pointerId);
+      } catch (error) {}
+    }
+  }
+
+  function updateTransportRequestSwipe(event) {
+    if (
+      !transportRequestSwipeState.targetCard
+      || transportRequestSwipeState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const requestCard = transportRequestSwipeState.targetCard;
+    const deltaX = event.clientX - transportRequestSwipeState.startX;
+    const deltaY = event.clientY - transportRequestSwipeState.startY;
+
+    transportRequestSwipeState.deltaX = deltaX;
+    transportRequestSwipeState.deltaY = deltaY;
+
+    if (!transportRequestSwipeState.hasMoved) {
+      if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) {
+        return;
+      }
+      transportRequestSwipeState.hasMoved = true;
+    }
+
+    if (!transportRequestSwipeState.isHorizontal) {
+      if (deltaX >= 0 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+        return;
+      }
+      transportRequestSwipeState.isHorizontal = true;
+    }
+
+    event.preventDefault();
+    requestCard.classList.add('is-swiping');
+    const maxSwipeOffset = Math.max(requestCard.offsetWidth * 1.1, 96);
+    const swipeOffset = Math.max(deltaX, -maxSwipeOffset);
+    const swipeProgress = Math.min(Math.abs(swipeOffset) / Math.max(requestCard.offsetWidth || 1, 1), 1);
+    requestCard.style.setProperty('--transport-request-swipe-offset', `${swipeOffset}px`);
+    requestCard.style.setProperty('--transport-request-swipe-opacity', String(Math.max(0.24, 1 - (swipeProgress * 0.48))));
+  }
+
+  function endTransportRequestSwipe(event) {
+    if (
+      !transportRequestSwipeState.targetCard
+      || transportRequestSwipeState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const requestCard = transportRequestSwipeState.targetCard;
+    const requestId = transportRequestSwipeState.requestId;
+    const swipeThreshold = Math.min(132, Math.max(84, requestCard.offsetWidth * 0.28));
+    const shouldDismiss = transportRequestSwipeState.isHorizontal && transportRequestSwipeState.deltaX <= -swipeThreshold;
+
+    if (typeof requestCard.releasePointerCapture === 'function') {
+      try {
+        requestCard.releasePointerCapture(event.pointerId);
+      } catch (error) {}
+    }
+
+    if (transportRequestSwipeState.hasMoved) {
+      transportRequestSwipeState.suppressedClickRequestId = requestId;
+      window.setTimeout(() => {
+        if (Number(transportRequestSwipeState.suppressedClickRequestId) === requestId) {
+          transportRequestSwipeState.suppressedClickRequestId = null;
+        }
+      }, 250);
+    }
+
+    if (shouldDismiss) {
+      animateTransportRequestCardDismissal(requestCard, requestId);
+    } else {
+      snapBackTransportRequestCard(requestCard);
+    }
+
+    resetTransportRequestSwipeState({ preserveSuppressedClick: transportRequestSwipeState.hasMoved });
   }
 
   function syncSelectedTransportRequestState(payload) {
@@ -1216,7 +1448,8 @@
     transportState.requests = Array.isArray(payload && payload.requests) && payload.requests.length
       ? payload.requests.map(normalizeTransportRequestItem).filter((requestItem) => Number.isFinite(requestItem.requestId))
       : createTransportFallbackRequest(payload);
-    if (transportUiState.selectedRequestId === null || !findTransportRequestById(transportUiState.selectedRequestId)) {
+    reconcileDismissedTransportRequestIds();
+    if (transportUiState.selectedRequestId === null || !findVisibleTransportRequestById(transportUiState.selectedRequestId)) {
       transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
     }
     syncSelectedTransportRequestState(payload);
@@ -1361,14 +1594,14 @@
     }
 
     transportRequestHistoryList.replaceChildren();
-    getTransportRequests().forEach((requestItem) => {
+    getVisibleTransportRequests().forEach((requestItem) => {
       transportRequestHistoryList.appendChild(createTransportRequestCard(requestItem));
     });
   }
 
   function renderTransportScreen() {
     const activeBuilderConfig = getTransportRequestBuilderConfig(transportUiState.requestBuilderKind);
-    const hasRequests = getTransportRequests().length > 0;
+    const hasRequests = getVisibleTransportRequests().length > 0;
 
     if (transportAddressSummaryValue) {
       transportAddressSummaryValue.textContent = formatTransportAddressSummary(transportState.endRua, transportState.zip);
@@ -1481,6 +1714,8 @@
     transportScreenBackdrop.classList.add('is-hidden');
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
+    clearDismissedTransportRequests();
+    resetTransportRequestSwipeState();
     clearTransportInlineStatus();
     syncFormControlStates();
     realignViewport();
@@ -1498,6 +1733,8 @@
 
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
+    clearDismissedTransportRequests();
+    resetTransportRequestSwipeState();
     transportScreen.hidden = false;
     transportScreenBackdrop.hidden = false;
     transportScreen.classList.remove('is-hidden');
@@ -3810,6 +4047,22 @@
   }
 
   if (transportRequestHistoryList) {
+    transportRequestHistoryList.addEventListener('pointerdown', (event) => {
+      beginTransportRequestSwipe(event);
+    });
+
+    transportRequestHistoryList.addEventListener('pointermove', (event) => {
+      updateTransportRequestSwipe(event);
+    });
+
+    transportRequestHistoryList.addEventListener('pointerup', (event) => {
+      endTransportRequestSwipe(event);
+    });
+
+    transportRequestHistoryList.addEventListener('pointercancel', (event) => {
+      endTransportRequestSwipe(event);
+    });
+
     transportRequestHistoryList.addEventListener('click', (event) => {
       const targetElement = resolveTransportEventTargetElement(event);
       const cancelButton = targetElement
@@ -3829,11 +4082,18 @@
       if (!requestButton) {
         return;
       }
+      const requestId = Number(requestButton.getAttribute('data-request-id'));
+      if (
+        Number.isFinite(requestId)
+        && Number(transportRequestSwipeState.suppressedClickRequestId) === requestId
+      ) {
+        transportRequestSwipeState.suppressedClickRequestId = null;
+        return;
+      }
       if (requestButton.getAttribute('aria-disabled') === 'true') {
         return;
       }
 
-      const requestId = Number(requestButton.getAttribute('data-request-id'));
       if (!Number.isFinite(requestId)) {
         return;
       }
