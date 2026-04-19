@@ -16,6 +16,8 @@ import com.br.checkingnative.data.remote.CheckingHttpRequest
 import com.br.checkingnative.data.remote.CheckingHttpResponse
 import com.br.checkingnative.data.remote.CheckingHttpTransport
 import com.br.checkingnative.domain.model.CheckingState
+import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
+import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.ManagedLocation
 import com.br.checkingnative.domain.model.ManagedLocationCoordinate
@@ -268,6 +270,63 @@ class CheckingControllerTest {
         )
     }
 
+    @Test
+    fun refreshPermissionState_turnsOffPermissionBackedSwitchesWhenRevoked() = runBlocking {
+        val fixture = createFixture("controller_permissions.preferences_pb")
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                canEnableLocationSharing = true,
+                locationSharingEnabled = true,
+                oemBackgroundSetupEnabled = true,
+                lastMatchedLocation = "Base Sul",
+                isLoading = false,
+            ),
+        )
+        fixture.controller.initialize()
+
+        fixture.controller.refreshPermissionState(
+            snapshot = permissionSnapshot(backgroundAccessEnabled = false),
+            updateStatus = true,
+        )
+
+        val uiState = fixture.controller.uiState.value
+        assertFalse(uiState.state.canEnableLocationSharing)
+        assertFalse(uiState.state.locationSharingEnabled)
+        assertFalse(uiState.state.oemBackgroundSetupEnabled)
+        assertNull(uiState.state.lastMatchedLocation)
+        assertFalse(uiState.permissionSettings.backgroundAccessEnabled)
+        assertEquals(
+            "Permita o acesso à localização em segundo plano para concluir a ativação.",
+            uiState.state.statusMessage,
+        )
+        assertEquals(StatusTone.ERROR, uiState.state.statusTone)
+    }
+
+    @Test
+    fun setOemBackgroundSetupEnabled_persistsFlagAndShowsVendorWarning() = runBlocking {
+        val fixture = createFixture("controller_oem.preferences_pb")
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                canEnableLocationSharing = true,
+                isLoading = false,
+            ),
+        )
+        fixture.controller.initialize()
+
+        fixture.controller.setOemBackgroundSetupEnabled(
+            value = true,
+            setupResult = CheckingOemBackgroundSetupResult(
+                openedSettings = false,
+                message = "Em Samsung, revise Apps em suspensão.",
+            ),
+        )
+
+        val state = fixture.controller.uiState.value.state
+        assertTrue(state.oemBackgroundSetupEnabled)
+        assertEquals("Em Samsung, revise Apps em suspensão.", state.statusMessage)
+        assertEquals(StatusTone.WARNING, state.statusTone)
+    }
+
     private fun createFixture(fileName: String): ControllerFixture {
         val cacheDataStore = createDataStore("cache_$fileName")
         val stateStore = FakeCheckingStateStore()
@@ -406,5 +465,21 @@ private fun buildControllerLocation(id: Int): ManagedLocation {
         ),
         toleranceMeters = 30 + id,
         updatedAt = Instant.parse("2026-04-18T00:00:00Z"),
+    )
+}
+
+private fun permissionSnapshot(
+    locationServiceEnabled: Boolean = true,
+    preciseLocationGranted: Boolean = true,
+    backgroundAccessEnabled: Boolean = true,
+    notificationsEnabled: Boolean = true,
+    batteryOptimizationIgnored: Boolean = true,
+): CheckingPermissionSnapshot {
+    return CheckingPermissionSnapshot(
+        locationServiceEnabled = locationServiceEnabled,
+        preciseLocationGranted = preciseLocationGranted,
+        backgroundAccessEnabled = backgroundAccessEnabled,
+        notificationsEnabled = notificationsEnabled,
+        batteryOptimizationIgnored = batteryOptimizationIgnored,
     )
 }

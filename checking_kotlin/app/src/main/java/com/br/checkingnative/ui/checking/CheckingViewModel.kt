@@ -3,6 +3,8 @@ package com.br.checkingnative.ui.checking
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.br.checkingnative.domain.model.InformeType
+import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
+import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.data.remote.CheckingApiException
@@ -83,6 +85,70 @@ class CheckingViewModel @Inject constructor(
     fun setLocationSharingEnabled(value: Boolean) {
         viewModelScope.launch {
             controller.setLocationSharingEnabled(value)
+        }
+    }
+
+    fun enableLocationSharingAfterPermissionFlow(snapshot: CheckingPermissionSnapshot) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.enableLocationSharingAfterPermissionFlow(snapshot)
+        }
+    }
+
+    fun refreshPermissionState(
+        snapshot: CheckingPermissionSnapshot,
+        updateStatus: Boolean = false,
+    ) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.refreshPermissionState(
+                snapshot = snapshot,
+                updateStatus = updateStatus,
+            )
+        }
+    }
+
+    fun setPermissionSettingsRefreshing(value: Boolean) {
+        controller.setPermissionSettingsRefreshing(value)
+    }
+
+    fun setBackgroundAccessEnabled(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.setBackgroundAccessEnabled(value, snapshot)
+        }
+    }
+
+    fun setNotificationsEnabled(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.setNotificationsEnabled(value, snapshot)
+        }
+    }
+
+    fun setBatteryOptimizationIgnored(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.setBatteryOptimizationIgnored(value, snapshot)
+        }
+    }
+
+    fun setOemBackgroundSetupEnabled(
+        value: Boolean,
+        setupResult: CheckingOemBackgroundSetupResult = CheckingOemBackgroundSetupResult.empty,
+    ) {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.setOemBackgroundSetupEnabled(value, setupResult)
         }
     }
 

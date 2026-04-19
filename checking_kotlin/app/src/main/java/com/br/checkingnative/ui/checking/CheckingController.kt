@@ -7,6 +7,8 @@ import com.br.checkingnative.data.remote.CheckingApiService
 import com.br.checkingnative.domain.logic.CheckingLocationLogic
 import com.br.checkingnative.domain.logic.CheckingRuntimeLogic
 import com.br.checkingnative.domain.model.CheckingState
+import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
+import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
@@ -299,6 +301,166 @@ class CheckingController @Inject constructor(
             ),
         )
         setStatus("Busca por localização ativada.", StatusTone.SUCCESS)
+    }
+
+    suspend fun enableLocationSharingAfterPermissionFlow(snapshot: CheckingPermissionSnapshot) {
+        refreshPermissionState(
+            snapshot = snapshot,
+            updateStatus = true,
+        )
+        if (snapshot.canEnableLocationSharing) {
+            setLocationSharingEnabled(true)
+        }
+    }
+
+    suspend fun refreshPermissionState(
+        snapshot: CheckingPermissionSnapshot,
+        updateStatus: Boolean = false,
+    ) {
+        val previousState = currentState
+        val reconciledState = CheckingRuntimeLogic.reconcilePermissionBackedSwitches(
+            state = previousState,
+            canEnableLocationSharing = snapshot.canEnableLocationSharing,
+        )
+        val status = if (updateStatus) permissionStatus(snapshot) else null
+        val nextState = if (status != null) {
+            reconciledState.copy(
+                statusMessage = status.message,
+                statusTone = status.tone,
+            )
+        } else {
+            reconciledState
+        }
+
+        _uiState.update { current ->
+            current.copy(
+                state = nextState,
+                permissionSettings = snapshot.toSettingsState(isRefreshing = false),
+            )
+        }
+
+        if (nextState != previousState) {
+            checkingStateStore.saveState(nextState)
+        }
+    }
+
+    fun setPermissionSettingsRefreshing(value: Boolean) {
+        _uiState.update { current ->
+            current.copy(
+                permissionSettings = current.permissionSettings.copy(isRefreshing = value),
+            )
+        }
+    }
+
+    suspend fun setBackgroundAccessEnabled(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        refreshPermissionState(snapshot = snapshot, updateStatus = false)
+        if (!value) {
+            setStatus(
+                "Revise o acesso à localização em 2º plano nas configurações do Android.",
+                StatusTone.WARNING,
+            )
+            return
+        }
+        if (!snapshot.backgroundAccessEnabled) {
+            setStatus(
+                "Permita o acesso à localização em segundo plano para concluir a ativação.",
+                StatusTone.ERROR,
+            )
+            return
+        }
+        setStatus(
+            "Acesso à localização em 2º plano liberado. O monitoramento contínuo em segundo plano será usado quando a busca por localização e a automação estiverem ativas.",
+            StatusTone.SUCCESS,
+        )
+    }
+
+    suspend fun setNotificationsEnabled(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        refreshPermissionState(snapshot = snapshot, updateStatus = false)
+        if (!value) {
+            setStatus(
+                "Revise as notificações do aplicativo nas configurações do Android.",
+                StatusTone.WARNING,
+            )
+            return
+        }
+        if (!snapshot.notificationsEnabled) {
+            setStatus(
+                "Permita as notificações do aplicativo para manter o monitoramento em segundo plano.",
+                StatusTone.ERROR,
+            )
+            return
+        }
+        setStatus("Notificações do aplicativo liberadas.", StatusTone.SUCCESS)
+    }
+
+    suspend fun setBatteryOptimizationIgnored(
+        value: Boolean,
+        snapshot: CheckingPermissionSnapshot,
+    ) {
+        refreshPermissionState(snapshot = snapshot, updateStatus = false)
+        if (!value) {
+            setStatus(
+                "Revise a otimização de bateria nas configurações do Android.",
+                StatusTone.WARNING,
+            )
+            return
+        }
+        if (!snapshot.batteryOptimizationIgnored) {
+            setStatus(
+                "Permita ignorar a otimização de bateria para maior confiabilidade em segundo plano.",
+                StatusTone.WARNING,
+            )
+            return
+        }
+        setStatus(
+            "Otimização de bateria ajustada para o monitoramento em segundo plano.",
+            StatusTone.SUCCESS,
+        )
+    }
+
+    suspend fun setOemBackgroundSetupEnabled(
+        value: Boolean,
+        setupResult: CheckingOemBackgroundSetupResult = CheckingOemBackgroundSetupResult.empty,
+    ) {
+        if (value && !currentState.canEnableLocationSharing) {
+            setStatus(
+                "Permita localização precisa, acesso em 2º plano e notificações antes de ativar o Auto-Start.",
+                StatusTone.WARNING,
+            )
+            return
+        }
+
+        if (!value) {
+            updateAndPersist(
+                currentState.copy(
+                    oemBackgroundSetupEnabled = false,
+                    statusMessage = "Auto-start desativado.",
+                    statusTone = StatusTone.WARNING,
+                ),
+            )
+            return
+        }
+
+        val message = setupResult.message.ifBlank {
+            "Configuração OEM aberta para ajustes de auto-start."
+        }
+        updateAndPersist(
+            currentState.copy(
+                oemBackgroundSetupEnabled = true,
+                statusMessage = message,
+                statusTone = if (setupResult.message.isBlank()) {
+                    StatusTone.SUCCESS
+                } else {
+                    StatusTone.WARNING
+                },
+            ),
+        )
     }
 
     suspend fun refreshAfterEnteringForeground() {
@@ -691,6 +853,35 @@ class CheckingController @Inject constructor(
         }
     }
 
+    private fun permissionStatus(snapshot: CheckingPermissionSnapshot): PermissionStatusMessage {
+        return when {
+            !snapshot.locationServiceEnabled -> PermissionStatusMessage(
+                message = "Ative o serviço de localização do Android para continuar.",
+                tone = StatusTone.ERROR,
+            )
+            !snapshot.preciseLocationGranted -> PermissionStatusMessage(
+                message = "Permita a localização precisa do aplicativo para ativar o monitoramento.",
+                tone = StatusTone.ERROR,
+            )
+            !snapshot.backgroundAccessEnabled -> PermissionStatusMessage(
+                message = "Permita o acesso à localização em segundo plano para concluir a ativação.",
+                tone = StatusTone.ERROR,
+            )
+            !snapshot.notificationsEnabled -> PermissionStatusMessage(
+                message = "Permita as notificações do aplicativo para manter o monitoramento em segundo plano.",
+                tone = StatusTone.ERROR,
+            )
+            !snapshot.batteryOptimizationIgnored -> PermissionStatusMessage(
+                message = "Busca por localização ativada. Para máxima confiabilidade com a tela bloqueada, permita ignorar a otimização de bateria do Android.",
+                tone = StatusTone.WARNING,
+            )
+            else -> PermissionStatusMessage(
+                message = "Configuração inicial do Android concluída.",
+                tone = StatusTone.SUCCESS,
+            )
+        }
+    }
+
     companion object {
         const val SOURCE_MANUAL: String = "manual"
         const val SOURCE_LOCATION_AUTOMATION: String = "location-automation"
@@ -712,3 +903,8 @@ class CheckingController @Inject constructor(
         }
     }
 }
+
+private data class PermissionStatusMessage(
+    val message: String,
+    val tone: StatusTone,
+)

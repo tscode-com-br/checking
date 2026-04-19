@@ -111,6 +111,10 @@ fun CheckingApp(
     onSyncHistory: () -> Unit,
     onRefreshCatalog: () -> Unit,
     onLocationSharingChanged: (Boolean) -> Unit,
+    onBackgroundAccessChanged: (Boolean) -> Unit,
+    onNotificationsChanged: (Boolean) -> Unit,
+    onBatteryOptimizationChanged: (Boolean) -> Unit,
+    onOemBackgroundSetupChanged: (Boolean) -> Unit,
     onAutomaticCheckingChanged: (Boolean) -> Unit,
     onLocationUpdateIntervalChanged: (Int) -> Unit,
     onNightUpdatesChanged: (Boolean) -> Unit,
@@ -174,6 +178,10 @@ fun CheckingApp(
                 state = uiState.state,
                 permissionSettings = uiState.permissionSettings,
                 onLocationSharingChanged = onLocationSharingChanged,
+                onBackgroundAccessChanged = onBackgroundAccessChanged,
+                onNotificationsChanged = onNotificationsChanged,
+                onBatteryOptimizationChanged = onBatteryOptimizationChanged,
+                onOemBackgroundSetupChanged = onOemBackgroundSetupChanged,
                 onSyncHistory = onSyncHistory,
                 onRefreshCatalog = onRefreshCatalog,
                 onLocationUpdateIntervalChanged = onLocationUpdateIntervalChanged,
@@ -578,6 +586,10 @@ private fun SettingsSheet(
     state: CheckingState,
     permissionSettings: CheckingPermissionSettingsState,
     onLocationSharingChanged: (Boolean) -> Unit,
+    onBackgroundAccessChanged: (Boolean) -> Unit,
+    onNotificationsChanged: (Boolean) -> Unit,
+    onBatteryOptimizationChanged: (Boolean) -> Unit,
+    onOemBackgroundSetupChanged: (Boolean) -> Unit,
     onSyncHistory: () -> Unit,
     onRefreshCatalog: () -> Unit,
     onLocationUpdateIntervalChanged: (Int) -> Unit,
@@ -605,19 +617,29 @@ private fun SettingsSheet(
                 label = "Acesso em 2º plano:",
                 value = permissionSettings.backgroundAccessEnabled,
                 isBusy = permissionSettings.isRefreshing,
-                onCheckedChange = null,
+                onCheckedChange = onBackgroundAccessChanged,
             )
             SwitchRow(
                 label = "Permitir notificações:",
                 value = permissionSettings.notificationsEnabled,
                 isBusy = permissionSettings.isRefreshing,
-                onCheckedChange = null,
+                onCheckedChange = onNotificationsChanged,
             )
             SwitchRow(
                 label = "Sem restrições de bateria:",
                 value = permissionSettings.batteryOptimizationIgnored,
                 isBusy = permissionSettings.isRefreshing,
-                onCheckedChange = null,
+                onCheckedChange = onBatteryOptimizationChanged,
+            )
+            SwitchRow(
+                label = "Ativar Auto-Start:",
+                value = state.oemBackgroundSetupEnabled,
+                isBusy = permissionSettings.isRefreshing,
+                onCheckedChange = if (state.canEnableLocationSharing) {
+                    onOemBackgroundSetupChanged
+                } else {
+                    null
+                },
             )
         }
         SectionTitle("Sincronização")
