@@ -12,9 +12,9 @@ O foco aqui e registrar o estado real implementado no codigo, incluindo integrac
 
 ## 2. Escopo, repositorios e deploy
 
-### 2.1 Monorepo atual
+### 2.1 Workspace atual
 
-Este repositorio concentra hoje:
+Este workspace concentra hoje:
 
 - a API FastAPI;
 - o website administrativo servido pela propria API;
@@ -36,13 +36,13 @@ O app antigo em Tauri aparece apenas como contexto historico e de transicao.
 
 - API + website admin usam o repositorio principal e sao parte do fluxo de deploy automatico para a Digital Ocean.
 - O app Android antigo em `checking_android` possui repositorio proprio, compartilhado com `dsschmidt`.
-- O app Flutter em `checking_android_new` ainda nao possui repositorio proprio. Ele continua dentro do monorepo.
+- O app Flutter em `checking_android_new` tem Git proprio no workspace, mas esta fora do fluxo oficial de commit/push e nao deve ser publicado via `git subtree`.
 
 ### 2.4 Impacto pratico de deploy
 
 Push em `main` no repositorio principal atualiza a API e o website admin no ambiente da Digital Ocean.
 
-O app Flutter nao entra nesse deploy automatico. Ele tem ciclo de build/publicacao proprio, via `flutter build` e geracao de APK/AAB.
+O app Flutter nao entra nesse deploy automatico. Ele pode ser buildado localmente via `flutter build`, mas por decisao operacional atual nao faz parte do procedimento oficial de commit/push.
 
 ## 3. Visao geral da arquitetura
 
@@ -486,7 +486,7 @@ O fluxo de limpar eventos arquiva antes, depois permite consulta, download e exc
 
 ### 6.1 Escopo atual
 
-O app Flutter e hoje o candidato a substituir o app Android antigo em Tauri no medio prazo, mas ainda vive dentro do monorepo.
+O app Flutter e hoje o candidato a substituir o app Android antigo em Tauri no medio prazo, mas seu repositorio Git local em `checking_android_new` nao faz parte do fluxo oficial de publicacao do projeto.
 
 Ele faz principalmente:
 
@@ -801,4 +801,4 @@ Em termos praticos:
 - o app Flutter ainda nao tem fila offline persistente para retry de envio;
 - a secao de localizacoes do painel admin agora persiste no backend e abastece um banco SQLite local no app Flutter.
 
-Esse e o estado atual mais importante para qualquer manutencao, integracao futura ou separacao do app Flutter para um repositorio proprio.
+Esse e o estado atual mais importante para manutencao e integracao entre API, admin e app Flutter. O fluxo oficial de Git/publicacao do projeto permanece restrito ao repositorio principal.

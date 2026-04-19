@@ -24,6 +24,7 @@
         noAccess: "This user does not have transport access.",
       },
       panes: {
+        projectList: "Project List",
         userList: "User List",
       },
       selection: {
@@ -139,6 +140,8 @@
       empty: {
         noRows: "No rows in {title}.",
         noVehicles: "No vehicles in {scope} list.",
+        noProjectsAvailable: "No projects are registered.",
+        noProjectsSelected: "Select at least one project to show users.",
       },
       vehicleTypes: {
         carro: "Car",
@@ -194,6 +197,7 @@
         noAccess: "Este usuário não tem acesso ao transporte.",
       },
       panes: {
+        projectList: "Lista de projetos",
         userList: "Lista de usuários",
       },
       selection: {
@@ -309,6 +313,8 @@
       empty: {
         noRows: "Sem linhas em {title}.",
         noVehicles: "Nenhum veículo na lista {scope}.",
+        noProjectsAvailable: "Nenhum projeto cadastrado.",
+        noProjectsSelected: "Selecione ao menos um projeto para exibir usuários.",
       },
       vehicleTypes: {
         carro: "Carro",
@@ -364,6 +370,7 @@
         noAccess: "该用户没有交通访问权限。",
       },
       panes: {
+        projectList: "项目列表",
         userList: "用户列表",
       },
       selection: {
@@ -477,6 +484,8 @@
       empty: {
         noRows: "{title}中没有记录。",
         noVehicles: "{scope}列表中没有车辆。",
+        noProjectsAvailable: "没有已登记的项目。",
+        noProjectsSelected: "请至少选择一个项目来显示用户。",
       },
       vehicleTypes: {
         carro: "汽车",
@@ -532,6 +541,7 @@
         noAccess: "Pengguna ini tiada akses pengangkutan.",
       },
       panes: {
+        projectList: "Senarai projek",
         userList: "Senarai pengguna",
       },
       selection: {
@@ -645,6 +655,8 @@
       empty: {
         noRows: "Tiada baris dalam {title}.",
         noVehicles: "Tiada kenderaan dalam senarai {scope}.",
+        noProjectsAvailable: "Tiada projek berdaftar.",
+        noProjectsSelected: "Pilih sekurang-kurangnya satu projek untuk memaparkan pengguna.",
       },
       vehicleTypes: {
         carro: "Kereta",
@@ -700,6 +712,7 @@
         noAccess: "Walang access sa transport ang user na ito.",
       },
       panes: {
+        projectList: "Listahan ng proyekto",
         userList: "Listahan ng user",
       },
       selection: {
@@ -813,6 +826,8 @@
       empty: {
         noRows: "Walang rows sa {title}.",
         noVehicles: "Walang sasakyan sa listahang {scope}.",
+        noProjectsAvailable: "Walang rehistradong proyekto.",
+        noProjectsSelected: "Pumili ng kahit isang proyekto para ipakita ang mga user.",
       },
       vehicleTypes: {
         carro: "Kotse",

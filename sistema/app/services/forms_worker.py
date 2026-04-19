@@ -36,6 +36,31 @@ class FormsWorker:
         path = self.assets_dir / "xpath" / name
         return path.read_text(encoding="utf-8").strip()
 
+    def _build_xpath_literal(self, value: str) -> str:
+        if '"' not in value:
+            return f'"{value}"'
+        if "'" not in value:
+            return f"'{value}'"
+        parts = value.split('"')
+        return "concat(" + ", '\"', ".join(f'"{part}"' for part in parts) + ")"
+
+    def _build_project_xpath_map(self) -> dict[str, str]:
+        xpath_dir = self.assets_dir / "xpath"
+        project_xpath_map: dict[str, str] = {}
+        for path in sorted(xpath_dir.glob("botao_projeto_*.txt")):
+            project_name = path.stem.replace("botao_projeto_", "").strip().upper()
+            if not project_name:
+                continue
+            project_xpath_map[project_name] = path.read_text(encoding="utf-8").strip()
+        return project_xpath_map
+
+    def _build_generic_project_xpath(self, project_name: str) -> str:
+        project_literal = self._build_xpath_literal(project_name.strip())
+        return (
+            f"//*[@id='question-list']//span[normalize-space()={project_literal}]"
+            "/ancestor::div[contains(@class, 'office-form-question-choice') or .//label][1]//label/span[1]/input"
+        )
+
     def _wait_for_step(self, page, xpath: str, step_name: str, timeout_seconds: int):
         deadline = monotonic() + timeout_seconds
         selector = f"xpath={xpath}"
@@ -120,11 +145,7 @@ class FormsWorker:
         botao_enviar = self.load_xpath("botao_enviar.txt")
         sucesso = self.load_xpath("sucesso.txt")
 
-        projeto_xpath_map = {
-            "P80": self.load_xpath("botao_projeto_P80.txt"),
-            "P82": self.load_xpath("botao_projeto_P82.txt"),
-            "P83": self.load_xpath("botao_projeto_P83.txt"),
-        }
+        projeto_xpath_map = self._build_project_xpath_map()
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -145,9 +166,10 @@ class FormsWorker:
                 if action == "checkin":
                     self._click_checked_step(page, botao_checkin, "botao_checkin")
                     completed_steps.append("botao_checkin:clicked+verified")
-                    if projeto not in projeto_xpath_map:
+                    if projeto is None:
                         raise ValueError("Projeto invalido para check-in")
-                    self._click_checked_step(page, projeto_xpath_map[projeto], f"botao_projeto_{projeto}")
+                    project_xpath = projeto_xpath_map.get(projeto) or self._build_generic_project_xpath(projeto)
+                    self._click_checked_step(page, project_xpath, f"botao_projeto_{projeto}")
                     completed_steps.append(f"botao_projeto_{projeto}:clicked+verified")
                 else:
                     self._click_checked_step(page, botao_checkout, "botao_checkout")

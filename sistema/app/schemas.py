@@ -3,6 +3,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .services.project_catalog import normalize_project_name
 from .services.user_profiles import normalize_person_name
 
 
@@ -109,6 +110,10 @@ def _validate_web_password(value: str, field_name: str) -> str:
     return password
 
 
+def _normalize_project_value(value: str) -> str:
+    return normalize_project_name(value)
+
+
 class HealthResponse(BaseModel):
     status: str
     app: str
@@ -140,7 +145,7 @@ class AdminUserUpsert(BaseModel):
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
     perfil: int = Field(default=0, ge=0, le=999)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     workplace: str | None = Field(default=None, max_length=120)
     placa: str | None = Field(default=None, max_length=9)
     end_rua: str | None = Field(default=None, max_length=255)
@@ -196,6 +201,11 @@ class AdminUserUpsert(BaseModel):
     def validate_email(cls, value: str | None) -> str | None:
         normalized = _normalize_optional_compact_text(value, "O email", max_length=255)
         return normalized.lower() if normalized is not None else None
+
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_projeto(cls, value: str) -> str:
+        return _normalize_project_value(value)
 
 
 class LocationCoordinate(BaseModel):
@@ -381,6 +391,20 @@ class TransportSessionResponse(BaseModel):
 class AdminActionResponse(BaseModel):
     ok: bool
     message: str
+
+
+class ProjectRow(BaseModel):
+    id: int
+    name: str
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_project_value(value)
 
 
 class AdminLocationSettingsResponse(AdminActionResponse):
@@ -611,6 +635,7 @@ class TransportDashboardResponse(BaseModel):
     selected_date: date
     selected_route: Literal["home_to_work", "work_to_home"]
     work_to_home_departure_time: str = Field(min_length=5, max_length=5)
+    projects: list[ProjectRow]
     regular_requests: list[TransportRequestRow]
     weekend_requests: list[TransportRequestRow]
     extra_requests: list[TransportRequestRow]
@@ -748,6 +773,14 @@ class EventRow(BaseModel):
     event_time: datetime
 
 
+class DatabaseEventListResponse(BaseModel):
+    items: list[EventRow]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class InactiveUserRow(BaseModel):
     id: int
     rfid: Optional[str]
@@ -786,7 +819,7 @@ class EventArchiveCreateResponse(BaseModel):
 
 class MobileSyncRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     action: Literal["checkin", "checkout"]
     local: str | None = None
     event_time: datetime
@@ -805,10 +838,15 @@ class MobileSyncRequest(BaseModel):
     def validate_mobile_sync_local(cls, value: str | None) -> str | None:
         return _normalize_optional_local(value)
 
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_mobile_sync_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
 
 class MobileSubmitRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     action: Literal["checkin", "checkout"]
     local: str | None = None
     event_time: datetime
@@ -827,10 +865,15 @@ class MobileSubmitRequest(BaseModel):
     def validate_mobile_submit_local(cls, value: str | None) -> str | None:
         return _normalize_optional_local(value)
 
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_mobile_submit_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
 
 class MobileFormsSubmitRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     action: Literal["checkin", "checkout"]
     local: str | None = None
     informe: Literal["normal", "retroativo"]
@@ -858,6 +901,11 @@ class MobileFormsSubmitRequest(BaseModel):
     def validate_mobile_forms_submit_local(cls, value: str | None) -> str | None:
         return _normalize_optional_local(value)
 
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_mobile_forms_submit_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
 
 class WebCheckSubmitRequest(MobileFormsSubmitRequest):
     pass
@@ -873,7 +921,7 @@ class WebPasswordStatusResponse(BaseModel):
 
 class WebPasswordRegisterRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     senha: str = Field(min_length=3, max_length=10)
 
     @field_validator("chave")
@@ -889,11 +937,16 @@ class WebPasswordRegisterRequest(BaseModel):
     def validate_web_password_register_value(cls, value: str) -> str:
         return _validate_web_password(value, "A senha")
 
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_web_password_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
 
 class WebUserSelfRegistrationRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     nome: str = Field(min_length=3, max_length=180)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     end_rua: str = Field(min_length=2, max_length=255)
     zip: str = Field(min_length=1, max_length=10)
     email: str = Field(min_length=3, max_length=255)
@@ -917,6 +970,11 @@ class WebUserSelfRegistrationRequest(BaseModel):
     @classmethod
     def validate_web_user_self_registration_end_rua(cls, value: str) -> str:
         return _normalize_required_label(str(value), "O endereco", max_length=255)
+
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_web_user_self_registration_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
 
     @field_validator("zip", mode="before")
     @classmethod
@@ -1132,6 +1190,30 @@ class WebLocationOptionsResponse(BaseModel):
     items: list[str]
 
 
+class WebProjectUpdateRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    projeto: str = Field(min_length=2, max_length=120)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_project_update_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_web_project_update_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
+
+class WebProjectUpdateResponse(BaseModel):
+    ok: bool
+    message: str
+    project: str
+
+
 class MobileSyncStateResponse(BaseModel):
     found: bool
     chave: str
@@ -1166,7 +1248,7 @@ class WebCheckSubmitResponse(MobileSubmitResponse):
 class ProviderCheckSubmitRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     nome: str = Field(min_length=3, max_length=180)
-    projeto: Literal["P80", "P82", "P83"]
+    projeto: str = Field(min_length=2, max_length=120)
     atividade: Literal["check-in", "check-out"]
     informe: Literal["normal", "retroativo"]
     data: str = Field(min_length=10, max_length=10)
@@ -1184,6 +1266,11 @@ class ProviderCheckSubmitRequest(BaseModel):
     @classmethod
     def validate_provider_nome(cls, value: str) -> str:
         return _normalize_required_label(str(value), "O nome", max_length=180)
+
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_provider_project(cls, value: str) -> str:
+        return _normalize_project_value(value)
 
     @field_validator("informe", mode="before")
     @classmethod

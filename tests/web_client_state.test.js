@@ -39,6 +39,25 @@ test('resolvePersistedUserSettings returns settings for the active key', () => {
   });
 });
 
+test('resolvePersistedUserSettings falls back to the first allowed project when needed', () => {
+  const settings = clientState.resolvePersistedUserSettings(
+    {
+      HR71: { project: 'LEGACY', automaticActivitiesEnabled: false },
+    },
+    'hr71',
+    {
+      project: '',
+      automaticActivitiesEnabled: false,
+      allowedProjects: ['P95', 'P97'],
+    }
+  );
+
+  assert.deepEqual(settings, {
+    project: 'P95',
+    automaticActivitiesEnabled: false,
+  });
+});
+
 test('withPersistedUserSettings stores settings by sanitized chave', () => {
   const settingsMap = clientState.withPersistedUserSettings(
     {},
@@ -52,6 +71,22 @@ test('withPersistedUserSettings stores settings by sanitized chave', () => {
 
   assert.deepEqual(settingsMap, {
     HR70: { project: 'P82', automaticActivitiesEnabled: true },
+  });
+});
+
+test('withPersistedUserSettings does not hardcode legacy project fallbacks', () => {
+  const settingsMap = clientState.withPersistedUserSettings(
+    {},
+    'hr72',
+    { project: 'unknown', automaticActivitiesEnabled: false },
+    {
+      project: '',
+      allowedProjects: ['P95', 'P97'],
+    }
+  );
+
+  assert.deepEqual(settingsMap, {
+    HR72: { project: 'P95', automaticActivitiesEnabled: false },
   });
 });
 

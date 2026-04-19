@@ -13,6 +13,7 @@ from .routers import admin, device, health, mobile, provider, transport as trans
 from .services.admin_auth import seed_default_admin
 from .services.event_archives import ensure_event_archives_dir
 from .services.forms_queue import forms_submission_worker
+from .services.project_catalog import seed_default_projects
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
     if settings.app_env == "development":
         Base.metadata.create_all(bind=engine)
+    seed_default_projects()
     seed_default_admin()
     if settings.forms_queue_enabled:
         forms_submission_worker.start()

@@ -42,6 +42,7 @@ from sistema.app.models import (
     CheckEvent,
     CheckingHistory,
     FormsSubmission,
+    Project,
     TransportAssignment,
     TransportBotSession,
     TransportNotification,
@@ -63,6 +64,7 @@ from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services import whatsapp_meta as whatsapp_meta_module
 from sistema.app.services.passwords import verify_password
+from sistema.app.services.project_catalog import seed_default_projects
 from sistema.app.services.time_utils import now_sgt
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 from sistema.app.routers import web_check as web_check_router
@@ -75,6 +77,7 @@ PROVIDER_HEADERS = {"x-provider-shared-key": "PETROBRASP80P82P83"}
 TRANSPORT_BOT_HEADERS = {"x-transport-bot-shared-key": "transport-bot-test-key"}
 
 Base.metadata.create_all(bind=engine)
+seed_default_projects()
 
 
 def login_admin(client: TestClient, *, chave: str = ADMIN_LOGIN_CHAVE, senha: str = ADMIN_LOGIN_SENHA):
@@ -126,6 +129,19 @@ def ensure_web_user_exists(*, chave: str, projeto: str = "P80", nome: str = "Ori
                 inactivity_days=0,
             )
         )
+        db.commit()
+
+
+def ensure_project_exists(project_name: str) -> None:
+    normalized_name = str(project_name).strip().upper()
+    assert normalized_name
+
+    with SessionLocal() as db:
+        existing = db.execute(select(Project).where(Project.name == normalized_name)).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        db.add(Project(name=normalized_name))
         db.commit()
 
 
@@ -375,6 +391,127 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
     assert all(row.chave == "UF02" for row in sync_rows)
     assert history_rows
     assert all(row.chave == "UF02" for row in history_rows)
+
+
+def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        listed = client.get("/api/admin/projects")
+        assert listed.status_code == 200
+        listed_names = {row["name"] for row in listed.json()}
+        assert {"P80", "P82", "P83"}.issubset(listed_names)
+
+        created = client.post("/api/admin/projects", json={"name": "P90"})
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+        assert project_payload["name"] == "P90"
+
+        with SessionLocal() as db:
+            db.add(
+                User(
+                    rfid=None,
+                    nome="Usuario Vinculado",
+                    chave="PJ90",
+                    projeto="P90",
+                    perfil=0,
+                    local=None,
+                    checkin=None,
+                    time=None,
+                    last_active_at=now_sgt(),
+                    inactivity_days=0,
+                )
+            )
+            db.commit()
+
+        blocked = client.delete(f"/api/admin/projects/{project_payload['id']}")
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"] == "Nao e possivel remover um projeto com usuarios vinculados."
+
+        with SessionLocal() as db:
+            linked_user = get_user_by_chave(db, "PJ90")
+            db.delete(linked_user)
+            db.commit()
+
+        removed = client.delete(f"/api/admin/projects/{project_payload['id']}")
+        assert removed.status_code == 200
+        assert removed.json()["ok"] is True
+
+        listed_after = client.get("/api/admin/projects")
+        assert listed_after.status_code == 200
+        listed_after_names = {row["name"] for row in listed_after.json()}
+        assert "P90" not in listed_after_names
+
+
+def test_admin_project_delete_reassigns_admin_only_users_to_fallback_project():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post("/api/admin/projects", json={"name": "P91"})
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+
+        with SessionLocal() as db:
+            db.add(
+                User(
+                    rfid=None,
+                    nome="Admin Vinculado",
+                    chave="PA91",
+                    projeto="P91",
+                    perfil=1,
+                    local=None,
+                    checkin=None,
+                    time=None,
+                    last_active_at=now_sgt(),
+                    inactivity_days=0,
+                )
+            )
+            db.commit()
+
+        removed = client.delete(f"/api/admin/projects/{project_payload['id']}")
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["ok"] is True
+
+    with SessionLocal() as db:
+        admin_user = get_user_by_chave(db, "PA91")
+        removed_project = db.execute(select(Project).where(Project.name == "P91")).scalar_one_or_none()
+
+    assert removed_project is None
+    assert admin_user.projeto in {"P80", "P82", "P83"}
+    assert admin_user.projeto != "P91"
+
+
+def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_persists():
+    ensure_project_exists("P95")
+    ensure_web_user_exists(chave="WP95", projeto="P80", nome="Usuario Projeto Web")
+
+    with TestClient(app) as client:
+        listed = client.get("/api/web/projects")
+        assert listed.status_code == 200
+        listed_names = {row["name"] for row in listed.json()}
+        assert {"P80", "P82", "P83", "P95"}.issubset(listed_names)
+
+        register_response = register_web_password(
+            client,
+            chave="WP95",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+        updated = client.put("/api/web/project", json={"chave": "WP95", "projeto": "P95"})
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["ok"] is True
+        assert updated.json()["project"] == "P95"
+
+        history_state = client.get("/api/web/check/state", params={"chave": "WP95"})
+        assert history_state.status_code == 200, history_state.text
+        assert history_state.json()["projeto"] == "P95"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP95")
+
+    assert user.projeto == "P95"
 
 
 def test_provider_endpoint_requires_valid_shared_key():
@@ -3602,12 +3739,16 @@ def test_admin_page_is_served_on_admin_path():
         assert response.status_code == 200
         assert "Checking Admin" in response.text
         assert "Acesso Administrativo" in response.text
+
+
 def test_gerencia_page_is_served_on_gerencia_path():
     with TestClient(app) as client:
         response = client.get("/gerencia")
         assert response.status_code == 200
         assert "Checking Gerência" in response.text
         assert "Entrar na gerência" in response.text
+        assert "Painel de Administrador" in response.text
+        assert "Banco de Dados" in response.text
         assert 'id="realtimeStatusBadge"' in response.text
         assert 'data-dashboard-stat-value="checkin"' in response.text
         assert '../admin/app.js' in response.text
@@ -3620,24 +3761,187 @@ def test_gerencia_trailing_slash_redirects_to_canonical_path():
         assert response.headers["location"] == "../gerencia"
 
 
+def test_database_events_endpoint_filters_and_paginates_check_events():
+    primary_key = f"D{uuid.uuid4().hex[:3].upper()}"
+    secondary_key = f"E{uuid.uuid4().hex[:3].upper()}"
+    primary_rfid = f"rfid-db-{uuid.uuid4().hex[:8]}"
+    secondary_rfid = f"rfid-db-{uuid.uuid4().hex[:8]}"
+    timestamp = now_sgt().replace(microsecond=0)
+    idempotency_keys = [uuid.uuid4().hex for _ in range(4)]
+
+    try:
+        with SessionLocal() as db:
+            db.add_all(
+                [
+                    User(
+                        rfid=primary_rfid,
+                        nome="Usuario Banco Primario",
+                        chave=primary_key,
+                        projeto="P80",
+                        workplace=None,
+                        placa=None,
+                        end_rua=None,
+                        zip=None,
+                        cargo=None,
+                        email=None,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=timestamp,
+                        inactivity_days=0,
+                    ),
+                    User(
+                        rfid=secondary_rfid,
+                        nome="Usuario Banco Secundario",
+                        chave=secondary_key,
+                        projeto="P82",
+                        workplace=None,
+                        placa=None,
+                        end_rua=None,
+                        zip=None,
+                        cargo=None,
+                        email=None,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=timestamp,
+                        inactivity_days=0,
+                    ),
+                ]
+            )
+            db.add_all(
+                [
+                    CheckEvent(
+                        idempotency_key=idempotency_keys[0],
+                        source="device",
+                        rfid=primary_rfid,
+                        action="checkin",
+                        status="success",
+                        message="Entrada liberada",
+                        details="reader=gate-1",
+                        project="P80",
+                        device_id="ESP-DB-01",
+                        local="Portaria Norte",
+                        request_path="/api/scan",
+                        http_status=200,
+                        ontime=True,
+                        event_time=timestamp - timedelta(minutes=10),
+                        submitted_at=timestamp - timedelta(minutes=10),
+                        retry_count=0,
+                    ),
+                    CheckEvent(
+                        idempotency_key=idempotency_keys[1],
+                        source="mobile",
+                        rfid=primary_rfid,
+                        action="checkout",
+                        status="queued",
+                        message="Saida enviada pelo app",
+                        details="client_event_id=db-checkout-1",
+                        project="P80",
+                        device_id="APP-DB-01",
+                        local="Portaria Norte",
+                        request_path="/api/mobile/events/sync",
+                        http_status=202,
+                        ontime=False,
+                        event_time=timestamp - timedelta(minutes=2),
+                        submitted_at=timestamp - timedelta(minutes=2),
+                        retry_count=1,
+                    ),
+                    CheckEvent(
+                        idempotency_key=idempotency_keys[2],
+                        source="forms",
+                        rfid=secondary_rfid,
+                        action="checkin",
+                        status="success",
+                        message="Entrada confirmada",
+                        details="provider=meta",
+                        project="P82",
+                        device_id="FORMS-DB-01",
+                        local="Oficina Sul",
+                        request_path="/api/provider/forms",
+                        http_status=200,
+                        ontime=True,
+                        event_time=timestamp - timedelta(minutes=1),
+                        submitted_at=timestamp - timedelta(minutes=1),
+                        retry_count=0,
+                    ),
+                    CheckEvent(
+                        idempotency_key=idempotency_keys[3],
+                        source="admin",
+                        rfid=None,
+                        action="admin_request",
+                        status="success",
+                        message="Solicitacao administrativa",
+                        details="chave=HR70",
+                        project=None,
+                        device_id=None,
+                        local=None,
+                        request_path="/api/admin/administrators/request",
+                        http_status=200,
+                        ontime=None,
+                        event_time=timestamp,
+                        submitted_at=timestamp,
+                        retry_count=0,
+                    ),
+                ]
+            )
+            db.commit()
+
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+
+            first_page = client.get(
+                "/api/admin/database-events",
+                params={"chave": primary_key, "page_size": 1},
+            )
+            assert first_page.status_code == 200, first_page.text
+            first_payload = first_page.json()
+            assert first_payload["total"] == 2
+            assert first_payload["page"] == 1
+            assert first_payload["page_size"] == 1
+            assert first_payload["total_pages"] == 2
+            assert len(first_payload["items"]) == 1
+            assert first_payload["items"][0]["chave"] == primary_key
+            assert first_payload["items"][0]["action"] == "checkout"
+
+            second_page = client.get(
+                "/api/admin/database-events",
+                params={"chave": primary_key, "page_size": 1, "page": 2},
+            )
+            assert second_page.status_code == 200, second_page.text
+            second_payload = second_page.json()
+            assert second_payload["page"] == 2
+            assert len(second_payload["items"]) == 1
+            assert second_payload["items"][0]["action"] == "checkin"
+
+            search_response = client.get(
+                "/api/admin/database-events",
+                params={"search": "oficina", "project": "P82"},
+            )
+            assert search_response.status_code == 200, search_response.text
+            search_payload = search_response.json()
+            assert search_payload["total"] == 1
+            assert search_payload["items"][0]["chave"] == secondary_key
+            assert search_payload["items"][0]["local"] == "Oficina Sul"
+            assert search_payload["items"][0]["action"] == "checkin"
+    finally:
+        with SessionLocal() as db:
+            for row in db.execute(select(CheckEvent).where(CheckEvent.idempotency_key.in_(idempotency_keys))).scalars().all():
+                db.delete(row)
+            for user in db.execute(select(User).where(User.chave.in_([primary_key, secondary_key]))).scalars().all():
+                db.delete(user)
+            db.commit()
 
 
-def test_gerencia_page_is_served_on_gerencia_path():
+def test_database_events_endpoint_rejects_invalid_date_ranges():
     with TestClient(app) as client:
-        response = client.get("/gerencia")
-        assert response.status_code == 200
-        assert "Checking Gerência" in response.text
-        assert "Entrar na gerência" in response.text
-        assert 'id="realtimeStatusBadge"' in response.text
-        assert 'data-dashboard-stat-value="checkin"' in response.text
-        assert '../admin/app.js' in response.text
-
-
-def test_gerencia_trailing_slash_redirects_to_canonical_path():
-    with TestClient(app) as client:
-        response = client.get("/gerencia/", follow_redirects=False)
-        assert response.status_code == 307
-        assert response.headers["location"] == "../gerencia"
+        ensure_admin_session(client)
+        response = client.get(
+            "/api/admin/database-events",
+            params={"from_date": "2025-01-10", "to_date": "2025-01-09"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Intervalo de datas invalido para a consulta de eventos."
 
 
 def test_web_password_registration_requires_existing_key_and_hashes_password():

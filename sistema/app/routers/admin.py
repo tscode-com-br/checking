@@ -1,10 +1,11 @@
 import asyncio
 import json
+from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -14,6 +15,7 @@ from ..models import (
     CheckingHistory,
     ManagedLocation,
     PendingRegistration,
+    Project,
     Workplace,
     User,
     UserSyncEvent,
@@ -22,6 +24,7 @@ from ..models import (
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
+    DatabaseEventListResponse,
     AdminIdentity,
     AdminLocationsResponse,
     AdminLocationSettingsResponse,
@@ -31,6 +34,8 @@ from ..schemas import (
     AdminManagementRow,
     AdminPasswordResetRequest,
     AdminPasswordSetRequest,
+    ProjectCreate,
+    ProjectRow,
     AdminSessionResponse,
     AdminUserListRow,
     AdminUserUpsert,
@@ -73,6 +78,7 @@ from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
     upsert_location_settings,
 )
+from ..services.project_catalog import ensure_known_project, list_projects, resolve_default_project_name
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
     calculate_inactivity_days,
@@ -85,6 +91,8 @@ from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 EVENT_KEY_FIELDS = ("approved_by", "rejected_by", "revoked_by", "updated_by", "chave")
+DATABASE_EVENT_ACTIONS = ("checkin", "checkout")
+DATABASE_EVENT_PAGE_SIZE = 50
 
 
 def format_assiduidade_label(ontime: bool | None) -> str:
@@ -120,6 +128,39 @@ def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -
     if event.rfid:
         return user_keys_by_rfid.get(event.rfid)
     return None
+
+
+def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRow]:
+    rfids = sorted({row.rfid for row in rows if row.rfid})
+    user_keys_by_rfid: dict[str, str] = {}
+    if rfids:
+        user_keys_by_rfid = {
+            rfid: chave
+            for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
+            if rfid is not None
+        }
+
+    return [
+        EventRow(
+            id=row.id,
+            source=row.source,
+            rfid=row.rfid,
+            chave=resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid),
+            device_id=row.device_id,
+            local=row.local,
+            action=row.action,
+            status=row.status,
+            message=row.message,
+            details=row.details,
+            project=row.project,
+            ontime=row.ontime,
+            request_path=row.request_path,
+            http_status=row.http_status,
+            retry_count=row.retry_count,
+            event_time=row.event_time,
+        )
+        for row in rows
+    ]
 
 
 def build_location_settings_log_message(
@@ -253,6 +294,10 @@ def build_location_row(location: ManagedLocation) -> LocationRow:
         coordinates=coordinates,
         tolerance_meters=location.tolerance_meters,
     )
+
+
+def build_project_row(project: Project) -> ProjectRow:
+    return ProjectRow(id=project.id, name=project.name)
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
@@ -553,6 +598,81 @@ def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRo
     return list_admin_rows(db)
 
 
+@router.get("/projects", response_model=list[ProjectRow], dependencies=[Depends(require_admin_session)])
+def list_admin_projects(db: Session = Depends(get_db)) -> list[ProjectRow]:
+    return [build_project_row(project) for project in list_projects(db)]
+
+
+@router.post("/projects", response_model=ProjectRow, dependencies=[Depends(require_admin_session)])
+def create_admin_project(
+    payload: ProjectCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> ProjectRow:
+    existing_project = db.execute(select(Project).where(Project.name == payload.name)).scalar_one_or_none()
+    if existing_project is not None:
+        raise HTTPException(status_code=409, detail="Ja existe um projeto com esse nome.")
+
+    project = Project(name=payload.name)
+    db.add(project)
+    log_event(
+        db,
+        source="admin",
+        action="register",
+        status="done",
+        message="Project created via admin",
+        request_path="/api/admin/projects",
+        http_status=200,
+        details=f"updated_by={current_admin.chave}; project_name={payload.name}",
+    )
+    db.commit()
+    db.refresh(project)
+    notify_admin_views("register", "event")
+    return build_project_row(project)
+
+
+@router.delete("/projects/{project_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+def remove_admin_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> AdminActionResponse:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+
+    all_projects = list_projects(db)
+    if len(all_projects) <= 1:
+        raise HTTPException(status_code=409, detail="Nao e possivel remover o ultimo projeto cadastrado.")
+
+    fallback_project = next((row.name for row in all_projects if row.id != project.id), None)
+    linked_users = db.execute(select(User).where(User.projeto == project.name).order_by(User.id)).scalars().all()
+    blocked_users = [user for user in linked_users if not user_has_admin_access(user)]
+    if blocked_users:
+        raise HTTPException(status_code=409, detail="Nao e possivel remover um projeto com usuarios vinculados.")
+
+    for linked_user in linked_users:
+        linked_user.projeto = fallback_project or resolve_default_project_name(db)
+
+    db.delete(project)
+    log_event(
+        db,
+        source="admin",
+        action="register",
+        status="removed",
+        message="Project removed via admin",
+        request_path=f"/api/admin/projects/{project_id}",
+        http_status=200,
+        details=(
+            f"updated_by={current_admin.chave}; project_name={project.name}; project_id={project_id}; "
+            f"reassigned_admin_users={len(linked_users)}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("register", "event")
+    return AdminActionResponse(ok=True, message="Projeto removido com sucesso.")
+
+
 @router.post(
     "/administrators/requests/{request_id}/approve",
     response_model=AdminActionResponse,
@@ -578,6 +698,7 @@ def approve_administrator_request(
         raise HTTPException(status_code=404, detail="Solicitacao de administrador nao encontrada.")
 
     existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
+    default_project_name = resolve_default_project_name(db)
     if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
             db,
@@ -601,7 +722,7 @@ def approve_administrator_request(
                 senha=access_request.password_hash,
                 perfil=1,
                 nome=access_request.nome_completo,
-                projeto="P80",
+                projeto=default_project_name,
                 workplace=None,
                 placa=None,
                 end_rua=None,
@@ -1025,6 +1146,7 @@ def upsert_user(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_admin_session),
 ) -> dict:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     payload_fields = set(getattr(payload, "model_fields_set", set()))
     placa_was_provided = "placa" in payload_fields
     user = None
@@ -1312,35 +1434,103 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
         .order_by(desc(CheckEvent.id))
         .limit(200)
     ).scalars().all()
-    rfids = sorted({row.rfid for row in rows if row.rfid})
-    user_keys_by_rfid: dict[str, str] = {}
-    if rfids:
-        user_keys_by_rfid = {
-            rfid: chave
-            for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
-            if rfid is not None
-        }
-    return [
-        EventRow(
-            id=r.id,
-            source=r.source,
-            rfid=r.rfid,
-            chave=resolve_event_key(r, user_keys_by_rfid=user_keys_by_rfid),
-            device_id=r.device_id,
-            local=r.local,
-            action=r.action,
-            status=r.status,
-            message=r.message,
-            details=r.details,
-            project=r.project,
-            ontime=r.ontime,
-            request_path=r.request_path,
-            http_status=r.http_status,
-            retry_count=r.retry_count,
-            event_time=r.event_time,
+    return build_event_row_payload(rows, db)
+
+
+@router.get(
+    "/database-events",
+    response_model=DatabaseEventListResponse,
+    dependencies=[Depends(require_admin_session)],
+)
+def list_database_events(
+    db: Session = Depends(get_db),
+    action: str | None = Query(default=None),
+    project: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    chave: str | None = Query(default=None, min_length=1, max_length=4),
+    rfid: str | None = Query(default=None, min_length=1, max_length=64),
+    search: str | None = Query(default=None, min_length=1, max_length=120),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DATABASE_EVENT_PAGE_SIZE, ge=1, le=200),
+) -> DatabaseEventListResponse:
+    normalized_action = str(action or "").strip().lower() or None
+    if normalized_action and normalized_action not in DATABASE_EVENT_ACTIONS:
+        raise HTTPException(status_code=400, detail="Acao invalida para a consulta de eventos do banco de dados.")
+
+    normalized_project = str(project or "").strip().upper() or None
+    normalized_source = str(source or "").strip().lower() or None
+    normalized_status = str(status or "").strip().lower() or None
+    normalized_key = str(chave or "").strip().upper() or None
+    normalized_rfid = str(rfid or "").strip() or None
+    normalized_search = str(search or "").strip().lower() or None
+
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(status_code=400, detail="Intervalo de datas invalido para a consulta de eventos.")
+
+    query = select(CheckEvent).where(CheckEvent.action.in_(DATABASE_EVENT_ACTIONS))
+
+    if normalized_action:
+        query = query.where(CheckEvent.action == normalized_action)
+    if normalized_project:
+        query = query.where(CheckEvent.project == normalized_project)
+    if normalized_source:
+        query = query.where(func.lower(CheckEvent.source) == normalized_source)
+    if normalized_status:
+        query = query.where(func.lower(CheckEvent.status) == normalized_status)
+    if normalized_rfid:
+        query = query.where(CheckEvent.rfid == normalized_rfid)
+    if normalized_search:
+        like_pattern = f"%{normalized_search}%"
+        query = query.where(
+            or_(
+                func.lower(func.coalesce(CheckEvent.rfid, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.source, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.device_id, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.local, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.status, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.message, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.details, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.project, "")).like(like_pattern),
+                func.lower(func.coalesce(CheckEvent.request_path, "")).like(like_pattern),
+            )
         )
-        for r in rows
-    ]
+    if from_date:
+        from_datetime = datetime.combine(from_date, dt_time.min, tzinfo=now_sgt().tzinfo)
+        query = query.where(CheckEvent.event_time >= from_datetime)
+    if to_date:
+        to_datetime = datetime.combine(to_date + timedelta(days=1), dt_time.min, tzinfo=now_sgt().tzinfo)
+        query = query.where(CheckEvent.event_time < to_datetime)
+
+    if normalized_key:
+        key_match = db.execute(select(User.rfid).where(User.chave == normalized_key, User.rfid.is_not(None))).scalars().all()
+        details_pattern = f"%{normalized_key}%"
+        key_conditions = [func.upper(func.coalesce(CheckEvent.details, "")).like(details_pattern)]
+        if key_match:
+            key_conditions.append(CheckEvent.rfid.in_(key_match))
+        query = query.where(or_(*key_conditions))
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = db.execute(count_query).scalar_one()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+
+    rows = db.execute(
+        query
+        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
+        .offset((current_page - 1) * page_size)
+        .limit(page_size)
+    ).scalars().all()
+
+    return DatabaseEventListResponse(
+        items=build_event_row_payload(rows, db),
+        total=total,
+        page=current_page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_session)])

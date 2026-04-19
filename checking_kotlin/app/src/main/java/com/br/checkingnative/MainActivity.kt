@@ -9,14 +9,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.br.checkingnative.ui.BootstrapApp
-import com.br.checkingnative.ui.BootstrapViewModel
+import com.br.checkingnative.ui.checking.CheckingApp
+import com.br.checkingnative.ui.checking.CheckingViewModel
 import com.br.checkingnative.ui.theme.CheckingKotlinTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private val viewModel: BootstrapViewModel by viewModels()
+    private val viewModel: CheckingViewModel by viewModels()
+    private var initialResumeHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,8 +25,34 @@ class MainActivity : ComponentActivity() {
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             CheckingKotlinTheme {
-                BootstrapApp(uiState = uiState)
+                CheckingApp(
+                    uiState = uiState,
+                    messages = viewModel.messages,
+                    onChaveChanged = viewModel::updateChave,
+                    onRegistroChanged = viewModel::updateRegistro,
+                    onInformeChanged = viewModel::updateInforme,
+                    onProjetoChanged = viewModel::updateProjeto,
+                    onSubmit = viewModel::submitCurrent,
+                    onSyncHistory = viewModel::syncHistory,
+                    onRefreshCatalog = viewModel::refreshLocationsCatalog,
+                    onLocationSharingChanged = viewModel::setLocationSharingEnabled,
+                    onAutomaticCheckingChanged = viewModel::setAutomaticCheckInOutEnabled,
+                    onLocationUpdateIntervalChanged = viewModel::setLocationUpdateIntervalMinutes,
+                    onNightUpdatesChanged = viewModel::setNightUpdatesDisabled,
+                    onNightModeAfterCheckoutChanged = viewModel::setNightModeAfterCheckoutEnabled,
+                    onNightStartChanged = viewModel::setNightPeriodStartMinutes,
+                    onNightEndChanged = viewModel::setNightPeriodEndMinutes,
+                )
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (initialResumeHandled) {
+            viewModel.refreshAfterEnteringForeground()
+        } else {
+            initialResumeHandled = true
         }
     }
 

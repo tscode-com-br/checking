@@ -6,6 +6,12 @@ Este documento registra, de forma detalhada, como realizar o commit e o push do 
 
 Este é o fluxo usado no commit publicado em `2026-04-08`, que gerou o push para `origin/main` e disparou o deploy automático.
 
+Atualizacao operacional validada em `2026-04-19`:
+
+- o workspace contem dois repositorios Git distintos: `checkcheck` e `checking_android_new`;
+- o procedimento oficial de commit/push do projeto existe apenas para o repositorio principal `checkcheck`;
+- o app Flutter permanece fora do fluxo oficial de publicacao por Git, mesmo mantendo `.git` proprio no workspace.
+
 ## 2. Escopo correto deste deploy
 
 O deploy automático do DigitalOcean é acionado pelo repositório principal deste projeto, que contém:
@@ -15,7 +21,9 @@ O deploy automático do DigitalOcean é acionado pelo repositório principal des
 - firmware ESP32;
 - documentação do repositório principal.
 
-O app Android atual em `checking_android_new` vive no monorepo, mas não participa do deploy automático da API/web.
+O app Android atual em `checking_android_new` tem Git proprio no workspace, mas não participa do deploy automático da API/web nem do procedimento oficial de commit/push.
+
+Por decisão operacional atual, não existe fluxo oficial de publicação por Git para o app Flutter. Não usar `git subtree` nem push direto do repositório aninhado como parte da rotina do projeto.
 
 ## 3. Premissas antes do push
 
@@ -207,6 +215,16 @@ Neste caso, antes do push, foram executados testes focados no fluxo de arquivame
 ### 12.5 Separar o escopo do commit
 
 Mesmo quando o workspace contiver artefatos locais ou projetos auxiliares, eles não devem ser misturados com o commit da API/web quando a entrega for apenas do backend e do painel administrativo.
+
+### 12.6 Não publicar o app Flutter via Git
+
+O diretório `checking_android_new` continua no workspace com `.git` próprio, mas isso não faz parte do processo oficial atual.
+
+Não usar:
+
+- `git subtree split --prefix checking_android_new ...`;
+- `git push` dentro de `checking_android_new`;
+- qualquer rotina de publicação do app Flutter acoplada ao deploy da API/web.
 
 ## 13. Passo a passo resumido
 

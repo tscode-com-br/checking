@@ -813,6 +813,8 @@
       selectedRequestId: null,
       isLoading: false,
       selectedRouteKind: "home_to_work",
+      projectVisibility: {},
+      projectListOpen: false,
       expandedVehicleKey: null,
       vehicleViewModes: {
         extra: "grid",
@@ -839,6 +841,9 @@
     const selectionText = document.querySelector("[data-selection-text]");
     const clearSelectionButton = document.querySelector("[data-clear-selection]");
     const rejectSelectionButton = document.querySelector("[data-reject-selection]");
+    const projectListToggle = document.querySelector("[data-project-list-toggle]");
+    const projectListPanel = document.querySelector("[data-project-list-panel]");
+    const projectListContainer = document.querySelector("[data-project-list]");
     const transportTopbar = document.querySelector("[data-transport-topbar]");
     const settingsTrigger = document.querySelector("[data-open-settings-modal]");
     const settingsTitleAnchor = document.querySelector("[data-settings-title-anchor]");
@@ -897,6 +902,13 @@
       });
     });
 
+    if (projectListToggle) {
+      projectListToggle.addEventListener("click", function () {
+        state.projectListOpen = !state.projectListOpen;
+        renderProjectList();
+      });
+    }
+
     function refreshDatePanelLabels() {
       const selectedDate = dateStore.getValue();
       document.querySelectorAll("[data-date-label]").forEach(function (labelElement) {
@@ -951,7 +963,11 @@
         authLabels[1].textContent = t("auth.pass");
       }
 
-      const userListTitle = document.querySelector("#tela01main_esq .transport-pane-title");
+      const projectListTitle = document.querySelector("[data-project-list-toggle]");
+      const userListTitle = document.querySelector("[data-user-list-title]");
+      if (projectListTitle) {
+        projectListTitle.textContent = t("panes.projectList");
+      }
       if (userListTitle) {
         userListTitle.textContent = t("panes.userList");
       }
@@ -2030,6 +2046,51 @@
         : [];
     }
 
+    function getProjectRows() {
+      if (!state.dashboard) {
+        return [];
+      }
+      return Array.isArray(state.dashboard.projects) ? state.dashboard.projects : [];
+    }
+
+    function reconcileProjectVisibility() {
+      const nextVisibility = {};
+      getProjectRows().forEach(function (projectRow) {
+        if (!projectRow || !projectRow.name) {
+          return;
+        }
+        nextVisibility[projectRow.name] = state.projectVisibility[projectRow.name] !== false;
+      });
+      state.projectVisibility = nextVisibility;
+    }
+
+    function hasAnyVisibleProject() {
+      const projectNames = Object.keys(state.projectVisibility);
+      if (!projectNames.length) {
+        return true;
+      }
+      return projectNames.some(function (projectName) {
+        return state.projectVisibility[projectName] !== false;
+      });
+    }
+
+    function isProjectVisible(projectName) {
+      const normalizedProjectName = String(projectName || "").trim();
+      if (!normalizedProjectName) {
+        return true;
+      }
+      if (!(normalizedProjectName in state.projectVisibility)) {
+        return true;
+      }
+      return state.projectVisibility[normalizedProjectName] !== false;
+    }
+
+    function getVisibleRequestsForKind(kind) {
+      return getRequestsForKind(kind).filter(function (requestRow) {
+        return isProjectVisible(requestRow.projeto);
+      });
+    }
+
     function getVehiclesForScope(scope) {
       if (!state.dashboard) {
         return [];
@@ -2054,12 +2115,18 @@
       }, []);
     }
 
+    function getAllVisibleRequests() {
+      return REQUEST_SECTION_ORDER.reduce(function (rows, kind) {
+        return rows.concat(getVisibleRequestsForKind(kind));
+      }, []);
+    }
+
     function getSelectedRequest() {
       if (state.selectedRequestId === null) {
         return null;
       }
       return (
-        getAllRequests().find(function (row) {
+        getAllVisibleRequests().find(function (row) {
           return Number(row.id) === Number(state.selectedRequestId);
         }) || null
       );
@@ -2152,6 +2219,43 @@
       return detailsPanel;
     }
 
+    function renderProjectList() {
+      if (projectListPanel) {
+        projectListPanel.hidden = !state.projectListOpen;
+      }
+      if (projectListToggle) {
+        projectListToggle.setAttribute("aria-expanded", String(state.projectListOpen));
+      }
+      if (!projectListContainer) {
+        return;
+      }
+
+      clearElement(projectListContainer);
+      const projectRows = getProjectRows();
+      if (!projectRows.length) {
+        projectListContainer.appendChild(createEmptyState(t("empty.noProjectsAvailable")));
+        return;
+      }
+
+      projectRows.forEach(function (projectRow) {
+        const label = createNode("label", "transport-project-chip");
+        const checkbox = document.createElement("input");
+        const text = createNode("span", "transport-project-chip-label", projectRow.name);
+
+        checkbox.type = "checkbox";
+        checkbox.checked = state.projectVisibility[projectRow.name] !== false;
+        label.classList.toggle("is-selected", checkbox.checked);
+        checkbox.addEventListener("change", function () {
+          state.projectVisibility[projectRow.name] = checkbox.checked;
+          renderDashboard();
+        });
+
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        projectListContainer.appendChild(label);
+      });
+    }
+
     function renderSelectionBanner() {
       const selectedRequest = getSelectedRequest();
       if (!selectionBanner || !selectionText) {
@@ -2188,9 +2292,14 @@
     function renderRequestTables() {
       REQUEST_SECTION_ORDER.forEach(function (kind) {
         const container = requestContainers[kind];
-        const requestRows = getRequestsForKind(kind);
+        const requestRows = getVisibleRequestsForKind(kind);
         clearElement(container);
         if (!container) {
+          return;
+        }
+
+        if (!hasAnyVisibleProject()) {
+          container.appendChild(createEmptyState(t("empty.noProjectsSelected")));
           return;
         }
 
@@ -2207,23 +2316,14 @@
             rowButton.classList.add("is-selected");
           }
 
-          const timeCell = createNode("span", "transport-request-time", requestRow.requested_time);
           const nameCell = createNode("span", "transport-request-primary", requestRow.nome);
           const addressCell = createNode("span", "transport-request-secondary", requestRow.end_rua || t("misc.addressPending"));
-          const zipCell = createNode("span", "transport-request-secondary", requestRow.zip || t("misc.zipPending"));
-          const metaText = createRequestMetaLine(requestRow);
+          const zipCell = createNode("span", "transport-request-secondary transport-request-zip", requestRow.zip || t("misc.zipPending"));
 
           if (shouldHighlightRequestName(requestRow.assignment_status)) {
             nameCell.classList.add("is-attention");
           }
 
-          if (metaText) {
-            const metaLine = createNode("small", "transport-request-meta", metaText);
-            nameCell.appendChild(document.createElement("br"));
-            nameCell.appendChild(metaLine);
-          }
-
-          rowButton.appendChild(timeCell);
           rowButton.appendChild(nameCell);
           rowButton.appendChild(addressCell);
           rowButton.appendChild(zipCell);
@@ -2493,12 +2593,14 @@
     function renderDashboard() {
       ensureSelectedRequestStillExists();
       ensureExpandedVehicleStillExists();
+      renderProjectList();
       renderSelectionBanner();
       renderRequestTables();
       renderVehiclePanels();
     }
 
     function clearDashboard() {
+      renderProjectList();
       REQUEST_SECTION_ORDER.forEach(function (kind) {
         const container = requestContainers[kind];
         clearElement(container);
@@ -2545,6 +2647,7 @@
       )
         .then(function (dashboard) {
           state.dashboard = dashboard || null;
+          reconcileProjectVisibility();
           state.selectedRouteKind = (dashboard && dashboard.selected_route) || routeKind;
           syncRouteInputs();
           syncRouteTimeControls();

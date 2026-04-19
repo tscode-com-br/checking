@@ -17,19 +17,25 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Estado atual
 
-- Fase 3 concluída: persistência, cache local e onboarding manual endurecidos
+- Fase 5 concluída: UI Compose funcional para fluxos manuais
 - scaffold Android nativo criado
-- tela inicial de bootstrap pronta
+- tela inicial de bootstrap removida
+- tela principal funcional em Compose conectada ao controller
 - DI, banco local e preferências já conectados
 - manifest com permissões Android sensíveis declaradas
 - receivers nativos de boot, notificações e ações preparados
 - service placeholder de localização em foreground declarado
 - Room versionado sem destructive migration
 - cache DataStore para catálogo de localizações
+- controller nativo com sync de histórico, refresh de catálogo e envio manual
+- ViewModel funcional conectado à UI Compose
+- lint reduzido de 18 para 2 warnings restantes de Hilt/AGP
 - baseline da migração documentado em `docs/migration-phase-0-baseline.md`
 - decisão de identidade documentada em `docs/migration-phase-1-identity.md`
 - fundação Android documentada em `docs/migration-phase-2-android-foundation.md`
 - persistência documentada em `docs/migration-phase-3-persistence.md`
+- controller documentado em `docs/migration-phase-4-controller.md`
+- UI Compose documentada em `docs/migration-phase-5-compose-ui.md`
 
 ## Comandos
 
@@ -40,6 +46,6 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Próximos passos
 
-1. Implementar ViewModel/controller funcional equivalente ao Flutter.
-2. Conectar envio manual, sync de histórico e sync de catálogo à API.
-3. Substituir a UI de bootstrap pela tela funcional em Compose.
+1. Implementar permissões runtime e abertura de settings Android.
+2. Implementar captura real de localização em foreground.
+3. Conectar automação de localização ao foreground service.

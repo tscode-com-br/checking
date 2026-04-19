@@ -543,6 +543,10 @@ button {
   gap: 4px;
 }
 
+.transport-pane-head-stack {
+  gap: 12px;
+}
+
 .transport-pane-head-extra {
   gap: 10px;
 }
@@ -562,6 +566,77 @@ button {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.transport-project-list-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--transport-text-soft);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.transport-project-list-toggle:hover,
+.transport-project-list-toggle:focus-visible,
+.transport-project-list-toggle[aria-expanded="true"] {
+  color: #d5fffc;
+}
+
+.transport-project-list-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.transport-project-list-toggle:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.45);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+.transport-project-list-panel {
+  padding: 12px 14px;
+  border: 1px solid rgba(72, 212, 206, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(72, 212, 206, 0.1), rgba(255, 255, 255, 0.02));
+}
+
+.transport-project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.transport-project-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--transport-text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.transport-project-chip input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #48d4ce;
+}
+
+.transport-project-chip.is-selected {
+  border-color: rgba(72, 212, 206, 0.42);
+  background: rgba(72, 212, 206, 0.12);
+  color: #e7fffe;
 }
 
 .transport-pane-title-link {
@@ -804,7 +879,7 @@ button {
   min-height: 0;
   display: grid;
   grid-template-rows: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
 .transport-request-section {
@@ -829,11 +904,11 @@ button {
 
 .transport-request-row {
   width: 100%;
-  padding: 14px 16px;
+  padding: 12px 14px;
   display: grid;
-  grid-template-columns: 86px minmax(0, 1.6fr) minmax(0, 1.15fr) 110px;
-  gap: 12px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  align-items: flex-start;
   border: 1px solid transparent;
   border-left: 4px solid transparent;
   border-radius: 18px;
@@ -870,12 +945,6 @@ button {
   border-left-color: var(--transport-warning);
 }
 
-.transport-request-time {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
 .transport-request-primary {
   font-size: var(--transport-body-size);
   font-weight: 700;
@@ -889,9 +958,15 @@ button {
 .transport-request-secondary {
   color: var(--transport-text-muted);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.transport-request-zip {
+  color: #a7fff0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 
 .transport-request-meta {
@@ -1535,11 +1610,7 @@ button {
   }
 
   .transport-request-row {
-    grid-template-columns: 74px minmax(0, 1fr);
-  }
-
-  .transport-request-row .transport-request-secondary:last-child {
-    justify-self: flex-start;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .transport-vehicle-grid.is-management-table {
@@ -1574,6 +1645,10 @@ button {
 
   .transport-request-sections {
     grid-template-rows: repeat(3, minmax(120px, auto));
+  }
+
+  .transport-project-list {
+    grid-template-columns: 1fr;
   }
 
   .transport-vehicle-grid {

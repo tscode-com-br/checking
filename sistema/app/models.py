@@ -6,6 +6,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
 
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("name", name="uq_projects_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+
 class Workplace(Base):
     __tablename__ = "workplaces"
     __table_args__ = (UniqueConstraint("workplace", name="uq_workplaces_workplace"),)
@@ -26,7 +34,7 @@ class User(Base):
     senha: Mapped[str | None] = mapped_column(String(255), nullable=True)
     perfil: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
-    projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)
     placa: Mapped[str | None] = mapped_column(String(9), ForeignKey("vehicles.placa"), nullable=True)
     end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -227,7 +235,7 @@ class CheckEvent(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     message: Mapped[str] = mapped_column(String(255), nullable=False)
     details: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    project: Mapped[str] = mapped_column(String(3), nullable=True)
+    project: Mapped[str] = mapped_column(String(120), nullable=True)
     device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     request_path: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -256,7 +264,7 @@ class FormsSubmission(Base):
     rfid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     chave: Mapped[str] = mapped_column(String(4), nullable=False)
-    projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     ontime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -304,7 +312,7 @@ class UserSyncEvent(Base):
     rfid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
-    projeto: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    projeto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     ontime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -325,14 +333,13 @@ class CheckingHistory(Base):
             name="uq_checkinghistory_event",
         ),
         CheckConstraint("atividade IN ('check-in', 'check-out')", name="ck_checkinghistory_atividade_allowed"),
-        CheckConstraint("projeto IN ('P80', 'P82', 'P83')", name="ck_checkinghistory_projeto_allowed"),
         CheckConstraint("informe IN ('normal', 'retroativo')", name="ck_checkinghistory_informe_allowed"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chave: Mapped[str] = mapped_column(String(4), nullable=False)
     atividade: Mapped[str] = mapped_column(String(16), nullable=False)
-    projeto: Mapped[str] = mapped_column(String(3), nullable=False)
+    projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     informe: Mapped[str] = mapped_column(String(16), nullable=False)
 

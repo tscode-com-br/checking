@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
 @Singleton
 class CheckingStateRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
-) {
+) : CheckingStateStore {
     private object Keys {
         val stateJson = stringPreferencesKey("checking_state_json")
         val apiSharedKey = stringPreferencesKey("checking_api_shared_key")
@@ -31,7 +31,7 @@ class CheckingStateRepository @Inject constructor(
             booleanPreferencesKey("checking_legacy_source_installed")
     }
 
-    val storageSnapshot: Flow<CheckingStateStorageSnapshot> =
+    override val storageSnapshot: Flow<CheckingStateStorageSnapshot> =
         dataStore.data.map { preferences ->
             val resolvedSharedKey = preferences.resolvedSharedKey()
             val persistedState = preferences[Keys.stateJson]
@@ -52,7 +52,7 @@ class CheckingStateRepository @Inject constructor(
             )
         }
 
-    suspend fun ensureSeededState() {
+    override suspend fun ensureSeededState() {
         dataStore.edit { preferences ->
             if (!preferences[Keys.stateJson].isNullOrBlank()) {
                 return@edit
@@ -70,7 +70,7 @@ class CheckingStateRepository @Inject constructor(
         }
     }
 
-    suspend fun saveState(state: CheckingState) {
+    override suspend fun saveState(state: CheckingState) {
         dataStore.edit { preferences ->
             preferences[Keys.stateJson] = state.toPersistedJsonString()
 
@@ -83,13 +83,13 @@ class CheckingStateRepository @Inject constructor(
         }
     }
 
-    suspend fun markInitialAndroidSetupPrompted() {
+    override suspend fun markInitialAndroidSetupPrompted() {
         dataStore.edit { preferences ->
             preferences[Keys.initialAndroidSetupPrompted] = true
         }
     }
 
-    suspend fun updateLegacyMigrationReport(report: LegacyFlutterMigrationReport) {
+    override suspend fun updateLegacyMigrationReport(report: LegacyFlutterMigrationReport) {
         dataStore.edit { preferences ->
             preferences[Keys.legacyMigrationStatus] = report.status.storageValue
             preferences[Keys.legacyMigrationMessage] = report.message

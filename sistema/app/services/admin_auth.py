@@ -7,6 +7,7 @@ from ..database import SessionLocal, get_db
 from ..models import User
 from .passwords import hash_password, verify_password
 from .event_logger import log_event
+from .project_catalog import resolve_default_project_name
 from .time_utils import now_sgt
 
 
@@ -101,6 +102,7 @@ def clear_transport_session(request: Request) -> None:
 def ensure_default_admin(db: Session) -> User:
     chave = normalize_admin_key(settings.bootstrap_admin_key)
     timestamp = now_sgt()
+    default_project_name = resolve_default_project_name(db)
     admin = db.execute(select(User).where(User.chave == chave)).scalar_one_or_none()
     bootstrap_profile = BOOTSTRAP_PROFILE_BY_KEY.get(chave, 9)
     changed = False
@@ -113,7 +115,7 @@ def ensure_default_admin(db: Session) -> User:
             senha=hash_password(settings.bootstrap_admin_password),
             perfil=bootstrap_profile,
             nome=settings.bootstrap_admin_name.strip(),
-            projeto="P80",
+            projeto=default_project_name,
             workplace=None,
             placa=None,
             end_rua=None,

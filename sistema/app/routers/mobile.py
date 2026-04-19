@@ -24,6 +24,7 @@ from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
 )
+from ..services.project_catalog import ensure_known_project
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -98,6 +99,7 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
 
 @router.post("/events/submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     resolved_local = payload.local or DEFAULT_MOBILE_LOCAL
     existing = db.execute(
         select(UserSyncEvent).where(
@@ -233,6 +235,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
 
 @router.post("/events/forms-submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     return submit_forms_event(
         db,
         chave=payload.chave,
@@ -249,6 +252,7 @@ def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = D
 
 @router.post("/events/sync", response_model=MobileSyncResponse, dependencies=[Depends(require_mobile_shared_key)])
 def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db)) -> MobileSyncResponse:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     resolved_local = payload.local or DEFAULT_MOBILE_LOCAL
     existing = db.execute(
         select(UserSyncEvent).where(

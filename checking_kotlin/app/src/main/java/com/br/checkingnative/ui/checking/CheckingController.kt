@@ -1,7 +1,7 @@
 package com.br.checkingnative.ui.checking
 
 import com.br.checkingnative.data.local.repository.ManagedLocationRepository
-import com.br.checkingnative.data.preferences.CheckingStateRepository
+import com.br.checkingnative.data.preferences.CheckingStateStore
 import com.br.checkingnative.data.remote.CheckingApiException
 import com.br.checkingnative.data.remote.CheckingApiService
 import com.br.checkingnative.domain.logic.CheckingLocationLogic
@@ -26,7 +26,7 @@ import kotlinx.coroutines.flow.update
 
 @Singleton
 class CheckingController @Inject constructor(
-    private val checkingStateRepository: CheckingStateRepository,
+    private val checkingStateStore: CheckingStateStore,
     private val apiService: CheckingApiService,
     private val locationRepository: ManagedLocationRepository,
 ) {
@@ -41,8 +41,8 @@ class CheckingController @Inject constructor(
         }
 
         try {
-            checkingStateRepository.ensureSeededState()
-            val snapshot = checkingStateRepository.storageSnapshot.first()
+            checkingStateStore.ensureSeededState()
+            val snapshot = checkingStateStore.storageSnapshot.first()
             val restoredState = CheckingLocationLogic.resolveLocationUpdateIntervalState(
                 state = snapshot.state,
             ).copy(
@@ -662,7 +662,7 @@ class CheckingController @Inject constructor(
     private suspend fun updateAndPersist(nextState: CheckingState) {
         val resolvedState = nextState.copy(isLoading = false)
         setStateOnly(resolvedState)
-        checkingStateRepository.saveState(resolvedState)
+        checkingStateStore.saveState(resolvedState)
     }
 
     private fun setStateOnly(nextState: CheckingState) {

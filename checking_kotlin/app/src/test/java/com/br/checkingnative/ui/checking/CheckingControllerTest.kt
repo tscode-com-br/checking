@@ -8,7 +8,9 @@ import com.br.checkingnative.data.local.db.ManagedLocationEntity
 import com.br.checkingnative.data.local.db.toEntity
 import com.br.checkingnative.data.local.repository.ManagedLocationCacheRepository
 import com.br.checkingnative.data.local.repository.ManagedLocationRepository
-import com.br.checkingnative.data.preferences.CheckingStateRepository
+import com.br.checkingnative.data.migration.LegacyFlutterMigrationReport
+import com.br.checkingnative.data.preferences.CheckingStateStorageSnapshot
+import com.br.checkingnative.data.preferences.CheckingStateStore
 import com.br.checkingnative.data.remote.CheckingApiService
 import com.br.checkingnative.data.remote.CheckingHttpRequest
 import com.br.checkingnative.data.remote.CheckingHttpResponse
@@ -46,7 +48,7 @@ class CheckingControllerTest {
     @Test
     fun initialize_loadsPersistedStateAndLocations() = runBlocking {
         val fixture = createFixture("controller_init.preferences_pb")
-        fixture.stateRepository.saveState(
+        fixture.stateStore.saveState(
             CheckingState.initial().copy(
                 chave = "AB12",
                 isLoading = false,
@@ -67,7 +69,7 @@ class CheckingControllerTest {
     @Test
     fun updateChave_normalizesValueAndClearsCurrentHistory() = runBlocking {
         val fixture = createFixture("controller_key.preferences_pb")
-        fixture.stateRepository.saveState(
+        fixture.stateStore.saveState(
             CheckingState.initial().copy(
                 chave = "ZZ99",
                 lastCheckIn = Instant.parse("2026-04-18T08:00:00Z"),
@@ -114,7 +116,7 @@ class CheckingControllerTest {
                 }
             """.trimIndent(),
         )
-        fixture.stateRepository.saveState(
+        fixture.stateStore.saveState(
             CheckingState.initial().copy(
                 chave = "AB12",
                 checkInProjeto = ProjetoType.P80,
@@ -160,7 +162,7 @@ class CheckingControllerTest {
                 }
             """.trimIndent(),
         )
-        fixture.stateRepository.saveState(
+        fixture.stateStore.saveState(
             CheckingState.initial().copy(
                 chave = "AB12",
                 registro = RegistroType.CHECK_IN,
@@ -188,7 +190,7 @@ class CheckingControllerTest {
         assertEquals("Registro enviado.", state.statusMessage)
         assertEquals(StatusTone.SUCCESS, state.statusTone)
         assertEquals(Instant.parse("2026-04-18T09:30:00Z"), state.lastCheckIn)
-        assertEquals("Base Norte", state.lastCheckInLocation)
+        assertNull(state.lastCheckInLocation)
         assertEquals(RegistroType.CHECK_OUT, state.registro)
         assertFalse(state.isSubmitting)
     }
@@ -218,7 +220,7 @@ class CheckingControllerTest {
                 }
             """.trimIndent(),
         )
-        fixture.stateRepository.saveState(
+        fixture.stateStore.saveState(
             CheckingState.initial().copy(
                 chave = "AB12",
                 isLoading = false,
@@ -242,21 +244,21 @@ class CheckingControllerTest {
     }
 
     private fun createFixture(fileName: String): ControllerFixture {
-        val dataStore = createDataStore(fileName)
-        val stateRepository = CheckingStateRepository(dataStore)
-        val cacheRepository = ManagedLocationCacheRepository(dataStore)
+        val cacheDataStore = createDataStore("cache_$fileName")
+        val stateStore = FakeCheckingStateStore()
+        val cacheRepository = ManagedLocationCacheRepository(cacheDataStore)
         val dao = FakeManagedLocationDao()
         val locationRepository = ManagedLocationRepository(dao, cacheRepository)
         val transport = FakeCheckingHttpTransport()
         val apiService = CheckingApiService(transport)
         val controller = CheckingController(
-            checkingStateRepository = stateRepository,
+            checkingStateStore = stateStore,
             apiService = apiService,
             locationRepository = locationRepository,
         )
         return ControllerFixture(
             controller = controller,
-            stateRepository = stateRepository,
+            stateStore = stateStore,
             locationRepository = locationRepository,
             dao = dao,
             transport = transport,
@@ -274,11 +276,42 @@ class CheckingControllerTest {
 
 private data class ControllerFixture(
     val controller: CheckingController,
-    val stateRepository: CheckingStateRepository,
+    val stateStore: FakeCheckingStateStore,
     val locationRepository: ManagedLocationRepository,
     val dao: FakeManagedLocationDao,
     val transport: FakeCheckingHttpTransport,
 )
+
+private class FakeCheckingStateStore : CheckingStateStore {
+    private val snapshot = MutableStateFlow(CheckingStateStorageSnapshot())
+
+    override val storageSnapshot: Flow<CheckingStateStorageSnapshot> = snapshot
+
+    override suspend fun ensureSeededState() {
+        if (!snapshot.value.hasPersistedState) {
+            saveState(CheckingState.initial().copy(isLoading = false))
+        }
+    }
+
+    override suspend fun saveState(state: CheckingState) {
+        snapshot.value = snapshot.value.copy(
+            state = state,
+            hasPersistedState = true,
+        )
+    }
+
+    override suspend fun markInitialAndroidSetupPrompted() {
+        snapshot.value = snapshot.value.copy(hasPromptedInitialAndroidSetup = true)
+    }
+
+    override suspend fun updateLegacyMigrationReport(report: LegacyFlutterMigrationReport) {
+        snapshot.value = snapshot.value.copy(
+            legacyMigrationStatus = report.status,
+            legacyMigrationMessage = report.message,
+            legacySourceInstalled = report.sourceAppInstalled,
+        )
+    }
+}
 
 private class FakeManagedLocationDao : ManagedLocationDao {
     private val storedItems = MutableStateFlow<List<ManagedLocationEntity>>(emptyList())

@@ -1,0 +1,117 @@
+Fase 0 - Travar A Referência (já implementada)
+
+Congelar o Flutter atual como especificação funcional: checking_android_new.
+Usar os 74 testes do Flutter como checklist de paridade.
+Registrar screenshots do fluxo Flutter: splash, tela principal, settings sheet, automação sheet, histórico de localizações, estados de erro/sucesso.
+Confirmar versão alvo: o pubspec.yaml está em 1.4.1+16, mas READMEs/docs antigos citam 1.2.2 e 1.0.0.
+Definir se o Kotlin será substituto do app publicado ou app separado.
+
+Fase 1 - Decisão Crítica De Identidade (já implementada)
+
+Se o Kotlin for substituir o Flutter na Play Store, trocar applicationId e namespace de com.br.checkingnative para com.br.checking.
+Usar a mesma assinatura/upload key para permitir upgrade sobre o app Flutter.
+Se continuar como app separado, aceitar que a migração automática de dados internos do Flutter fica bloqueada pelo sandbox Android.
+Corrigir Room antes de qualquer release: o Flutter usa banco checking_locations.db versão 2; o Kotlin está com Room version 1 e fallbackToDestructiveMigration, risco real de apagar catálogo ao abrir banco legado.
+Decidir política de migração: upgrade in-place, importação manual ou novo setup.
+
+Fase 2 - Fundação Android Nativa (já implementada)
+
+Portar permissões do manifest Flutter para o Kotlin: internet, rede, localização coarse/fine/background, notificações, foreground service location, wake lock, boot completed e battery optimization.
+Definir usesCleartextTraffic="false".
+Adicionar receivers/serviços necessários: foreground location service, boot/update receiver, notification action receiver se o comportamento legado for mantido.
+Importar ícone/logo real de checking_android_new/assets.
+Remover UI/ícone placeholder “K”.
+Corrigir warnings simples de lint: recursos não usados, monochrome icon e targetApi.
+
+Fase 3 - Persistência E Migração (já implementada)
+
+Reproduzir exatamente as chaves legadas: checking_flutter_state_v1, backup da shared key, cache de locais e flag de setup Android.
+Implementar importação de SharedPreferences legado quando o package for o mesmo.
+Manter a regra Flutter: lastCheckIn e lastCheckOut não são persistidos localmente; vêm da API.
+Guardar apiSharedKey com equivalente seguro, mantendo fallback operacional para background.
+Corrigir DataStore para não “semear” estado novo antes de tentar migração.
+Implementar cache fallback do catálogo, como o Flutter faz quando SQLite falha.
+Testar migração com JSON válido, JSON inválido, flags antigas de automação e histórico de localização antigo sem coordenadas.
+
+Fase 4 - ViewModel/Controller Funcional (já implementada)
+
+Criar CheckingViewModel equivalente ao CheckingController.
+Portar inicialização: carregar estado, carregar catálogo, sincronizar permissões, sincronizar histórico, preparar automação.
+Portar updates: chave, registro, informe, projeto, URL base, shared key.
+Portar timers: refresh de histórico a cada 5s, timers de fronteira noturna e captura periódica de localização.
+Portar fila de persistência para não perder a última chave em updates rápidos.
+Portar estados transitórios: loading, submitting, syncing, locationUpdating, automaticCheckingUpdating.
+Garantir mensagens e tons iguais ao Flutter, inclusive acentos/textos de usuário.
+
+Fase 5 - API E Fluxos Manuais (crashed)
+
+Conectar UI/ViewModel ao CheckingApiService.
+Implementar syncHistory: buscar estado remoto, aplicar último check-in/out e sugerir próxima ação.
+Implementar refreshLocationsCatalog: buscar catálogo, substituir Room/cache, aplicar location_accuracy_threshold_meters.
+Implementar submitCurrent: validar chave/API, montar client_event_id, enviar evento, aplicar resposta.
+Preservar regra crítica: envio manual usa o informe escolhido; automação sempre usa normal.
+Tratar erros HTTP com as mesmas mensagens amigáveis do Flutter.
+Testar fallback https://www.tscode.com.br.
+
+Fase 6 - Permissões E Configurações
+
+Implementar checagem e request de localização precisa.
+Implementar request de localização em segundo plano.
+Implementar request de notificações Android 13+.
+Implementar fluxo de ignorar otimização de bateria.
+Implementar helper OEM Xiaomi/HyperOS, Samsung e Motorola.
+Implementar flags derivadas: canEnableLocationSharing, CheckingPermissionSettingsState.
+Garantir que switches voltem para off quando permissões forem revogadas.
+
+Fase 7 - Localização Em Foreground
+
+Adicionar dependência de localização nativa, idealmente Fused Location Provider.
+Capturar posição atual ao ativar busca por localização.
+Criar stream foreground quando background service não estiver rodando.
+Rejeitar leituras com precisão pior que threshold.
+Deduplicar leituras repetidas dentro de 1 segundo e mesma coordenada.
+Atualizar lastDetectedLocation, lastMatchedLocation, lastLocationUpdateAt e histórico das últimas 10 posições.
+Reproduzir labels especiais: Zona de Check-Out, Fora do Ambiente de Trabalho, Localização não Cadastrada.
+
+Fase 8 - Automação Background
+
+Criar foreground service nativo com notification channel “Checking em segundo plano”.
+Manter serviço vivo com stopWithTask=false, wake lock e restart em boot/update quando habilitado.
+Implementar pausa por período noturno configurado.
+Implementar modo noturno pós-checkout até 06:00 de Singapura.
+Implementar automação completa: check-in ao entrar em local, check-out em zona de checkout, check-out fora de range maior que 2 km, check-in perto do trabalho sem match exato.
+Evitar evento duplicado no mesmo local.
+Cachear estado remoto por janela curta, como o Flutter faz.
+Sincronizar snapshots do serviço com a UI via repository/Flow.
+
+Fase 9 - UI Compose Final
+
+Recriar splash/presentation de 2s com logo e nomes.
+Recriar tela principal: logo, header, botões GPS/settings, histórico, status, chave, radio groups e botão registrar.
+Recriar comportamento do campo chave: limpar ao tocar, aceitar 4 alfanuméricos, uppercase, fechar teclado com 4 chars.
+Recriar modal de automação por localização.
+Recriar modal de configurações.
+Recriar seletores de frequência e horários noturnos.
+Recriar diálogo de últimas localizações.
+Recriar snackbars, disabled states, loading spinners e cores do AppTheme.
+Validar layout em telas pequenas e grandes.
+
+Fase 10 - Testes De Paridade
+
+Portar para Kotlin os cenários dos 74 testes Flutter que ainda não existem.
+Adicionar testes de ViewModel com coroutines test.
+Adicionar testes instrumentados para permissões, Room real e service lifecycle.
+Adicionar screenshot/golden tests ou baseline visual para Compose.
+Testar upgrade/migração com banco e prefs simulados do Flutter.
+Testar em dispositivo real Android 13, 14 e 15+.
+
+Fase 11 - Release
+
+Ajustar versionCode/versionName para a versão alvo real.
+Configurar release assinado, minify, shrink resources e ProGuard/R8.
+Criar scripts equivalentes aos do Flutter para AAB e preflight.
+Atualizar README/docs específicos do Kotlin.
+Revisar política de background location, Data Safety, screenshots e release notes.
+Gerar AAB e validar instalação/upgrade.
+Critério Final
+O Kotlin só deve ser considerado “perfeito conforme Flutter” quando passar build, lint, testes de paridade, teste real de localização em background, teste de upgrade/migração e comparação visual das telas principais. Hoje ele está saudável como base técnica, mas ainda está antes da parte mais importante: virar o aplicativo operacional de fato.

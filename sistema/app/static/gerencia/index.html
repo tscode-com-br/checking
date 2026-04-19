@@ -130,7 +130,7 @@
           <div class="hero-card panel-surface">
             <div class="hero-copy">
               <span class="section-kicker">Operação administrativa</span>
-              <h1>Painel profissional de gestão</h1>
+              <h1 class="hero-admin-title">Painel de Administrador</h1>
               <p>
                 Presença, cadastro e auditoria em uma leitura mais limpa, com tabelas estáveis, filtros consistentes
                 e ações mais fáceis de operar durante o expediente.
@@ -218,6 +218,7 @@
           <button data-tab="inactive"><span>Inativos</span><span class="tab-count" data-tab-count-for="inactive">0</span></button>
           <button data-tab="cadastro"><span>Cadastro</span><span class="tab-count" data-tab-count-for="cadastro">0</span></button>
           <button data-tab="eventos"><span>Eventos</span><span class="tab-count" data-tab-count-for="eventos">0</span></button>
+          <button data-tab="banco-dados"><span>Banco de Dados</span><span class="tab-count" data-tab-count-for="banco-dados">0</span></button>
         </nav>
 
         <main class="dashboard-main">
@@ -538,22 +539,47 @@
               </div>
             </div>
 
-            <div class="panel-surface panel-section">
-              <div class="section-header">
-                <div>
-                  <span class="section-kicker">Acesso</span>
-                  <h2>Administradores</h2>
-                  <p class="section-copy">Relação dos usuários com perfil administrativo refletido no backend atual.</p>
+            <div class="cadastro-split-grid">
+              <div class="panel-surface panel-section">
+                <div class="section-header">
+                  <div>
+                    <span class="section-kicker">Acesso</span>
+                    <h2>Administradores</h2>
+                    <p class="section-copy">Relação dos usuários com perfil administrativo refletido no backend atual.</p>
+                  </div>
+                </div>
+
+                <div class="table-wrap table-shell">
+                  <table class="responsive-table cadastro-table cadastro-admin-table">
+                    <thead>
+                      <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
+                    </thead>
+                    <tbody id="administratorsBody"></tbody>
+                  </table>
                 </div>
               </div>
 
-              <div class="table-wrap table-shell">
-                <table class="responsive-table cadastro-table cadastro-admin-table">
-                  <thead>
-                    <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
-                  </thead>
-                  <tbody id="administratorsBody"></tbody>
-                </table>
+              <div class="panel-surface panel-section">
+                <div class="section-header">
+                  <div>
+                    <span class="section-kicker">Catálogo</span>
+                    <h2>Projetos</h2>
+                    <p class="section-copy">Lista central de projetos disponíveis para cadastro, transporte e área web.</p>
+                  </div>
+                </div>
+
+                <div class="table-wrap table-shell">
+                  <table class="responsive-table cadastro-table cadastro-projects-table">
+                    <thead>
+                      <tr><th>Nome do Projeto</th><th>Ações</th></tr>
+                    </thead>
+                    <tbody id="projectsBody"></tbody>
+                  </table>
+                </div>
+
+                <div class="locations-actions-bar cadastro-projects-actions">
+                  <button id="addProjectButton" type="button">Adicionar Projeto</button>
+                </div>
               </div>
             </div>
 
@@ -595,6 +621,114 @@
                   </thead>
                   <tbody id="eventsBody"></tbody>
                 </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-banco-dados" class="tab">
+            <div class="panel-surface panel-section database-panel">
+              <div class="section-header database-section-header">
+                <div>
+                  <span class="section-kicker">Banco de dados</span>
+                  <h2>Check-Ins e Check-Outs em check_events</h2>
+                  <p class="section-copy">Filtre o histórico bruto de eventos por chave, RFID, período, origem, status e busca inteligente em mensagem, detalhes, local e device.</p>
+                </div>
+                <div class="database-summary-stack">
+                  <span id="databaseEventsResultSummary" class="database-summary-label">0 eventos encontrados</span>
+                  <span id="databaseEventsPageInfo" class="database-summary-label">Página 1 de 1</span>
+                </div>
+              </div>
+
+              <div class="database-controls">
+                <div class="database-filter-grid">
+                  <label class="presence-control-field database-filter-field">
+                    <span>Busca inteligente</span>
+                    <input id="databaseEventsSearch" data-database-event-filter="search" type="search" placeholder="Chave, RFID, local, mensagem, detalhes ou device" />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Chave</span>
+                    <input id="databaseEventsKey" data-database-event-filter="chave" type="text" maxlength="4" placeholder="HR70" />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>RFID</span>
+                    <input id="databaseEventsRfid" data-database-event-filter="rfid" type="text" maxlength="64" placeholder="RFID exato" />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Ação</span>
+                    <select id="databaseEventsAction" data-database-event-filter="action">
+                      <option value="">Todos</option>
+                      <option value="checkin">Check-In</option>
+                      <option value="checkout">Check-Out</option>
+                    </select>
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Projeto</span>
+                    <select id="databaseEventsProject" data-database-event-filter="project">
+                      <option value="">Todos</option>
+                      <option value="P80">P80</option>
+                      <option value="P82">P82</option>
+                      <option value="P83">P83</option>
+                    </select>
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Origem</span>
+                    <input id="databaseEventsSource" data-database-event-filter="source" type="text" maxlength="20" placeholder="device, admin, forms..." />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Status</span>
+                    <input id="databaseEventsStatus" data-database-event-filter="status" type="text" maxlength="16" placeholder="queued, success, failed..." />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>De</span>
+                    <input id="databaseEventsFromDate" data-database-event-filter="fromDate" type="date" />
+                  </label>
+                  <label class="presence-control-field database-filter-field">
+                    <span>Até</span>
+                    <input id="databaseEventsToDate" data-database-event-filter="toDate" type="date" />
+                  </label>
+                </div>
+
+                <div class="database-controls-actions">
+                  <button id="databaseEventsClearFilters" type="button" class="secondary-button">Limpar filtros</button>
+                </div>
+              </div>
+
+              <div class="database-insights" aria-label="Resumo do filtro de banco de dados">
+                <article class="database-insight-card">
+                  <span class="database-insight-label">Total filtrado</span>
+                  <strong id="databaseEventsTotalCount">0</strong>
+                </article>
+                <article class="database-insight-card">
+                  <span class="database-insight-label">Nesta página</span>
+                  <strong id="databaseEventsVisibleCount">0</strong>
+                </article>
+                <article class="database-insight-card">
+                  <span class="database-insight-label">Check-Ins visíveis</span>
+                  <strong id="databaseEventsCheckinCount">0</strong>
+                </article>
+                <article class="database-insight-card">
+                  <span class="database-insight-label">Check-Outs visíveis</span>
+                  <strong id="databaseEventsCheckoutCount">0</strong>
+                </article>
+              </div>
+
+              <div class="table-wrap table-shell database-table-wrap">
+                <table class="responsive-table database-events-table">
+                  <thead>
+                    <tr><th>ID</th><th>Horário</th><th>Ação</th><th>Chave</th><th>RFID</th><th>Projeto</th><th>Local</th><th>Origem</th><th>Status</th><th>HTTP</th><th>Device</th><th>Mensagem</th><th>Detalhes</th></tr>
+                  </thead>
+                  <tbody id="databaseEventsBody"></tbody>
+                </table>
+              </div>
+
+              <div class="database-pagination">
+                <div class="database-pagination-copy">
+                  <span id="databaseEventsPaginationSummary" class="database-summary-label">Use os filtros para navegar pelo histórico.</span>
+                </div>
+                <div class="database-pagination-actions">
+                  <button id="databaseEventsPrev" type="button" class="secondary-button">Anterior</button>
+                  <button id="databaseEventsNext" type="button" class="secondary-button">Próxima</button>
+                </div>
               </div>
             </div>
           </section>

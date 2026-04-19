@@ -129,8 +129,20 @@
         ></div>
         <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
           <section id="tela01main_esq" class="transport-pane transport-pane-single">
-            <div class="transport-pane-head">
-              <h1 class="transport-pane-title">User List</h1>
+            <div class="transport-pane-head transport-pane-head-stack">
+              <button
+                type="button"
+                class="transport-project-list-toggle"
+                data-project-list-toggle
+                aria-controls="transportProjectListPanel"
+                aria-expanded="false"
+              >
+                Project List
+              </button>
+              <div id="transportProjectListPanel" class="transport-project-list-panel" data-project-list-panel hidden>
+                <div class="transport-project-list" data-project-list></div>
+              </div>
+              <h1 class="transport-pane-title" data-user-list-title>User List</h1>
             </div>
 
             <div class="transport-selection-banner" data-selection-banner hidden>

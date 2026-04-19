@@ -58,7 +58,9 @@ Os dois canais atualizam o mesmo backend FastAPI, que persiste dados no banco e 
   4. valida `GET /api/health`
 
 Observação informada pelo projeto:
-- O app Android atual permanece em `checking_android_new` dentro do monorepo e pode ser publicado separadamente via `git subtree`.
+- O workspace contem dois repositorios Git: o principal `checkcheck` e o aninhado `checking_android_new`.
+- O procedimento oficial de commit/push usa apenas o repositorio principal.
+- O app Android permanece em `checking_android_new` apenas como codigo local do workspace; nao usar `git subtree` nem push do repositorio do app na rotina operacional.
 
 ## 4. Fluxos de negócio ponta a ponta
 

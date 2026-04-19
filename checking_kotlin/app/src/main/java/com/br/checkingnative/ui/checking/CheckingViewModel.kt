@@ -5,9 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
+import com.br.checkingnative.data.remote.CheckingApiException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -16,9 +20,13 @@ class CheckingViewModel @Inject constructor(
 ) : ViewModel() {
     val uiState: StateFlow<CheckingUiState> = controller.uiState
 
+    private val _messages = MutableSharedFlow<String>()
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
     init {
         viewModelScope.launch {
             controller.initialize()
+            controller.refreshAfterEnteringForeground()
         }
     }
 
@@ -48,25 +56,89 @@ class CheckingViewModel @Inject constructor(
 
     fun syncHistory() {
         viewModelScope.launch {
-            controller.syncHistory(silent = true, updateStatus = true)
+            emitMessage(controller.syncHistory(silent = true, updateStatus = true))
         }
     }
 
     fun refreshLocationsCatalog() {
         viewModelScope.launch {
-            controller.refreshLocationsCatalog(silent = true, updateStatus = true)
+            val count = controller.refreshLocationsCatalog(silent = true, updateStatus = true)
+            emitMessage("$count localizacoes atualizadas no aplicativo.")
         }
     }
 
     fun submitCurrent() {
         viewModelScope.launch {
-            controller.submitCurrent()
+            val result = runCatching {
+                controller.submitCurrent()
+            }
+            if (result.isSuccess) {
+                emitMessage(result.getOrThrow())
+            } else {
+                emitMessage(userMessage(result.exceptionOrNull() ?: return@launch))
+            }
+        }
+    }
+
+    fun setLocationSharingEnabled(value: Boolean) {
+        viewModelScope.launch {
+            controller.setLocationSharingEnabled(value)
+        }
+    }
+
+    fun setAutomaticCheckInOutEnabled(value: Boolean) {
+        viewModelScope.launch {
+            controller.setAutomaticCheckInOutEnabled(value)
+        }
+    }
+
+    fun setLocationUpdateIntervalMinutes(minutes: Int) {
+        viewModelScope.launch {
+            controller.setLocationUpdateIntervalMinutes(minutes)
+        }
+    }
+
+    fun setNightUpdatesDisabled(value: Boolean) {
+        viewModelScope.launch {
+            controller.setNightUpdatesDisabled(value)
+        }
+    }
+
+    fun setNightModeAfterCheckoutEnabled(value: Boolean) {
+        viewModelScope.launch {
+            controller.setNightModeAfterCheckoutEnabled(value)
+        }
+    }
+
+    fun setNightPeriodStartMinutes(minutes: Int) {
+        viewModelScope.launch {
+            controller.setNightPeriodStartMinutes(minutes)
+        }
+    }
+
+    fun setNightPeriodEndMinutes(minutes: Int) {
+        viewModelScope.launch {
+            controller.setNightPeriodEndMinutes(minutes)
         }
     }
 
     fun refreshAfterEnteringForeground() {
         viewModelScope.launch {
             controller.refreshAfterEnteringForeground()
+        }
+    }
+
+    private suspend fun emitMessage(message: String) {
+        if (message.isNotBlank()) {
+            _messages.emit(message)
+        }
+    }
+
+    private fun userMessage(error: Throwable): String {
+        return if (error is CheckingApiException) {
+            error.userMessage
+        } else {
+            error.message ?: "Falha ao executar a operacao."
         }
     }
 }

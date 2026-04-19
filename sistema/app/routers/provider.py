@@ -12,6 +12,7 @@ from ..models import User, UserSyncEvent
 from ..schemas import ProviderCheckSubmitRequest, ProviderCheckSubmitResponse
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
+from ..services.project_catalog import ensure_known_project
 from ..services.time_utils import now_sgt
 from ..services.user_profiles import merge_provider_date_and_time, normalize_person_name
 from ..services.user_sync import (
@@ -61,6 +62,7 @@ def submit_provider_checking(
     payload: ProviderCheckSubmitRequest,
     db: Session = Depends(get_db),
 ) -> ProviderCheckSubmitResponse:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     # This endpoint mirrors data that already originated from FORMS.
     # It must only update the local database and must never enqueue or submit
     # anything back to FORMS, otherwise production could enter a feedback loop.

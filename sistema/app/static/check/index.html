@@ -50,6 +50,8 @@
           data-transport-ack-endpoint="/api/web/transport/acknowledge"
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
+          data-projects-endpoint="/api/web/projects"
+          data-project-update-endpoint="/api/web/project"
           data-locations-endpoint="/api/web/check/locations"
           data-location-endpoint="/api/web/check/location"
         >
@@ -183,9 +185,7 @@
             <label id="projectField" class="check-field check-field-compact" for="projectSelect">
               <span>Projeto</span>
               <select id="projectSelect" name="projeto">
-                <option value="P80">P80</option>
-                <option value="P82">P82</option>
-                <option value="P83">P83</option>
+                <option value="">Carregando projetos...</option>
               </select>
             </label>
 
@@ -305,9 +305,7 @@
               <label class="check-field" for="registrationProjectSelect">
                 <span>Projeto Alocado</span>
                 <select id="registrationProjectSelect" name="cadastro_projeto" required>
-                  <option value="P80">P80</option>
-                  <option value="P82">P82</option>
-                  <option value="P83">P83</option>
+                  <option value="">Carregando projetos...</option>
                 </select>
               </label>
 

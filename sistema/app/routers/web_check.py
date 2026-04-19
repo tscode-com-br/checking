@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import ManagedLocation, TransportRequest, User
 from ..schemas import (
+    ProjectRow,
     WebCheckHistoryResponse,
     WebLocationOptionsResponse,
     WebPasswordActionResponse,
@@ -17,6 +18,8 @@ from ..schemas import (
     WebCheckSubmitResponse,
     WebLocationMatchRequest,
     WebLocationMatchResponse,
+    WebProjectUpdateRequest,
+    WebProjectUpdateResponse,
     WebTransportActionResponse,
     WebTransportAddressUpdateRequest,
     WebTransportRequestAction,
@@ -32,6 +35,7 @@ from ..services.location_matching import (
 )
 from ..services.location_settings import get_location_accuracy_threshold_meters
 from ..services.passwords import hash_password, verify_password
+from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.time_utils import now_sgt
 from ..services.transport import (
     acknowledge_transport_assignments,
@@ -127,6 +131,10 @@ def _build_web_password_status(*, request: Request, user: User | None, chave: st
         authenticated=True,
         message="Aplicacao liberada.",
     )
+
+
+def _list_web_projects(db: Session) -> list[ProjectRow]:
+    return [ProjectRow(id=project.id, name=project.name) for project in list_projects(db)]
 
 
 def _require_authenticated_web_user(request: Request, db: Session) -> User:
@@ -285,6 +293,7 @@ def register_web_user(
     db: Session = Depends(get_db),
 ) -> WebPasswordActionResponse:
     normalized = _validate_public_chave(payload.chave)
+    payload.projeto = ensure_known_project(db, payload.projeto)
     existing_user = find_user_by_chave(db, normalized)
     if existing_user is not None:
         raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
@@ -316,6 +325,28 @@ def register_web_user(
         has_password=True,
         message="Usuario cadastrado com sucesso.",
     )
+
+
+@router.get("/projects", response_model=list[ProjectRow])
+def list_web_projects(db: Session = Depends(get_db)) -> list[ProjectRow]:
+    return _list_web_projects(db)
+
+
+@router.put("/project", response_model=WebProjectUpdateResponse)
+def update_web_project(
+    payload: WebProjectUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebProjectUpdateResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    payload.projeto = ensure_known_project(db, payload.projeto)
+    if user.projeto == payload.projeto:
+        return WebProjectUpdateResponse(ok=True, message="Projeto atualizado com sucesso.", project=user.projeto)
+
+    user.projeto = payload.projeto
+    db.commit()
+    notify_admin_data_changed("register")
+    return WebProjectUpdateResponse(ok=True, message="Projeto atualizado com sucesso.", project=user.projeto)
 
 
 @router.post("/auth/login", response_model=WebPasswordActionResponse)
@@ -587,6 +618,7 @@ def submit_web_check(
     request: Request,
     db: Session = Depends(get_db),
 ) -> WebCheckSubmitResponse:
+    payload.projeto = ensure_known_project(db, payload.projeto)
     _require_matching_authenticated_web_user(request, db, payload.chave)
     response = submit_forms_event(
         db,

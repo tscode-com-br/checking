@@ -21,6 +21,7 @@ from ..models import (
     Workplace,
 )
 from ..schemas import (
+    ProjectRow,
     TransportBotConversationResponse,
     TransportBotReplyMessage,
     TransportDashboardResponse,
@@ -32,6 +33,7 @@ from ..schemas import (
     WorkplaceRow,
 )
 from .location_settings import get_transport_work_to_home_time, get_transport_work_to_home_time_for_date
+from .project_catalog import list_project_names, list_projects, normalize_project_name
 from .time_utils import now_sgt
 from .user_profiles import normalize_person_name
 from .user_sync import (
@@ -72,7 +74,6 @@ _PAIRED_ROUTE_KIND = {
 }
 _PLACEHOLDER_NAMES = {APP_IMPORTED_USER_NAME, WEB_IMPORTED_USER_NAME}
 _MENU_OPTIONS = ["REGULAR", "WEEKEND", "EXTRA", "CHANGE", "CANCEL"]
-_PROJECT_OPTIONS = ["P80", "P82", "P83"]
 
 
 def _resolve_web_transport_route_order(preferred_route_kind: str | None) -> list[str]:
@@ -113,6 +114,7 @@ def build_transport_dashboard(
     service_date: date,
     route_kind: str,
 ) -> TransportDashboardResponse:
+    projects = [ProjectRow(id=row.id, name=row.name) for row in list_projects(db)]
     workplaces = list_workplaces(db)
     work_to_home_departure_time = get_transport_work_to_home_time_for_date(db, service_date=service_date)
     vehicles_by_scope, vehicle_rows_by_id = _build_vehicle_rows_for_dashboard(
@@ -243,6 +245,7 @@ def build_transport_dashboard(
         selected_date=service_date,
         selected_route=route_kind,
         work_to_home_departure_time=work_to_home_departure_time,
+        projects=projects,
         regular_requests=request_rows["regular"],
         weekend_requests=request_rows["weekend"],
         extra_requests=request_rows["extra"],
@@ -761,14 +764,19 @@ def process_bot_message(db: Session, *, chat_id: str, message: str) -> Transport
         except ValueError:
             replies.append(TransportBotReplyMessage(text="The name must contain at least 3 characters."))
             return _save_bot_response(session, context, replies)
+        project_options = list_project_names(db)
+        if not project_options:
+            replies.append(TransportBotReplyMessage(text="No project is registered in the system. Add a project before continuing."))
+            return _save_bot_response(session, context, replies)
         session.state = "awaiting_project"
-        replies.append(TransportBotReplyMessage(text="Enter the project.", options=_PROJECT_OPTIONS))
+        replies.append(TransportBotReplyMessage(text="Enter the project.", options=project_options))
         return _save_bot_response(session, context, replies)
 
     if session.state == "awaiting_project":
-        project = _normalize_project_code(normalized_message)
+        project_options = list_project_names(db)
+        project = _normalize_project_code(db, normalized_message)
         if project is None:
-            replies.append(TransportBotReplyMessage(text="Invalid project. Choose P80, P82, or P83.", options=_PROJECT_OPTIONS))
+            replies.append(TransportBotReplyMessage(text="Invalid project. Choose a registered project.", options=project_options))
             return _save_bot_response(session, context, replies)
         context["projeto"] = project
         workplaces = list_workplaces(db)
@@ -1883,9 +1891,12 @@ def _normalize_key_candidate(value: str) -> str | None:
     return normalized
 
 
-def _normalize_project_code(value: str) -> str | None:
-    normalized = str(value or "").strip().upper()
-    return normalized if normalized in _PROJECT_OPTIONS else None
+def _normalize_project_code(db: Session, value: str) -> str | None:
+    try:
+        normalized = normalize_project_name(value)
+    except ValueError:
+        return None
+    return normalized if normalized in set(list_project_names(db)) else None
 
 
 def _normalize_free_text(value: str, *, min_length: int, max_length: int) -> str | None:

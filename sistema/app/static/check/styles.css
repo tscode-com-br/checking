@@ -611,19 +611,19 @@ header {
 .transport-choice-button {
   appearance: none;
   cursor: pointer;
-  border-color: #0000ff;
-  background: #0000ff;
+  border-color: #7dc8ff;
+  background: linear-gradient(135deg, #9ed8ff 0%, #6bbdff 100%);
   color: #ffffff;
-  box-shadow: 0 12px 28px rgba(0, 0, 255, 0.24);
+  box-shadow: 0 12px 28px rgba(107, 189, 255, 0.28);
 }
 
 .transport-choice-button:hover {
-  box-shadow: 0 14px 30px rgba(0, 0, 255, 0.3);
+  box-shadow: 0 14px 30px rgba(107, 189, 255, 0.34);
   transform: translateY(-1px);
 }
 
 .transport-choice-button:focus-visible {
-  outline: 2px solid rgba(0, 0, 255, 0.22);
+  outline: 2px solid rgba(107, 189, 255, 0.28);
   outline-offset: 2px;
 }
 

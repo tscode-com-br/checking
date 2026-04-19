@@ -13,6 +13,8 @@
   const transportAcknowledgeEndpoint = form.dataset.transportAckEndpoint || '/api/web/transport/acknowledge';
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
+  const projectsEndpoint = form.dataset.projectsEndpoint || '/api/web/projects';
+  const projectUpdateEndpoint = form.dataset.projectUpdateEndpoint || '/api/web/project';
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
   const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
   const automaticActivities = window.CheckingWebAutomaticActivities;
@@ -146,8 +148,10 @@
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
-  const allowedProjectValues = Array.from(projectSelect.options).map((option) => option.value);
-  const defaultProjectValue = projectSelect.value;
+  let allowedProjectValues = Array.from(projectSelect.options)
+    .map((option) => String(option.value || '').trim().toUpperCase())
+    .filter(Boolean);
+  let defaultProjectValue = allowedProjectValues[0] || '';
   const lifecycleTriggerCooldownMs = 1200;
   const passwordVerificationDebounceMs = 260;
   const unknownWebUserDetail = 'A chave do usuario nao esta cadastrada';
@@ -199,6 +203,10 @@
   let transportRequestInProgress = false;
   let transportCancelInProgress = false;
   let transportAcknowledgeInProgress = false;
+  let projectCatalogPromise = null;
+  let projectCatalogLoading = false;
+  let projectUpdateInProgress = false;
+  let lastCommittedProjectValue = defaultProjectValue;
   let userInteractionLockCount = 0;
   let passwordVerificationTimeoutId = null;
   let passwordAutofillSyncTimeoutId = null;
@@ -370,7 +378,17 @@
 
     syncAuthenticationFieldHighlights();
 
-    projectSelect.disabled = dialogOpen || lockActive || submitInProgress || passwordRegisterInProgress || passwordChangeInProgress || userSelfRegistrationInProgress;
+    projectSelect.disabled = dialogOpen
+      || lockActive
+      || !unlocked
+      || submitInProgress
+      || passwordRegisterInProgress
+      || passwordChangeInProgress
+      || userSelfRegistrationInProgress
+      || projectCatalogLoading
+      || projectUpdateInProgress
+      || allowedProjectValues.length === 0
+      || isAutomaticActivitiesEnabled();
 
     processControls.forEach((control) => {
       if (!control) {
@@ -452,6 +470,11 @@
       if (control === registrationDialogSubmitButton) {
         control.disabled = userSelfRegistrationInProgress;
         control.textContent = userSelfRegistrationInProgress ? 'Cadastrando...' : 'Cadastrar';
+        return;
+      }
+
+      if (control === registrationProjectSelect) {
+        control.disabled = userSelfRegistrationInProgress || projectCatalogLoading || allowedProjectValues.length === 0;
         return;
       }
 
@@ -753,10 +776,14 @@
       return;
     }
 
+    if (!allowedProjectValues.length) {
+      void loadProjectCatalog({ showError: false });
+    }
+
     const activeChave = getActiveChave();
     const initialPassword = clientState.isPasswordLengthValid(passwordInput.value) ? passwordInput.value : '';
     registrationChaveInput.value = activeChave;
-    registrationProjectSelect.value = projectSelect.value;
+    syncProjectSelectOptions({ registrationValue: projectSelect.value });
     registrationPasswordInput.value = initialPassword;
     registrationConfirmPasswordInput.value = initialPassword;
     registrationDialog.hidden = false;
@@ -1321,6 +1348,7 @@
       return false;
     }
 
+    await loadProjectCatalog({ showError: false });
     restorePersistedUserSettingsForChave(normalizedChave);
     await loadManualLocations();
     if (!isApplicationUnlocked(normalizedChave)) {
@@ -1418,6 +1446,12 @@
     if (!clientState.isPasswordLengthValid(password)) {
       setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
       passwordInput.focus();
+      return false;
+    }
+
+    await loadProjectCatalog({ showError: true });
+    if (!allowedProjectValues.length) {
+      setStatus('Nenhum projeto está disponível no momento.', 'error');
       return false;
     }
 
@@ -1653,6 +1687,12 @@
   async function submitUserSelfRegistration(event) {
     event.preventDefault();
 
+    await loadProjectCatalog({ showError: true });
+    if (!allowedProjectValues.length) {
+      setStatus('Nenhum projeto está disponível no momento.', 'error');
+      return;
+    }
+
     const normalizedChave = sanitizeChave(registrationChaveInput.value);
     const nome = registrationNameInput.value;
     const projeto = registrationProjectSelect.value;
@@ -1712,7 +1752,8 @@
 
       chaveInput.value = normalizedChave;
       passwordInput.value = password;
-      projectSelect.value = projeto;
+      lastCommittedProjectValue = normalizeKnownProjectValue(projeto, defaultProjectValue);
+      syncProjectSelectOptions({ mainValue: lastCommittedProjectValue, registrationValue: lastCommittedProjectValue });
       writePersistedChave(normalizedChave);
       persistCurrentUserSettings();
 
@@ -1845,6 +1886,112 @@
     }
   }
 
+  function normalizeKnownProjectValue(projectValue, fallbackProject) {
+    const normalizedFallback = String(fallbackProject || defaultProjectValue || allowedProjectValues[0] || '').trim().toUpperCase();
+    return clientState.normalizeProjectValue(projectValue, allowedProjectValues, normalizedFallback);
+  }
+
+  function syncProjectSelectOptions(options) {
+    const settings = options || {};
+    const mainValue = normalizeKnownProjectValue(
+      settings.mainValue !== undefined ? settings.mainValue : projectSelect.value,
+      defaultProjectValue
+    );
+    const registrationValue = normalizeKnownProjectValue(
+      settings.registrationValue !== undefined ? settings.registrationValue : (registrationProjectSelect.value || mainValue),
+      mainValue || defaultProjectValue
+    );
+
+    [
+      [projectSelect, mainValue],
+      [registrationProjectSelect, registrationValue],
+    ].forEach(([selectElement, selectedValue]) => {
+      if (!selectElement) {
+        return;
+      }
+
+      selectElement.textContent = '';
+      if (!allowedProjectValues.length) {
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = projectCatalogLoading ? 'Carregando projetos...' : 'Nenhum projeto disponível';
+        selectElement.appendChild(placeholderOption);
+        selectElement.value = '';
+        return;
+      }
+
+      allowedProjectValues.forEach((projectName) => {
+        const option = document.createElement('option');
+        option.value = projectName;
+        option.textContent = projectName;
+        selectElement.appendChild(option);
+      });
+      selectElement.value = selectedValue;
+    });
+  }
+
+  function setProjectCatalog(projectRows, options) {
+    const settings = options || {};
+    const nextProjects = Array.from(new Set(
+      (Array.isArray(projectRows) ? projectRows : [])
+        .map((projectRow) => String(projectRow && projectRow.name || '').trim().toUpperCase())
+        .filter(Boolean)
+    ));
+
+    allowedProjectValues = nextProjects;
+    defaultProjectValue = nextProjects[0] || '';
+    lastCommittedProjectValue = normalizeKnownProjectValue(lastCommittedProjectValue, defaultProjectValue);
+    syncProjectSelectOptions({
+      mainValue: settings.mainValue !== undefined ? settings.mainValue : projectSelect.value,
+      registrationValue:
+        settings.registrationValue !== undefined
+          ? settings.registrationValue
+          : (registrationProjectSelect.value || projectSelect.value),
+    });
+    syncFormControlStates();
+  }
+
+  async function loadProjectCatalog(options) {
+    if (projectCatalogPromise) {
+      return projectCatalogPromise;
+    }
+
+    const settings = options || {};
+    projectCatalogLoading = true;
+    syncProjectSelectOptions();
+    syncFormControlStates();
+    projectCatalogPromise = fetch(projectsEndpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ([]));
+        if (!response.ok) {
+          throw createRequestError(response, payload);
+        }
+
+        setProjectCatalog(payload, settings);
+        return allowedProjectValues;
+      })
+      .catch((error) => {
+        if (settings.showError !== false) {
+          setStatus(error instanceof Error ? error.message : 'Não foi possível carregar os projetos.', 'error');
+        }
+        syncProjectSelectOptions();
+        return allowedProjectValues;
+      })
+      .finally(() => {
+        projectCatalogLoading = false;
+        syncProjectSelectOptions();
+        syncFormControlStates();
+        projectCatalogPromise = null;
+      });
+
+    return projectCatalogPromise;
+  }
+
   function resolveCurrentUserSettingsDefaults() {
     return {
       project: defaultProjectValue,
@@ -1860,7 +2007,10 @@
       resolveCurrentUserSettingsDefaults()
     );
 
-    projectSelect.value = resolvedSettings.project;
+    syncProjectSelectOptions({
+      mainValue: resolvedSettings.project,
+      registrationValue: resolvedSettings.project,
+    });
     if (automaticActivitiesToggle) {
       automaticActivitiesToggle.checked = resolvedSettings.automaticActivitiesEnabled;
     }
@@ -1904,7 +2054,7 @@
       readPersistedUserSettingsMap(),
       normalizedChave,
       {
-        project: projectSelect.value,
+        project: normalizeKnownProjectValue(projectSelect.value, defaultProjectValue),
         automaticActivitiesEnabled: Boolean(
           automaticActivitiesToggle && automaticActivitiesToggle.checked
         ),
@@ -1912,6 +2062,61 @@
       resolveCurrentUserSettingsDefaults()
     );
     writePersistedUserSettingsMap(nextSettingsMap);
+  }
+
+  async function updateCurrentUserProjectSelection() {
+    const normalizedChave = getActiveChave();
+    const nextProject = normalizeKnownProjectValue(projectSelect.value, lastCommittedProjectValue || defaultProjectValue);
+    syncProjectSelectOptions({ mainValue: nextProject });
+
+    if (normalizedChave.length !== 4 || !isApplicationUnlocked(normalizedChave) || isAutomaticActivitiesEnabled()) {
+      persistCurrentUserSettings();
+      syncFormControlStates();
+      return false;
+    }
+
+    projectUpdateInProgress = true;
+    syncFormControlStates();
+    try {
+      const response = await fetch(projectUpdateEndpoint, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          chave: normalizedChave,
+          projeto: nextProject,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw buildProtectedRequestError(response, payload);
+      }
+
+      const committedProject = normalizeKnownProjectValue(payload && payload.project, nextProject);
+      lastCommittedProjectValue = committedProject;
+      syncProjectSelectOptions({ mainValue: committedProject });
+      if (latestHistoryState && typeof latestHistoryState === 'object') {
+        latestHistoryState.projeto = committedProject;
+      }
+      persistCurrentUserSettings();
+      await loadManualLocations();
+      setStatus(payload && payload.message ? payload.message : 'Projeto atualizado com sucesso.', 'success');
+      return true;
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        return false;
+      }
+
+      syncProjectSelectOptions({ mainValue: lastCommittedProjectValue || defaultProjectValue });
+      setStatus(error instanceof Error ? error.message : 'Não foi possível atualizar o projeto.', 'error');
+      return false;
+    } finally {
+      projectUpdateInProgress = false;
+      syncFormControlStates();
+    }
   }
 
   function setLocationPresentation(label, message, tone, accuracyText, options) {
@@ -2578,6 +2783,12 @@
 
   function applyHistoryState(state) {
     latestHistoryState = state;
+    if (state && state.projeto) {
+      const committedProject = normalizeKnownProjectValue(state.projeto, defaultProjectValue);
+      lastCommittedProjectValue = committedProject;
+      syncProjectSelectOptions({ mainValue: committedProject });
+      persistCurrentUserSettings();
+    }
     renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
     renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
     applySuggestedActionFromHistory(state);
@@ -3102,10 +3313,7 @@
   });
 
   projectSelect.addEventListener('change', () => {
-    persistCurrentUserSettings();
-    if (isApplicationUnlocked()) {
-      setStatus('Atualização do projeto concluída.', 'success');
-    }
+    void updateCurrentUserProjectSelection();
   });
 
   if (automaticActivitiesToggle) {
@@ -3298,7 +3506,11 @@
   setAuthenticationPrompt();
 
   const persistedChave = readPersistedChave();
-  if (persistedChave) {
+  void loadProjectCatalog({ showError: false }).finally(() => {
+    if (!persistedChave) {
+      return;
+    }
+
     chaveInput.value = persistedChave;
     restorePersistedUserSettingsForChave(persistedChave);
     restorePersistedPasswordForChave(persistedChave);
@@ -3307,5 +3519,5 @@
         schedulePasswordVerification: true,
       });
     });
-  }
+  });
 })();

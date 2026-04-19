@@ -8,6 +8,7 @@ const sessionUserLabel = document.getElementById("sessionUserLabel");
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
 const ARCHIVE_PAGE_SIZE = 8;
+const DATABASE_EVENTS_PAGE_SIZE = 50;
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -32,6 +33,103 @@ let administratorsTotal = 0;
 let eventsTotal = 0;
 let lastDashboardRefreshAt = null;
 let userTextareaRefreshFrame = null;
+let databaseEventsLoaded = false;
+let databaseEventsRefreshTimer = null;
+let projectCatalog = [];
+
+function createDefaultDatabaseEventFilters() {
+  return {
+    search: "",
+    chave: "",
+    rfid: "",
+    action: "",
+    project: "",
+    source: "",
+    status: "",
+    fromDate: "",
+    toDate: "",
+  };
+}
+
+const databaseEventsState = {
+  page: 1,
+  pageSize: DATABASE_EVENTS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  filters: createDefaultDatabaseEventFilters(),
+};
+
+function getProjectCatalogNames() {
+  return projectCatalog.map((row) => row.name).filter(Boolean);
+}
+
+function getProjectOptions(selectedValue, options = {}) {
+  const optionValues = getProjectCatalogNames();
+  const normalizedSelectedValue = String(selectedValue ?? "").trim();
+  if (options.includeDetachedValue && normalizedSelectedValue && !optionValues.includes(normalizedSelectedValue)) {
+    return [normalizedSelectedValue, ...optionValues];
+  }
+  return optionValues;
+}
+
+function syncSelectOptions(selectElement, optionValues, selectedValue) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const nextSelectedValue = String(selectedValue ?? "").trim();
+  const fragment = document.createDocumentFragment();
+  optionValues.forEach((optionValue) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionValue;
+    fragment.appendChild(option);
+  });
+  selectElement.replaceChildren(fragment);
+  if (optionValues.includes(nextSelectedValue)) {
+    selectElement.value = nextSelectedValue;
+    return;
+  }
+  selectElement.value = optionValues[0] || "";
+}
+
+function buildProjectOptionsHtml(selectedValue, options = {}) {
+  return getProjectOptions(selectedValue, options)
+    .map((projectName) => `<option value="${escapeHtml(projectName)}">${escapeHtml(projectName)}</option>`)
+    .join("");
+}
+
+function syncDatabaseProjectFilterOptions() {
+  const selectElement = document.getElementById("databaseEventsProject");
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const currentValue = String(databaseEventsState.filters.project || "").trim().toUpperCase();
+  const optionValues = getProjectOptions(currentValue, { includeDetachedValue: Boolean(currentValue) });
+  const fragment = document.createDocumentFragment();
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Todos";
+  fragment.appendChild(defaultOption);
+  optionValues.forEach((projectName) => {
+    const option = document.createElement("option");
+    option.value = projectName;
+    option.textContent = projectName;
+    fragment.appendChild(option);
+  });
+  selectElement.replaceChildren(fragment);
+  selectElement.value = optionValues.includes(currentValue) ? currentValue : "";
+}
+
+function setProjectCatalog(rows) {
+  projectCatalog = Array.isArray(rows)
+    ? rows
+      .filter((row) => row && typeof row.name === "string" && row.name.trim())
+      .map((row) => ({ id: row.id, name: row.name.trim() }))
+    : [];
+  syncDatabaseProjectFilterOptions();
+}
 
 const PRESENCE_TABLE_CONFIGS = {
   checkin: {
@@ -75,6 +173,7 @@ const TAB_LABELS = {
   inactive: "Inativos",
   cadastro: "Cadastro",
   eventos: "Eventos",
+  "banco-dados": "Banco de Dados",
 };
 
 function createPresenceFilterState(filterColumns) {
@@ -178,6 +277,7 @@ function updateDashboardSummary() {
     missingCheckout: presenceTableStates.missingCheckout.rawRows.length,
     cadastro: registeredUsersTotal,
     eventos: eventsTotal,
+    "banco-dados": databaseEventsState.total,
   };
 
   Object.entries(counts).forEach(([key, value]) => {
@@ -215,6 +315,17 @@ function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
+  databaseEventsLoaded = false;
+  if (databaseEventsRefreshTimer !== null) {
+    window.clearTimeout(databaseEventsRefreshTimer);
+    databaseEventsRefreshTimer = null;
+  }
+  databaseEventsState.page = 1;
+  databaseEventsState.total = 0;
+  databaseEventsState.totalPages = 1;
+  databaseEventsState.pageSize = DATABASE_EVENTS_PAGE_SIZE;
+  databaseEventsState.filters = createDefaultDatabaseEventFilters();
+  syncDatabaseEventFilterInputs();
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
   sessionBar.classList.add("hidden");
@@ -457,6 +568,180 @@ function makeEventDateTimeCell(value) {
 
 function makeEventDetailsButton() {
   return '<button type="button" class="event-details-button">Detalhes</button>';
+}
+
+function buildDatabaseEventsQueryParams() {
+  const params = new URLSearchParams();
+  params.set("page", String(databaseEventsState.page));
+  params.set("page_size", String(databaseEventsState.pageSize));
+
+  const normalizedKey = databaseEventsState.filters.chave.trim().toUpperCase();
+  const normalizedRfid = databaseEventsState.filters.rfid.trim();
+  const normalizedSearch = databaseEventsState.filters.search.trim();
+  const normalizedSource = databaseEventsState.filters.source.trim().toLowerCase();
+  const normalizedStatus = databaseEventsState.filters.status.trim().toLowerCase();
+  const normalizedAction = databaseEventsState.filters.action.trim().toLowerCase();
+  const normalizedProject = databaseEventsState.filters.project.trim().toUpperCase();
+
+  if (normalizedSearch) {
+    params.set("search", normalizedSearch);
+  }
+  if (normalizedKey) {
+    params.set("chave", normalizedKey);
+  }
+  if (normalizedRfid) {
+    params.set("rfid", normalizedRfid);
+  }
+  if (normalizedAction) {
+    params.set("action", normalizedAction);
+  }
+  if (normalizedProject) {
+    params.set("project", normalizedProject);
+  }
+  if (normalizedSource) {
+    params.set("source", normalizedSource);
+  }
+  if (normalizedStatus) {
+    params.set("status", normalizedStatus);
+  }
+  if (databaseEventsState.filters.fromDate) {
+    params.set("from_date", databaseEventsState.filters.fromDate);
+  }
+  if (databaseEventsState.filters.toDate) {
+    params.set("to_date", databaseEventsState.filters.toDate);
+  }
+
+  return params;
+}
+
+function syncDatabaseEventFilterInputs() {
+  const filterInputIds = {
+    search: "databaseEventsSearch",
+    chave: "databaseEventsKey",
+    rfid: "databaseEventsRfid",
+    action: "databaseEventsAction",
+    project: "databaseEventsProject",
+    source: "databaseEventsSource",
+    status: "databaseEventsStatus",
+    fromDate: "databaseEventsFromDate",
+    toDate: "databaseEventsToDate",
+  };
+
+  Object.entries(filterInputIds).forEach(([filterKey, elementId]) => {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.value = databaseEventsState.filters[filterKey] ?? "";
+    }
+  });
+}
+
+function updateDatabaseEventsInsights(rows) {
+  const visibleCount = rows.length;
+  const visibleCheckins = rows.filter((row) => row.action === "checkin").length;
+  const visibleCheckouts = rows.filter((row) => row.action === "checkout").length;
+  const total = databaseEventsState.total;
+  const page = databaseEventsState.page;
+  const totalPages = databaseEventsState.totalPages;
+  const startRow = total === 0 ? 0 : (page - 1) * databaseEventsState.pageSize + 1;
+  const endRow = total === 0 ? 0 : startRow + visibleCount - 1;
+
+  setTextContentIfPresent("databaseEventsTotalCount", String(total));
+  setTextContentIfPresent("databaseEventsVisibleCount", String(visibleCount));
+  setTextContentIfPresent("databaseEventsCheckinCount", String(visibleCheckins));
+  setTextContentIfPresent("databaseEventsCheckoutCount", String(visibleCheckouts));
+  setTextContentIfPresent(
+    "databaseEventsResultSummary",
+    total === 1 ? "1 evento encontrado" : `${total} eventos encontrados`,
+  );
+  setTextContentIfPresent("databaseEventsPageInfo", `Página ${page} de ${totalPages}`);
+  setTextContentIfPresent(
+    "databaseEventsPaginationSummary",
+    total === 0 ? "Nenhum evento corresponde aos filtros atuais." : `Mostrando ${startRow}-${endRow} de ${total} eventos.`,
+  );
+
+  const previousButton = document.getElementById("databaseEventsPrev");
+  if (previousButton) {
+    previousButton.disabled = page <= 1 || total === 0;
+  }
+  const nextButton = document.getElementById("databaseEventsNext");
+  if (nextButton) {
+    nextButton.disabled = page >= totalPages || total === 0;
+  }
+}
+
+function renderDatabaseEvents(rows) {
+  const body = document.getElementById("databaseEventsBody");
+  if (!body) {
+    return;
+  }
+
+  body.innerHTML = "";
+  if (!rows.length) {
+    renderEmptyStateRow("databaseEventsBody", 13, "Nenhum evento encontrado para os filtros informados.");
+    updateDatabaseEventsInsights([]);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const eventDetails = {
+      message: row.message ?? "-",
+      details: formatEventDetails(row.details),
+    };
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatLocal(row.local), "event-cell-left")}</td><td>${makeEventCell(row.source ?? "-")}</td><td>${makeEventCell(row.status ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.device_id ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.message ?? "-", "event-cell-left")}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
+    body.appendChild(tr);
+  });
+
+  applyResponsiveLabels("databaseEventsBody");
+  updateDatabaseEventsInsights(rows);
+}
+
+function scheduleDatabaseEventsRefresh(delayMs = REALTIME_DEBOUNCE_MS) {
+  if (!isAuthenticated || !document.getElementById("databaseEventsBody")) {
+    return;
+  }
+
+  if (databaseEventsRefreshTimer !== null) {
+    window.clearTimeout(databaseEventsRefreshTimer);
+  }
+
+  databaseEventsRefreshTimer = window.setTimeout(() => {
+    loadDatabaseEvents().catch((error) => setStatus(error.message, false));
+    databaseEventsRefreshTimer = null;
+  }, delayMs);
+}
+
+function resetDatabaseEventFilters() {
+  databaseEventsState.page = 1;
+  databaseEventsState.total = 0;
+  databaseEventsState.totalPages = 1;
+  databaseEventsState.filters = createDefaultDatabaseEventFilters();
+  syncDatabaseEventFilterInputs();
+}
+
+async function loadDatabaseEvents() {
+  if (!document.getElementById("databaseEventsBody")) {
+    return;
+  }
+
+  const { fromDate, toDate } = databaseEventsState.filters;
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error("O período informado é inválido. Ajuste as datas de início e fim.");
+  }
+
+  const params = buildDatabaseEventsQueryParams();
+  const payload = await fetchJson(`/api/admin/database-events?${params.toString()}`);
+  const rows = Array.isArray(payload?.items) ? payload.items : [];
+
+  databaseEventsLoaded = true;
+  databaseEventsState.total = Number(payload?.total) || 0;
+  databaseEventsState.page = Number(payload?.page) || 1;
+  databaseEventsState.pageSize = Number(payload?.page_size) || DATABASE_EVENTS_PAGE_SIZE;
+  databaseEventsState.totalPages = Math.max(1, Number(payload?.total_pages) || 1);
+
+  renderDatabaseEvents(rows);
+  updateDashboardSummary();
 }
 
 function formatOntime(value) {
@@ -1458,6 +1743,7 @@ async function loadLocations() {
 }
 
 function makePendingRow(row) {
+  const defaultProjectValue = getProjectOptions("", {}).at(0) || "";
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${escapeHtml(row.rfid)}</td>
@@ -1465,9 +1751,7 @@ function makePendingRow(row) {
     <td><input class="inline" id="chave-${row.id}" maxlength="4" disabled /></td>
     <td>
       <select class="inline" id="projeto-${row.id}" disabled>
-        <option value="P80">P80</option>
-        <option value="P82">P82</option>
-        <option value="P83">P83</option>
+        ${buildProjectOptionsHtml(defaultProjectValue)}
       </select>
     </td>
     <td class="pending-actions">
@@ -1489,9 +1773,7 @@ function makeRegisteredUserRow(user) {
     <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
     <td>
       <select class="inline user-projeto" disabled>
-        <option value="P80">P80</option>
-        <option value="P82">P82</option>
-        <option value="P83">P83</option>
+        ${buildProjectOptionsHtml(user.projeto, { includeDetachedValue: true })}
       </select>
     </td>
     <td><textarea class="inline user-end-rua user-field-textarea" rows="3" maxlength="255" disabled>${escapeHtml(user.end_rua ?? "")}</textarea></td>
@@ -1507,6 +1789,17 @@ function makeRegisteredUserRow(user) {
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
   tr.querySelectorAll(".user-field-textarea").forEach((textarea) => bindAutoTextareaHeight(textarea));
+  return tr;
+}
+
+function makeProjectRow(project) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${escapeHtml(project.name)}</td>
+    <td class="pending-actions user-actions">
+      <button type="button" class="secondary-button" data-project-remove="${project.id}">Remover</button>
+    </td>
+  `;
   return tr;
 }
 
@@ -1651,6 +1944,26 @@ async function loadAdministrators() {
   updateDashboardSummary();
 }
 
+async function loadProjects() {
+  const rows = await fetchJson("/api/admin/projects");
+  setProjectCatalog(rows);
+
+  const body = document.getElementById("projectsBody");
+  if (!body) {
+    return rows;
+  }
+
+  body.innerHTML = "";
+  if (!rows.length) {
+    renderEmptyStateRow("projectsBody", 2, "Nenhum projeto cadastrado.");
+    return rows;
+  }
+
+  rows.forEach((project) => body.appendChild(makeProjectRow(project)));
+  applyResponsiveLabels("projectsBody");
+  return rows;
+}
+
 async function loadRegisteredUsers() {
   const rows = await fetchJson("/api/admin/users");
   registeredUsersTotal = rows.length;
@@ -1661,6 +1974,44 @@ async function loadRegisteredUsers() {
   syncUserTitles();
   updateDashboardSummary();
   scheduleUserFieldTextareaRefresh();
+}
+
+async function createProject() {
+  if (hasPendingEditInProgress()) {
+    setStatus("Salve ou cancele as edições pendentes antes de alterar os projetos.", false);
+    return;
+  }
+
+  const projectName = window.prompt("Informe o nome do projeto.");
+  if (projectName === null) {
+    return;
+  }
+
+  if (!projectName.trim()) {
+    setStatus("Informe o nome do projeto.", false);
+    return;
+  }
+
+  await postJson("/api/admin/projects", { name: projectName });
+  setStatus("Projeto adicionado com sucesso", true);
+  await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
+}
+
+async function removeProject(projectId) {
+  if (hasPendingEditInProgress()) {
+    setStatus("Salve ou cancele as edições pendentes antes de alterar os projetos.", false);
+    return;
+  }
+
+  const normalizedProjectId = requireIntegerId(projectId, "Projeto");
+  const confirmed = window.confirm("Deseja remover este projeto?");
+  if (!confirmed) {
+    return;
+  }
+
+  await deleteJson(`/api/admin/projects/${normalizedProjectId}`);
+  setStatus("Projeto removido com sucesso", true);
+  await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
 }
 
 async function loadEvents() {
@@ -1700,8 +2051,14 @@ async function refreshActiveTab() {
   }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
+      await loadProjects();
       await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers(), loadLocations()]);
     }
+    markDashboardRefreshed();
+    return;
+  }
+  if (activeTab === "banco-dados") {
+    await loadDatabaseEvents();
     markDashboardRefreshed();
     return;
   }
@@ -1711,7 +2068,11 @@ async function refreshActiveTab() {
 
 async function refreshAllTables() {
   const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents(), loadAdministrators()];
+  if (databaseEventsLoaded) {
+    jobs.push(loadDatabaseEvents());
+  }
   if (!hasPendingEditInProgress()) {
+    await loadProjects();
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
     jobs.push(loadLocations());
@@ -1918,6 +2279,9 @@ async function archiveAndClearEvents() {
   renderEventArchives(payload.archives || {});
   openEventArchivesModal();
   await loadEvents();
+  if (databaseEventsLoaded) {
+    await loadDatabaseEvents();
+  }
 
   if (payload.created && payload.archive) {
     setStatus(`Eventos salvos em ${payload.archive.period} e limpos (${payload.cleared_count} registros).`, true);
@@ -2181,6 +2545,68 @@ function bindActions() {
     });
   });
 
+  const databaseTab = document.getElementById("tab-banco-dados");
+  if (databaseTab) {
+    const handleDatabaseFilterChange = (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || !target.dataset.databaseEventFilter) {
+        return;
+      }
+
+      const filterKey = target.dataset.databaseEventFilter;
+      let nextValue = target.value;
+
+      if (filterKey === "chave") {
+        nextValue = nextValue.replace(/\s+/g, "").toUpperCase().slice(0, 4);
+        target.value = nextValue;
+      } else if (filterKey === "project") {
+        nextValue = nextValue.toUpperCase();
+      } else if (["action", "source", "status"].includes(filterKey)) {
+        nextValue = nextValue.toLowerCase();
+      }
+
+      databaseEventsState.filters[filterKey] = nextValue;
+      databaseEventsState.page = 1;
+
+      const shouldDebounce = event.type === "input" && (target.type === "search" || target.type === "text");
+      scheduleDatabaseEventsRefresh(shouldDebounce ? REALTIME_DEBOUNCE_MS : 0);
+    };
+
+    databaseTab.addEventListener("input", handleDatabaseFilterChange);
+    databaseTab.addEventListener("change", handleDatabaseFilterChange);
+
+    const clearDatabaseFiltersButton = document.getElementById("databaseEventsClearFilters");
+    if (clearDatabaseFiltersButton) {
+      clearDatabaseFiltersButton.addEventListener("click", () => {
+        resetDatabaseEventFilters();
+        scheduleDatabaseEventsRefresh(0);
+        setStatus("Filtros do banco de dados limpos com sucesso.", true);
+      });
+    }
+
+    const previousButton = document.getElementById("databaseEventsPrev");
+    if (previousButton) {
+      previousButton.addEventListener("click", () => {
+        if (databaseEventsState.page <= 1) {
+          return;
+        }
+        databaseEventsState.page -= 1;
+        loadDatabaseEvents().catch((error) => setStatus(error.message, false));
+      });
+    }
+
+    const nextButton = document.getElementById("databaseEventsNext");
+    if (nextButton) {
+      nextButton.addEventListener("click", () => {
+        if (databaseEventsState.page >= databaseEventsState.totalPages) {
+          return;
+        }
+        databaseEventsState.page += 1;
+        loadDatabaseEvents().catch((error) => setStatus(error.message, false));
+      });
+    }
+  }
+
   document.querySelector("main").addEventListener("click", (event) => {
     const target = event.target;
     const sortButton = target instanceof Element ? target.closest(".sortable-header") : null;
@@ -2388,6 +2814,23 @@ function bindActions() {
       removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
     }
   });
+
+  const addProjectButton = document.getElementById("addProjectButton");
+  if (addProjectButton) {
+    addProjectButton.addEventListener("click", () => {
+      createProject().catch((error) => setStatus(error.message, false));
+    });
+  }
+
+  const projectsBody = document.getElementById("projectsBody");
+  if (projectsBody) {
+    projectsBody.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target.tagName === "BUTTON" && target.dataset.projectRemove) {
+        removeProject(target.dataset.projectRemove).catch((error) => setStatus(error.message, false));
+      }
+    });
+  }
 
   document.getElementById("inactiveBody").addEventListener("click", (event) => {
     const target = event.target;

@@ -63,6 +63,21 @@
     return fallbackProject;
   }
 
+  function resolveFallbackProject(defaults) {
+    const safeDefaults = defaults || {};
+    const allowedProjects = Array.isArray(safeDefaults.allowedProjects)
+      ? safeDefaults.allowedProjects.filter((project) => String(project || '').trim())
+      : [];
+    const defaultProject = String(safeDefaults.project || '').trim().toUpperCase();
+    if (defaultProject && allowedProjects.includes(defaultProject)) {
+      return defaultProject;
+    }
+    if (allowedProjects.length) {
+      return String(allowedProjects[0] || '').trim().toUpperCase();
+    }
+    return defaultProject;
+  }
+
   function shouldAttemptSilentLocationLookup(permissionState, hasPersistedGrant) {
     void hasPersistedGrant;
 
@@ -199,7 +214,7 @@
   function resolvePersistedUserSettings(settingsByChave, chave, defaults) {
     const normalizedChave = sanitizeSettingsChave(chave);
     const safeDefaults = defaults || {};
-    const fallbackProject = safeDefaults.project || 'P80';
+    const fallbackProject = resolveFallbackProject(safeDefaults);
     const fallbackAutomaticActivitiesEnabled = Boolean(safeDefaults.automaticActivitiesEnabled);
     if (normalizedChave.length !== 4) {
       return {
@@ -239,7 +254,7 @@
       project: normalizeProjectValue(
         nextSettings && nextSettings.project,
         allowedProjects,
-        safeDefaults.project || 'P80'
+        resolveFallbackProject(safeDefaults)
       ),
       automaticActivitiesEnabled: Boolean(
         nextSettings && nextSettings.automaticActivitiesEnabled

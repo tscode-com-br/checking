@@ -11,6 +11,8 @@ import com.br.checkingnative.data.local.db.CheckingDatabase
 import com.br.checkingnative.data.local.db.ManagedLocationDao
 import com.br.checkingnative.data.remote.CheckingHttpTransport
 import com.br.checkingnative.data.remote.JdkCheckingHttpTransport
+import com.br.checkingnative.data.preferences.CheckingStateRepository
+import com.br.checkingnative.data.preferences.CheckingStateStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -55,4 +57,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideCheckingHttpTransport(): CheckingHttpTransport = JdkCheckingHttpTransport()
+
+    @Provides
+    @Singleton
+    fun provideCheckingStateStore(
+        repository: CheckingStateRepository,
+    ): CheckingStateStore = repository
 }
