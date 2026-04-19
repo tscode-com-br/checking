@@ -1,8 +1,8 @@
 package com.br.checkingnative.ui.checking
 
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import com.br.checkingnative.data.background.CheckingBackgroundSnapshotRepository
 import com.br.checkingnative.data.local.db.ManagedLocationDao
 import com.br.checkingnative.data.local.db.ManagedLocationEntity
@@ -19,8 +19,8 @@ import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.StatusTone
 import com.google.gson.JsonParser
-import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -29,18 +29,17 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
@@ -49,23 +48,20 @@ class CheckingViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
-    @get:Rule
-    val temporaryFolder: TemporaryFolder = TemporaryFolder()
-
     @Test
-    fun init_initializesControllerState() = runTest {
-        val fixture = createFixture("viewmodel_init.preferences_pb")
+    fun init_initializesControllerState() = runBlocking {
+        val fixture = createFixture()
 
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
 
         assertTrue(fixture.viewModel.uiState.value.initialized)
         assertFalse(fixture.viewModel.uiState.value.state.isLoading)
     }
 
     @Test
-    fun updateChave_normalizesAndSyncsWhenKeyBecomesValid() = runTest {
-        val fixture = createFixture("viewmodel_key.preferences_pb")
-        advanceUntilIdle()
+    fun updateChave_normalizesAndSyncsWhenKeyBecomesValid() = runBlocking {
+        val fixture = createFixture()
+        mainDispatcherRule.advanceUntilIdle()
         fixture.transport.enqueueResponse(
             statusCode = 200,
             body = """
@@ -77,7 +73,7 @@ class CheckingViewModelTest {
         )
 
         fixture.viewModel.updateChave("h r-70x")
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
 
         assertEquals("HR70", fixture.viewModel.uiState.value.state.chave)
         assertEquals(
@@ -87,9 +83,9 @@ class CheckingViewModelTest {
     }
 
     @Test
-    fun submitCurrent_emitsSuccessMessageFromApi() = runTest {
-        val fixture = createFixture("viewmodel_submit.preferences_pb")
-        advanceUntilIdle()
+    fun submitCurrent_emitsSuccessMessageFromApi() = runBlocking {
+        val fixture = createFixture()
+        mainDispatcherRule.advanceUntilIdle()
         fixture.transport.enqueueResponse(
             statusCode = 200,
             body = """
@@ -100,7 +96,7 @@ class CheckingViewModelTest {
             """.trimIndent(),
         )
         fixture.viewModel.updateChave("ab12")
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
         fixture.transport.enqueueResponse(
             statusCode = 200,
             body = """
@@ -120,12 +116,12 @@ class CheckingViewModelTest {
             """.trimIndent(),
         )
         val messages = mutableListOf<String>()
-        val collector = launch {
+        val collector = launch(Dispatchers.Main, start = CoroutineStart.UNDISPATCHED) {
             fixture.viewModel.messages.take(1).toList(messages)
         }
 
         fixture.viewModel.submitCurrent()
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
 
         assertEquals(listOf("Registro enviado."), messages)
         val submitPayload = JsonParser.parseString(
@@ -137,9 +133,8 @@ class CheckingViewModelTest {
     }
 
     @Test
-    fun refreshPermissionState_turnsOffLocationSharingWhenPermissionIsRevoked() = runTest {
+    fun refreshPermissionState_turnsOffLocationSharingWhenPermissionIsRevoked() = runBlocking {
         val fixture = createFixture(
-            fileName = "viewmodel_permissions.preferences_pb",
             initialState = CheckingState.initial().copy(
                 canEnableLocationSharing = true,
                 locationSharingEnabled = true,
@@ -147,7 +142,7 @@ class CheckingViewModelTest {
                 isLoading = false,
             ),
         )
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
 
         fixture.viewModel.refreshPermissionState(
             snapshot = CheckingPermissionSnapshot(
@@ -159,7 +154,7 @@ class CheckingViewModelTest {
             ),
             updateStatus = true,
         )
-        advanceUntilIdle()
+        mainDispatcherRule.advanceUntilIdle()
 
         val state = fixture.viewModel.uiState.value.state
         assertFalse(state.canEnableLocationSharing)
@@ -169,11 +164,10 @@ class CheckingViewModelTest {
     }
 
     private fun createFixture(
-        fileName: String,
         initialState: CheckingState = CheckingState.initial().copy(isLoading = false),
     ): ViewModelFixture {
         val stateStore = ViewModelFakeCheckingStateStore(initialState)
-        val cacheRepository = ManagedLocationCacheRepository(createDataStore("cache_$fileName"))
+        val cacheRepository = ManagedLocationCacheRepository(createDataStore())
         val locationRepository = ManagedLocationRepository(
             dao = ViewModelFakeManagedLocationDao(),
             cacheRepository = cacheRepository,
@@ -192,14 +186,8 @@ class CheckingViewModelTest {
         )
     }
 
-    private fun createDataStore(fileName: String): DataStore<Preferences> {
-        val file = File(temporaryFolder.root, fileName)
-        return PreferenceDataStoreFactory.create(
-            scope = kotlinx.coroutines.CoroutineScope(
-                kotlinx.coroutines.SupervisorJob() + Dispatchers.IO,
-            ),
-            produceFile = { file },
-        )
+    private fun createDataStore(): DataStore<Preferences> {
+        return ViewModelFakePreferencesDataStore()
     }
 }
 
@@ -209,9 +197,24 @@ private data class ViewModelFixture(
     val transport: ViewModelFakeCheckingHttpTransport,
 )
 
+private class ViewModelFakePreferencesDataStore : DataStore<Preferences> {
+    private val storedPreferences = MutableStateFlow(emptyPreferences())
+
+    override val data: Flow<Preferences> = storedPreferences
+
+    override suspend fun updateData(
+        transform: suspend (t: Preferences) -> Preferences,
+    ): Preferences {
+        val nextPreferences = transform(storedPreferences.value)
+        storedPreferences.value = nextPreferences
+        return nextPreferences
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
-private class MainDispatcherRule(
-    private val dispatcher: TestDispatcher = StandardTestDispatcher(),
+class MainDispatcherRule(
+    private val scheduler: TestCoroutineScheduler = TestCoroutineScheduler(),
+    private val dispatcher: TestDispatcher = StandardTestDispatcher(scheduler),
 ) : TestWatcher() {
     override fun starting(description: Description) {
         Dispatchers.setMain(dispatcher)
@@ -219,6 +222,10 @@ private class MainDispatcherRule(
 
     override fun finished(description: Description) {
         Dispatchers.resetMain()
+    }
+
+    fun advanceUntilIdle() {
+        scheduler.advanceUntilIdle()
     }
 }
 

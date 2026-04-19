@@ -1,9 +1,44 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+}
+
+val releaseVersionName = providers.gradleProperty("checking.versionName")
+    .orElse("1.4.1")
+val releaseVersionCode = providers.gradleProperty("checking.versionCode")
+    .map(String::toInt)
+    .orElse(16)
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) {
+        file.inputStream().use(::load)
+    }
+}
+val requiresReleaseSigning = gradle.startParameter.taskNames.any { taskName ->
+    val lower = taskName.lowercase()
+    lower.contains("bundlerelease") ||
+        lower.contains("assemblerelease") ||
+        lower.contains("publish")
+}
+
+fun requireKeystoreProperty(name: String): String {
+    val value = keystoreProperties.getProperty(name, "").trim()
+    if (value.isEmpty()) {
+        throw GradleException(
+            "Missing required property '$name' in keystore.properties for release build.",
+        )
+    }
+    if (value == "change-me") {
+        throw GradleException(
+            "keystore.properties still contains placeholder value for '$name'.",
+        )
+    }
+    return value
 }
 
 android {
@@ -14,8 +49,8 @@ android {
         applicationId = "com.br.checkingnative"
         minSdk = 23
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseVersionCode.get()
+        versionName = releaseVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,13 +58,38 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val configuredStoreFile = keystoreProperties.getProperty("storeFile", "").trim()
+            if (requiresReleaseSigning) {
+                val requiredStoreFile = rootProject.file(requireKeystoreProperty("storeFile"))
+                if (!requiredStoreFile.exists()) {
+                    throw GradleException(
+                        "Configured storeFile does not exist: ${requiredStoreFile.absolutePath}",
+                    )
+                }
+                storeFile = requiredStoreFile
+                storePassword = requireKeystoreProperty("storePassword")
+                keyAlias = requireKeystoreProperty("keyAlias")
+                keyPassword = requireKeystoreProperty("keyPassword")
+            } else if (configuredStoreFile.isNotEmpty()) {
+                storeFile = rootProject.file(configuredStoreFile)
+                storePassword = keystoreProperties.getProperty("storePassword", "")
+                keyAlias = keystoreProperties.getProperty("keyAlias", "")
+                keyPassword = keystoreProperties.getProperty("keyPassword", "")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

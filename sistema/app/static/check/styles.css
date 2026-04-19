@@ -1011,6 +1011,12 @@ header {
   box-shadow: 0 18px 34px rgba(15, 118, 110, 0.12);
 }
 
+.transport-request-card.is-pressing {
+  transform: translate3d(var(--transport-request-swipe-offset), 0, 0) scale(0.988);
+  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.16);
+  border-color: rgba(15, 118, 110, 0.18);
+}
+
 .transport-request-card.is-swiping {
   transition: none;
   box-shadow: 0 18px 34px rgba(15, 23, 42, 0.14);

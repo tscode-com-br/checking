@@ -326,8 +326,13 @@
     isHorizontal: false,
     hasMoved: false,
     targetCard: null,
+    holdTimeoutId: null,
+    holdTriggered: false,
     suppressedClickRequestId: null,
   };
+
+  const transportRequestDismissHoldDelayMs = 420;
+  const transportRequestDismissMoveTolerancePx = 14;
 
   function isStandaloneShortcutMode() {
     return Boolean(
@@ -1254,6 +1259,10 @@
 
   function resetTransportRequestSwipeState(options) {
     const preserveSuppressedClick = Boolean(options && options.preserveSuppressedClick);
+    if (transportRequestSwipeState.holdTimeoutId !== null) {
+      window.clearTimeout(transportRequestSwipeState.holdTimeoutId);
+      transportRequestSwipeState.holdTimeoutId = null;
+    }
     transportRequestSwipeState.pointerId = null;
     transportRequestSwipeState.requestId = null;
     transportRequestSwipeState.startX = 0;
@@ -1263,9 +1272,19 @@
     transportRequestSwipeState.isHorizontal = false;
     transportRequestSwipeState.hasMoved = false;
     transportRequestSwipeState.targetCard = null;
+    transportRequestSwipeState.holdTriggered = false;
     if (!preserveSuppressedClick) {
       transportRequestSwipeState.suppressedClickRequestId = null;
     }
+  }
+
+  function suppressTransportRequestCardClick(requestId) {
+    transportRequestSwipeState.suppressedClickRequestId = requestId;
+    window.setTimeout(() => {
+      if (Number(transportRequestSwipeState.suppressedClickRequestId) === Number(requestId)) {
+        transportRequestSwipeState.suppressedClickRequestId = null;
+      }
+    }, 250);
   }
 
   function snapBackTransportRequestCard(cardElement) {
@@ -1273,7 +1292,7 @@
       return;
     }
 
-    cardElement.classList.remove('is-swiping');
+    cardElement.classList.remove('is-swiping', 'is-pressing');
     cardElement.style.setProperty('--transport-request-swipe-offset', '0px');
     cardElement.style.setProperty('--transport-request-swipe-opacity', '1');
   }
@@ -1283,7 +1302,7 @@
       return;
     }
 
-    cardElement.classList.remove('is-swiping');
+    cardElement.classList.remove('is-swiping', 'is-pressing');
     cardElement.classList.add('is-dismissing');
     window.setTimeout(() => {
       dismissTransportRequestCard(requestId);
@@ -1310,7 +1329,9 @@
       return;
     }
 
-    transportRequestSwipeState.pointerId = event.pointerId;
+    const pointerId = event.pointerId;
+
+    transportRequestSwipeState.pointerId = pointerId;
     transportRequestSwipeState.requestId = requestId;
     transportRequestSwipeState.startX = event.clientX;
     transportRequestSwipeState.startY = event.clientY;
@@ -1319,12 +1340,35 @@
     transportRequestSwipeState.isHorizontal = false;
     transportRequestSwipeState.hasMoved = false;
     transportRequestSwipeState.targetCard = requestCard;
+    transportRequestSwipeState.holdTriggered = false;
+
+    requestCard.classList.add('is-pressing');
 
     if (typeof requestCard.setPointerCapture === 'function') {
       try {
-        requestCard.setPointerCapture(event.pointerId);
+        requestCard.setPointerCapture(pointerId);
       } catch (error) {}
     }
+
+    transportRequestSwipeState.holdTimeoutId = window.setTimeout(() => {
+      if (
+        !transportRequestSwipeState.targetCard
+        || transportRequestSwipeState.pointerId !== pointerId
+        || Number(transportRequestSwipeState.requestId) !== requestId
+      ) {
+        return;
+      }
+
+      transportRequestSwipeState.holdTriggered = true;
+      suppressTransportRequestCardClick(requestId);
+      if (typeof requestCard.releasePointerCapture === 'function') {
+        try {
+          requestCard.releasePointerCapture(pointerId);
+        } catch (error) {}
+      }
+      animateTransportRequestCardDismissal(requestCard, requestId);
+      resetTransportRequestSwipeState({ preserveSuppressedClick: true });
+    }, transportRequestDismissHoldDelayMs);
   }
 
   function updateTransportRequestSwipe(event) {
@@ -1342,27 +1386,25 @@
     transportRequestSwipeState.deltaX = deltaX;
     transportRequestSwipeState.deltaY = deltaY;
 
-    if (!transportRequestSwipeState.hasMoved) {
-      if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) {
-        return;
-      }
-      transportRequestSwipeState.hasMoved = true;
+    if (transportRequestSwipeState.holdTriggered) {
+      return;
     }
 
-    if (!transportRequestSwipeState.isHorizontal) {
-      if (deltaX >= 0 || Math.abs(deltaX) <= Math.abs(deltaY)) {
-        return;
-      }
-      transportRequestSwipeState.isHorizontal = true;
+    if (
+      Math.abs(deltaX) <= transportRequestDismissMoveTolerancePx
+      && Math.abs(deltaY) <= transportRequestDismissMoveTolerancePx
+    ) {
+      return;
     }
 
-    event.preventDefault();
-    requestCard.classList.add('is-swiping');
-    const maxSwipeOffset = Math.max(requestCard.offsetWidth * 1.1, 96);
-    const swipeOffset = Math.max(deltaX, -maxSwipeOffset);
-    const swipeProgress = Math.min(Math.abs(swipeOffset) / Math.max(requestCard.offsetWidth || 1, 1), 1);
-    requestCard.style.setProperty('--transport-request-swipe-offset', `${swipeOffset}px`);
-    requestCard.style.setProperty('--transport-request-swipe-opacity', String(Math.max(0.24, 1 - (swipeProgress * 0.48))));
+    if (typeof requestCard.releasePointerCapture === 'function') {
+      try {
+        requestCard.releasePointerCapture(event.pointerId);
+      } catch (error) {}
+    }
+
+    snapBackTransportRequestCard(requestCard);
+    resetTransportRequestSwipeState();
   }
 
   function endTransportRequestSwipe(event) {
@@ -1374,9 +1416,6 @@
     }
 
     const requestCard = transportRequestSwipeState.targetCard;
-    const requestId = transportRequestSwipeState.requestId;
-    const swipeThreshold = Math.min(132, Math.max(84, requestCard.offsetWidth * 0.28));
-    const shouldDismiss = transportRequestSwipeState.isHorizontal && transportRequestSwipeState.deltaX <= -swipeThreshold;
 
     if (typeof requestCard.releasePointerCapture === 'function') {
       try {
@@ -1384,22 +1423,8 @@
       } catch (error) {}
     }
 
-    if (transportRequestSwipeState.hasMoved) {
-      transportRequestSwipeState.suppressedClickRequestId = requestId;
-      window.setTimeout(() => {
-        if (Number(transportRequestSwipeState.suppressedClickRequestId) === requestId) {
-          transportRequestSwipeState.suppressedClickRequestId = null;
-        }
-      }, 250);
-    }
-
-    if (shouldDismiss) {
-      animateTransportRequestCardDismissal(requestCard, requestId);
-    } else {
-      snapBackTransportRequestCard(requestCard);
-    }
-
-    resetTransportRequestSwipeState({ preserveSuppressedClick: transportRequestSwipeState.hasMoved });
+    snapBackTransportRequestCard(requestCard);
+    resetTransportRequestSwipeState();
   }
 
   function syncSelectedTransportRequestState(payload) {

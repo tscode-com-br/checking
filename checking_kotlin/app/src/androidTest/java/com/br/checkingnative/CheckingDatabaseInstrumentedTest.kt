@@ -11,7 +11,6 @@ import java.time.Instant
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,6 +118,6 @@ class CheckingDatabaseInstrumentedTest {
         assertEquals(1, loaded.size)
         assertEquals("Base Legada", loaded.single().local)
         assertEquals(Instant.parse("2026-04-15T07:00:00Z").toString(), loaded.single().updatedAt)
-        assertFalse(roomDatabase.isOpen.not())
+        assertTrue(roomDatabase.isOpen)
     }
 }

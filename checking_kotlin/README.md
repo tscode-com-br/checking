@@ -17,6 +17,7 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 
 ## Estado atual
 
+- Fase 10 implementada localmente: testes de paridade unitários e instrumentados compiláveis
 - Fase 9 concluída: UI Compose final alinhada ao Flutter
 - Fase 8 concluída: foreground service nativo com automação de localização em background
 - Fase 7 concluída: captura real de localização em foreground com Fused Location Provider
@@ -42,6 +43,8 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - splash/presentation de 2s com logo e nomes, usando os assets PNG reais do Flutter
 - tela principal Compose com header, botões GPS/settings, histórico, status, chave, grupos de rádio e botão registrar
 - bottom sheets de automação/configurações com controles, wheels de frequência/horário e histórico de localizações
+- testes unitários ampliados para estado legado, automação, regras de runtime e ViewModel com coroutines test
+- testes instrumentados adicionados para permissões/manifest, Room real/migração e baseline visual Compose
 - lint reduzido de 18 para 2 warnings restantes de Hilt/AGP
 - baseline da migração documentado em `docs/migration-phase-0-baseline.md`
 - decisão de identidade documentada em `docs/migration-phase-1-identity.md`
@@ -53,16 +56,19 @@ Projeto Android nativo em Kotlin criado para coexistir com o app Flutter atual.
 - localização foreground documentada em `docs/migration-phase-7-foreground-location.md`
 - automação background documentada em `docs/migration-phase-8-background-automation.md`
 - UI Compose final documentada em `docs/migration-phase-9-compose-final.md`
+- testes de paridade documentados em `docs/migration-phase-10-parity-tests.md`
 
 ## Comandos
 
 ```powershell
 .\gradlew.bat assembleDebug
 .\gradlew.bat testDebugUnitTest
+.\gradlew.bat assembleDebugAndroidTest
+.\gradlew.bat lintDebug
 ```
 
 ## Próximos passos
 
-1. Portar os cenários restantes dos testes Flutter para Kotlin.
-2. Adicionar testes instrumentados/screenshot para a UI Compose final.
-3. Validar permissões/background/localização em dispositivo físico Android 13, 14 e 15+.
+1. Executar os testes instrumentados em dispositivo físico Android 13, 14 e 15+.
+2. Fazer validação manual de background location, permissões e upgrade antes de release.
+3. Prosseguir para a Fase 11: versão, assinatura, AAB e preflight de publicação.

@@ -101,7 +101,7 @@ Recriar snackbars, disabled states, loading spinners e cores do AppTheme.
 Validar layout em telas pequenas e grandes.
 Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug e lintDebug.
 
-Fase 10 - Testes De Paridade
+Fase 10 - Testes De Paridade (implementada localmente)
 
 Portar para Kotlin os cenários dos 74 testes Flutter que ainda não existem.
 Adicionar testes de ViewModel com coroutines test.
@@ -109,6 +109,8 @@ Adicionar testes instrumentados para permissões, Room real e service lifecycle.
 Adicionar screenshot/golden tests ou baseline visual para Compose.
 Testar upgrade/migração com banco e prefs simulados do Flutter.
 Testar em dispositivo real Android 13, 14 e 15+.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebugAndroidTest, assembleDebug e lintDebug.
+Observação: a execução real em dispositivos Android 13, 14 e 15+ continua obrigatória antes da release, porque assembleDebugAndroidTest apenas compila o APK de testes instrumentados.
 
 Fase 11 - Release
 
