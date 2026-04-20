@@ -986,7 +986,6 @@
       languageLoading: false,
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
-      routeTimeEditorOpen: false,
       routeTimeSaving: false,
       requestSectionCollapsedByKind: {
         extra: false,
@@ -1021,15 +1020,7 @@
     const extraDepartureField = document.querySelector("[data-extra-departure-field]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
-    const routeSlot = document.querySelector("[data-route-slot]");
-    const routeInputs = Array.from(document.querySelectorAll("[data-route-kind]"));
-    const routeOptionElements = routeInputs
-      .map(function (inputElement) {
-        return inputElement.closest(".transport-route-option");
-      })
-      .filter(function (optionElement, optionIndex, optionList) {
-        return !!optionElement && optionList.indexOf(optionElement) === optionIndex;
-      });
+    const routeSelect = document.querySelector("[data-route-select]");
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
@@ -1101,7 +1092,7 @@
       const brandKicker = document.querySelector(".transport-topbar-brand .transport-topbar-kicker");
       const brandTitle = document.querySelector(".transport-topbar-brand .transport-topbar-title");
       const supportKicker = document.querySelector(".transport-topbar-support .transport-topbar-kicker");
-      const routeLabels = document.querySelectorAll(".transport-topbar-route-toggle .transport-route-option span");
+      const topbarRouteOptions = routeSelect ? Array.from(routeSelect.options) : [];
       const authLabels = document.querySelectorAll(".transport-auth-label");
       const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title-link");
       const paneLinks = document.querySelectorAll(".transport-pane-title-link");
@@ -1123,11 +1114,11 @@
       if (supportKicker) {
         supportKicker.textContent = t("topbar.systemSupport");
       }
-      if (routeLabels[0]) {
-        routeLabels[0].textContent = getRouteKindLabel("home_to_work");
+      if (topbarRouteOptions[0]) {
+        topbarRouteOptions[0].text = getRouteKindLabel("home_to_work");
       }
-      if (routeLabels[1]) {
-        routeLabels[1].textContent = getRouteKindLabel("work_to_home");
+      if (topbarRouteOptions[1]) {
+        topbarRouteOptions[1].text = getRouteKindLabel("work_to_home");
       }
       if (authLabels[0]) {
         authLabels[0].textContent = t("auth.key");
@@ -1273,9 +1264,8 @@
       if (transportTopbar) {
         transportTopbar.setAttribute("aria-label", t("layout.quickActions"));
       }
-      const routeGroup = document.querySelector(".transport-topbar-route-toggle");
-      if (routeGroup) {
-        routeGroup.setAttribute("aria-label", t("layout.selectedTransportRoute"));
+      if (routeSelect) {
+        routeSelect.setAttribute("aria-label", t("layout.selectedTransportRoute"));
       }
       const datePanel = document.querySelector("[data-date-panel]");
       if (datePanel) {
@@ -1479,10 +1469,12 @@
     function syncRouteTimeControls() {
       const isWorkToHomeSelected = getSelectedRouteKind() === "work_to_home";
       const canEditRouteTime = state.isAuthenticated && isWorkToHomeSelected;
+      const shouldShowRouteTime = isWorkToHomeSelected && state.isAuthenticated;
       const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
 
-      if (!canEditRouteTime) {
-        state.routeTimeEditorOpen = false;
+      if (routeSelect) {
+        routeSelect.value = getSelectedRouteKind();
+        routeSelect.disabled = state.isLoading;
       }
 
       if (routeTimeInput) {
@@ -1496,41 +1488,12 @@
       }
 
       if (routeTimePopover) {
-        routeTimePopover.hidden = !canEditRouteTime || !state.routeTimeEditorOpen;
+        routeTimePopover.hidden = !shouldShowRouteTime;
       }
     }
 
     function closeRouteTimePopover() {
-      state.routeTimeEditorOpen = false;
       syncRouteTimeControls();
-    }
-
-    function openRouteTimePopover() {
-      if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
-        syncRouteTimeControls();
-        return;
-      }
-      if (getSelectedRouteKind() !== "work_to_home") {
-        closeRouteTimePopover();
-        return;
-      }
-
-      state.routeTimeEditorOpen = true;
-      syncRouteTimeControls();
-      if (routeTimeInput && typeof routeTimeInput.focus === "function") {
-        globalScope.setTimeout(function () {
-          routeTimeInput.focus();
-        }, 0);
-      }
-    }
-
-    function toggleRouteTimePopover() {
-      if (state.routeTimeEditorOpen) {
-        closeRouteTimePopover();
-        return;
-      }
-      openRouteTimePopover();
     }
 
     function saveRouteTimeForSelectedDate(nextWorkToHomeTime) {
@@ -2026,54 +1989,22 @@
       });
     }
 
-    routeOptionElements.forEach(function (optionElement) {
-      optionElement.addEventListener("click", function () {
-        const inputElement = optionElement.querySelector("[data-route-kind]");
-        if (!inputElement) {
-          return;
-        }
-
-        const clickedRouteKind = inputElement.value || "home_to_work";
-        const isAlreadySelected = clickedRouteKind === getSelectedRouteKind() && inputElement.checked;
-        if (clickedRouteKind === "work_to_home" && isAlreadySelected) {
-          toggleRouteTimePopover();
-          return;
-        }
-
-        closeRouteTimePopover();
-      });
-    });
-
-    if (typeof document !== "undefined") {
-      document.addEventListener("click", function (event) {
-        if (!state.routeTimeEditorOpen || !routeSlot) {
-          return;
-        }
-        if (routeSlot.contains(event.target)) {
-          return;
-        }
-        closeRouteTimePopover();
-      });
-    }
-
     populateLanguageOptions();
     applyStaticTranslations();
     syncSettingsControls();
     syncRouteTimeControls();
 
-    routeInputs.forEach(function (inputElement) {
-      if (inputElement.checked) {
-        state.selectedRouteKind = inputElement.value || state.selectedRouteKind;
+    if (routeSelect) {
+      if (routeSelect.value) {
+        state.selectedRouteKind = routeSelect.value || state.selectedRouteKind;
       }
-      inputElement.addEventListener("change", function () {
-        if (!inputElement.checked) {
-          return;
-        }
+      routeSelect.addEventListener("change", function () {
         closeRouteTimePopover();
-        state.selectedRouteKind = inputElement.value || "home_to_work";
+        state.selectedRouteKind = routeSelect.value || "home_to_work";
+        syncRouteTimeControls();
         loadDashboard(dateStore.getValue());
       });
-    });
+    }
 
     if (settingsTrigger) {
       settingsTrigger.addEventListener("click", openSettingsModal);
@@ -2257,9 +2188,9 @@
     }
 
     function syncRouteInputs() {
-      routeInputs.forEach(function (inputElement) {
-        inputElement.checked = inputElement.value === state.selectedRouteKind;
-      });
+      if (routeSelect) {
+        routeSelect.value = getSelectedRouteKind();
+      }
     }
 
     function getSelectedRouteKind() {

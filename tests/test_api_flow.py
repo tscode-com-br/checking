@@ -3132,6 +3132,7 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
             chave="TD17",
             projeto="P80",
             workplace="Delete Hub",
+            placa="DEL1700",
             end_rua="17 Delete Street",
             zip="170170",
             local=None,
@@ -3158,6 +3159,7 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
         db.add(request_row)
         db.commit()
         request_id = request_row.id
+        user_id = user.id
         vehicle_id = vehicle.id
         schedule_id = first_schedule.id
         schedule_ids = [first_schedule.id, second_schedule.id]
@@ -3203,6 +3205,7 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
     assert all(row["placa"] != "DEL1700" for row in paired_dashboard.json()["regular_vehicles"])
 
     with SessionLocal() as db:
+        user_row = db.get(User, user_id)
         vehicle_row = db.get(Vehicle, vehicle_id)
         schedules = db.execute(
             select(TransportVehicleSchedule).where(TransportVehicleSchedule.vehicle_id == vehicle_id)
@@ -3219,11 +3222,156 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
             select(TransportNotification).where(TransportNotification.request_id == request_id)
         ).scalars().all()
 
+    assert user_row is not None
+    assert user_row.placa is None
     assert vehicle_row is None
     assert schedules == []
     assert schedule_exceptions == []
     assert assignments == []
     assert notifications == []
+
+
+def test_transport_vehicle_delete_clears_user_plate_references_for_all_vehicle_lists():
+    scenarios = [
+        {
+            "scope": "regular",
+            "plate": "CLR1701",
+            "user_key": "VR17",
+            "selected_date": date(2026, 4, 17),
+            "dashboard_key": "regular_vehicles",
+            "schedule_specs": [
+                {"route_kind": "home_to_work", "recurrence_kind": "weekday"},
+                {"route_kind": "work_to_home", "recurrence_kind": "weekday"},
+            ],
+        },
+        {
+            "scope": "weekend",
+            "plate": "CLW1901",
+            "user_key": "VW19",
+            "selected_date": date(2026, 4, 19),
+            "dashboard_key": "weekend_vehicles",
+            "schedule_specs": [
+                {"route_kind": "home_to_work", "recurrence_kind": "matching_weekday", "weekday": 6},
+                {"route_kind": "work_to_home", "recurrence_kind": "matching_weekday", "weekday": 6},
+            ],
+        },
+        {
+            "scope": "extra",
+            "plate": "CLX2101",
+            "user_key": "VX21",
+            "selected_date": date(2026, 4, 21),
+            "dashboard_key": "extra_vehicles",
+            "schedule_specs": [
+                {"route_kind": "home_to_work", "recurrence_kind": "single_date", "service_date": date(2026, 4, 21)},
+            ],
+        },
+    ]
+
+    created_rows = []
+    with SessionLocal() as db:
+        for index, scenario in enumerate(scenarios, start=1):
+            workplace = Workplace(
+                workplace=f"Delete Scope Hub {index}",
+                address=f"{index} Scope Road",
+                zip=f"70{index:04d}",
+                country="Singapore",
+            )
+            db.add(workplace)
+            db.flush()
+
+            vehicle = Vehicle(
+                placa=scenario["plate"],
+                tipo="carro",
+                color="Blue",
+                lugares=4,
+                tolerance=6,
+                service_scope=scenario["scope"],
+            )
+            db.add(vehicle)
+            db.flush()
+
+            first_schedule_id = None
+            for schedule_spec in scenario["schedule_specs"]:
+                schedule = add_transport_schedule(
+                    db,
+                    vehicle=vehicle,
+                    service_scope=scenario["scope"],
+                    route_kind=schedule_spec["route_kind"],
+                    recurrence_kind=schedule_spec["recurrence_kind"],
+                    service_date=schedule_spec.get("service_date"),
+                    weekday=schedule_spec.get("weekday"),
+                )
+                if first_schedule_id is None:
+                    first_schedule_id = schedule.id
+
+            user = User(
+                rfid=None,
+                nome=f"Delete Scope Rider {index}",
+                chave=scenario["user_key"],
+                projeto="P80",
+                workplace=workplace.workplace,
+                placa=scenario["plate"],
+                end_rua=f"{index} Delete Avenue",
+                zip=f"80{index:04d}",
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(user)
+            db.flush()
+
+            created_rows.append(
+                {
+                    "dashboard_key": scenario["dashboard_key"],
+                    "plate": scenario["plate"],
+                    "schedule_id": first_schedule_id,
+                    "selected_date": scenario["selected_date"],
+                    "user_id": user.id,
+                    "vehicle_id": vehicle.id,
+                }
+            )
+
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        for created_row in created_rows:
+            removed = client.delete(
+                f"/api/transport/vehicles/{created_row['schedule_id']}",
+                params={"service_date": created_row["selected_date"].isoformat()},
+            )
+            assert removed.status_code == 200
+
+            dashboard = client.get(
+                "/api/transport/dashboard",
+                params={
+                    "service_date": created_row["selected_date"].isoformat(),
+                    "route_kind": "home_to_work",
+                },
+            )
+            assert dashboard.status_code == 200
+            assert all(
+                row["placa"] != created_row["plate"]
+                for row in dashboard.json()[created_row["dashboard_key"]]
+            )
+
+    with SessionLocal() as db:
+        for created_row in created_rows:
+            user_row = db.get(User, created_row["user_id"])
+            vehicle_row = db.get(Vehicle, created_row["vehicle_id"])
+            schedule_rows = db.execute(
+                select(TransportVehicleSchedule).where(
+                    TransportVehicleSchedule.vehicle_id == created_row["vehicle_id"]
+                )
+            ).scalars().all()
+
+            assert user_row is not None
+            assert user_row.placa is None
+            assert vehicle_row is None
+            assert schedule_rows == []
 
 
 def test_transport_regular_assignment_persists_across_weekdays_and_routes():

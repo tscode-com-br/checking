@@ -101,7 +101,7 @@
         workToHomeTime: "Work to Home Time:",
         lastUpdateTime: "Last Update Time:",
         workToHomeNote:
-          "Base default for all dates. To change only the selected date, click Work to Home again in the top bar; it updates Regular and Weekend lists only and resets on the next day.",
+          "Base default for all dates. Switch the route selector to Work to Home to edit only the selected date; it updates Regular and Weekend lists only and resets on the next day.",
         close: "Close",
       },
       routes: {
@@ -281,7 +281,7 @@
         workToHomeTime: "Horário de Work to Home:",
         lastUpdateTime: "Horário da Última Atualização:",
         workToHomeNote:
-          "Padrão base para todas as datas. Para alterar apenas a data selecionada, clique novamente em Work to Home na barra superior; isso atualiza apenas as listas Rotineiro e Fim de semana e volta ao padrão no dia seguinte.",
+          "Padrão base para todas as datas. Selecione Work to Home no seletor de trajeto para editar apenas a data escolhida; isso atualiza apenas as listas Rotineiro e Fim de semana e volta ao padrão no dia seguinte.",
         close: "Fechar",
       },
       routes: {
@@ -460,7 +460,7 @@
         workToHomeTime: "Work to Home 时间：",
         lastUpdateTime: "最后更新时间：",
         workToHomeNote:
-          "这是所有日期的基础默认时间。若只想修改当前选定日期，请在顶部栏再次点击 Work to Home；它只会更新常规和周末列表，并会在第二天恢复默认值。",
+          "这是所有日期的基础默认时间。若只想修改当前选定日期，请在顶部的路线选择器中切换到 Work to Home；它只会更新常规和周末列表，并会在第二天恢复默认值。",
         close: "关闭",
       },
       routes: {
@@ -638,7 +638,7 @@
         workToHomeTime: "Masa Work to Home:",
         lastUpdateTime: "Masa Kemas Kini Terakhir:",
         workToHomeNote:
-          "Ini ialah masa lalai asas untuk semua tarikh. Untuk ubah hanya tarikh yang dipilih, klik Work to Home sekali lagi pada bar atas; ia hanya mengemas kini senarai Biasa dan Hujung minggu dan akan kembali kepada lalai pada hari berikutnya.",
+          "Ini ialah masa lalai asas untuk semua tarikh. Tukar pemilih laluan kepada Work to Home untuk ubah hanya tarikh yang dipilih; ia hanya mengemas kini senarai Biasa dan Hujung minggu dan akan kembali kepada lalai pada hari berikutnya.",
         close: "Tutup",
       },
       routes: {
@@ -816,7 +816,7 @@
         workToHomeTime: "Oras ng Work to Home:",
         lastUpdateTime: "Oras ng Huling Update:",
         workToHomeNote:
-          "Ito ang batayang default para sa lahat ng petsa. Para baguhin lang ang kasalukuyang napiling petsa, i-click muli ang Work to Home sa itaas na bar; regular at weekend na mga listahan lang ang maaapektuhan at babalik ito sa default sa susunod na araw.",
+          "Ito ang batayang default para sa lahat ng petsa. Ilipat ang route selector sa Work to Home para ang kasalukuyang napiling petsa lang ang ma-edit; regular at weekend na mga listahan lang ang maaapektuhan at babalik ito sa default sa susunod na araw.",
         close: "Isara",
       },
       routes: {

@@ -609,6 +609,12 @@ def delete_transport_vehicle_registration(
         for vehicle_schedule in schedules:
             db.delete(vehicle_schedule)
 
+    linked_users = db.execute(
+        select(User).where(User.placa == vehicle.placa)
+    ).scalars().all()
+    for linked_user in linked_users:
+        linked_user.placa = None
+
     db.delete(vehicle)
     return vehicle
 

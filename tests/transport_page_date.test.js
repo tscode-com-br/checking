@@ -317,6 +317,28 @@ test('transport page request section titles are rendered as links that control e
   assert.match(transportHtml, /id="transportRequestScopeRegular"/);
 });
 
+test('transport topbar uses a single route selector instead of a radio pair and only shows the inline time field after authentication on Work to Home', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(transportHtml, /data-route-select/);
+  assert.doesNotMatch(transportHtml, /type="radio"\s+name="transport_route_kind"/);
+  assert.match(transportScript, /const routeSelect = document\.querySelector\("\[data-route-select\]"\);/);
+  assert.match(transportScript, /const shouldShowRouteTime = isWorkToHomeSelected && state\.isAuthenticated;/);
+  assert.match(transportScript, /routeTimePopover\.hidden = !shouldShowRouteTime;/);
+  assert.match(transportCss, /\.transport-route-select\s*\{[\s\S]*text-align:\s*center;[\s\S]*color-scheme:\s*dark;[\s\S]*cursor:\s*pointer;/);
+});
+
 test('transport request sections size themselves by their own content instead of sharing equal-height rows', () => {
   const transportCss = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/styles.css'),

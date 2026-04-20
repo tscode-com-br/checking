@@ -33,15 +33,16 @@
             </svg>
           </button>
           <div class="transport-topbar-route-slot" data-route-slot>
-            <div class="transport-route-toggle transport-topbar-route-toggle" role="radiogroup" aria-label="Selected transport route">
-              <label class="transport-route-option">
-                <input type="radio" name="transport_route_kind" value="home_to_work" data-route-kind checked />
-                <span data-settings-route-anchor>Home to Work</span>
-              </label>
-              <label class="transport-route-option">
-                <input type="radio" name="transport_route_kind" value="work_to_home" data-route-kind />
-                <span>Work to Home</span>
-              </label>
+            <div class="transport-route-select-shell">
+              <select
+                class="transport-route-select transport-topbar-route-select"
+                data-route-select
+                data-settings-route-anchor
+                aria-label="Selected transport route"
+              >
+                <option value="home_to_work" selected>Home to Work</option>
+                <option value="work_to_home">Work to Home</option>
+              </select>
             </div>
             <div class="transport-route-inline-time" data-route-time-popover hidden>
               <input
