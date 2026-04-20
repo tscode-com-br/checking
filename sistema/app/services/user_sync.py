@@ -16,7 +16,10 @@ from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
 WEB_IMPORTED_USER_NAME = "Oriundo da Web"
+PROVIDER_ACTIVITY_LOCAL = "Forms"
 SYNC_EVENT_FALLBACK_STATUSES = ("queued", "updated", "success", "synced", "created", "submitted")
+LOW_PRIORITY_SYNC_SOURCES = frozenset(("state_import",))
+SECONDARY_SYNC_SOURCES = frozenset(("provider",))
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class ResolvedUserActivity:
     event_time: datetime
     local: str | None
     ontime: bool | None
+    source: str | None = None
 
 
 def normalize_user_key(value: str) -> str:
@@ -127,6 +131,61 @@ def apply_user_state(
     mark_user_active(user, activity_time=event_time)
 
 
+def resolve_activity_local(*, local: str | None, source: str | None) -> str | None:
+    if local is not None:
+        return local
+    if str(source or "").strip().lower() == "provider":
+        return PROVIDER_ACTIVITY_LOCAL
+    return None
+
+
+def get_sync_source_priority(source: str | None) -> int:
+    normalized_source = str(source or "").strip().lower()
+    if normalized_source in LOW_PRIORITY_SYNC_SOURCES:
+        return 0
+    if normalized_source in SECONDARY_SYNC_SOURCES:
+        return 1
+    return 2
+
+
+def list_user_sync_events(
+    db: Session,
+    *,
+    user_id: int,
+    action: str | None = None,
+) -> list[UserSyncEvent]:
+    query = select(UserSyncEvent).where(UserSyncEvent.user_id == user_id)
+    if action is None:
+        query = query.where(UserSyncEvent.action.in_(("checkin", "checkout")))
+    else:
+        query = query.where(UserSyncEvent.action == action)
+
+    return db.execute(
+        query.order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
+    ).scalars().all()
+
+
+def select_preferred_sync_event(events: list[UserSyncEvent]) -> UserSyncEvent | None:
+    if not events:
+        return None
+
+    latest_day = normalize_event_time(events[0].event_time).date()
+    same_day_events = [
+        event
+        for event in events
+        if normalize_event_time(event.event_time).date() == latest_day
+    ]
+    same_day_events.sort(
+        key=lambda event: (
+            get_sync_source_priority(event.source),
+            normalize_event_time(event.event_time),
+            event.id,
+        ),
+        reverse=True,
+    )
+    return same_day_events[0]
+
+
 def create_user_sync_event(
     db: Session,
     *,
@@ -167,21 +226,30 @@ def create_user_sync_event(
 
 
 def get_latest_sync_event(db: Session, *, user_id: int, action: str) -> UserSyncEvent | None:
-    return db.execute(
-        select(UserSyncEvent)
-        .where(UserSyncEvent.user_id == user_id, UserSyncEvent.action == action)
-        .order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
-        .limit(1)
-    ).scalar_one_or_none()
+    return select_preferred_sync_event(list_user_sync_events(db, user_id=user_id, action=action))
 
 
 def get_latest_user_sync_event(db: Session, *, user_id: int) -> UserSyncEvent | None:
-    return db.execute(
-        select(UserSyncEvent)
-        .where(UserSyncEvent.user_id == user_id, UserSyncEvent.action.in_(("checkin", "checkout")))
-        .order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
-        .limit(1)
-    ).scalar_one_or_none()
+    candidates = [
+        event
+        for event in (
+            get_latest_sync_event(db, user_id=user_id, action="checkin"),
+            get_latest_sync_event(db, user_id=user_id, action="checkout"),
+        )
+        if event is not None
+    ]
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda event: (
+            normalize_event_time(event.event_time),
+            get_sync_source_priority(event.source),
+            event.id,
+        ),
+        reverse=True,
+    )
+    return candidates[0]
 
 
 def get_latest_check_event(db: Session, *, rfid: str, action: str) -> CheckEvent | None:
@@ -213,20 +281,6 @@ def get_latest_check_activity_event(db: Session, *, rfid: str) -> CheckEvent | N
 def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActivity | None:
     candidates: list[tuple[datetime, int, ResolvedUserActivity]] = []
 
-    if user.time is not None and user.checkin is not None:
-        candidates.append(
-            (
-                user.time,
-                2,
-                ResolvedUserActivity(
-                    action="checkin" if user.checkin else "checkout",
-                    event_time=user.time,
-                    local=user.local,
-                    ontime=True,
-                ),
-            )
-        )
-
     latest_sync = get_latest_user_sync_event(db, user_id=user.id)
     if latest_sync is not None:
         candidates.append(
@@ -236,8 +290,24 @@ def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActi
                 ResolvedUserActivity(
                     action=latest_sync.action,
                     event_time=latest_sync.event_time,
-                    local=latest_sync.local,
+                    local=resolve_activity_local(local=latest_sync.local, source=latest_sync.source),
                     ontime=latest_sync.ontime,
+                    source=latest_sync.source,
+                ),
+            )
+        )
+
+    if user.time is not None and user.checkin is not None:
+        candidates.append(
+            (
+                user.time,
+                1,
+                ResolvedUserActivity(
+                    action="checkin" if user.checkin else "checkout",
+                    event_time=user.time,
+                    local=user.local,
+                    ontime=True,
+                    source="state",
                 ),
             )
         )
@@ -252,8 +322,9 @@ def resolve_latest_user_activity(db: Session, *, user: User) -> ResolvedUserActi
                     ResolvedUserActivity(
                         action=latest_check_event.action,
                         event_time=latest_check_event.event_time,
-                        local=latest_check_event.local,
+                        local=resolve_activity_local(local=latest_check_event.local, source=latest_check_event.source),
                         ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
+                        source=latest_check_event.source,
                     ),
                 )
             )
@@ -303,13 +374,12 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
 
     latest_checkin = get_latest_sync_event(db, user_id=user.id, action="checkin")
     latest_checkout = get_latest_sync_event(db, user_id=user.id, action="checkout")
+    latest_activity = resolve_latest_user_activity(db, user=user)
     fallback_checkin = get_latest_check_event(db, rfid=user.rfid, action="checkin") if user.rfid else None
     fallback_checkout = get_latest_check_event(db, rfid=user.rfid, action="checkout") if user.rfid else None
-    current_action = None
-    if user.checkin is True:
-        current_action = "checkin"
-    elif user.checkin is False:
-        current_action = "checkout"
+    current_action = latest_activity.action if latest_activity is not None else None
+    current_event_time = latest_activity.event_time if latest_activity is not None else user.time
+    current_local = latest_activity.local if latest_activity is not None and latest_activity.local is not None else user.local
 
     return MobileSyncStateResponse(
         found=True,
@@ -317,17 +387,25 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
         nome=user.nome,
         projeto=user.projeto,
         current_action=current_action,
-        current_event_time=user.time,
-        current_local=user.local,
+        current_event_time=current_event_time,
+        current_local=current_local,
         last_checkin_at=(
             latest_checkin.event_time
             if latest_checkin is not None
-            else (fallback_checkin.event_time if fallback_checkin is not None else (user.time if user.checkin is True else None))
+            else (
+                fallback_checkin.event_time
+                if fallback_checkin is not None
+                else (current_event_time if current_action == "checkin" else None)
+            )
         ),
         last_checkout_at=(
             latest_checkout.event_time
             if latest_checkout is not None
-            else (fallback_checkout.event_time if fallback_checkout is not None else (user.time if user.checkin is False else None))
+            else (
+                fallback_checkout.event_time
+                if fallback_checkout is not None
+                else (current_event_time if current_action == "checkout" else None)
+            )
         ),
     )
 

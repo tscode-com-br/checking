@@ -156,6 +156,7 @@
   const storageKey = 'checking.web.user.chave';
   const userSettingsStorageKey = 'checking.web.user.settings.by-chave';
   const userPasswordStorageKey = 'checking.web.user.password.by-chave';
+  const userTransportLocalStateStorageKey = 'checking.web.transport.local-state.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
@@ -327,6 +328,7 @@
     inlineMessage: '',
     inlineTone: null,
     dismissedRequestIds: new Set(),
+    realizedRequestIds: new Set(),
   };
 
   const transportRequestSwipeState = {
@@ -497,8 +499,94 @@
     }
   }
 
-  function clearDismissedTransportRequests() {
-    transportUiState.dismissedRequestIds.clear();
+  function normalizePersistedTransportRequestIds(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const uniqueIds = new Set();
+    value.forEach((entry) => {
+      const normalizedId = Number(entry);
+      if (Number.isFinite(normalizedId)) {
+        uniqueIds.add(normalizedId);
+      }
+    });
+    return Array.from(uniqueIds);
+  }
+
+  function readPersistedTransportLocalStateMap() {
+    try {
+      const rawValue = window.localStorage.getItem(userTransportLocalStateStorageKey);
+      if (!rawValue) {
+        return {};
+      }
+
+      const parsedValue = JSON.parse(rawValue);
+      return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writePersistedTransportLocalStateMap(localStateMap) {
+    try {
+      window.localStorage.setItem(userTransportLocalStateStorageKey, JSON.stringify(localStateMap));
+    } catch {
+      // Ignore browsers with unavailable storage.
+    }
+  }
+
+  function resetTransportRequestLocalState() {
+    transportUiState.dismissedRequestIds = new Set();
+    transportUiState.realizedRequestIds = new Set();
+  }
+
+  function loadPersistedTransportRequestLocalState(chave) {
+    const normalizedChave = sanitizeChave(chave);
+    if (normalizedChave.length !== 4) {
+      resetTransportRequestLocalState();
+      return;
+    }
+
+    const localStateMap = readPersistedTransportLocalStateMap();
+    const persistedState = localStateMap[normalizedChave] && typeof localStateMap[normalizedChave] === 'object'
+      ? localStateMap[normalizedChave]
+      : {};
+
+    transportUiState.dismissedRequestIds = new Set(normalizePersistedTransportRequestIds(persistedState.dismissed_request_ids));
+    transportUiState.realizedRequestIds = new Set(normalizePersistedTransportRequestIds(persistedState.realized_request_ids));
+  }
+
+  function persistTransportRequestLocalState(chave) {
+    const normalizedChave = sanitizeChave(chave);
+    if (normalizedChave.length !== 4) {
+      return;
+    }
+
+    const localStateMap = readPersistedTransportLocalStateMap();
+    const dismissedRequestIds = normalizePersistedTransportRequestIds(Array.from(transportUiState.dismissedRequestIds));
+    const realizedRequestIds = normalizePersistedTransportRequestIds(Array.from(transportUiState.realizedRequestIds));
+
+    if (!dismissedRequestIds.length && !realizedRequestIds.length) {
+      delete localStateMap[normalizedChave];
+    } else {
+      localStateMap[normalizedChave] = {
+        dismissed_request_ids: dismissedRequestIds,
+        realized_request_ids: realizedRequestIds,
+      };
+    }
+
+    writePersistedTransportLocalStateMap(localStateMap);
+  }
+
+  function normalizeTransportRequestStatusValue(value) {
+    const normalizedStatus = String(value || 'pending').trim().toLowerCase();
+    if (!normalizedStatus) {
+      return 'pending';
+    }
+
+    // The API will own `realized` later; for now the webapp controls it locally.
+    return normalizedStatus === 'realized' ? 'confirmed' : normalizedStatus;
   }
 
   function getTransportRequests() {
@@ -537,11 +625,65 @@
     return findVisibleTransportRequestById(transportUiState.detailRequestId);
   }
 
+  function canDismissTransportRequestItem(requestItem) {
+    return Boolean(
+      requestItem
+      && (requestItem.status === 'realized' || requestItem.status === 'cancelled')
+    );
+  }
+
+  function applyPersistedTransportRequestLocalOverrides() {
+    transportState.requests = getTransportRequests().map((requestItem) => {
+      if (!requestItem) {
+        return requestItem;
+      }
+
+      if (
+        transportUiState.realizedRequestIds.has(Number(requestItem.requestId))
+        && requestItem.status === 'confirmed'
+      ) {
+        return {
+          ...requestItem,
+          status: 'realized',
+        };
+      }
+
+      return requestItem;
+    });
+  }
+
+  function reconcilePersistedTransportRequestLocalState() {
+    const requestById = new Map(
+      getTransportRequests().map((requestItem) => [Number(requestItem.requestId), requestItem])
+    );
+    let changed = false;
+
+    Array.from(transportUiState.realizedRequestIds).forEach((requestId) => {
+      const requestItem = requestById.get(Number(requestId));
+      if (!requestItem || (requestItem.status !== 'confirmed' && requestItem.status !== 'realized')) {
+        transportUiState.realizedRequestIds.delete(requestId);
+        changed = true;
+      }
+    });
+
+    Array.from(transportUiState.dismissedRequestIds).forEach((requestId) => {
+      const requestItem = requestById.get(Number(requestId));
+      if (!requestItem || !canDismissTransportRequestItem(requestItem)) {
+        transportUiState.dismissedRequestIds.delete(requestId);
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      persistTransportRequestLocalState(getActiveChave());
+    }
+  }
+
   function shouldAutoRefreshTransportRequest(requestItem) {
     return Boolean(
       requestItem
       && requestItem.isActive
-      && (requestItem.status === 'pending' || (requestItem.status === 'confirmed' && !requestItem.awarenessConfirmed))
+      && (requestItem.status === 'pending' || requestItem.status === 'confirmed')
     );
   }
 
@@ -1126,8 +1268,9 @@
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
     transportUiState.selectedRequestId = null;
+    transportUiState.detailRequestId = null;
     transportUiState.acknowledgementChecked = false;
-    clearDismissedTransportRequests();
+    resetTransportRequestLocalState();
     resetTransportRequestSwipeState();
     clearTransportInlineStatus();
     renderTransportScreen();
@@ -1271,7 +1414,7 @@
     return {
       requestId,
       requestKind: payload && payload.request_kind ? String(payload.request_kind) : null,
-      status: String(payload && payload.status || 'pending'),
+      status: normalizeTransportRequestStatusValue(payload && payload.status),
       isActive: Boolean(payload && payload.is_active),
       serviceDate: payload && payload.service_date ? String(payload.service_date) : null,
       requestedTime: String(payload && payload.requested_time || ''),
@@ -1305,7 +1448,7 @@
     return [normalizeTransportRequestItem({
       request_id: requestId,
       request_kind: payload && payload.request_kind,
-      status: payload && payload.status || 'pending',
+      status: normalizeTransportRequestStatusValue(payload && payload.status),
       is_active: payload && payload.status !== 'available',
       service_date: payload && payload.service_date,
       requested_time: payload && payload.requested_time,
@@ -1335,12 +1478,18 @@
         .map((requestItem) => Number(requestItem.requestId))
         .filter((requestId) => Number.isFinite(requestId))
     );
+    let changed = false;
 
     Array.from(transportUiState.dismissedRequestIds).forEach((requestId) => {
       if (!activeRequestIds.has(requestId)) {
         transportUiState.dismissedRequestIds.delete(requestId);
+        changed = true;
       }
     });
+
+    if (changed) {
+      persistTransportRequestLocalState(getActiveChave());
+    }
   }
 
   function buildTransportSelectionFallbackPayload() {
@@ -1368,14 +1517,41 @@
       return;
     }
 
+    const requestItem = findTransportRequestById(normalizedRequestId);
+    if (!canDismissTransportRequestItem(requestItem)) {
+      return;
+    }
+
     transportUiState.dismissedRequestIds.add(normalizedRequestId);
     if (Number(transportUiState.detailRequestId) === normalizedRequestId) {
       transportUiState.detailRequestId = null;
     }
+    persistTransportRequestLocalState(getActiveChave());
     if (!findVisibleTransportRequestById(transportUiState.selectedRequestId)) {
       transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
     }
     syncSelectedTransportRequestState(buildTransportSelectionFallbackPayload());
+    renderTransportScreen();
+    syncFormControlStates();
+  }
+
+  function markTransportRequestAsRealized(requestId) {
+    const normalizedRequestId = Number(requestId);
+    if (!Number.isFinite(normalizedRequestId)) {
+      return;
+    }
+
+    const requestItem = findTransportRequestById(normalizedRequestId);
+    if (!canMarkTransportRequestAsRealized(requestItem)) {
+      return;
+    }
+
+    transportUiState.realizedRequestIds.add(normalizedRequestId);
+    transportUiState.dismissedRequestIds.delete(normalizedRequestId);
+    persistTransportRequestLocalState(getActiveChave());
+    applyPersistedTransportRequestLocalOverrides();
+    syncSelectedTransportRequestState(buildTransportSelectionFallbackPayload());
+    setTransportInlineStatus('Solicitação marcada como realizada.', 'success');
     renderTransportScreen();
     syncFormControlStates();
   }
@@ -1449,6 +1625,10 @@
 
     const requestId = Number(requestCard.getAttribute('data-request-id'));
     if (!Number.isFinite(requestId)) {
+      return;
+    }
+
+    if (!canDismissTransportRequestItem(findVisibleTransportRequestById(requestId) || findTransportRequestById(requestId))) {
       return;
     }
 
@@ -1552,9 +1732,29 @@
 
   function syncSelectedTransportRequestState(payload) {
     const selectedRequest = getTransportSelectedRequest();
-    const fallbackStatus = String(payload && payload.status || 'available');
+    const fallbackStatus = payload && payload.status === 'realized'
+      ? 'confirmed'
+      : String(payload && payload.status || 'available');
 
     if (!selectedRequest) {
+      if (getVisibleTransportRequests().length === 0) {
+        transportState.status = 'available';
+        transportState.requestId = null;
+        transportState.requestKind = null;
+        transportState.routeKind = null;
+        transportState.serviceDate = null;
+        transportState.requestedTime = '';
+        transportState.boardingTime = '';
+        transportState.confirmationDeadlineTime = '';
+        transportState.vehicleType = '';
+        transportState.vehiclePlate = '';
+        transportState.vehicleColor = '';
+        transportState.toleranceMinutes = null;
+        transportState.awarenessRequired = false;
+        transportState.awarenessConfirmed = false;
+        return;
+      }
+
       transportState.status = fallbackStatus;
       transportState.requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
         ? Number(payload.request_id)
@@ -1598,7 +1798,10 @@
     transportState.requests = Array.isArray(payload && payload.requests) && payload.requests.length
       ? payload.requests.map(normalizeTransportRequestItem).filter((requestItem) => Number.isFinite(requestItem.requestId))
       : createTransportFallbackRequest(payload);
+    loadPersistedTransportRequestLocalState(getActiveChave());
+    applyPersistedTransportRequestLocalOverrides();
     reconcileDismissedTransportRequestIds();
+    reconcilePersistedTransportRequestLocalState();
     if (transportUiState.selectedRequestId === null || !findVisibleTransportRequestById(transportUiState.selectedRequestId)) {
       transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
     }
@@ -1628,6 +1831,33 @@
       && requestItem.isActive
       && (requestItem.status === 'pending' || requestItem.status === 'confirmed')
     );
+  }
+
+  function canMarkTransportRequestAsRealized(requestItem) {
+    if (!requestItem || requestItem.status !== 'confirmed' || !requestItem.isActive || !requestItem.serviceDate) {
+      return false;
+    }
+
+    const now = new Date();
+    const todayDateValue = formatDateInputValue(now);
+    if (!todayDateValue) {
+      return false;
+    }
+
+    if (requestItem.serviceDate < todayDateValue) {
+      return true;
+    }
+    if (requestItem.serviceDate > todayDateValue) {
+      return false;
+    }
+
+    const departureTime = formatTransportRequestCardTime(requestItem.boardingTime || requestItem.requestedTime);
+    if (!/^\d{2}:\d{2}$/.test(departureTime)) {
+      return false;
+    }
+
+    const departureDateTime = new Date(`${requestItem.serviceDate}T${departureTime}:00`);
+    return !Number.isNaN(departureDateTime.getTime()) && departureDateTime.getTime() <= now.getTime();
   }
 
   function formatTransportRequestWeekdays(selectedWeekdays) {
@@ -1802,13 +2032,13 @@
     const cardMeta = document.createElement('div');
     const cardDateTime = document.createElement('span');
     const cardActions = document.createElement('div');
-    const cancelButton = document.createElement('button');
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
       || transportCancelInProgress
       || transportAcknowledgeInProgress;
     const canCancelRequest = canCancelTransportRequestItem(requestItem);
+    const canMarkRealized = canMarkTransportRequestAsRealized(requestItem);
 
     cardElement.className = `transport-request-card is-${requestItem.status}`;
     cardElement.dataset.requestId = String(requestItem.requestId);
@@ -1837,7 +2067,19 @@
 
     cardActions.className = 'transport-request-card-actions';
 
+    if (canMarkRealized) {
+      const realizedButton = document.createElement('button');
+      realizedButton.type = 'button';
+      realizedButton.className = 'transport-request-card-realized-button';
+      realizedButton.dataset.transportRequestRealized = 'true';
+      realizedButton.dataset.requestId = String(requestItem.requestId);
+      realizedButton.disabled = transportBusy;
+      realizedButton.textContent = 'Realizado';
+      cardActions.appendChild(realizedButton);
+    }
+
     if (canCancelRequest) {
+      const cancelButton = document.createElement('button');
       cancelButton.type = 'button';
       cancelButton.className = 'transport-request-card-cancel-button';
       cancelButton.dataset.transportRequestCancel = 'true';
@@ -1999,7 +2241,6 @@
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
     transportUiState.detailRequestId = null;
-    clearDismissedTransportRequests();
     resetTransportRequestSwipeState();
     clearTransportInlineStatus();
     syncFormControlStates();
@@ -2018,8 +2259,8 @@
 
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
-  transportUiState.detailRequestId = null;
-    clearDismissedTransportRequests();
+    transportUiState.detailRequestId = null;
+    loadPersistedTransportRequestLocalState(getActiveChave());
     resetTransportRequestSwipeState();
     transportScreen.hidden = false;
     transportScreenBackdrop.hidden = false;
@@ -2070,6 +2311,7 @@
       return null;
     }
 
+    loadPersistedTransportRequestLocalState(normalizedChave);
     clearTransportAutoRefresh();
     transportStateLoading = true;
     clearTransportInlineStatus();
@@ -4359,6 +4601,17 @@
 
     transportRequestHistoryList.addEventListener('click', (event) => {
       const targetElement = resolveTransportEventTargetElement(event);
+      const realizedButton = targetElement
+        ? targetElement.closest('[data-transport-request-realized="true"][data-request-id]')
+        : null;
+      if (realizedButton) {
+        const requestId = Number(realizedButton.getAttribute('data-request-id'));
+        if (Number.isFinite(requestId)) {
+          markTransportRequestAsRealized(requestId);
+        }
+        return;
+      }
+
       const cancelButton = targetElement
         ? targetElement.closest('[data-transport-request-cancel="true"][data-request-id]')
         : null;
@@ -4397,6 +4650,13 @@
 
     transportRequestHistoryList.addEventListener('keydown', (event) => {
       const targetElement = resolveTransportEventTargetElement(event);
+      const realizedButton = targetElement
+        ? targetElement.closest('[data-transport-request-realized="true"][data-request-id]')
+        : null;
+      if (realizedButton) {
+        return;
+      }
+
       const cancelButton = targetElement
         ? targetElement.closest('[data-transport-request-cancel="true"][data-request-id]')
         : null;

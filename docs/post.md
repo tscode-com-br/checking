@@ -183,7 +183,8 @@ Ao receber dados em `updaterecords`, a API:
 - nao enfileira `FormsSubmission`;
 - nao chama nenhum fluxo de envio para o FORMS;
 - nao replica a atividade para o formulario externo;
-- apenas atualiza `users`, `checkinghistory`, `user_sync_events` e os logs internos da API.
+- apenas atualiza `users`, `checkinghistory`, `user_sync_events` e os logs internos da API;
+- registra cada recebimento para consulta posterior na aba administrativa `Forms`.
 
 Essa regra existe para impedir um ciclo infinito entre a base que origina os dados e a propria API.
 
@@ -193,15 +194,17 @@ A tabela `users` representa apenas o estado atual do usuário.
 
 Regra aplicada:
 
-- se o evento recebido for mais novo que `users.time`, a API atualiza o estado atual do usuário;
-- se `users.time` estiver vazio, a API também atualiza o estado atual;
-- se o evento recebido for mais antigo do que o estado atual existente, a API grava o histórico, mas preserva o estado mais novo em `users`.
+- se nao existir nenhum estado atual, a API atualiza `users` com o evento recebido;
+- se o evento recebido for claramente mais antigo do que o estado atual existente, a API grava o histórico, mas preserva o estado mais novo em `users`;
+- se houver conflito no mesmo dia e na mesma atividade, os dados recebidos por `updaterecords` nao tem prioridade sobre dados vindos do webapp, app mobile ou outras fontes internas de sincronizacao;
+- nesses conflitos, a API grava o histórico e o log de recebimento, mas preserva em `users` o estado da fonte considerada autoritativa.
 
 Campos atualizados quando o evento é o mais recente:
 
 - `users.projeto`
 - `users.checkin`
 - `users.time`
+- `users.local`, com o valor `Forms` quando o estado corrente veio deste endpoint
 
 Conversão de atividade:
 

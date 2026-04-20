@@ -909,6 +909,48 @@ tbody tr:last-child td {
   width: 92px;
 }
 
+.forms-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+
+.forms-table th,
+.forms-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.forms-table th:nth-child(1),
+.forms-table td:nth-child(1) {
+  width: 148px;
+}
+
+.forms-table th:nth-child(2),
+.forms-table td:nth-child(2) {
+  width: 84px;
+}
+
+.forms-table th:nth-child(3),
+.forms-table td:nth-child(3) {
+  width: 240px;
+}
+
+.forms-table th:nth-child(4),
+.forms-table td:nth-child(4) {
+  width: 96px;
+}
+
+.forms-table th:nth-child(5),
+.forms-table td:nth-child(5),
+.forms-table th:nth-child(6),
+.forms-table td:nth-child(6),
+.forms-table th:nth-child(7),
+.forms-table td:nth-child(7),
+.forms-table th:nth-child(8),
+.forms-table td:nth-child(8) {
+  width: 104px;
+}
+
 .event-cell {
   display: block;
   line-height: 1.4;
@@ -1229,7 +1271,7 @@ textarea.inline {
 }
 
 .cadastro-locations-table {
-  min-width: 980px;
+  min-width: 1120px;
   width: 100%;
   table-layout: fixed;
 }
@@ -1440,22 +1482,22 @@ textarea.inline {
 
 .cadastro-locations-table th:nth-child(1),
 .cadastro-locations-table td:nth-child(1) {
-  width: 18%;
+  width: 220px;
 }
 
 .cadastro-locations-table th:nth-child(2),
 .cadastro-locations-table td:nth-child(2) {
-  width: 50%;
+  width: auto;
 }
 
 .cadastro-locations-table th:nth-child(3),
 .cadastro-locations-table td:nth-child(3) {
-  width: 10%;
+  width: 120px;
 }
 
 .cadastro-locations-table th:nth-child(4),
 .cadastro-locations-table td:nth-child(4) {
-  width: 22%;
+  width: 248px;
 }
 
 .cadastro-locations-table .inline {
@@ -1625,10 +1667,15 @@ textarea.inline {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   align-items: stretch;
+  white-space: normal;
 }
 
 .location-row.location-row-editing .location-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.location-row.location-row-editing .location-action-primary {
+  grid-column: 1 / -1;
 }
 
 .location-actions button {
@@ -1637,6 +1684,8 @@ textarea.inline {
   min-height: 36px;
   padding: 8px 12px;
   font-size: 0.78rem;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .location-action-danger {
@@ -2001,6 +2050,12 @@ textarea.inline {
 
   .location-actions {
     grid-template-columns: 1fr;
+  }
+  .location-row.location-row-editing .location-actions {
+    grid-template-columns: 1fr;
+  }
+  .location-row.location-row-editing .location-action-primary {
+    grid-column: auto;
   }
 
   .user-actions {

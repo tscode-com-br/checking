@@ -1174,6 +1174,14 @@ body.portrait-lock-active > .orientation-lock-screen {
   isolation: isolate;
   contain: layout paint;
   touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.transport-request-card * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .transport-request-card:hover {
@@ -1328,21 +1336,21 @@ body.portrait-lock-active > .orientation-lock-screen {
 .transport-request-card-actions {
   display: flex;
   flex: 0 1 auto;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
+  gap: 8px;
   min-width: 0;
   max-width: 100%;
   margin-left: auto;
 }
 
+.transport-request-card-realized-button,
 .transport-request-card-cancel-button {
   min-height: 26px;
   max-width: 100%;
   padding: 4px 10px;
-  border: 1px solid rgba(220, 38, 38, 0.24);
   border-radius: 999px;
-  background: rgba(254, 226, 226, 0.92);
-  color: #b91c1c;
   font-size: 0.72rem;
   font-weight: 800;
   line-height: 1;
@@ -1350,8 +1358,29 @@ body.portrait-lock-active > .orientation-lock-screen {
   white-space: nowrap;
 }
 
+.transport-request-card-realized-button {
+  border: 1px solid rgba(71, 85, 105, 0.24);
+  background: rgba(226, 232, 240, 0.96);
+  color: #334155;
+}
+
+.transport-request-card-cancel-button {
+  border: 1px solid rgba(220, 38, 38, 0.24);
+  background: rgba(254, 226, 226, 0.92);
+  color: #b91c1c;
+}
+
+.transport-request-card-realized-button:hover {
+  background: rgba(203, 213, 225, 0.98);
+}
+
 .transport-request-card-cancel-button:hover {
   background: rgba(254, 202, 202, 0.98);
+}
+
+.transport-request-card-realized-button:focus-visible {
+  outline: 2px solid rgba(71, 85, 105, 0.2);
+  outline-offset: 2px;
 }
 
 .transport-request-card-cancel-button:focus-visible {
@@ -1359,6 +1388,7 @@ body.portrait-lock-active > .orientation-lock-screen {
   outline-offset: 2px;
 }
 
+.transport-request-card-realized-button:disabled,
 .transport-request-card-cancel-button:disabled {
   cursor: default;
   opacity: 0.68;
@@ -1565,6 +1595,7 @@ body.portrait-lock-active > .orientation-lock-screen {
   }
 
   .transport-request-card-status,
+  .transport-request-card-realized-button,
   .transport-request-card-cancel-button {
     padding: 4px 8px;
     font-size: 0.68rem;
@@ -1611,6 +1642,7 @@ body.portrait-lock-active > .orientation-lock-screen {
   }
 
   .transport-request-card-status,
+  .transport-request-card-realized-button,
   .transport-request-card-cancel-button {
     padding: 4px 7px;
     font-size: 0.66rem;

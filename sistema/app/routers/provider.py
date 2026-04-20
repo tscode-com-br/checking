@@ -21,6 +21,8 @@ from ..services.user_sync import (
     ensure_current_user_state_event,
     find_user_by_chave,
     normalize_event_time,
+    PROVIDER_ACTIVITY_LOCAL,
+    resolve_latest_user_activity,
 )
 
 router = APIRouter(prefix="/api/provider", tags=["provider"])
@@ -30,6 +32,23 @@ _ACTION_BY_ACTIVITY = {
     "check-in": "checkin",
     "check-out": "checkout",
 }
+
+
+def _build_provider_log_details(
+    *,
+    payload: ProviderCheckSubmitRequest,
+    event_time,
+    created_user: bool,
+    updated_project: bool,
+    updated_current_state: bool,
+) -> str:
+    return (
+        f"chave={payload.chave}; nome={payload.nome}; projeto={payload.projeto}; "
+        f"atividade={payload.atividade}; informe={payload.informe}; data={payload.data}; hora={payload.hora}; "
+        f"event_time={event_time.isoformat()}; created_user={created_user}; "
+        f"updated_project={updated_project}; updated_current_state={updated_current_state}; "
+        "forms_skipped=true; reason=source_is_forms_database"
+    )
 
 
 def require_provider_shared_key(
@@ -119,13 +138,16 @@ def submit_provider_checking(
             message="Provider event already processed",
             rfid=user.rfid,
             project=user.projeto,
+            local=PROVIDER_ACTIVITY_LOCAL,
             request_path=PROVIDER_REQUEST_PATH,
             http_status=200,
             ontime=ontime,
-            details=(
-                f"chave={user.chave}; atividade={payload.atividade}; informe={payload.informe}; "
-                f"event_time={event_time.isoformat()}; created_user={created_user}; updated_project={updated_project}; "
-                "forms_skipped=true; reason=source_is_forms_database"
+            details=_build_provider_log_details(
+                payload=payload,
+                event_time=event_time,
+                created_user=created_user,
+                updated_project=updated_project,
+                updated_current_state=False,
             ),
         )
         db.commit()
@@ -147,16 +169,6 @@ def submit_provider_checking(
         )
 
     ensure_current_user_state_event(db, user=user)
-    current_user_time = normalize_event_time(user.time) if user.time is not None else None
-    updated_current_state = current_user_time is None or event_time >= current_user_time
-    if updated_current_state:
-        apply_user_state(
-            user,
-            action=action,
-            event_time=event_time,
-            projeto=payload.projeto,
-            local=None,
-        )
 
     create_user_sync_event(
         db,
@@ -165,11 +177,42 @@ def submit_provider_checking(
         action=action,
         event_time=event_time,
         projeto=user.projeto,
-        local=None,
+        local=PROVIDER_ACTIVITY_LOCAL,
         ontime=ontime,
         source_request_id=provider_request_id,
         device_id="provider",
     )
+    db.flush()
+
+    preferred_activity = resolve_latest_user_activity(db, user=user)
+    updated_current_state = False
+    if preferred_activity is not None:
+        preferred_event_time = normalize_event_time(preferred_activity.event_time)
+        current_user_time = normalize_event_time(user.time) if user.time is not None else None
+        next_checkin = preferred_activity.action == "checkin"
+        next_local = preferred_activity.local
+        should_update_current_state = (
+            current_user_time is None
+            or user.checkin is None
+            or current_user_time != preferred_event_time
+            or bool(user.checkin) != next_checkin
+            or user.local != next_local
+        )
+        if should_update_current_state:
+            apply_user_state(
+                user,
+                action=preferred_activity.action,
+                event_time=preferred_event_time,
+                projeto=payload.projeto,
+                local=next_local,
+            )
+
+        updated_current_state = (
+            preferred_activity.source == "provider"
+            and preferred_activity.action == action
+            and preferred_event_time == event_time
+        )
+
     log_event(
         db,
         idempotency_key=f"provider:{provider_request_id}",
@@ -180,15 +223,17 @@ def submit_provider_checking(
         rfid=user.rfid,
         project=user.projeto,
         device_id="provider",
+        local=PROVIDER_ACTIVITY_LOCAL,
         request_path=PROVIDER_REQUEST_PATH,
         http_status=200,
         ontime=ontime,
         submitted_at=now_sgt(),
-        details=(
-            f"chave={user.chave}; atividade={payload.atividade}; informe={payload.informe}; "
-            f"event_time={event_time.isoformat()}; created_user={created_user}; "
-            f"updated_project={updated_project}; updated_current_state={updated_current_state}; "
-            "forms_skipped=true; reason=source_is_forms_database"
+        details=_build_provider_log_details(
+            payload=payload,
+            event_time=event_time,
+            created_user=created_user,
+            updated_project=updated_project,
+            updated_current_state=updated_current_state,
         ),
     )
     db.commit()

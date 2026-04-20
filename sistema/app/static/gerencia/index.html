@@ -158,6 +158,7 @@
         <nav class="tabs panel-surface">
           <button data-tab="checkin" class="active"><span>Check-In</span><span class="tab-count" data-tab-count-for="checkin">0</span></button>
           <button data-tab="checkout"><span>Check-Out</span><span class="tab-count" data-tab-count-for="checkout">0</span></button>
+          <button data-tab="forms"><span>Forms</span><span class="tab-count" data-tab-count-for="forms">0</span></button>
           <button data-tab="inactive"><span>Inativos</span><span class="tab-count" data-tab-count-for="inactive">0</span></button>
           <button data-tab="cadastro"><span>Cadastro</span><span class="tab-count" data-tab-count-for="cadastro">0</span></button>
           <button data-tab="eventos"><span>Eventos</span><span class="tab-count" data-tab-count-for="eventos">0</span></button>
@@ -541,6 +542,27 @@
                     <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Perfil</th><th>Projeto</th><th>Endereço</th><th>ZIP Code</th><th>Cargo</th><th>Email</th><th>Ações</th></tr>
                   </thead>
                   <tbody id="usersBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-forms" class="tab">
+            <div class="panel-surface panel-section">
+              <div class="section-header">
+                <div>
+                  <span class="section-kicker">Integração</span>
+                  <h2 id="formsTitle">Forms (0)</h2>
+                  <p class="section-copy">Todos os registros recebidos pelo endpoint provider, com horário de recebimento e payload original.</p>
+                </div>
+              </div>
+
+              <div class="table-wrap forms-wrap table-shell">
+                <table class="responsive-table forms-table">
+                  <thead>
+                    <tr><th>Recebimento</th><th>Chave</th><th>Nome</th><th>Projeto</th><th>Atividade</th><th>Informe</th><th>Data</th><th>Hora</th></tr>
+                  </thead>
+                  <tbody id="formsBody"></tbody>
                 </table>
               </div>
             </div>

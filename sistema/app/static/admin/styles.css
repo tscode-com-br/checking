@@ -373,6 +373,48 @@ th { background: #f3f4f6; }
 .events-table td:nth-child(14) {
   width: 112px;
 }
+
+.forms-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+
+.forms-table th,
+.forms-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.forms-table th:nth-child(1),
+.forms-table td:nth-child(1) {
+  width: 148px;
+}
+
+.forms-table th:nth-child(2),
+.forms-table td:nth-child(2) {
+  width: 84px;
+}
+
+.forms-table th:nth-child(3),
+.forms-table td:nth-child(3) {
+  width: 240px;
+}
+
+.forms-table th:nth-child(4),
+.forms-table td:nth-child(4) {
+  width: 96px;
+}
+
+.forms-table th:nth-child(5),
+.forms-table td:nth-child(5),
+.forms-table th:nth-child(6),
+.forms-table td:nth-child(6),
+.forms-table th:nth-child(7),
+.forms-table td:nth-child(7),
+.forms-table th:nth-child(8),
+.forms-table td:nth-child(8) {
+  width: 104px;
+}
 .event-cell {
   display: block;
   line-height: 1.35;
@@ -584,9 +626,14 @@ input.inline, select.inline, textarea.inline {
   margin-top: 0;
 }
 
-.cadastro-grid-wrap > .cadastro-users-table,
-.cadastro-grid-wrap > .cadastro-locations-table {
+.cadastro-grid-wrap > .cadastro-users-table {
   min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.cadastro-grid-wrap > .cadastro-locations-table {
+  min-width: 1120px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -853,6 +900,7 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-locations-table {
   width: 100%;
+  min-width: 1120px;
   table-layout: fixed;
 }
 
@@ -864,22 +912,22 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-locations-table th:nth-child(1),
 .cadastro-locations-table td:nth-child(1) {
-  width: 18%;
+  width: 220px;
 }
 
 .cadastro-locations-table th:nth-child(2),
 .cadastro-locations-table td:nth-child(2) {
-  width: 50%;
+  width: auto;
 }
 
 .cadastro-locations-table th:nth-child(3),
 .cadastro-locations-table td:nth-child(3) {
-  width: 10%;
+  width: 120px;
 }
 
 .cadastro-locations-table th:nth-child(4),
 .cadastro-locations-table td:nth-child(4) {
-  width: 22%;
+  width: 248px;
 }
 
 .cadastro-locations-table .inline {
@@ -1066,12 +1114,17 @@ input.inline, select.inline, textarea.inline {
 .location-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
   align-items: stretch;
+  white-space: normal;
 }
 
 .location-row.location-row-editing .location-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.location-row.location-row-editing .location-action-primary {
+  grid-column: 1 / -1;
 }
 
 .location-actions button {
@@ -1080,6 +1133,8 @@ input.inline, select.inline, textarea.inline {
   min-height: 32px;
   padding: 6px 8px;
   font-size: 12px;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .location-action-danger {
@@ -1327,6 +1382,12 @@ input.inline, select.inline, textarea.inline {
   }
   .location-actions {
     grid-template-columns: 1fr;
+  }
+  .location-row.location-row-editing .location-actions {
+    grid-template-columns: 1fr;
+  }
+  .location-row.location-row-editing .location-action-primary {
+    grid-column: auto;
   }
   .location-coordinate-line {
     flex-direction: column;

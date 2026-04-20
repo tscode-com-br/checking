@@ -756,6 +756,137 @@ def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_
     assert len(provider_events) == 1
 
 
+def test_provider_same_day_events_do_not_override_web_state_and_are_reported_in_forms():
+    web_checkin_time = datetime(2026, 4, 20, 7, 10, 0, tzinfo=ZoneInfo(settings.tz_name))
+    web_checkout_time = datetime(2026, 4, 20, 21, 7, 14, tzinfo=ZoneInfo(settings.tz_name))
+
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="PV31", senha="web123", projeto="P80")
+        assert registered.status_code == 200, registered.text
+
+        web_checkin = client.post(
+            "/api/web/check",
+            json={
+                "chave": "PV31",
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "local": "Web",
+                "event_time": web_checkin_time.isoformat(),
+                "client_event_id": f"web-checkin-{uuid.uuid4().hex}",
+            },
+        )
+        assert web_checkin.status_code == 200, web_checkin.text
+
+        provider_checkin = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV31",
+                "nome": "USUARIO WEB FORMS",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "20/04/2026",
+                "hora": "07:12:33",
+            },
+        )
+        assert provider_checkin.status_code == 200, provider_checkin.text
+        assert provider_checkin.json()["updated_current_state"] is False
+
+        ensure_admin_session(client)
+
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200, checkin_rows.text
+        checkin_row = next(row for row in checkin_rows.json() if row["chave"] == "PV31")
+        assert normalize_event_time(datetime.fromisoformat(checkin_row["time"])) == web_checkin_time
+        assert checkin_row["local"] == "Web"
+
+        web_checkout = client.post(
+            "/api/web/check",
+            json={
+                "chave": "PV31",
+                "projeto": "P80",
+                "action": "checkout",
+                "informe": "normal",
+                "local": "Web",
+                "event_time": web_checkout_time.isoformat(),
+                "client_event_id": f"web-checkout-{uuid.uuid4().hex}",
+            },
+        )
+        assert web_checkout.status_code == 200, web_checkout.text
+
+        provider_checkout = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV31",
+                "nome": "USUARIO WEB FORMS",
+                "projeto": "P80",
+                "atividade": "check-out",
+                "informe": "normal",
+                "data": "20/04/2026",
+                "hora": "21:09:37",
+            },
+        )
+        assert provider_checkout.status_code == 200, provider_checkout.text
+        assert provider_checkout.json()["updated_current_state"] is False
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200, checkout_rows.text
+        checkout_row = next(row for row in checkout_rows.json() if row["chave"] == "PV31")
+        assert normalize_event_time(datetime.fromisoformat(checkout_row["time"])) == web_checkout_time
+        assert checkout_row["local"] == "Web"
+
+        history_state = client.get("/api/web/check/state", params={"chave": "PV31"})
+        assert history_state.status_code == 200, history_state.text
+        assert normalize_event_time(datetime.fromisoformat(history_state.json()["last_checkout_at"])) == web_checkout_time
+
+        forms_rows = client.get("/api/admin/forms")
+        assert forms_rows.status_code == 200, forms_rows.text
+        provider_rows = [row for row in forms_rows.json() if row["chave"] == "PV31"]
+        assert any(row["atividade"] == "check-in" and row["hora"] == "07:12:33" for row in provider_rows)
+        assert any(row["atividade"] == "check-out" and row["hora"] == "21:09:37" for row in provider_rows)
+
+
+def test_provider_current_state_uses_forms_as_local_when_provider_event_wins():
+    provider_time = datetime(2026, 4, 21, 18, 5, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV32",
+                "nome": "USUARIO PROVIDER LOCAL",
+                "projeto": "P82",
+                "atividade": "check-out",
+                "informe": "retroativo",
+                "data": "21/04/2026",
+                "hora": "18:05:00",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["updated_current_state"] is True
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200, checkout_rows.text
+        checkout_row = next(row for row in checkout_rows.json() if row["chave"] == "PV32")
+        assert normalize_event_time(datetime.fromisoformat(checkout_row["time"])) == provider_time
+        assert checkout_row["local"] == "Forms"
+        assert checkout_row["assiduidade"] == "Retroativo"
+
+        forms_rows = client.get("/api/admin/forms")
+        assert forms_rows.status_code == 200, forms_rows.text
+        forms_row = next(row for row in forms_rows.json() if row["chave"] == "PV32")
+        assert forms_row["nome"] == "USUARIO PROVIDER LOCAL"
+        assert forms_row["atividade"] == "check-out"
+        assert forms_row["informe"] == "retroativo"
+        assert forms_row["hora"] == "18:05:00"
+
+
 def test_admin_stream_requires_valid_session():
     with TestClient(app) as client:
         forbidden = client.get("/api/admin/stream")

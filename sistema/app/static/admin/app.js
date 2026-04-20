@@ -33,6 +33,7 @@ let locationSettingsDirty = false;
 let pendingUsersTotal = 0;
 let administratorsTotal = 0;
 let eventsTotal = 0;
+let formsTotal = 0;
 let lastDashboardRefreshAt = null;
 let userTextareaRefreshFrame = null;
 let databaseEventsLoaded = false;
@@ -158,6 +159,7 @@ const presenceTableStates = Object.fromEntries(
 const TAB_LABELS = {
   checkin: "Check-In",
   checkout: "Check-Out",
+  forms: "Forms",
   inactive: "Inativos",
   cadastro: "Cadastro",
   eventos: "Eventos",
@@ -258,6 +260,7 @@ function updateDashboardSummary() {
   const counts = {
     checkin: presenceTableStates.checkin.rawRows.length,
     checkout: presenceTableStates.checkout.rawRows.length,
+    forms: formsTotal,
     inactive: presenceTableStates.inactive.rawRows.length,
     pending: pendingUsersTotal,
     users: registeredUsersTotal,
@@ -303,6 +306,7 @@ function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
+  formsTotal = 0;
   databaseEventsLoaded = false;
   if (databaseEventsRefreshTimer !== null) {
     window.clearTimeout(databaseEventsRefreshTimer);
@@ -2219,6 +2223,33 @@ async function loadEvents() {
   updateDashboardSummary();
 }
 
+async function loadForms() {
+  const body = document.getElementById("formsBody");
+  if (!body) {
+    formsTotal = 0;
+    updateDashboardSummary();
+    return;
+  }
+
+  const rows = await fetchJson("/api/admin/forms");
+  formsTotal = Array.isArray(rows) ? rows.length : 0;
+  setTextContentIfPresent("formsTitle", `Forms (${formsTotal})`);
+  body.innerHTML = "";
+  if (formsTotal === 0) {
+    renderEmptyStateRow("formsBody", 8, "Nenhum registro recebido do endpoint updaterecords.");
+    updateDashboardSummary();
+    return;
+  }
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${makeEventDateTimeCell(row.recebimento)}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.projeto ?? "-")}</td><td>${makeEventCell(row.atividade ?? "-")}</td><td>${makeEventCell(row.informe ?? "-")}</td><td>${makeEventCell(row.data ?? "-")}</td><td>${makeEventCell(row.hora ?? "-")}</td>`;
+    body.appendChild(tr);
+  });
+  applyResponsiveLabels("formsBody");
+  updateDashboardSummary();
+}
+
 async function refreshActiveTab() {
   if (activeTab === "checkin") {
     await loadCheckin();
@@ -2227,6 +2258,11 @@ async function refreshActiveTab() {
   }
   if (activeTab === "checkout") {
     await loadCheckout();
+    markDashboardRefreshed();
+    return;
+  }
+  if (activeTab === "forms") {
+    await loadForms();
     markDashboardRefreshed();
     return;
   }
@@ -2253,7 +2289,7 @@ async function refreshActiveTab() {
 }
 
 async function refreshAllTables() {
-  const jobs = [loadCheckin(), loadCheckout(), loadInactive(), loadEvents(), loadAdministrators()];
+  const jobs = [loadCheckin(), loadCheckout(), loadForms(), loadInactive(), loadEvents(), loadAdministrators()];
   if (databaseEventsLoaded) {
     jobs.push(loadDatabaseEvents());
   }

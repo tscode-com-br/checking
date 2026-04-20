@@ -47,6 +47,7 @@ from ..schemas import (
     InactiveUserRow,
     LocationRow,
     PendingRow,
+    ProviderFormRow,
     UserRow,
 )
 from ..services.admin_auth import (
@@ -93,6 +94,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 EVENT_KEY_FIELDS = ("approved_by", "rejected_by", "revoked_by", "updated_by", "chave")
 DATABASE_EVENT_ACTIONS = ("checkin", "checkout")
+PROVIDER_FORMS_REQUEST_PATH = "/api/provider/updaterecords"
 DATABASE_EVENT_PAGE_SIZE = 50
 DATABASE_EVENT_DEFAULT_SORT_BY = "event_time"
 DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc"
@@ -136,6 +138,36 @@ def parse_event_details(details: str | None) -> dict[str, str]:
         if normalized_key and normalized_value:
             parsed[normalized_key] = normalized_value
     return parsed
+
+
+def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
+    rows = db.execute(
+        select(CheckEvent)
+        .where(
+            CheckEvent.source == "provider",
+            CheckEvent.request_path == PROVIDER_FORMS_REQUEST_PATH,
+            CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
+        )
+        .order_by(desc(CheckEvent.id))
+    ).scalars().all()
+
+    payload: list[ProviderFormRow] = []
+    for row in rows:
+        details_map = parse_event_details(row.details)
+        payload.append(
+            ProviderFormRow(
+                recebimento=row.event_time,
+                chave=(details_map.get("chave") or "-").upper(),
+                nome=details_map.get("nome") or "-",
+                projeto=(details_map.get("projeto") or row.project or "-").upper(),
+                atividade=details_map.get("atividade") or ("check-in" if row.action == "checkin" else "check-out"),
+                informe=details_map.get("informe") or ("retroativo" if row.ontime is False else "normal"),
+                data=details_map.get("data") or "-",
+                hora=details_map.get("hora") or "-",
+            )
+        )
+
+    return payload
 
 
 def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -> str | None:
@@ -1051,6 +1083,11 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
     return build_presence_rows(db, action="checkout", reference_time=reference_time)
+
+
+@router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_admin_session)])
+def list_provider_forms(db: Session = Depends(get_db)) -> list[ProviderFormRow]:
+    return build_provider_forms_rows(db)
 
 
 @router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])

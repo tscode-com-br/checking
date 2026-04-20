@@ -446,6 +446,17 @@ class UserRow(BaseModel):
     assiduidade: Literal["Normal", "Retroativo"]
 
 
+class ProviderFormRow(BaseModel):
+    recebimento: datetime
+    chave: str
+    nome: str
+    projeto: str
+    atividade: Literal["check-in", "check-out"]
+    informe: Literal["normal", "retroativo"]
+    data: str
+    hora: str
+
+
 class AdminUserListRow(BaseModel):
     id: int
     rfid: Optional[str]
