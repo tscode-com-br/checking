@@ -363,16 +363,37 @@
           </div>
         </div>
 
-        <div class="section-header">
-          <h2>Administradores (admin)</h2>
-        </div>
-        <div class="table-wrap">
-          <table class="responsive-table cadastro-table cadastro-admin-table">
-            <thead>
-              <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
-            </thead>
-            <tbody id="administratorsBody"></tbody>
-          </table>
+        <div class="cadastro-split-grid">
+          <div class="cadastro-side-panel">
+            <div class="section-header">
+              <h2>Administradores (admin)</h2>
+            </div>
+            <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
+              <table class="responsive-table cadastro-table cadastro-admin-table">
+                <thead>
+                  <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
+                </thead>
+                <tbody id="administratorsBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="cadastro-side-panel">
+            <div class="section-header">
+              <h2>Projetos</h2>
+            </div>
+            <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
+              <table class="responsive-table cadastro-table cadastro-projects-table">
+                <thead>
+                  <tr><th>Nome do Projeto</th><th>Ações</th></tr>
+                </thead>
+                <tbody id="projectsBody"></tbody>
+              </table>
+            </div>
+            <div class="locations-actions-bar cadastro-projects-actions">
+              <button id="addProjectButton" type="button">Adicionar Projeto</button>
+            </div>
+          </div>
         </div>
 
         <div class="section-header">

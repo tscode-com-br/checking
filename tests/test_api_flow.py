@@ -4044,33 +4044,21 @@ def test_admin_page_is_served_on_admin_path():
         assert response.status_code == 200
         assert "Checking Admin" in response.text
         assert "Acesso Administrativo" in response.text
+    assert "Projetos" in response.text
+    assert 'id="projectsBody"' in response.text
+    assert 'id="addProjectButton"' in response.text
 
 
-def test_gerencia_page_is_served_on_gerencia_path():
+def test_gerencia_page_is_not_served_anymore():
     with TestClient(app) as client:
         response = client.get("/gerencia")
-        assert response.status_code == 200
-        assert "Checking Gerência" in response.text
-        assert "Entrar na gerência" in response.text
-        assert "Banco de Dados" in response.text
-        assert "Operação administrativa" not in response.text
-        assert "Diretriz visual" not in response.text
-        assert "<span class=\"summary-kicker\">Risco</span>" not in response.text
-        assert '<select id="databaseEventsKey" data-database-event-filter="chave">' in response.text
-        assert '<select id="databaseEventsRfid" data-database-event-filter="rfid">' in response.text
-        assert '<select id="databaseEventsSource" data-database-event-filter="source">' in response.text
-        assert '<select id="databaseEventsStatus" data-database-event-filter="status">' in response.text
-        assert 'id="realtimeStatusBadge"' in response.text
-        assert 'data-dashboard-stat-value="checkin"' in response.text
-        assert 'data-dashboard-stat-value="users"' in response.text
-        assert '../admin/app.js' in response.text
+    assert response.status_code == 404
 
 
-def test_gerencia_trailing_slash_redirects_to_canonical_path():
+def test_gerencia_trailing_slash_is_not_served_anymore():
     with TestClient(app) as client:
         response = client.get("/gerencia/", follow_redirects=False)
-        assert response.status_code == 307
-        assert response.headers["location"] == "../gerencia"
+    assert response.status_code == 404
 
 
 def test_database_events_endpoint_filters_and_paginates_check_events():

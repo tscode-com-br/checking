@@ -11,7 +11,6 @@ Implementacao inicial do sistema de check-in/check-out com:
 - Fila persistida para envio assíncrono ao Microsoft Forms apos resposta rapida ao ESP32
 - Migracoes com Alembic
 - Painel web administrativo em /admin com login por sessao
-- Entrada visual alternativa da gerencia em /gerencia
 
 ## Estrutura
 - assets/xpath: seletores XPath do formulario
@@ -44,12 +43,6 @@ Implementacao inicial do sistema de check-in/check-out com:
    uvicorn sistema.app.main:app --reload --host 0.0.0.0 --port 8000
 6. Abrir painel admin:
    http://127.0.0.1:8000/admin
-7. Abrir a nova area visual de gerencia:
-   http://127.0.0.1:8000/gerencia
-
-Compatibilidade:
-- A nova area visual de gerencia fica em `/gerencia` e reutiliza os mesmos endpoints `/api/admin/*`.
-- Para preview local rapido quando o `.env` estiver apontando para Postgres do Docker, use `DATABASE_URL=sqlite:///./preview_gerencia.db` e `FORMS_QUEUE_ENABLED=false` ao subir o `uvicorn`.
 
 ## Repositorio e deploy automatico
 - Repositorio principal: `git@github.com:tscode-com-br/checking.git`
