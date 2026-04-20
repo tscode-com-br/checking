@@ -4,7 +4,7 @@ import calendar
 import hashlib
 import json
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -175,7 +175,7 @@ def resolve_transport_request_dashboard_service_date(
         request_weekdays = get_transport_request_selected_weekdays(transport_request)
         if request_weekdays and dashboard_service_date.weekday() >= 5:
             return dashboard_service_date
-        return None
+        return _find_next_request_service_date(dashboard_service_date, request_weekdays)
 
     if transport_request.request_kind == "weekend":
         return _find_next_request_service_date(
@@ -227,6 +227,44 @@ def _resolve_web_transport_request_item_boarding_time(
         return get_transport_work_to_home_time_for_date(db, service_date=service_date)
 
     return boarding_time
+
+
+def _parse_transport_clock_time(value: str | None) -> tuple[int, int] | None:
+    normalized_value = str(value or "").strip()
+    if len(normalized_value) < 5:
+        return None
+
+    candidate = normalized_value[:5]
+    try:
+        parsed_time = datetime.strptime(candidate, "%H:%M")
+    except ValueError:
+        return None
+    return parsed_time.hour, parsed_time.minute
+
+
+def _is_web_transport_request_realized(
+    *,
+    request_status: str,
+    service_date: date | None,
+    departure_time: str | None,
+    reference_datetime: datetime,
+) -> bool:
+    if request_status != "confirmed" or service_date is None:
+        return False
+
+    current_date = reference_datetime.date()
+    if service_date < current_date:
+        return True
+    if service_date > current_date:
+        return False
+
+    parsed_departure = _parse_transport_clock_time(departure_time)
+    if parsed_departure is None:
+        return False
+
+    departure_minutes = (parsed_departure[0] * 60) + parsed_departure[1]
+    current_minutes = (reference_datetime.hour * 60) + reference_datetime.minute
+    return departure_minutes <= current_minutes
 
 
 def _resolve_vehicle_departure_time(
@@ -850,6 +888,7 @@ def _build_web_transport_request_items(
     service_date: date,
     preferred_route_kind: str | None,
 ) -> list[WebTransportRequestItemResponse]:
+    reference_datetime = now_sgt()
     transport_requests = db.execute(
         select(TransportRequest)
         .where(TransportRequest.user_id == user.id)
@@ -901,6 +940,7 @@ def _build_web_transport_request_items(
         boarding_time = None
         vehicle_type = None
         vehicle_plate = None
+        vehicle_color = None
         tolerance_minutes = None
         awareness_required = False
         awareness_confirmed = False
@@ -957,6 +997,7 @@ def _build_web_transport_request_items(
                 )
                 vehicle_type = confirmed_vehicle.tipo
                 vehicle_plate = confirmed_vehicle.placa
+                vehicle_color = confirmed_vehicle.color
                 tolerance_minutes = confirmed_vehicle.tolerance
                 awareness_required = True
                 awareness_confirmed = all(
@@ -974,7 +1015,7 @@ def _build_web_transport_request_items(
                 resolved_route_kind = cancelled_assignment[1]
                 request_status = "cancelled"
         else:
-            request_status = "rejected" if latest_assignment is not None and latest_assignment.status == "rejected" else "cancelled"
+            request_status = "cancelled"
 
         boarding_time = _resolve_web_transport_request_item_boarding_time(
             db,
@@ -982,6 +1023,13 @@ def _build_web_transport_request_items(
             service_date=item_service_date,
             boarding_time=boarding_time,
         )
+        if _is_web_transport_request_realized(
+            request_status=request_status,
+            service_date=item_service_date,
+            departure_time=boarding_time or transport_request.requested_time,
+            reference_datetime=reference_datetime,
+        ):
+            request_status = "realized"
 
         request_items.append(
             WebTransportRequestItemResponse(
@@ -997,6 +1045,7 @@ def _build_web_transport_request_items(
                 confirmation_deadline_time=confirmation_deadline_time,
                 vehicle_type=vehicle_type,
                 vehicle_plate=vehicle_plate,
+                vehicle_color=vehicle_color,
                 tolerance_minutes=tolerance_minutes,
                 awareness_required=awareness_required,
                 awareness_confirmed=awareness_confirmed,
@@ -1101,26 +1150,34 @@ def build_web_transport_state(
     )
 
     if confirmed_assignment is not None and confirmed_vehicle is not None:
+        boarding_time = _resolve_web_transport_boarding_time(
+            db,
+            active_request=active_request,
+            service_date=service_date,
+            route_kind=resolved_route_kind,
+            vehicle=confirmed_vehicle,
+        )
+        resolved_status = "realized" if _is_web_transport_request_realized(
+            request_status="confirmed",
+            service_date=service_date,
+            departure_time=boarding_time or active_request.requested_time,
+            reference_datetime=now_sgt(),
+        ) else "confirmed"
         return WebTransportStateResponse(
             chave=user.chave,
             end_rua=user.end_rua,
             zip=user.zip,
-            status="confirmed",
+            status=resolved_status,
             request_id=active_request.id,
             request_kind=active_request.request_kind,
             route_kind=resolved_route_kind,
             service_date=service_date,
             requested_time=active_request.requested_time,
-            boarding_time=_resolve_web_transport_boarding_time(
-                db,
-                active_request=active_request,
-                service_date=service_date,
-                route_kind=resolved_route_kind,
-                vehicle=confirmed_vehicle,
-            ),
+            boarding_time=boarding_time,
             confirmation_deadline_time=confirmation_deadline_time,
             vehicle_type=confirmed_vehicle.tipo,
             vehicle_plate=confirmed_vehicle.placa,
+            vehicle_color=confirmed_vehicle.color,
             tolerance_minutes=confirmed_vehicle.tolerance,
             awareness_required=True,
             awareness_confirmed=awareness_confirmed,

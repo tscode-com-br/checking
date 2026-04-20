@@ -20,6 +20,7 @@ Preparar o projeto Kotlin para gerar artefatos de release com o mesmo rigor do a
 - `scripts/play-release-preflight.ps1`
 - `scripts/release-artifact-utils.ps1`
 - `docs/google-play-submission-checklist.md`
+- `docs/google-play-console-content.md`
 
 ## Fluxo de release
 
@@ -68,6 +69,10 @@ Se a decisão mudar para substituir o Flutter publicado:
 ## Estado local em 2026-04-19
 
 - Infraestrutura de release implementada.
-- `testDebugUnitTest --rerun-tasks`, `assembleDebug`, `assembleDebugAndroidTest` e `lintDebug` devem continuar passando.
+- `testDebugUnitTest --rerun-tasks`: passou.
+- `assembleDebug`: passou.
+- `assembleDebugAndroidTest`: passou.
+- `lintDebug`: passou.
+- `:app:minifyReleaseWithR8`: passou, validando R8/shrink de release.
+- `bundleRelease`: bloqueou corretamente sem `keystore.properties`, com erro de `storeFile` ausente.
 - Geração do AAB assinado depende de `keystore.properties` e upload key real, que não devem ser versionados.
-

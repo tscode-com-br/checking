@@ -1,8 +1,13 @@
 :root {
+  --app-viewport-width: 100vw;
+  --app-viewport-height: 100vh;
+  --app-viewport-height: 100svh;
+  --app-viewport-height: 100dvh;
   --header-height: 64px;
+  --app-header-height: calc(var(--header-height) + env(safe-area-inset-top) + 20px);
   --page-padding-inline: clamp(12px, 3vw, 28px);
   --page-padding-block: clamp(12px, 2.8vh, 24px);
-  --card-max-width: 520px;
+  --card-max-width: 680px;
   --card-padding: clamp(14px, 2.2vw, 22px);
   --card-radius: clamp(16px, 2vw, 22px);
   --section-gap: clamp(10px, 1.8vh, 16px);
@@ -40,9 +45,7 @@ body {
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: 100vh;
-  min-height: 100svh;
-  min-height: 100dvh;
+  min-height: var(--app-viewport-height);
   margin: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -99,16 +102,100 @@ header {
   letter-spacing: -0.03em;
 }
 
+.orientation-lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(12px);
+}
+
+.orientation-lock-card {
+  width: min(100%, 360px);
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  padding: clamp(20px, 5vw, 28px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: calc(var(--card-radius) + 2px);
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.96), rgba(15, 23, 42, 0.94));
+  color: #ffffff;
+  text-align: center;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.34);
+}
+
+.orientation-lock-icon {
+  position: relative;
+  display: inline-flex;
+  width: 68px;
+  height: 68px;
+  align-items: center;
+  justify-content: center;
+}
+
+.orientation-lock-icon::before {
+  content: "";
+  width: 32px;
+  height: 48px;
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 2px rgba(15, 118, 110, 0.18);
+  transform: rotate(-90deg);
+}
+
+.orientation-lock-icon::after {
+  content: "↻";
+  position: absolute;
+  right: 3px;
+  bottom: 4px;
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.orientation-lock-card h2 {
+  margin: 0;
+  font-size: clamp(1rem, 3.5vw, 1.28rem);
+  line-height: 1.2;
+}
+
+.orientation-lock-card p {
+  margin: 0;
+  font-size: clamp(0.84rem, 2.8vw, 0.96rem);
+  font-weight: 600;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+body.portrait-lock-active {
+  overflow: hidden;
+}
+
+body.portrait-lock-active > header,
+body.portrait-lock-active > .check-shell {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+body.portrait-lock-active > .orientation-lock-screen {
+  visibility: visible;
+  pointer-events: auto;
+}
+
 .check-shell {
   position: relative;
   z-index: 1;
   flex: 1 1 auto;
-  min-height: calc(100vh - var(--header-height));
-  min-height: calc(100svh - var(--header-height));
-  min-height: calc(100dvh - var(--header-height));
+  width: 100%;
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
   padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   overflow: visible;
 }
@@ -118,7 +205,7 @@ header {
   gap: var(--section-gap);
   width: min(100%, var(--card-max-width));
   max-width: 100%;
-  margin: auto;
+  margin: 0 auto;
   padding: var(--card-padding);
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(15, 118, 110, 0.18);
@@ -374,6 +461,8 @@ header {
 .check-form {
   display: grid;
   gap: var(--section-gap);
+  min-height: 100%;
+  align-content: start;
 }
 
 .auth-credentials-row {
@@ -668,7 +757,7 @@ header {
   display: grid;
   gap: 12px;
   width: min(100%, 420px);
-  max-height: calc(100dvh - (2 * var(--page-padding-block)));
+  max-height: calc(var(--app-viewport-height) - (2 * var(--page-padding-block)));
   padding: clamp(16px, 2.2vw, 22px);
   border: 1px solid rgba(15, 118, 110, 0.18);
   border-radius: calc(var(--card-radius) - 2px);
@@ -708,6 +797,7 @@ header {
 .transport-screen {
   position: fixed;
   inset: 0;
+  --transport-screen-card-height: calc(var(--app-viewport-height) - (2 * var(--page-padding-block)));
   z-index: 11;
   display: flex;
   align-items: center;
@@ -717,13 +807,16 @@ header {
 }
 
 .transport-screen-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: min(100%, 468px);
+  width: min(100%, 620px);
   max-width: 100%;
   min-width: 0;
-  max-height: calc(100dvh - (2 * var(--page-padding-block)));
+  min-height: var(--transport-screen-card-height);
+  height: var(--transport-screen-card-height);
+  max-height: var(--transport-screen-card-height);
   padding: clamp(14px, 2.2vw, 20px);
   border: 1px solid rgba(15, 118, 110, 0.18);
   border-radius: calc(var(--card-radius) - 2px);
@@ -840,6 +933,96 @@ header {
   width: 100%;
 }
 
+.transport-request-detail-widget {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(12px, 3vw, 18px);
+}
+
+.transport-request-detail-widget-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(1.5px);
+}
+
+.transport-request-detail-widget-card {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 372px);
+  max-width: 100%;
+  max-height: 100%;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.98));
+  box-shadow: 0 22px 42px rgba(15, 23, 42, 0.18);
+  overflow-y: auto;
+}
+
+.transport-request-detail-widget-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 0.94rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.transport-request-detail-widget-content,
+.transport-request-detail-copy,
+.transport-request-detail-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.transport-request-detail-message {
+  margin: 0;
+  color: #0f172a;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.transport-request-detail-fields {
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.94);
+}
+
+.transport-request-detail-field {
+  display: grid;
+  gap: 3px;
+}
+
+.transport-request-detail-field-label {
+  color: #0f766e;
+  font-size: 0.73rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.transport-request-detail-field-value {
+  color: #1e293b;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.transport-request-detail-actions {
+  margin-top: 0;
+}
+
 .transport-option-buttons {
   display: grid;
   gap: 12px;
@@ -912,10 +1095,13 @@ header {
 }
 
 .transport-request-history-section {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 10px;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
   overflow-x: hidden;
 }
@@ -931,13 +1117,15 @@ header {
 
 .transport-request-history-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
-  max-height: 292px;
+  max-height: none;
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 4px;
@@ -1036,6 +1224,18 @@ header {
   border-left-color: #16a34a;
 }
 
+.transport-request-card.is-realized {
+  border-left-color: #94a3b8;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.98), rgba(226, 232, 240, 0.98));
+  color: #334155;
+  box-shadow: 0 12px 24px rgba(100, 116, 139, 0.12);
+}
+
+.transport-request-card.is-realized.is-selected {
+  border-color: rgba(148, 163, 184, 0.42);
+  box-shadow: 0 18px 32px rgba(100, 116, 139, 0.16);
+}
+
 .transport-request-card.is-rejected,
 .transport-request-card.is-cancelled {
   border-left-color: #dc2626;
@@ -1088,6 +1288,11 @@ header {
 .transport-request-card-status.is-confirmed {
   color: #166534;
   background: rgba(34, 197, 94, 0.16);
+}
+
+.transport-request-card-status.is-realized {
+  color: #475569;
+  background: rgba(148, 163, 184, 0.2);
 }
 
 .transport-request-card-status.is-rejected,
@@ -1321,17 +1526,17 @@ header {
 
   .password-dialog-card {
     width: 100%;
-    max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+    max-height: calc(var(--app-viewport-height) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
   }
 
   .transport-screen {
     align-items: flex-start;
+    --transport-screen-card-height: calc(var(--app-viewport-height) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
     padding-top: max(12px, env(safe-area-inset-top));
   }
 
   .transport-screen-card {
     width: 100%;
-    max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
   }
 
   .transport-inline-field {
@@ -1346,7 +1551,6 @@ header {
   }
 
   .transport-request-history-list {
-    max-height: 272px;
     padding-right: 0;
   }
 
@@ -1446,16 +1650,20 @@ header {
   .transport-screen-header h2 {
     font-size: 0.8rem;
   }
-}
 
-@media (max-height: 720px) {
-  .check-shell {
-    align-items: flex-start;
+  .orientation-lock-card {
+    gap: 12px;
+    padding: 18px;
   }
 
-  .check-card {
-    margin-top: 0;
-    margin-bottom: 0;
+  .orientation-lock-icon {
+    width: 60px;
+    height: 60px;
+  }
+
+  .orientation-lock-icon::before {
+    width: 28px;
+    height: 42px;
   }
 }
 
@@ -1484,13 +1692,13 @@ header {
   }
 
   .check-card {
-    --card-max-width: 560px;
+    --card-max-width: 760px;
   }
 }
 
 @media (min-width: 1024px) {
   .check-card {
-    --card-max-width: 600px;
+    --card-max-width: 920px;
   }
 
   .history-card {

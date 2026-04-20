@@ -898,12 +898,17 @@ button {
 
 .transport-request-sections {
   min-height: 0;
-  display: grid;
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .transport-request-section {
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -914,7 +919,12 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
 }
 
-.transport-request-table,
+.transport-request-table {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
 .transport-vehicle-grid {
   min-height: 0;
   display: grid;
@@ -934,6 +944,7 @@ button {
 
 .transport-request-row {
   width: 100%;
+  min-height: 82px;
   padding: 12px 48px 12px 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -949,8 +960,12 @@ button {
     transform 160ms ease,
     border-color 160ms ease,
     background-color 160ms ease,
-    box-shadow 160ms ease;
+    box-shadow 160ms ease,
+    min-height 220ms ease,
+    padding 220ms ease,
+    gap 220ms ease;
   cursor: grab;
+  overflow: hidden;
 }
 
   .transport-request-row.is-collapsed {
@@ -969,7 +984,11 @@ button {
 
   .transport-request-row.is-collapsed .transport-request-secondary,
   .transport-request-row.is-collapsed .transport-request-meta {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+    margin-top: 0;
+    pointer-events: none;
   }
 
 .transport-request-row:hover {
@@ -1026,6 +1045,7 @@ button {
   line-height: 1;
   cursor: pointer;
   box-shadow: 0 8px 18px rgba(220, 38, 38, 0.22);
+  transition: top 220ms ease, transform 220ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .transport-request-reject-button:hover {
@@ -1052,6 +1072,11 @@ button {
   min-width: 0;
   line-height: 1.35;
   white-space: normal;
+  overflow: hidden;
+  max-height: 3.2em;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease, margin-top 180ms ease;
 }
 
 .transport-request-zip {
@@ -1067,6 +1092,11 @@ button {
   color: var(--transport-text-soft);
   font-size: 0.75rem;
   line-height: 1.35;
+  overflow: hidden;
+  max-height: 2.4em;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease, margin-top 180ms ease;
 }
 
 .transport-vehicle-grid {
@@ -1812,7 +1842,7 @@ button {
   }
 
   .transport-request-sections {
-    grid-template-rows: repeat(3, minmax(120px, auto));
+    padding-right: 0;
   }
 
   .transport-project-list {

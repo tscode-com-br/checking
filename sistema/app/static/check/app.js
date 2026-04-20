@@ -1,5 +1,9 @@
 (function () {
   const form = document.getElementById('checkForm');
+  const appBody = document.body;
+  const appHeader = document.querySelector('body > header');
+  const appShell = document.querySelector('main.check-shell');
+  const orientationLockScreen = document.getElementById('orientationLockScreen');
   const authStatusEndpoint = form.dataset.authStatusEndpoint || '/api/web/auth/status';
   const authRegisterEndpoint = form.dataset.authRegisterEndpoint || '/api/web/auth/register-password';
   const authUserRegisterEndpoint = form.dataset.authUserRegisterEndpoint || '/api/web/auth/register-user';
@@ -93,6 +97,11 @@
   const transportAcknowledgementSection = document.getElementById('transportAcknowledgementSection');
   const transportAcknowledgementCheckbox = document.getElementById('transportAcknowledgementCheckbox');
   const transportAcknowledgementButton = document.getElementById('transportAcknowledgementButton');
+  const transportRequestDetailWidget = document.getElementById('transportRequestDetailWidget');
+  const transportRequestDetailBackdrop = document.getElementById('transportRequestDetailBackdrop');
+  const transportRequestDetailTitle = document.getElementById('transportRequestDetailWidgetTitle');
+  const transportRequestDetailContent = document.getElementById('transportRequestDetailContent');
+  const transportRequestDetailCloseButton = document.getElementById('transportRequestDetailCloseButton');
   const transportInlineStatus = document.getElementById('transportInlineStatus');
 
   const actionInputs = Array.from(document.querySelectorAll('input[name="action"]'));
@@ -186,6 +195,7 @@
   const transportRequestStatusLabels = {
     pending: 'Pendente',
     confirmed: 'Confirmado',
+    realized: 'Realizado',
     rejected: 'Rejeitado',
     cancelled: 'Cancelado',
   };
@@ -257,6 +267,7 @@
   let passwordVerificationTimeoutId = null;
   let passwordAutofillSyncTimeoutId = null;
   let passwordAutofillSyncFrameId = null;
+  let viewportMetricsSyncFrameId = null;
   let passwordVerificationRequestToken = 0;
   let lastVerifiedPassword = '';
   let lastObservedPasswordFieldValue = '';
@@ -300,6 +311,7 @@
     confirmationDeadlineTime: '',
     vehicleType: '',
     vehiclePlate: '',
+    vehicleColor: '',
     toleranceMinutes: null,
     awarenessRequired: false,
     awarenessConfirmed: false,
@@ -310,6 +322,7 @@
     addressEditorOpen: false,
     requestBuilderKind: null,
     selectedRequestId: null,
+    detailRequestId: null,
     acknowledgementChecked: false,
     inlineMessage: '',
     inlineTone: null,
@@ -360,7 +373,106 @@
     }
   }
 
+  function isLandscapeOrientationActive() {
+    if (window.matchMedia) {
+      return window.matchMedia('(orientation: landscape)').matches;
+    }
+
+    const metrics = getViewportLayoutMetrics();
+    return metrics.viewportWidth > metrics.viewportHeight;
+  }
+
+  async function requestPortraitOrientationLock() {
+    const orientationApi = window.screen && window.screen.orientation;
+    if (!orientationApi || typeof orientationApi.lock !== 'function') {
+      return false;
+    }
+
+    try {
+      await orientationApi.lock('portrait');
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function syncPortraitLockState() {
+    const isLandscape = isLandscapeOrientationActive();
+
+    if (appBody) {
+      appBody.classList.toggle('portrait-lock-active', isLandscape);
+    }
+
+    if (orientationLockScreen) {
+      orientationLockScreen.hidden = !isLandscape;
+      orientationLockScreen.classList.toggle('is-hidden', !isLandscape);
+    }
+
+    [appHeader, appShell].filter(Boolean).forEach((element) => {
+      element.setAttribute('aria-hidden', String(isLandscape));
+    });
+
+    if (isLandscape) {
+      dismissActiveKeyboard();
+      return;
+    }
+
+    void requestPortraitOrientationLock();
+  }
+
+  function getViewportLayoutMetrics() {
+    const visualViewport = window.visualViewport;
+    const viewportWidth = Math.round(
+      Math.max(
+        visualViewport && Number.isFinite(visualViewport.width) ? visualViewport.width : 0,
+        window.innerWidth || 0,
+        document.documentElement.clientWidth || 0
+      )
+    );
+    const viewportHeight = Math.round(
+      Math.max(
+        visualViewport && Number.isFinite(visualViewport.height) ? visualViewport.height : 0,
+        window.innerHeight || 0,
+        document.documentElement.clientHeight || 0
+      )
+    );
+    const headerHeight = appHeader ? Math.round(appHeader.getBoundingClientRect().height) : 0;
+
+    return {
+      viewportWidth,
+      viewportHeight,
+      headerHeight,
+    };
+  }
+
+  function syncViewportLayoutMetrics() {
+    const rootStyle = document.documentElement.style;
+    const metrics = getViewportLayoutMetrics();
+
+    if (metrics.viewportWidth > 0) {
+      rootStyle.setProperty('--app-viewport-width', `${metrics.viewportWidth}px`);
+    }
+    if (metrics.viewportHeight > 0) {
+      rootStyle.setProperty('--app-viewport-height', `${metrics.viewportHeight}px`);
+    }
+    if (metrics.headerHeight > 0) {
+      rootStyle.setProperty('--app-header-height', `${metrics.headerHeight}px`);
+    }
+  }
+
+  function scheduleViewportLayoutMetricsSync() {
+    if (viewportMetricsSyncFrameId !== null) {
+      return;
+    }
+
+    viewportMetricsSyncFrameId = window.requestAnimationFrame(() => {
+      viewportMetricsSyncFrameId = null;
+      syncViewportLayoutMetrics();
+    });
+  }
+
   function realignViewport() {
+    scheduleViewportLayoutMetricsSync();
     window.requestAnimationFrame(() => {
       window.scrollTo(0, 0);
     });
@@ -419,6 +531,10 @@
 
   function getTransportSelectedRequest() {
     return findVisibleTransportRequestById(transportUiState.selectedRequestId);
+  }
+
+  function getTransportDetailRequest() {
+    return findVisibleTransportRequestById(transportUiState.detailRequestId);
   }
 
   function shouldAutoRefreshTransportRequest(requestItem) {
@@ -1073,6 +1189,7 @@
 
     transportUiState.requestBuilderKind = requestKind;
     transportUiState.addressEditorOpen = false;
+    transportUiState.detailRequestId = null;
 
     transportRequestWeekdayInputs.forEach((inputElement) => {
       const weekdayValue = Number(inputElement.value);
@@ -1166,6 +1283,7 @@
       confirmationDeadlineTime: String(payload && payload.confirmation_deadline_time || ''),
       vehicleType: String(payload && payload.vehicle_type || ''),
       vehiclePlate: String(payload && payload.vehicle_plate || ''),
+      vehicleColor: String(payload && payload.vehicle_color || ''),
       toleranceMinutes: payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
         ? Number(payload.tolerance_minutes)
         : null,
@@ -1196,6 +1314,7 @@
       confirmation_deadline_time: payload && payload.confirmation_deadline_time,
       vehicle_type: payload && payload.vehicle_type,
       vehicle_plate: payload && payload.vehicle_plate,
+      vehicle_color: payload && payload.vehicle_color,
       tolerance_minutes: payload && payload.tolerance_minutes,
       awareness_required: payload && payload.awareness_required,
       awareness_confirmed: payload && payload.awareness_confirmed,
@@ -1236,6 +1355,7 @@
       confirmation_deadline_time: transportState.confirmationDeadlineTime,
       vehicle_type: transportState.vehicleType,
       vehicle_plate: transportState.vehiclePlate,
+      vehicle_color: transportState.vehicleColor,
       tolerance_minutes: transportState.toleranceMinutes,
       awareness_required: transportState.awarenessRequired,
       awareness_confirmed: transportState.awarenessConfirmed,
@@ -1249,6 +1369,9 @@
     }
 
     transportUiState.dismissedRequestIds.add(normalizedRequestId);
+    if (Number(transportUiState.detailRequestId) === normalizedRequestId) {
+      transportUiState.detailRequestId = null;
+    }
     if (!findVisibleTransportRequestById(transportUiState.selectedRequestId)) {
       transportUiState.selectedRequestId = resolveDefaultSelectedTransportRequestId();
     }
@@ -1444,6 +1567,7 @@
       transportState.confirmationDeadlineTime = String(payload && payload.confirmation_deadline_time || payload && payload.requested_time || '');
       transportState.vehicleType = String(payload && payload.vehicle_type || '');
       transportState.vehiclePlate = String(payload && payload.vehicle_plate || '');
+      transportState.vehicleColor = String(payload && payload.vehicle_color || '');
       transportState.toleranceMinutes = payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
         ? Number(payload.tolerance_minutes)
         : null;
@@ -1462,6 +1586,7 @@
     transportState.confirmationDeadlineTime = selectedRequest.confirmationDeadlineTime || selectedRequest.requestedTime;
     transportState.vehicleType = selectedRequest.vehicleType;
     transportState.vehiclePlate = selectedRequest.vehiclePlate;
+    transportState.vehicleColor = selectedRequest.vehicleColor;
     transportState.toleranceMinutes = selectedRequest.toleranceMinutes;
     transportState.awarenessRequired = selectedRequest.awarenessRequired;
     transportState.awarenessConfirmed = selectedRequest.awarenessConfirmed;
@@ -1553,6 +1678,122 @@
     return weekdaysLabel || '--';
   }
 
+  function closeTransportRequestDetailWidget() {
+    if (transportUiState.detailRequestId === null) {
+      return;
+    }
+
+    transportUiState.detailRequestId = null;
+    renderTransportScreen();
+    syncFormControlStates();
+  }
+
+  function formatTransportRequestDetailVehicleType(value) {
+    const formatter = clientState && typeof clientState.formatTransportVehicleType === 'function'
+      ? clientState.formatTransportVehicleType
+      : null;
+    const formattedValue = formatter ? formatter(value) : String(value || '').trim();
+    return formattedValue || '--';
+  }
+
+  function createTransportRequestDetailField(label, value) {
+    const fieldElement = document.createElement('div');
+    const labelElement = document.createElement('span');
+    const valueElement = document.createElement('span');
+
+    fieldElement.className = 'transport-request-detail-field';
+    labelElement.className = 'transport-request-detail-field-label';
+    valueElement.className = 'transport-request-detail-field-value';
+
+    labelElement.textContent = label;
+    valueElement.textContent = value || '--';
+
+    fieldElement.appendChild(labelElement);
+    fieldElement.appendChild(valueElement);
+    return fieldElement;
+  }
+
+  function buildTransportRequestDetailContent(requestItem) {
+    const fragment = document.createDocumentFragment();
+    const copyStack = document.createElement('div');
+    const statusMessage = document.createElement('p');
+
+    copyStack.className = 'transport-request-detail-copy';
+    statusMessage.className = 'transport-request-detail-message';
+    copyStack.appendChild(statusMessage);
+
+    if (requestItem.status === 'pending') {
+      const followupMessage = document.createElement('p');
+      followupMessage.className = 'transport-request-detail-message';
+      statusMessage.textContent = 'Aguardando alocação de transporte.';
+      followupMessage.textContent = 'Quando você for alocado em um veículo, as informações aparecerão aqui.';
+      copyStack.appendChild(followupMessage);
+      fragment.appendChild(copyStack);
+      return fragment;
+    }
+
+    if (requestItem.status === 'confirmed' || requestItem.status === 'realized') {
+      const detailsGroup = document.createElement('div');
+      const departureDate = formatTransportRequestServiceDate(requestItem.serviceDate) || '--';
+      const departureTime = formatTransportRequestCardTime(requestItem.boardingTime || requestItem.requestedTime) || '--';
+
+      detailsGroup.className = 'transport-request-detail-fields';
+      statusMessage.textContent = requestItem.status === 'realized'
+        ? 'Transporte realizado.'
+        : 'Transporte confirmado.';
+
+      detailsGroup.appendChild(createTransportRequestDetailField('Tipo de Veículo', formatTransportRequestDetailVehicleType(requestItem.vehicleType)));
+      detailsGroup.appendChild(createTransportRequestDetailField('Placa do Veículo', requestItem.vehiclePlate || '--'));
+      if (String(requestItem.vehicleColor || '').trim()) {
+        detailsGroup.appendChild(createTransportRequestDetailField('Cor do Veículo', requestItem.vehicleColor));
+      }
+      detailsGroup.appendChild(createTransportRequestDetailField('Data de Partida', departureDate));
+      detailsGroup.appendChild(createTransportRequestDetailField('Hora de Partida', departureTime));
+      copyStack.appendChild(detailsGroup);
+      fragment.appendChild(copyStack);
+      return fragment;
+    }
+
+    statusMessage.textContent = 'Esta solicitação não está mais ativa.';
+    if (String(requestItem.responseMessage || '').trim()) {
+      const responseMessage = document.createElement('p');
+      responseMessage.className = 'transport-request-detail-message';
+      responseMessage.textContent = requestItem.responseMessage;
+      copyStack.appendChild(responseMessage);
+    }
+    fragment.appendChild(copyStack);
+    return fragment;
+  }
+
+  function renderTransportRequestDetailWidget(options) {
+    if (!transportRequestDetailWidget || !transportRequestDetailContent) {
+      return;
+    }
+
+    const canShowDetails = Boolean(options && options.canShow);
+    const detailRequest = canShowDetails ? getTransportDetailRequest() : null;
+    if (!detailRequest) {
+      transportUiState.detailRequestId = null;
+    }
+
+    const shouldShow = Boolean(canShowDetails && detailRequest);
+    transportRequestDetailWidget.hidden = !shouldShow;
+    transportRequestDetailWidget.classList.toggle('is-hidden', !shouldShow);
+
+    if (!shouldShow) {
+      transportRequestDetailContent.replaceChildren();
+      if (transportRequestDetailTitle) {
+        transportRequestDetailTitle.textContent = 'Detalhes da Solicitação';
+      }
+      return;
+    }
+
+    if (transportRequestDetailTitle) {
+      transportRequestDetailTitle.textContent = transportRequestKindLabels[detailRequest.requestKind] || 'Detalhes da Solicitação';
+    }
+    transportRequestDetailContent.replaceChildren(buildTransportRequestDetailContent(detailRequest));
+  }
+
   function createTransportRequestCard(requestItem) {
     const cardElement = document.createElement('div');
     const cardHeader = document.createElement('span');
@@ -1572,6 +1813,8 @@
     cardElement.className = `transport-request-card is-${requestItem.status}`;
     cardElement.dataset.requestId = String(requestItem.requestId);
     cardElement.setAttribute('role', 'button');
+    cardElement.setAttribute('aria-haspopup', 'dialog');
+    cardElement.setAttribute('aria-controls', 'transportRequestDetailWidget');
     cardElement.setAttribute('aria-disabled', String(transportBusy));
     cardElement.setAttribute('aria-pressed', String(Number(transportUiState.selectedRequestId) === Number(requestItem.requestId)));
     cardElement.tabIndex = transportBusy ? -1 : 0;
@@ -1697,20 +1940,35 @@
       transportAcknowledgementCheckbox.checked = transportUiState.acknowledgementChecked;
     }
 
+    renderTransportRequestDetailWidget({
+      canShow: !transportUiState.addressEditorOpen && !activeBuilderConfig && hasRequests,
+    });
+
     scheduleTransportAutoRefresh();
   }
 
-  function selectTransportRequest(requestId) {
+  function selectTransportRequest(requestId, options) {
     const selectedRequest = findTransportRequestById(requestId);
     if (!selectedRequest) {
       return;
     }
 
+    const openDetails = Boolean(options && options.openDetails);
     transportUiState.selectedRequestId = selectedRequest.requestId;
+    if (openDetails) {
+      transportUiState.detailRequestId = selectedRequest.requestId;
+    }
     transportUiState.acknowledgementChecked = false;
     syncSelectedTransportRequestState({ status: selectedRequest.status });
     renderTransportScreen();
     syncFormControlStates();
+    if (openDetails && transportRequestDetailCloseButton) {
+      window.requestAnimationFrame(() => {
+        if (transportRequestDetailWidget && !transportRequestDetailWidget.hidden) {
+          transportRequestDetailCloseButton.focus();
+        }
+      });
+    }
   }
 
   function closeTransportAddressEditor() {
@@ -1721,6 +1979,7 @@
 
   function openTransportAddressEditor() {
     transportUiState.addressEditorOpen = true;
+    transportUiState.detailRequestId = null;
     syncTransportAddressFormValues();
     renderTransportScreen();
     realignViewport();
@@ -1739,6 +1998,7 @@
     transportScreenBackdrop.classList.add('is-hidden');
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
+    transportUiState.detailRequestId = null;
     clearDismissedTransportRequests();
     resetTransportRequestSwipeState();
     clearTransportInlineStatus();
@@ -1758,6 +2018,7 @@
 
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
+  transportUiState.detailRequestId = null;
     clearDismissedTransportRequests();
     resetTransportRequestSwipeState();
     transportScreen.hidden = false;
@@ -4071,6 +4332,14 @@
     });
   }
 
+  if (transportRequestDetailCloseButton) {
+    transportRequestDetailCloseButton.addEventListener('click', closeTransportRequestDetailWidget);
+  }
+
+  if (transportRequestDetailBackdrop) {
+    transportRequestDetailBackdrop.addEventListener('click', closeTransportRequestDetailWidget);
+  }
+
   if (transportRequestHistoryList) {
     transportRequestHistoryList.addEventListener('pointerdown', (event) => {
       beginTransportRequestSwipe(event);
@@ -4123,7 +4392,7 @@
         return;
       }
 
-      selectTransportRequest(requestId);
+      selectTransportRequest(requestId, { openDetails: true });
     });
 
     transportRequestHistoryList.addEventListener('keydown', (event) => {
@@ -4148,7 +4417,7 @@
       event.preventDefault();
       const requestId = Number(requestCard.getAttribute('data-request-id'));
       if (Number.isFinite(requestId)) {
-        selectTransportRequest(requestId);
+        selectTransportRequest(requestId, { openDetails: true });
       }
     });
   }
@@ -4184,6 +4453,8 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      scheduleViewportLayoutMetricsSync();
+      syncPortraitLockState();
       schedulePasswordAutofillSync();
       void runLifecycleUpdateSequence();
       if (isTransportScreenOpen()) {
@@ -4193,6 +4464,8 @@
   });
 
   window.addEventListener('focus', () => {
+    scheduleViewportLayoutMetricsSync();
+    syncPortraitLockState();
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
     if (isTransportScreenOpen()) {
@@ -4200,12 +4473,26 @@
     }
   });
   window.addEventListener('pageshow', () => {
+    scheduleViewportLayoutMetricsSync();
+    syncPortraitLockState();
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence();
     if (isTransportScreenOpen()) {
       void loadTransportState();
     }
   });
+  window.addEventListener('resize', scheduleViewportLayoutMetricsSync);
+  window.addEventListener('resize', syncPortraitLockState);
+  window.addEventListener('orientationchange', () => {
+    scheduleViewportLayoutMetricsSync();
+    syncPortraitLockState();
+    realignViewport();
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', scheduleViewportLayoutMetricsSync);
+    window.visualViewport.addEventListener('resize', syncPortraitLockState);
+    window.visualViewport.addEventListener('scroll', scheduleViewportLayoutMetricsSync);
+  }
 
   refreshLocationButton.addEventListener('click', () => {
     void runManualLocationRefreshSequence();
@@ -4337,6 +4624,11 @@
   }
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && transportUiState.detailRequestId !== null) {
+      closeTransportRequestDetailWidget();
+      return;
+    }
+
     if (event.key === 'Escape' && isTransportScreenOpen()) {
       closeTransportScreen();
       return;
@@ -4353,6 +4645,8 @@
   });
 
   syncProjectVisibility();
+  scheduleViewportLayoutMetricsSync();
+  syncPortraitLockState();
   syncAutomaticActivitiesToggle();
   clearProtectedClientState();
   syncFormControlStates();

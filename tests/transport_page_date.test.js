@@ -317,6 +317,55 @@ test('transport page request section titles are rendered as links that control e
   assert.match(transportHtml, /id="transportRequestScopeRegular"/);
 });
 
+test('transport request sections size themselves by their own content instead of sharing equal-height rows', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-request-sections\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*overflow:\s*auto;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-request-section\s*\{[\s\S]*flex:\s*0 0 auto;/
+  );
+  assert.doesNotMatch(
+    transportCss,
+    /\.transport-request-sections\s*\{[\s\S]*grid-template-rows:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/
+  );
+});
+
+test('transport request rows animate collapsed content instead of reflowing abruptly', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-request-row\s*\{[\s\S]*transition:[\s\S]*min-height 220ms ease,[\s\S]*padding 220ms ease,[\s\S]*gap 220ms ease;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-request-secondary\s*\{[\s\S]*max-height:\s*3\.2em;[\s\S]*transition:\s*max-height 220ms ease, opacity 180ms ease, transform 180ms ease, margin-top 180ms ease;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-request-row\.is-collapsed \.transport-request-secondary,[\s\S]*max-height:\s*0;[\s\S]*opacity:\s*0;/
+  );
+});
+
+test('transport vehicle details panel inserts the delete button before the passenger table shell', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(transportScript, /detailsPanel\.insertBefore\(deleteButton, passengerTableShell\);/);
+});
+
 test('buildVehiclePassengerPreviewRows keeps the dragged passenger visible in the preview table', () => {
   assert.deepEqual(
     transportPage.buildVehiclePassengerPreviewRows(

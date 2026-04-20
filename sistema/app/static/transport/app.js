@@ -1378,13 +1378,51 @@
       state.requestRowCollapseOverrides[requestIdKey] = Boolean(collapsed);
     }
 
-    function toggleRequestRowCollapsed(requestRow) {
-      if (!requestRow) {
+    function applyRequestRowCollapsedVisualState(rowButton, collapsed) {
+      if (!rowButton) {
+        return;
+      }
+
+      const rowShell = rowButton.parentElement;
+      rowButton.classList.toggle("is-collapsed", Boolean(collapsed));
+      rowButton.setAttribute("aria-expanded", String(!collapsed));
+      if (rowShell) {
+        rowShell.classList.toggle("is-collapsed", Boolean(collapsed));
+      }
+    }
+
+    function preserveRequestSectionScrollPosition(kind, callback) {
+      const container = requestContainers[kind];
+      const previousScrollTop = container ? container.scrollTop : 0;
+      if (typeof callback === "function") {
+        callback(container);
+      }
+      if (container) {
+        container.scrollTop = previousScrollTop;
+      }
+    }
+
+    function syncRequestSectionCollapsedRowsInDom(kind) {
+      const container = requestContainers[kind];
+      if (!container) {
+        return;
+      }
+
+      getVisibleRequestsForKind(kind).forEach(function (requestRow) {
+        const rowButton = container.querySelector(`.transport-request-row[data-request-id="${String(requestRow.id)}"]`);
+        applyRequestRowCollapsedVisualState(rowButton, getRequestRowCollapsedState(requestRow));
+      });
+    }
+
+    function toggleRequestRowCollapsed(requestRow, rowButton) {
+      if (!requestRow || !rowButton) {
         return;
       }
 
       setRequestRowCollapsedState(requestRow, !getRequestRowCollapsedState(requestRow));
-      renderRequestTables();
+      preserveRequestSectionScrollPosition(requestRow.request_kind, function () {
+        applyRequestRowCollapsedVisualState(rowButton, getRequestRowCollapsedState(requestRow));
+      });
     }
 
     function syncRequestSectionToggleState() {
@@ -1403,7 +1441,10 @@
     function toggleRequestSectionCollapsed(kind) {
       state.requestSectionCollapsedByKind[kind] = !getRequestSectionCollapsedState(kind);
       clearRequestCollapseOverridesForKind(kind);
-      renderRequestTables();
+      preserveRequestSectionScrollPosition(kind, function () {
+        syncRequestSectionCollapsedRowsInDom(kind);
+        syncRequestSectionToggleState();
+      });
     }
 
     function populateLanguageOptions() {
@@ -2600,7 +2641,7 @@
         event.stopPropagation();
         removeVehicleFromRoute(vehicle);
       });
-      detailsPanel.insertBefore(deleteButton, passengerTable);
+      detailsPanel.insertBefore(deleteButton, passengerTableShell);
       return detailsPanel;
     }
 
@@ -2756,7 +2797,7 @@
           });
 
           rowButton.addEventListener("click", function () {
-            toggleRequestRowCollapsed(requestRow);
+            toggleRequestRowCollapsed(requestRow, rowButton);
           });
 
           rowButton.addEventListener("keydown", function (event) {
@@ -2764,7 +2805,7 @@
               return;
             }
             event.preventDefault();
-            toggleRequestRowCollapsed(requestRow);
+            toggleRequestRowCollapsed(requestRow, rowButton);
           });
 
           rowShell.appendChild(rowButton);

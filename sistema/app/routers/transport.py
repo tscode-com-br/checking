@@ -383,7 +383,7 @@ def save_transport_assignment(
 def reject_transport_request(
     payload: TransportRequestReject,
     db: Session = Depends(get_db),
-    current_transport_user: User = Depends(require_transport_session),
+    _current_transport_user: User = Depends(require_transport_session),
 ) -> AdminActionResponse:
     transport_request = db.get(TransportRequest, payload.request_id)
     if transport_request is None or transport_request.status != "active":
@@ -397,7 +397,7 @@ def reject_transport_request(
         service_date=payload.service_date,
         route_kind=payload.route_kind,
         response_message=payload.response_message,
-        admin_user_id=current_transport_user.id,
+        admin_user_id=None,
     )
 
     user = db.get(User, transport_request.user_id)

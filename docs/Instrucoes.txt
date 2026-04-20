@@ -86,3 +86,16 @@ Rodar o app Android manualmente por terminal:
 3. Rodar o app no emulador:
 	flutter run -d emulator-5554
 
+
+Rodar o Kotlin no emulador.
+
+- Abra o Android Studio e inicie o emulador.
+- rode no powershell:
+
+cd C:\dev\projetos\checkcheck\checking_kotlin
+adb devices
+.\gradlew.bat installDebug
+
+- Abra o app pelo launcher do emulador, ou rode:
+
+adb shell monkey -p com.br.checkingnative 1

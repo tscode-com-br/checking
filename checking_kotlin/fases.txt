@@ -122,5 +122,7 @@ Revisar política de background location, Data Safety, screenshots e release not
 Gerar AAB e validar instalação/upgrade.
 Implementado com versionName 1.4.1 e versionCode 16, assinatura obrigatória por keystore.properties, R8/shrink, scripts PowerShell e checklist Play Console.
 Observação: o AAB assinado final depende de upload key real local e a validação de instalação/upgrade depende de dispositivo Android físico. Esses arquivos sensíveis não devem ser versionados.
+Validado em 2026-04-19 com testDebugUnitTest --rerun-tasks, assembleDebug, assembleDebugAndroidTest, lintDebug e :app:minifyReleaseWithR8.
+bundleRelease foi testado sem keystore.properties e bloqueou corretamente com erro de storeFile ausente.
 Critério Final
 O Kotlin só deve ser considerado “perfeito conforme Flutter” quando passar build, lint, testes de paridade, teste real de localização em background, teste de upgrade/migração e comparação visual das telas principais. Hoje ele está saudável como base técnica, mas ainda está antes da parte mais importante: virar o aplicativo operacional de fato.

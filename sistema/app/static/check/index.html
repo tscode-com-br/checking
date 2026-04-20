@@ -537,11 +537,47 @@
               </section>
             </div>
 
+            <section
+              id="transportRequestDetailWidget"
+              class="transport-request-detail-widget is-hidden"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="transportRequestDetailWidgetTitle"
+              hidden
+            >
+              <div id="transportRequestDetailBackdrop" class="transport-request-detail-widget-backdrop"></div>
+              <div class="transport-request-detail-widget-card">
+                <h3 id="transportRequestDetailWidgetTitle" class="transport-request-detail-widget-title">Detalhes da Solicitação</h3>
+                <div id="transportRequestDetailContent" class="transport-request-detail-widget-content"></div>
+                <div class="password-dialog-actions transport-request-detail-actions">
+                  <button id="transportRequestDetailCloseButton" type="button" class="secondary-button">Fechar</button>
+                </div>
+              </div>
+            </section>
+
             <p id="transportInlineStatus" class="transport-inline-status" aria-live="polite"></p>
           </div>
         </section>
       </section>
     </main>
+
+    <section
+      id="orientationLockScreen"
+      class="orientation-lock-screen is-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="orientationLockTitle"
+      aria-describedby="orientationLockMessage"
+      hidden
+    >
+      <div class="orientation-lock-card">
+        <span class="orientation-lock-icon" aria-hidden="true"></span>
+        <h2 id="orientationLockTitle">Use o aparelho em retrato</h2>
+        <p id="orientationLockMessage">
+          Este webapp foi otimizado somente para visualização vertical. Gire o dispositivo para continuar.
+        </p>
+      </div>
+    </section>
 
     <script src="automatic-activities.js"></script>
     <script src="web-client-state.js"></script>

@@ -1164,7 +1164,7 @@ class WebPasswordActionResponse(BaseModel):
 class WebTransportRequestItemResponse(BaseModel):
     request_id: int
     request_kind: Literal["regular", "weekend", "extra"]
-    status: Literal["pending", "confirmed", "rejected", "cancelled"]
+    status: Literal["pending", "confirmed", "rejected", "cancelled", "realized"]
     is_active: bool = False
     service_date: date | None = None
     requested_time: str | None = None
@@ -1174,6 +1174,7 @@ class WebTransportRequestItemResponse(BaseModel):
     confirmation_deadline_time: str | None = None
     vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
     vehicle_plate: str | None = None
+    vehicle_color: str | None = None
     tolerance_minutes: int | None = Field(default=None, ge=0, le=240)
     awareness_required: bool = False
     awareness_confirmed: bool = False
@@ -1185,7 +1186,7 @@ class WebTransportStateResponse(BaseModel):
     chave: str
     end_rua: str | None = None
     zip: str | None = None
-    status: Literal["available", "pending", "confirmed"] = "available"
+    status: Literal["available", "pending", "confirmed", "realized"] = "available"
     request_id: int | None = None
     request_kind: Literal["regular", "weekend", "extra"] | None = None
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
@@ -1195,6 +1196,7 @@ class WebTransportStateResponse(BaseModel):
     confirmation_deadline_time: str | None = None
     vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
     vehicle_plate: str | None = None
+    vehicle_color: str | None = None
     tolerance_minutes: int | None = Field(default=None, ge=0, le=240)
     awareness_required: bool = False
     awareness_confirmed: bool = False
