@@ -21,18 +21,20 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.br.checkingnative.data.background.CheckingBackgroundSnapshotRepository
-import com.br.checkingnative.data.local.repository.ManagedLocationRepository
 import com.br.checkingnative.data.preferences.CheckingStateStore
 import com.br.checkingnative.data.remote.CheckingApiException
-import com.br.checkingnative.data.remote.CheckingApiService
+import com.br.checkingnative.data.remote.WebCheckApiService
 import com.br.checkingnative.domain.logic.CheckingLocationLogic
+import com.br.checkingnative.domain.logic.WebAutomaticActivityDecision
+import com.br.checkingnative.domain.logic.WebAutomaticActivityReason
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.InformeType
-import com.br.checkingnative.domain.model.ManagedLocation
 import com.br.checkingnative.domain.model.MobileStateResponse
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.domain.model.StatusTone
-import com.br.checkingnative.domain.model.SubmitCheckingEventRequest
+import com.br.checkingnative.domain.model.WebCheckSubmitRequest
+import com.br.checkingnative.domain.model.WebLocationMatchRequest
+import com.br.checkingnative.domain.model.WebLocationMatchResponse
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -62,8 +64,7 @@ import kotlinx.coroutines.withContext
 @AndroidEntryPoint
 class CheckingLocationForegroundService : Service() {
     @Inject lateinit var checkingStateStore: CheckingStateStore
-    @Inject lateinit var apiService: CheckingApiService
-    @Inject lateinit var locationRepository: ManagedLocationRepository
+    @Inject lateinit var webApiService: WebCheckApiService
     @Inject lateinit var backgroundSnapshotRepository: CheckingBackgroundSnapshotRepository
 
     private val random = Random.Default
@@ -76,9 +77,9 @@ class CheckingLocationForegroundService : Service() {
     private var scheduleBoundaryJob: Job? = null
     private var locationCaptureJob: Job? = null
     private var processingLocationUpdate = false
-    private var lastKnownRemoteState: MobileStateResponse? = null
-    private var lastKnownRemoteStateAt: Instant? = null
     private var lastRuntimeState: CheckingState? = null
+    private var automationRetryAfter: Instant? = null
+    private var automationRetryDelayMillis: Long = INITIAL_AUTOMATION_RETRY_DELAY_MILLIS
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -316,31 +317,66 @@ class CheckingLocationForegroundService : Service() {
 
         processingLocationUpdate = true
         try {
-            val managedLocations = withContext(Dispatchers.IO) {
-                locationRepository.loadLocations(preferCache = true)
-            }
-            val matchResult = CheckingLocationLogic.resolveLocationMatch(
-                managedLocations = managedLocations,
-                latitude = location.latitude,
-                longitude = location.longitude,
-            )
-            val matchedLocation = matchResult.matchedLocation
             val locationFetchHistory = CheckingLocationLogic.recordLocationFetchHistory(
                 history = baseState.locationFetchHistory,
                 timestamp = positionTimestamp,
                 latitude = location.latitude,
                 longitude = location.longitude,
             )
-            val capturedLocationLabel = CheckingLocationLogic.resolveCapturedLocationLabel(
-                location = matchedLocation,
-                nearestWorkplaceDistanceMeters = matchResult.nearestWorkplaceDistanceMeters,
-            )
-            val nextState = baseState.copy(
-                lastMatchedLocation = matchedLocation?.automationAreaLabel,
-                lastDetectedLocation = capturedLocationLabel,
+            val capturedState = baseState.copy(
                 lastLocationUpdateAt = positionTimestamp,
                 locationFetchHistory = locationFetchHistory,
                 isLocationUpdating = true,
+            )
+
+            if (!capturedState.hasValidChave || !hasWebApiConfig(capturedState)) {
+                saveAndPublish(
+                    capturedState.copy(
+                        lastDetectedLocation = "Coordenada capturada",
+                        statusMessage =
+                            "Monitoramento ativo. Informe chave e URL da API para executar a automação web.",
+                        statusTone = StatusTone.WARNING,
+                    ),
+                )
+                return
+            }
+
+            val coordinateCapturedState = capturedState.copy(
+                lastDetectedLocation = "Coordenada capturada",
+            )
+            saveAndPublish(coordinateCapturedState)
+
+            val locationPayload = try {
+                withContext(Dispatchers.IO) {
+                    webApiService.matchLocation(
+                        baseUrl = capturedState.apiBaseUrl,
+                        request = WebLocationMatchRequest(
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            accuracyMeters = if (location.hasAccuracy()) {
+                                location.accuracy.toDouble()
+                            } else {
+                                null
+                            },
+                        ),
+                    )
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    throw error
+                }
+                recordAutomationFailure()
+                publishAutomationError(
+                    state = coordinateCapturedState,
+                    error = error,
+                )
+                return
+            }
+
+            val nextState = capturedState.copy(
+                lastMatchedLocation = locationPayload.resolvedLocal,
+                lastDetectedLocation =
+                    CheckingLocationLogic.resolveCapturedLocationLabel(locationPayload),
             )
             saveAndPublish(nextState)
 
@@ -351,34 +387,19 @@ class CheckingLocationForegroundService : Service() {
             if (
                 !nextState.hasAnyLocationAutomation ||
                 !nextState.hasValidChave ||
-                !nextState.hasApiConfig
+                !hasWebApiConfig(nextState)
             ) {
                 return
             }
 
-            if (matchedLocation == null) {
-                if (
-                    shouldAttemptAutomaticWithoutLocationMatch(
-                        state = nextState,
-                        nearestDistanceMeters = matchResult.nearestWorkplaceDistanceMeters,
-                    )
-                ) {
-                    submitAutomaticWithoutLocationMatch(
-                        state = nextState,
-                        nearestDistanceMeters = matchResult.nearestWorkplaceDistanceMeters,
-                    )
-                }
+            if (isAutomationRetryDeferred()) {
                 return
             }
 
-            if (matchedLocation.isCheckoutZone && !nextState.autoCheckOutEnabled) {
-                return
-            }
-            if (!matchedLocation.isCheckoutZone && !nextState.autoCheckInEnabled) {
-                return
-            }
-
-            submitAutomaticLocationEvent(nextState, matchedLocation)
+            submitAutomaticWebLocationEvent(
+                state = nextState,
+                locationPayload = locationPayload,
+            )
         } finally {
             processingLocationUpdate = false
             if (shouldRestartTracking) {
@@ -387,55 +408,47 @@ class CheckingLocationForegroundService : Service() {
         }
     }
 
-    private suspend fun submitAutomaticLocationEvent(
+    private suspend fun submitAutomaticWebLocationEvent(
         state: CheckingState,
-        location: ManagedLocation,
+        locationPayload: WebLocationMatchResponse,
     ) {
         try {
-            if (canSkipFetchForLocation(state, location)) {
-                return
-            }
-
             val remoteState = withContext(Dispatchers.IO) {
-                apiService.fetchState(
+                webApiService.fetchCheckState(
                     baseUrl = state.apiBaseUrl,
-                    sharedKey = state.apiSharedKey,
                     chave = state.chave,
-                )
+                ).toMobileStateResponse()
             }
-            rememberRemoteState(remoteState)
+            resetAutomationBackoff()
 
-            val nextAction = CheckingLocationLogic.resolveAutomaticActionForLocation(
+            val decision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
                 remoteState = remoteState,
-                location = location,
+                locationPayload = locationPayload,
                 autoCheckInEnabled = state.autoCheckInEnabled,
                 autoCheckOutEnabled = state.autoCheckOutEnabled,
-                lastCheckInLocation = state.lastCheckInLocation,
             ) ?: return
 
-            val resolvedLocal = CheckingLocationLogic.resolveAutomaticEventLocal(
-                action = nextAction,
-                location = location,
-            )
             val response = withContext(Dispatchers.IO) {
-                apiService.submitEvent(
+                webApiService.submitCheck(
                     baseUrl = state.apiBaseUrl,
-                    sharedKey = state.apiSharedKey,
-                    request = buildSubmitRequest(
+                    request = buildWebSubmitRequest(
                         state = state,
-                        action = nextAction,
-                        local = resolvedLocal,
+                        decision = decision,
+                        projeto = remoteState.projeto
+                            ?.trim()
+                            ?.takeIf { value -> value.isNotEmpty() }
+                            ?: state.projeto.apiValue,
                     ),
                 )
             }
-            rememberRemoteState(response.state)
+            resetAutomationBackoff()
 
             val nextState = applyAutomaticResponseState(
                 state = state,
                 remoteState = response.state,
-                statusMessage = "${nextAction.label} automático enviado para $resolvedLocal.",
-                action = nextAction,
-                local = resolvedLocal,
+                statusMessage = resolveAutomaticSuccessMessage(decision),
+                action = decision.action,
+                local = decision.local,
             )
             saveAndPublish(nextState)
             if (CheckingLocationLogic.isNightModeAfterCheckoutActive(state = nextState)) {
@@ -445,110 +458,9 @@ class CheckingLocationForegroundService : Service() {
             if (error is CancellationException) {
                 throw error
             }
+            recordAutomationFailure()
             publishAutomationError(state, error)
         }
-    }
-
-    private suspend fun submitAutomaticWithoutLocationMatch(
-        state: CheckingState,
-        nearestDistanceMeters: Double?,
-    ) {
-        try {
-            val remoteState = freshRemoteState() ?: withContext(Dispatchers.IO) {
-                apiService.fetchState(
-                    baseUrl = state.apiBaseUrl,
-                    sharedKey = state.apiSharedKey,
-                    chave = state.chave,
-                )
-            }.also(::rememberRemoteState)
-
-            val nextAction = CheckingLocationLogic.resolveAutomaticActionWithoutLocationMatch(
-                remoteState = remoteState,
-                nearestDistanceMeters = nearestDistanceMeters,
-                autoCheckInEnabled = state.autoCheckInEnabled,
-                autoCheckOutEnabled = state.autoCheckOutEnabled,
-            ) ?: return
-
-            val resolvedLocal = CheckingLocationLogic.resolveAutomaticEventLocal(
-                action = nextAction,
-            )
-            val response = withContext(Dispatchers.IO) {
-                apiService.submitEvent(
-                    baseUrl = state.apiBaseUrl,
-                    sharedKey = state.apiSharedKey,
-                    request = buildSubmitRequest(
-                        state = state,
-                        action = nextAction,
-                        local = resolvedLocal,
-                    ),
-                )
-            }
-            rememberRemoteState(response.state)
-
-            val nextState = applyAutomaticResponseState(
-                state = state,
-                remoteState = response.state,
-                statusMessage = if (nextAction == RegistroType.CHECK_OUT) {
-                    "Check-Out automático enviado por afastamento das áreas monitoradas."
-                } else {
-                    "${nextAction.label} automático enviado para $resolvedLocal."
-                },
-                action = nextAction,
-                local = resolvedLocal,
-            )
-            saveAndPublish(nextState)
-            if (CheckingLocationLogic.isNightModeAfterCheckoutActive(state = nextState)) {
-                reloadTrackingState(forceRestart = true)
-            }
-        } catch (error: Throwable) {
-            if (error is CancellationException) {
-                throw error
-            }
-            publishAutomationError(state, error)
-        }
-    }
-
-    private fun shouldAttemptAutomaticWithoutLocationMatch(
-        state: CheckingState,
-        nearestDistanceMeters: Double?,
-    ): Boolean {
-        val cachedLastAction = freshRemoteState()?.let(CheckingLocationLogic::resolveLastRecordedAction)
-        val lastRecordedAction = state.lastRecordedAction ?: cachedLastAction
-        val shouldAttemptOutOfRangeCheckout =
-            CheckingLocationLogic.shouldAttemptAutomaticOutOfRangeCheckout(
-                lastRecordedAction = lastRecordedAction,
-                nearestDistanceMeters = nearestDistanceMeters,
-                autoCheckOutEnabled = state.autoCheckOutEnabled,
-            )
-        val shouldAttemptNearbyWorkplaceCheckIn =
-            CheckingLocationLogic.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
-                lastRecordedAction = lastRecordedAction,
-                nearestDistanceMeters = nearestDistanceMeters,
-                autoCheckInEnabled = state.autoCheckInEnabled,
-            )
-        val shouldFetchUnknownOutOfRangeCheckout =
-            lastRecordedAction == null &&
-                state.autoCheckOutEnabled &&
-                nearestDistanceMeters != null &&
-                nearestDistanceMeters > CheckingLocationLogic.outOfRangeCheckoutDistanceMeters
-
-        return shouldAttemptOutOfRangeCheckout ||
-            shouldAttemptNearbyWorkplaceCheckIn ||
-            shouldFetchUnknownOutOfRangeCheckout
-    }
-
-    private fun canSkipFetchForLocation(
-        state: CheckingState,
-        location: ManagedLocation,
-    ): Boolean {
-        val remoteState = freshRemoteState() ?: return false
-        return CheckingLocationLogic.resolveAutomaticActionForLocation(
-            remoteState = remoteState,
-            location = location,
-            autoCheckInEnabled = state.autoCheckInEnabled,
-            autoCheckOutEnabled = state.autoCheckOutEnabled,
-            lastCheckInLocation = state.lastCheckInLocation,
-        ) == null
     }
 
     private fun applyAutomaticResponseState(
@@ -629,8 +541,6 @@ class CheckingLocationForegroundService : Service() {
             .toClampedMillis()
         scheduleBoundaryJob = serviceScope.launch {
             delay(delayMillis)
-            lastKnownRemoteState = null
-            lastKnownRemoteStateAt = null
             runGuarded { reloadTrackingState(forceRestart = true) }
         }
     }
@@ -639,8 +549,6 @@ class CheckingLocationForegroundService : Service() {
         scheduleBoundaryJob?.cancel()
         scheduleBoundaryJob = serviceScope.launch {
             delay(RETRY_DELAY_MILLIS)
-            lastKnownRemoteState = null
-            lastKnownRemoteStateAt = null
             runGuarded { reloadTrackingState(forceRestart = true) }
         }
     }
@@ -690,19 +598,13 @@ class CheckingLocationForegroundService : Service() {
         backgroundSnapshotRepository.publish(resolvedState)
     }
 
-    private suspend fun publishSnapshot(state: CheckingState) {
-        val resolvedState = state.copy(isLoading = false)
-        lastRuntimeState = resolvedState
-        backgroundSnapshotRepository.publish(resolvedState)
-    }
-
     private suspend fun publishAutomationError(state: CheckingState, error: Throwable) {
         val message = if (error is CheckingApiException) {
             error.userMessage
         } else {
             "Falha ao executar a automação por localização."
         }
-        publishSnapshot(
+        saveAndPublish(
             state.copy(
                 statusMessage = message,
                 statusTone = StatusTone.ERROR,
@@ -711,19 +613,29 @@ class CheckingLocationForegroundService : Service() {
         )
     }
 
-    private fun buildSubmitRequest(
+    private fun resolveAutomaticSuccessMessage(
+        decision: WebAutomaticActivityDecision,
+    ): String {
+        return when (decision.reason) {
+            WebAutomaticActivityReason.OUT_OF_RANGE_CHECKOUT ->
+                "Check-Out automático enviado por afastamento das áreas monitoradas."
+            else -> "${decision.action.label} automático enviado para ${decision.local}."
+        }
+    }
+
+    private fun buildWebSubmitRequest(
         state: CheckingState,
-        action: RegistroType,
-        local: String,
-    ): SubmitCheckingEventRequest {
-        return SubmitCheckingEventRequest(
+        decision: WebAutomaticActivityDecision,
+        projeto: String,
+    ): WebCheckSubmitRequest {
+        return WebCheckSubmitRequest(
             chave = state.chave,
-            projeto = state.projetoFor(action),
-            action = action,
+            projeto = projeto,
+            action = decision.action,
             informe = InformeType.NORMAL,
             clientEventId = buildClientEventId(),
             eventTime = Instant.now(),
-            local = local,
+            local = decision.local,
         )
     }
 
@@ -731,22 +643,27 @@ class CheckingLocationForegroundService : Service() {
         val now = Instant.now()
         val micros = (now.epochSecond * 1_000_000L) + (now.nano / 1_000L)
         val randomPart = random.nextInt(0xFFFFFF).toString(16).padStart(6, '0')
-        return "kotlin-auto-$micros-$randomPart"
+        return "web-check-android-auto-$micros-$randomPart"
     }
 
-    private fun rememberRemoteState(remoteState: MobileStateResponse) {
-        lastKnownRemoteState = remoteState
-        lastKnownRemoteStateAt = Instant.now()
+    private fun hasWebApiConfig(state: CheckingState): Boolean {
+        return state.apiBaseUrl.trim().isNotEmpty()
     }
 
-    private fun freshRemoteState(): MobileStateResponse? {
-        val remoteState = lastKnownRemoteState ?: return null
-        val remoteStateAt = lastKnownRemoteStateAt ?: return null
-        return if (Duration.between(remoteStateAt, Instant.now()) < REMOTE_CACHE_TTL) {
-            remoteState
-        } else {
-            null
-        }
+    private fun isAutomationRetryDeferred(referenceTime: Instant = Instant.now()): Boolean {
+        val retryAfter = automationRetryAfter ?: return false
+        return retryAfter.isAfter(referenceTime)
+    }
+
+    private fun recordAutomationFailure(referenceTime: Instant = Instant.now()) {
+        automationRetryAfter = referenceTime.plusMillis(automationRetryDelayMillis)
+        automationRetryDelayMillis = (automationRetryDelayMillis * 2)
+            .coerceAtMost(MAX_AUTOMATION_RETRY_DELAY_MILLIS)
+    }
+
+    private fun resetAutomationBackoff() {
+        automationRetryAfter = null
+        automationRetryDelayMillis = INITIAL_AUTOMATION_RETRY_DELAY_MILLIS
     }
 
     private suspend fun runGuarded(operation: suspend () -> Unit) {
@@ -934,8 +851,9 @@ class CheckingLocationForegroundService : Service() {
         private const val DEFAULT_NOTIFICATION_TEXT: String =
             "Monitoramento de localização em segundo plano em execução."
         private const val RETRY_DELAY_MILLIS: Long = 60_000L
+        private const val INITIAL_AUTOMATION_RETRY_DELAY_MILLIS: Long = 30_000L
+        private const val MAX_AUTOMATION_RETRY_DELAY_MILLIS: Long = 10 * 60_000L
         private const val MIN_BOUNDARY_DELAY_MILLIS: Long = 60_000L
         private const val MAX_BOUNDARY_DELAY_MILLIS: Long = 24 * 60 * 60 * 1_000L
-        private val REMOTE_CACHE_TTL: Duration = Duration.ofSeconds(45)
     }
 }

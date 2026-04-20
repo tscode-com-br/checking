@@ -29,6 +29,7 @@ data class CheckingHttpRequest(
 data class CheckingHttpResponse(
     val statusCode: Int,
     val body: String,
+    val headers: Map<String, List<String>> = emptyMap(),
 )
 
 interface CheckingHttpTransport {
@@ -63,9 +64,14 @@ class JdkCheckingHttpTransport @Inject constructor() : CheckingHttpTransport {
                     connection.errorStream
                 }
                 val responseBody = stream?.bufferedReader()?.use { reader -> reader.readText() }.orEmpty()
+                val responseHeaders = connection.headerFields
+                    .filterKeys { name -> name != null }
+                    .mapKeys { entry -> entry.key.orEmpty() }
+                    .mapValues { entry -> entry.value.orEmpty() }
                 CheckingHttpResponse(
                     statusCode = statusCode,
                     body = responseBody,
+                    headers = responseHeaders,
                 )
             } finally {
                 connection.disconnect()

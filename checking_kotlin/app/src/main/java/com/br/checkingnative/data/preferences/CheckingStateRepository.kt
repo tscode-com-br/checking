@@ -17,10 +17,11 @@ import kotlinx.coroutines.flow.map
 @Singleton
 class CheckingStateRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
-) : CheckingStateStore {
+) : CheckingStateStore, WebSessionStore {
     private object Keys {
         val stateJson = stringPreferencesKey("checking_state_json")
         val apiSharedKey = stringPreferencesKey("checking_api_shared_key")
+        val webSessionCookieHeader = stringPreferencesKey("checking_web_session_cookie_header")
         val initialAndroidSetupPrompted =
             booleanPreferencesKey("checking_initial_android_setup_prompted")
         val legacyMigrationStatus =
@@ -49,6 +50,13 @@ class CheckingStateRepository @Inject constructor(
                 legacyMigrationMessage = preferences[Keys.legacyMigrationMessage]
                     ?: "A verificacao da migracao legada ainda nao foi executada.",
                 legacySourceInstalled = preferences[Keys.legacySourceInstalled] ?: false,
+            )
+        }
+
+    override val webSessionSnapshot: Flow<WebSessionSnapshot> =
+        dataStore.data.map { preferences ->
+            WebSessionSnapshot(
+                cookieHeader = preferences[Keys.webSessionCookieHeader].orEmpty(),
             )
         }
 
@@ -86,6 +94,23 @@ class CheckingStateRepository @Inject constructor(
     override suspend fun markInitialAndroidSetupPrompted() {
         dataStore.edit { preferences ->
             preferences[Keys.initialAndroidSetupPrompted] = true
+        }
+    }
+
+    override suspend fun saveWebSessionCookieHeader(cookieHeader: String) {
+        dataStore.edit { preferences ->
+            val normalized = cookieHeader.trim()
+            if (normalized.isBlank()) {
+                preferences.remove(Keys.webSessionCookieHeader)
+            } else {
+                preferences[Keys.webSessionCookieHeader] = normalized
+            }
+        }
+    }
+
+    override suspend fun clearWebSessionCookie() {
+        dataStore.edit { preferences ->
+            preferences.remove(Keys.webSessionCookieHeader)
         }
     }
 

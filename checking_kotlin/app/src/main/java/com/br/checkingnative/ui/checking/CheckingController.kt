@@ -3,19 +3,25 @@ package com.br.checkingnative.ui.checking
 import com.br.checkingnative.data.background.CheckingBackgroundSnapshotRepository
 import com.br.checkingnative.data.local.repository.ManagedLocationRepository
 import com.br.checkingnative.data.preferences.CheckingStateStore
+import com.br.checkingnative.data.preferences.WebSessionStore
 import com.br.checkingnative.data.remote.CheckingApiException
-import com.br.checkingnative.data.remote.CheckingApiService
+import com.br.checkingnative.data.remote.WebCheckApiService
 import com.br.checkingnative.domain.logic.CheckingLocationLogic
 import com.br.checkingnative.domain.logic.CheckingRuntimeLogic
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
 import com.br.checkingnative.domain.model.CheckingLocationSample
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
+import com.br.checkingnative.domain.model.CheckingWebAuthState
+import com.br.checkingnative.domain.model.CheckingWebRegistrationInput
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.domain.model.StatusTone
-import com.br.checkingnative.domain.model.SubmitCheckingEventRequest
+import com.br.checkingnative.domain.model.WebCheckSubmitRequest
+import com.br.checkingnative.domain.model.WebPasswordLoginRequest
+import com.br.checkingnative.domain.model.WebPasswordRegisterRequest
+import com.br.checkingnative.domain.model.WebUserSelfRegistrationRequest
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,7 +42,8 @@ import kotlinx.coroutines.launch
 @Singleton
 class CheckingController @Inject constructor(
     private val checkingStateStore: CheckingStateStore,
-    private val apiService: CheckingApiService,
+    private val webApiService: WebCheckApiService,
+    private val webSessionStore: WebSessionStore,
     private val locationRepository: ManagedLocationRepository,
     private val backgroundSnapshotRepository: CheckingBackgroundSnapshotRepository =
         CheckingBackgroundSnapshotRepository(),
@@ -68,12 +75,21 @@ class CheckingController @Inject constructor(
                 isLocationUpdating = false,
                 isAutomaticCheckingUpdating = false,
             )
+            val hasStoredWebSession = webSessionStore.webSessionSnapshot
+                .first()
+                .cookieHeader
+                .isNotBlank()
             val locations = locationRepository.loadLocations(preferCache = true)
             _uiState.update { current ->
                 current.copy(
                     state = restoredState,
+                    webAuth = initialWebAuthForState(
+                        state = restoredState,
+                        hasStoredWebSession = hasStoredWebSession,
+                    ),
                     managedLocations = locations,
                     initialized = true,
+                    hasPromptedInitialAndroidSetup = snapshot.hasPromptedInitialAndroidSetup,
                     hasHydratedHistoryForCurrentKey = false,
                 )
             }
@@ -88,6 +104,7 @@ class CheckingController @Inject constructor(
                         statusTone = StatusTone.ERROR,
                     ),
                     initialized = true,
+                    hasPromptedInitialAndroidSetup = true,
                 )
             }
         }
@@ -105,7 +122,19 @@ class CheckingController @Inject constructor(
         }
 
         _uiState.update { current ->
-            current.copy(hasHydratedHistoryForCurrentKey = false)
+            current.copy(
+                webAuth = if (normalized.length == 4) {
+                    CheckingWebAuthState.unauthenticated(
+                        chave = normalized,
+                        message = "Verifique o acesso web para esta chave.",
+                        found = false,
+                        hasPassword = false,
+                    )
+                } else {
+                    CheckingWebAuthState.awaitingChave()
+                },
+                hasHydratedHistoryForCurrentKey = false,
+            )
         }
 
         updateAndPersist(
@@ -120,13 +149,16 @@ class CheckingController @Inject constructor(
             ),
         )
 
-        if (!currentState.hasValidChave || !currentState.hasApiConfig) {
+        if (!currentState.hasValidChave || !hasWebApiConfig(currentState)) {
             clearHistoryFields(updateStatus = false)
             return
         }
 
         if (syncAfterValidChange) {
-            syncHistory(silent = true, updateStatus = true)
+            val webAuth = refreshWebAuthStatus(updateStatus = true, silent = true)
+            if (webAuth.authenticated) {
+                syncHistory(silent = true, updateStatus = true)
+            }
         }
     }
 
@@ -150,11 +182,282 @@ class CheckingController @Inject constructor(
     }
 
     suspend fun updateApiBaseUrl(value: String) {
-        updateAndPersist(currentState.copy(apiBaseUrl = value.trim()))
+        val normalized = value.trim()
+        if (normalized == currentState.apiBaseUrl) {
+            return
+        }
+        webSessionStore.clearWebSessionCookie()
+        updateAndPersist(
+            currentState.copy(
+                apiBaseUrl = normalized,
+                locationSharingEnabled = false,
+                autoCheckInEnabled = false,
+                autoCheckOutEnabled = false,
+                isLocationUpdating = false,
+            ),
+        )
+        setWebAuthOnly(
+            CheckingWebAuthState.unauthenticated(
+                chave = currentState.chave,
+                message = "URL da API alterada. Entre novamente para liberar o segundo plano.",
+                found = false,
+                hasPassword = false,
+            ),
+        )
     }
 
     suspend fun updateApiSharedKey(value: String) {
         updateAndPersist(currentState.copy(apiSharedKey = value.trim()))
+    }
+
+    suspend fun refreshWebAuthStatus(
+        updateStatus: Boolean = true,
+        silent: Boolean = false,
+    ): CheckingWebAuthState {
+        val state = currentState
+        if (!state.hasValidChave) {
+            val nextAuth = CheckingWebAuthState.awaitingChave()
+            setWebAuthOnly(nextAuth)
+            if (updateStatus) {
+                setStatus("Informe a chave do usuário para verificar o acesso web.", StatusTone.WARNING)
+            }
+            return nextAuth
+        }
+        if (!hasWebApiConfig(state)) {
+            val nextAuth = CheckingWebAuthState.unauthenticated(
+                chave = state.chave,
+                message = "Informe a URL base da API para verificar o acesso web.",
+                found = false,
+                hasPassword = false,
+            )
+            setWebAuthOnly(nextAuth)
+            if (updateStatus) {
+                setStatus(nextAuth.message, StatusTone.WARNING)
+            }
+            return nextAuth
+        }
+
+        setWebAuthOnly(CheckingWebAuthState.checking(state.chave, _uiState.value.webAuth))
+        return try {
+            val response = webApiService.fetchAuthStatus(
+                baseUrl = state.apiBaseUrl,
+                chave = state.chave,
+            )
+            val nextAuth = CheckingWebAuthState.fromStatus(
+                response = response,
+                hasStoredSession = hasStoredWebSession(),
+            )
+            setWebAuthOnly(nextAuth)
+            if (updateStatus) {
+                setStatus(
+                    nextAuth.message,
+                    if (nextAuth.authenticated) StatusTone.SUCCESS else StatusTone.WARNING,
+                )
+            }
+            nextAuth
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
+            val message = userMessage(error, "Falha ao verificar o acesso web.")
+            val nextAuth = CheckingWebAuthState.unauthenticated(
+                chave = state.chave,
+                message = message,
+                found = _uiState.value.webAuth.found,
+                hasPassword = _uiState.value.webAuth.hasPassword,
+            )
+            setWebAuthOnly(nextAuth)
+            if (updateStatus) {
+                setStatus(message, StatusTone.ERROR)
+            }
+            if (!silent) {
+                throw error
+            }
+            nextAuth
+        }
+    }
+
+    suspend fun loginWebPassword(password: String): String {
+        val senha = password.trim()
+        validateWebAuthBasics()
+        if (senha.isBlank()) {
+            throw CheckingApiException("Informe a senha para entrar.")
+        }
+
+        setWebAuthOnly(CheckingWebAuthState.authenticating(_uiState.value.webAuth))
+        try {
+            val response = webApiService.login(
+                baseUrl = currentState.apiBaseUrl,
+                request = WebPasswordLoginRequest(
+                    chave = currentState.chave,
+                    senha = senha,
+                ),
+            )
+            val nextAuth = CheckingWebAuthState.fromAction(
+                chave = currentState.chave,
+                response = response,
+                hasStoredSession = hasStoredWebSession(),
+            )
+            setWebAuthOnly(nextAuth)
+            setStatus(response.message, if (response.authenticated) StatusTone.SUCCESS else StatusTone.WARNING)
+            if (response.authenticated) {
+                syncHistory(silent = true, updateStatus = false)
+            }
+            return response.message
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
+            val message = userMessage(error, "Falha ao entrar com a senha.")
+            setWebAuthOnly(
+                CheckingWebAuthState.unauthenticated(
+                    chave = currentState.chave,
+                    message = message,
+                ),
+            )
+            setStatus(message, StatusTone.ERROR)
+            throw error
+        }
+    }
+
+    suspend fun registerWebPassword(password: String): String {
+        val senha = password.trim()
+        validateWebAuthBasics()
+        if (senha.length < MIN_PASSWORD_LENGTH) {
+            throw CheckingApiException("A senha deve ter pelo menos $MIN_PASSWORD_LENGTH caracteres.")
+        }
+
+        setWebAuthOnly(CheckingWebAuthState.authenticating(_uiState.value.webAuth))
+        try {
+            val response = webApiService.registerPassword(
+                baseUrl = currentState.apiBaseUrl,
+                request = WebPasswordRegisterRequest(
+                    chave = currentState.chave,
+                    projeto = currentState.projeto.apiValue,
+                    senha = senha,
+                ),
+            )
+            val nextAuth = CheckingWebAuthState.fromAction(
+                chave = currentState.chave,
+                response = response,
+                hasStoredSession = hasStoredWebSession(),
+            )
+            setWebAuthOnly(nextAuth)
+            setStatus(response.message, if (response.authenticated) StatusTone.SUCCESS else StatusTone.WARNING)
+            if (response.authenticated) {
+                syncHistory(silent = true, updateStatus = false)
+            }
+            return response.message
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
+            val message = userMessage(error, "Falha ao cadastrar a senha.")
+            setWebAuthOnly(
+                CheckingWebAuthState.unauthenticated(
+                    chave = currentState.chave,
+                    message = message,
+                    found = true,
+                    hasPassword = false,
+                ),
+            )
+            setStatus(message, StatusTone.ERROR)
+            throw error
+        }
+    }
+
+    suspend fun registerWebUser(input: CheckingWebRegistrationInput): String {
+        validateWebAuthBasics()
+        validateWebRegistrationInput(input)
+
+        setWebAuthOnly(CheckingWebAuthState.authenticating(_uiState.value.webAuth))
+        try {
+            val response = webApiService.registerUser(
+                baseUrl = currentState.apiBaseUrl,
+                request = WebUserSelfRegistrationRequest(
+                    chave = currentState.chave,
+                    nome = input.nome.trim(),
+                    projeto = input.projeto.apiValue,
+                    endRua = input.endRua.trim(),
+                    zip = input.zip.trim(),
+                    email = input.email.trim(),
+                    senha = input.senha.trim(),
+                    confirmarSenha = input.confirmarSenha.trim(),
+                ),
+            )
+            updateAndPersist(currentState.copy(checkInProjeto = input.projeto))
+            val nextAuth = CheckingWebAuthState.fromAction(
+                chave = currentState.chave,
+                response = response,
+                hasStoredSession = hasStoredWebSession(),
+            )
+            setWebAuthOnly(nextAuth)
+            setStatus(response.message, if (response.authenticated) StatusTone.SUCCESS else StatusTone.WARNING)
+            if (response.authenticated) {
+                syncHistory(silent = true, updateStatus = false)
+            }
+            return response.message
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
+            val message = userMessage(error, "Falha ao cadastrar usuário.")
+            setWebAuthOnly(
+                CheckingWebAuthState.unauthenticated(
+                    chave = currentState.chave,
+                    message = message,
+                    found = false,
+                    hasPassword = false,
+                ),
+            )
+            setStatus(message, StatusTone.ERROR)
+            throw error
+        }
+    }
+
+    suspend fun logoutWebSession(): String {
+        val state = currentState
+        val message = try {
+            if (hasWebApiConfig(state)) {
+                webApiService.logout(baseUrl = state.apiBaseUrl).message
+            } else {
+                "Sessão encerrada."
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
+            userMessage(error, "Sessão local encerrada.")
+        } finally {
+            webSessionStore.clearWebSessionCookie()
+        }
+
+        setWebAuthOnly(
+            CheckingWebAuthState.unauthenticated(
+                chave = state.chave,
+                message = message,
+                found = _uiState.value.webAuth.found,
+                hasPassword = _uiState.value.webAuth.hasPassword,
+            ),
+        )
+        updateAndPersist(
+            currentState.copy(
+                locationSharingEnabled = false,
+                autoCheckInEnabled = false,
+                autoCheckOutEnabled = false,
+                isLocationUpdating = false,
+                statusMessage = message,
+                statusTone = StatusTone.WARNING,
+            ),
+        )
+        return message
+    }
+
+    suspend fun markInitialAndroidSetupPrompted() {
+        checkingStateStore.markInitialAndroidSetupPrompted()
+        _uiState.update { current ->
+            current.copy(hasPromptedInitialAndroidSetup = true)
+        }
     }
 
     suspend fun setLocationUpdateIntervalMinutes(minutes: Int) {
@@ -258,6 +561,13 @@ class CheckingController @Inject constructor(
             )
             return
         }
+        if (value && !_uiState.value.webAuth.authenticated) {
+            setStatus(
+                "Entre com sua senha para liberar a automação em segundo plano.",
+                StatusTone.ERROR,
+            )
+            return
+        }
 
         setStateOnly(state.copy(isAutomaticCheckingUpdating = true))
         try {
@@ -290,6 +600,13 @@ class CheckingController @Inject constructor(
         if (value && !state.canEnableLocationSharing) {
             setStatus(
                 "Permita localização precisa, localização em segundo plano e notificações para habilitar a busca por localização.",
+                StatusTone.ERROR,
+            )
+            return
+        }
+        if (value && !_uiState.value.webAuth.authenticated) {
+            setStatus(
+                "Entre com sua senha para liberar o monitoramento em segundo plano.",
                 StatusTone.ERROR,
             )
             return
@@ -587,8 +904,17 @@ class CheckingController @Inject constructor(
                 ),
             )
 
-            if (!currentState.hasValidChave || !currentState.hasApiConfig) {
+            if (!currentState.hasValidChave || !hasWebApiConfig(currentState)) {
                 clearHistoryFields(updateStatus = true)
+                return
+            }
+
+            val webAuth = refreshWebAuthStatus(updateStatus = false, silent = true)
+            if (!webAuth.authenticated) {
+                setStatus(
+                    webAuth.message.ifBlank { "Entre com sua senha para sincronizar o histórico." },
+                    StatusTone.WARNING,
+                )
                 return
             }
 
@@ -643,10 +969,10 @@ class CheckingController @Inject constructor(
             clearHistoryFields(updateStatus = updateStatus)
             return currentState.statusMessage
         }
-        if (!currentState.hasApiConfig) {
+        if (!hasWebApiConfig(currentState)) {
             if (updateStatus) {
                 setStatus(
-                    "A configuração interna da API do aplicativo está incompleta.",
+                    "Informe a URL base da API para sincronizar o histórico.",
                     StatusTone.WARNING,
                 )
             }
@@ -658,11 +984,11 @@ class CheckingController @Inject constructor(
 
         setStateOnly(currentState.copy(isSyncing = true))
         try {
-            val response = apiService.fetchState(
+            val response = webApiService.fetchCheckState(
                 baseUrl = currentState.apiBaseUrl,
-                sharedKey = currentState.apiSharedKey,
                 chave = currentState.chave,
-            )
+            ).toMobileStateResponse()
+            setWebAuthAuthenticatedAfterApiSuccess()
             _uiState.update { current ->
                 current.copy(hasHydratedHistoryForCurrentKey = true)
             }
@@ -682,6 +1008,14 @@ class CheckingController @Inject constructor(
                 throw error
             }
             val message = userMessage(error, "Falha ao consultar a API.")
+            setWebAuthOnly(
+                CheckingWebAuthState.unauthenticated(
+                    chave = currentState.chave,
+                    message = message,
+                    found = _uiState.value.webAuth.found,
+                    hasPassword = _uiState.value.webAuth.hasPassword,
+                ),
+            )
             if (updateStatus) {
                 setStatus(message, StatusTone.ERROR)
             }
@@ -698,10 +1032,10 @@ class CheckingController @Inject constructor(
         silent: Boolean = false,
         updateStatus: Boolean = true,
     ): Int {
-        if (!currentState.hasApiConfig) {
+        if (!hasWebApiConfig(currentState)) {
             if (updateStatus) {
                 setStatus(
-                    "A configuração interna da API do aplicativo está incompleta.",
+                    "Informe a URL base da API para consultar localizações.",
                     StatusTone.WARNING,
                 )
             }
@@ -709,32 +1043,16 @@ class CheckingController @Inject constructor(
         }
 
         try {
-            val response = apiService.fetchLocations(
+            val response = webApiService.fetchLocationOptions(
                 baseUrl = currentState.apiBaseUrl,
-                sharedKey = currentState.apiSharedKey,
             )
-            locationRepository.replaceAll(response.items)
-            val nextState = CheckingLocationLogic.resolveLocationUpdateIntervalState(
-                state = currentState.copy(
-                    locationAccuracyThresholdMeters =
-                        response.locationAccuracyThresholdMeters,
-                ),
-            ).let { resolvedState ->
-                if (updateStatus) {
-                    resolvedState.copy(
-                        statusMessage =
-                            "${response.items.size} localizações atualizadas no aplicativo.",
-                        statusTone = StatusTone.SUCCESS,
-                    )
-                } else {
-                    resolvedState
-                }
+            setWebAuthAuthenticatedAfterApiSuccess()
+            if (updateStatus) {
+                setStatus(
+                    "${response.items.size} localizações disponíveis na API web.",
+                    StatusTone.SUCCESS,
+                )
             }
-
-            _uiState.update { current ->
-                current.copy(managedLocations = response.items)
-            }
-            updateAndPersist(nextState)
             return response.items.size
         } catch (error: Throwable) {
             if (error is CancellationException) {
@@ -777,10 +1095,13 @@ class CheckingController @Inject constructor(
         if (!currentState.hasValidChave) {
             throw CheckingApiException("Informe uma chave Petrobras com 4 caracteres.")
         }
-        if (!currentState.hasApiConfig) {
+        if (!hasWebApiConfig(currentState)) {
             throw CheckingApiException(
-                "A configuração interna da API do aplicativo está incompleta.",
+                "Informe a URL base da API para enviar o registro.",
             )
+        }
+        if (!_uiState.value.webAuth.authenticated) {
+            throw CheckingApiException("Entre com sua senha para enviar o registro.")
         }
 
         setStateOnly(currentState.copy(isSubmitting = true))
@@ -792,25 +1113,25 @@ class CheckingController @Inject constructor(
                 action = action,
                 source = source,
             )
-            val response = apiService.submitEvent(
+            val response = webApiService.submitCheck(
                 baseUrl = state.apiBaseUrl,
-                sharedKey = state.apiSharedKey,
-                request = SubmitCheckingEventRequest(
+                request = WebCheckSubmitRequest(
                     chave = state.chave,
-                    projeto = state.projetoFor(action),
+                    projeto = state.projetoFor(action).apiValue,
                     action = action,
                     informe = informe,
                     clientEventId = buildClientEventId(
                         prefix = if (source == SOURCE_LOCATION_AUTOMATION) {
-                            "kotlin-auto"
+                            "web-check-android-auto"
                         } else {
-                            "kotlin"
+                            "web-check-android"
                         },
                     ),
                     eventTime = Instant.now(),
                     local = local,
                 ),
             )
+            setWebAuthAuthenticatedAfterApiSuccess()
             applyRemoteState(
                 response = response.state,
                 statusMessage = response.message,
@@ -831,6 +1152,14 @@ class CheckingController @Inject constructor(
                 throw error
             }
             val message = userMessage(error, "Falha ao enviar evento pela API.")
+            setWebAuthOnly(
+                CheckingWebAuthState.unauthenticated(
+                    chave = currentState.chave,
+                    message = message,
+                    found = _uiState.value.webAuth.found,
+                    hasPassword = _uiState.value.webAuth.hasPassword,
+                ),
+            )
             setStatus(
                 "$message (${if (source == SOURCE_MANUAL) "manual" else "automático"})",
                 StatusTone.ERROR,
@@ -913,6 +1242,76 @@ class CheckingController @Inject constructor(
         _uiState.update { current ->
             current.copy(state = nextState)
         }
+    }
+
+    private fun setWebAuthOnly(nextAuth: CheckingWebAuthState) {
+        _uiState.update { current ->
+            current.copy(webAuth = nextAuth)
+        }
+    }
+
+    private fun initialWebAuthForState(
+        state: CheckingState,
+        hasStoredWebSession: Boolean,
+    ): CheckingWebAuthState {
+        if (!state.hasValidChave) {
+            return CheckingWebAuthState.awaitingChave()
+        }
+        return CheckingWebAuthState(
+            chave = state.chave,
+            hasStoredSession = hasStoredWebSession,
+            message = if (hasStoredWebSession) {
+                "Sessão web salva. Verifique o acesso para liberar o segundo plano."
+            } else {
+                "Verifique o acesso web para liberar o segundo plano."
+            },
+        )
+    }
+
+    private suspend fun setWebAuthAuthenticatedAfterApiSuccess() {
+        val currentAuth = _uiState.value.webAuth
+        setWebAuthOnly(
+            currentAuth.copy(
+                chave = currentState.chave,
+                found = true,
+                hasPassword = true,
+                authenticated = true,
+                hasStoredSession = hasStoredWebSession(),
+                isChecking = false,
+                isAuthenticating = false,
+                message = "Aplicacao liberada.",
+            ),
+        )
+    }
+
+    private suspend fun hasStoredWebSession(): Boolean {
+        return webSessionStore.webSessionSnapshot.first().cookieHeader.isNotBlank()
+    }
+
+    private fun validateWebAuthBasics() {
+        if (!currentState.hasValidChave) {
+            throw CheckingApiException("Informe uma chave Petrobras com 4 caracteres.")
+        }
+        if (!hasWebApiConfig(currentState)) {
+            throw CheckingApiException("Informe a URL base da API.")
+        }
+    }
+
+    private fun validateWebRegistrationInput(input: CheckingWebRegistrationInput) {
+        when {
+            input.nome.isBlank() -> throw CheckingApiException("Informe seu nome.")
+            input.endRua.isBlank() -> throw CheckingApiException("Informe seu endereço.")
+            input.zip.isBlank() -> throw CheckingApiException("Informe seu ZIP/código postal.")
+            input.email.isBlank() -> throw CheckingApiException("Informe seu e-mail.")
+            input.senha.trim().length < MIN_PASSWORD_LENGTH ->
+                throw CheckingApiException("A senha deve ter pelo menos $MIN_PASSWORD_LENGTH caracteres.")
+            input.senha.trim() != input.confirmarSenha.trim() ->
+                throw CheckingApiException("A confirmação da senha não confere.")
+        }
+    }
+
+    private fun hasWebApiConfig(state: CheckingState): Boolean {
+        return state.apiBaseUrl.trim().isNotEmpty()
     }
 
     private fun startBackgroundSnapshotObserver() {
@@ -1000,6 +1399,7 @@ class CheckingController @Inject constructor(
     companion object {
         const val SOURCE_MANUAL: String = "manual"
         const val SOURCE_LOCATION_AUTOMATION: String = "location-automation"
+        const val MIN_PASSWORD_LENGTH: Int = 4
 
         fun resolveInformeForSubmission(
             state: CheckingState,

@@ -7,6 +7,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.br.checkingnative.domain.model.CheckingState
+import com.br.checkingnative.domain.model.CheckingPermissionSettingsState
+import com.br.checkingnative.domain.model.CheckingWebAuthState
 import com.br.checkingnative.domain.model.LocationFetchEntry
 import com.br.checkingnative.domain.model.StatusTone
 import com.br.checkingnative.ui.checking.CheckingApp
@@ -14,6 +16,7 @@ import com.br.checkingnative.ui.checking.CheckingUiState
 import com.br.checkingnative.ui.theme.CheckingKotlinTheme
 import java.time.Instant
 import kotlinx.coroutines.flow.emptyFlow
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,9 +54,34 @@ class CheckingComposeBaselineTest {
                             statusTone = StatusTone.SUCCESS,
                             isLoading = false,
                         ),
+                        webAuth = CheckingWebAuthState(
+                            chave = "HR70",
+                            found = true,
+                            hasPassword = true,
+                            authenticated = true,
+                            hasStoredSession = true,
+                            message = "Aplicacao liberada.",
+                        ),
+                        permissionSettings = CheckingPermissionSettingsState(
+                            backgroundAccessEnabled = true,
+                            notificationsEnabled = true,
+                            batteryOptimizationIgnored = true,
+                            isRefreshing = false,
+                            locationServiceEnabled = true,
+                            preciseLocationGranted = true,
+                            backgroundServiceSupported = true,
+                            foregroundServiceStartRequiresVisibleApp = true,
+                        ),
+                        hasPromptedInitialAndroidSetup = true,
+                        hasHydratedHistoryForCurrentKey = true,
                     ),
                     messages = emptyFlow(),
                     onChaveChanged = {},
+                    onRefreshWebAuthStatus = {},
+                    onLoginWebPassword = {},
+                    onRegisterWebPassword = {},
+                    onRegisterWebUser = {},
+                    onLogoutWebSession = {},
                     onRegistroChanged = {},
                     onInformeChanged = {},
                     onProjetoChanged = {},
@@ -69,6 +97,8 @@ class CheckingComposeBaselineTest {
                     onNightModeAfterCheckoutChanged = {},
                     onNightStartChanged = {},
                     onNightEndChanged = {},
+                    onInitialMonitoringAccepted = {},
+                    onInitialMonitoringSkipped = {},
                 )
             }
         }
@@ -82,11 +112,72 @@ class CheckingComposeBaselineTest {
         composeRule.onNodeWithText("ÚLTIMO CHECK-IN").assertIsDisplayed()
         composeRule.onNodeWithText("Atividades atualizadas.").assertIsDisplayed()
 
-        composeRule.onNodeWithContentDescription("Automação por localização").performClick()
+        composeRule.onNodeWithContentDescription("Monitoramento em segundo plano").performClick()
         composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Monitoramento").assertIsDisplayed()
+        composeRule.onNodeWithText("Ativação pelo app aberto").assertIsDisplayed()
+        composeRule.onNodeWithText("As permissões são solicitadas em etapas; o Android não libera tudo em um único pedido.").assertIsDisplayed()
+        composeRule.onNodeWithText("Permitir o tempo todo").assertIsDisplayed()
+        composeRule.onNodeWithText("Última coordenada").assertIsDisplayed()
+        composeRule.onNodeWithText("Fechar").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("Automação por localização").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Automação por Localização").assertIsDisplayed()
         composeRule.onNodeWithText("Últimas Localizações").assertIsDisplayed()
         composeRule.onNodeWithText("Local Capturado").assertIsDisplayed()
+    }
+
+    @Test
+    fun firstRunShowsInitialMonitoringPrompt() {
+        var skipped = false
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            CheckingKotlinTheme {
+                CheckingApp(
+                    uiState = CheckingUiState(
+                        state = CheckingState.initial().copy(isLoading = false),
+                        initialized = true,
+                        hasPromptedInitialAndroidSetup = false,
+                    ),
+                    messages = emptyFlow(),
+                    onChaveChanged = {},
+                    onRefreshWebAuthStatus = {},
+                    onLoginWebPassword = {},
+                    onRegisterWebPassword = {},
+                    onRegisterWebUser = {},
+                    onLogoutWebSession = {},
+                    onRegistroChanged = {},
+                    onInformeChanged = {},
+                    onProjetoChanged = {},
+                    onSubmit = {},
+                    onLocationSharingChanged = {},
+                    onBackgroundAccessChanged = {},
+                    onNotificationsChanged = {},
+                    onBatteryOptimizationChanged = {},
+                    onOemBackgroundSetupChanged = {},
+                    onAutomaticCheckingChanged = {},
+                    onLocationUpdateIntervalChanged = {},
+                    onNightUpdatesChanged = {},
+                    onNightModeAfterCheckoutChanged = {},
+                    onNightStartChanged = {},
+                    onNightEndChanged = {},
+                    onInitialMonitoringAccepted = {},
+                    onInitialMonitoringSkipped = { skipped = true },
+                )
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(2_200L)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Monitoramento automático").assertIsDisplayed()
+        composeRule.onNodeWithText("Ativar monitoramento automático").assertIsDisplayed()
+        composeRule.onNodeWithText("Agora não").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue(skipped)
     }
 }

@@ -8,6 +8,7 @@ import com.br.checkingnative.domain.model.MobileStateResponse
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.domain.model.StatusTone
+import com.br.checkingnative.domain.model.WebLocationMatchResponse
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -27,6 +28,19 @@ import kotlin.math.sqrt
 data class CheckingLocationMatchResult(
     val matchedLocation: ManagedLocation?,
     val nearestWorkplaceDistanceMeters: Double?,
+)
+
+enum class WebAutomaticActivityReason {
+    MATCHED_LOCATION,
+    CHECKOUT_ZONE,
+    OUT_OF_RANGE_CHECKOUT,
+    NEARBY_WORKPLACE_CHECKIN,
+}
+
+data class WebAutomaticActivityDecision(
+    val action: RegistroType,
+    val local: String,
+    val reason: WebAutomaticActivityReason,
 )
 
 object CheckingLocationLogic {
@@ -472,6 +486,107 @@ object CheckingLocationLogic {
         }
     }
 
+    fun resolveAutomaticActionForWebLocation(
+        remoteState: MobileStateResponse,
+        locationPayload: WebLocationMatchResponse,
+        autoCheckInEnabled: Boolean,
+        autoCheckOutEnabled: Boolean,
+    ): WebAutomaticActivityDecision? {
+        val lastRecordedAction = resolveLastRecordedAction(remoteState)
+
+        if (locationPayload.matched) {
+            return resolveAutomaticActionForMatchedWebLocation(
+                remoteState = remoteState,
+                locationPayload = locationPayload,
+                lastRecordedAction = lastRecordedAction,
+                autoCheckInEnabled = autoCheckInEnabled,
+                autoCheckOutEnabled = autoCheckOutEnabled,
+            )
+        }
+
+        if (
+            shouldAttemptAutomaticOutOfRangeCheckout(
+                lastRecordedAction = lastRecordedAction,
+                nearestDistanceMeters = locationPayload.nearestWorkplaceDistanceMeters,
+                autoCheckOutEnabled = autoCheckOutEnabled,
+            )
+        ) {
+            return WebAutomaticActivityDecision(
+                action = RegistroType.CHECK_OUT,
+                local = automaticCheckoutLocation,
+                reason = WebAutomaticActivityReason.OUT_OF_RANGE_CHECKOUT,
+            )
+        }
+
+        if (
+            shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+                locationPayload = locationPayload,
+                remoteState = remoteState,
+                autoCheckInEnabled = autoCheckInEnabled,
+            )
+        ) {
+            return WebAutomaticActivityDecision(
+                action = RegistroType.CHECK_IN,
+                local = resolveAutomaticCheckInLocation(locationPayload),
+                reason = WebAutomaticActivityReason.NEARBY_WORKPLACE_CHECKIN,
+            )
+        }
+
+        return null
+    }
+
+    fun shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+        locationPayload: WebLocationMatchResponse,
+        remoteState: MobileStateResponse,
+        autoCheckInEnabled: Boolean,
+    ): Boolean {
+        if (
+            !autoCheckInEnabled ||
+            locationPayload.matched ||
+            locationPayload.status != "not_in_known_location"
+        ) {
+            return false
+        }
+
+        if (resolveLastRecordedAction(remoteState) != RegistroType.CHECK_OUT) {
+            return false
+        }
+
+        return !locationNamesEqual(
+            resolveAutomaticCheckInLocation(locationPayload),
+            resolveCurrentRecordedLocation(remoteState),
+        )
+    }
+
+    fun resolveAutomaticCheckInLocation(locationPayload: WebLocationMatchResponse): String {
+        return normalizeOptionalLocationName(locationPayload.resolvedLocal)
+            ?: normalizeOptionalLocationName(locationPayload.label)
+            ?: uncatalogedCapturedLocation
+    }
+
+    fun resolveCapturedLocationLabel(locationPayload: WebLocationMatchResponse): String? {
+        val payloadLabel = normalizeOptionalLocationName(locationPayload.label)
+        val resolvedLocal = normalizeOptionalLocationName(locationPayload.resolvedLocal)
+        if (locationPayload.matched) {
+            return payloadLabel ?: resolvedLocal
+        }
+
+        return payloadLabel ?: if (
+            locationPayload.nearestWorkplaceDistanceMeters != null &&
+            locationPayload.nearestWorkplaceDistanceMeters > outOfRangeCheckoutDistanceMeters
+        ) {
+            outsideWorkplaceCapturedLocation
+        } else {
+            uncatalogedCapturedLocation
+        }
+    }
+
+    fun isCheckoutZoneLocationName(value: String?): Boolean {
+        val normalized = normalizeComparableLocationName(value)
+        return normalized == "zona de checkout" ||
+            Regex("^zona de checkout \\d+$").matches(normalized)
+    }
+
     fun shouldAttemptAutomaticOutOfRangeCheckout(
         lastRecordedAction: RegistroType?,
         nearestDistanceMeters: Double?,
@@ -682,6 +797,81 @@ object CheckingLocationLogic {
     fun normalizeOptionalLocationName(value: String?): String? {
         val normalized = value?.trim()?.replace(Regex("\\s+"), " ")
         return normalized?.takeIf { item -> item.isNotEmpty() }
+    }
+
+    private fun resolveAutomaticActionForMatchedWebLocation(
+        remoteState: MobileStateResponse,
+        locationPayload: WebLocationMatchResponse,
+        lastRecordedAction: RegistroType?,
+        autoCheckInEnabled: Boolean,
+        autoCheckOutEnabled: Boolean,
+    ): WebAutomaticActivityDecision? {
+        val resolvedLocal = normalizeOptionalLocationName(locationPayload.resolvedLocal)
+        if (isCheckoutZoneLocationName(resolvedLocal)) {
+            if (!autoCheckOutEnabled || lastRecordedAction != RegistroType.CHECK_IN) {
+                return null
+            }
+            return WebAutomaticActivityDecision(
+                action = RegistroType.CHECK_OUT,
+                local = resolvedLocal ?: checkoutZoneCapturedLocation,
+                reason = WebAutomaticActivityReason.CHECKOUT_ZONE,
+            )
+        }
+
+        if (!autoCheckInEnabled) {
+            return null
+        }
+
+        val automaticCheckInLocation = resolveAutomaticCheckInLocation(locationPayload)
+        if (
+            resolvedLocal != null &&
+            locationNamesEqual(resolvedLocal, resolveCurrentRecordedLocation(remoteState))
+        ) {
+            return null
+        }
+
+        if (lastRecordedAction != RegistroType.CHECK_IN) {
+            return WebAutomaticActivityDecision(
+                action = RegistroType.CHECK_IN,
+                local = automaticCheckInLocation,
+                reason = WebAutomaticActivityReason.MATCHED_LOCATION,
+            )
+        }
+
+        return if (
+            !locationNamesEqual(
+                    resolvedLocal,
+                    resolveRecordedCheckInLocation(
+                        remoteState = remoteState,
+                        fallbackLocation = null,
+                    ),
+                )
+        ) {
+            WebAutomaticActivityDecision(
+                action = RegistroType.CHECK_IN,
+                local = automaticCheckInLocation,
+                reason = WebAutomaticActivityReason.MATCHED_LOCATION,
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun resolveCurrentRecordedLocation(remoteState: MobileStateResponse): String? {
+        return normalizeOptionalLocationName(remoteState.currentLocal)
+    }
+
+    private fun locationNamesEqual(first: String?, second: String?): Boolean {
+        val firstNormalized = normalizeComparableLocationName(first)
+        val secondNormalized = normalizeComparableLocationName(second)
+        return firstNormalized.isNotEmpty() && firstNormalized == secondNormalized
+    }
+
+    private fun normalizeComparableLocationName(value: String?): String {
+        return normalizeOptionalLocationName(value)
+            ?.lowercase()
+            ?.replace("-", "")
+            .orEmpty()
     }
 
     private fun parseRemoteAction(value: String?): RegistroType? {

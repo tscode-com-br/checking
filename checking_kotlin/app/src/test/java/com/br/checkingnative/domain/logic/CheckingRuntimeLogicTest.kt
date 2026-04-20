@@ -136,6 +136,49 @@ class CheckingRuntimeLogicTest {
     }
 
     @Test
+    fun androidGuidanceExplainsBackgroundAccessSettingsRequirement() {
+        val guidance = CheckingRuntimeLogic.resolveAndroidLimitationGuidance(
+            state = CheckingState.initial(),
+            permissionSettings = CheckingPermissionSettingsState(
+                locationServiceEnabled = true,
+                preciseLocationGranted = true,
+                backgroundAccessEnabled = false,
+                backgroundAccessRequiresSettings = true,
+                notificationsEnabled = true,
+                batteryOptimizationIgnored = true,
+                isRefreshing = false,
+            ),
+        )
+
+        assertTrue(guidance.blocking)
+        assertEquals("Permitir o tempo todo", guidance.title)
+        assertTrue(guidance.message.contains("configurações do app"))
+    }
+
+    @Test
+    fun androidGuidanceMentionsVisibleStartRestrictionWhenConfigured() {
+        val guidance = CheckingRuntimeLogic.resolveAndroidLimitationGuidance(
+            state = CheckingState.initial().copy(
+                locationSharingEnabled = true,
+                autoCheckInEnabled = true,
+            ),
+            permissionSettings = CheckingPermissionSettingsState(
+                locationServiceEnabled = true,
+                preciseLocationGranted = true,
+                backgroundAccessEnabled = true,
+                notificationsEnabled = true,
+                batteryOptimizationIgnored = false,
+                foregroundServiceStartRequiresVisibleApp = true,
+                isRefreshing = false,
+            ),
+        )
+
+        assertFalse(guidance.blocking)
+        assertEquals("Ativação pelo app aberto", guidance.title)
+        assertTrue(guidance.message.contains("app está aberto"))
+    }
+
+    @Test
     fun submitRefreshDecision_matchesFlutterAutomationRules() {
         assertFalse(
             CheckingRuntimeLogic.shouldRefreshLocationTrackingAfterSubmit(

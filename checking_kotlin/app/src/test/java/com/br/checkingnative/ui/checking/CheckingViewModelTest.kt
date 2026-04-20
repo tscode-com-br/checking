@@ -11,10 +11,12 @@ import com.br.checkingnative.data.local.repository.ManagedLocationRepository
 import com.br.checkingnative.data.migration.LegacyFlutterMigrationReport
 import com.br.checkingnative.data.preferences.CheckingStateStorageSnapshot
 import com.br.checkingnative.data.preferences.CheckingStateStore
-import com.br.checkingnative.data.remote.CheckingApiService
+import com.br.checkingnative.data.preferences.WebSessionSnapshot
+import com.br.checkingnative.data.preferences.WebSessionStore
 import com.br.checkingnative.data.remote.CheckingHttpRequest
 import com.br.checkingnative.data.remote.CheckingHttpResponse
 import com.br.checkingnative.data.remote.CheckingHttpTransport
+import com.br.checkingnative.data.remote.WebCheckApiService
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
 import com.br.checkingnative.domain.model.CheckingState
 import com.br.checkingnative.domain.model.StatusTone
@@ -77,7 +79,7 @@ class CheckingViewModelTest {
 
         assertEquals("HR70", fixture.viewModel.uiState.value.state.chave)
         assertEquals(
-            "https://tscode.com.br/api/mobile/state?chave=HR70",
+            "https://tscode.com.br/api/web/auth/status?chave=HR70",
             fixture.transport.requests.single().url,
         )
     }
@@ -90,8 +92,25 @@ class CheckingViewModelTest {
             statusCode = 200,
             body = """
                 {
-                  "found": false,
-                  "chave": "AB12"
+                  "found": true,
+                  "chave": "AB12",
+                  "has_password": true,
+                  "authenticated": true,
+                  "message": "Aplicacao liberada."
+                }
+            """.trimIndent(),
+            headers = mapOf("Set-Cookie" to listOf("session=viewmodel; path=/; httponly")),
+        )
+        fixture.transport.enqueueResponse(
+            statusCode = 200,
+            body = """
+                {
+                  "found": true,
+                  "chave": "AB12",
+                  "projeto": "P80",
+                  "current_action": "checkout",
+                  "has_current_day_checkin": true,
+                  "last_checkout_at": "2026-04-19T07:00:00Z"
                 }
             """.trimIndent(),
         )
@@ -173,9 +192,11 @@ class CheckingViewModelTest {
             cacheRepository = cacheRepository,
         )
         val transport = ViewModelFakeCheckingHttpTransport()
+        val webSessionStore = ViewModelFakeWebSessionStore()
         val controller = CheckingController(
             checkingStateStore = stateStore,
-            apiService = CheckingApiService(transport),
+            webApiService = WebCheckApiService(transport, webSessionStore),
+            webSessionStore = webSessionStore,
             locationRepository = locationRepository,
             backgroundSnapshotRepository = CheckingBackgroundSnapshotRepository(),
         )
@@ -305,7 +326,24 @@ private class ViewModelFakeCheckingHttpTransport : CheckingHttpTransport {
     fun enqueueResponse(
         statusCode: Int,
         body: String,
+        headers: Map<String, List<String>> = emptyMap(),
     ) {
-        queuedResults.addLast(Result.success(CheckingHttpResponse(statusCode, body)))
+        queuedResults.addLast(Result.success(CheckingHttpResponse(statusCode, body, headers)))
+    }
+}
+
+private class ViewModelFakeWebSessionStore(
+    initialCookieHeader: String = "",
+) : WebSessionStore {
+    private val snapshot = MutableStateFlow(WebSessionSnapshot(initialCookieHeader))
+
+    override val webSessionSnapshot: MutableStateFlow<WebSessionSnapshot> = snapshot
+
+    override suspend fun saveWebSessionCookieHeader(cookieHeader: String) {
+        snapshot.value = WebSessionSnapshot(cookieHeader.trim())
+    }
+
+    override suspend fun clearWebSessionCookie() {
+        snapshot.value = WebSessionSnapshot()
     }
 }

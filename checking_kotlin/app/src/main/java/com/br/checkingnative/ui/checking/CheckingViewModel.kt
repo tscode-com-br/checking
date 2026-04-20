@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.CheckingOemBackgroundSetupResult
 import com.br.checkingnative.domain.model.CheckingPermissionSnapshot
+import com.br.checkingnative.domain.model.CheckingWebRegistrationInput
 import com.br.checkingnative.domain.model.ProjetoType
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.data.remote.CheckingApiException
@@ -66,7 +67,62 @@ class CheckingViewModel @Inject constructor(
     fun refreshLocationsCatalog() {
         viewModelScope.launch {
             val count = controller.refreshLocationsCatalog(silent = true, updateStatus = true)
-            emitMessage("$count localizações atualizadas no aplicativo.")
+            emitMessage("$count localizações disponíveis na API web.")
+        }
+    }
+
+    fun refreshWebAuthStatus() {
+        viewModelScope.launch {
+            emitMessage(
+                controller.refreshWebAuthStatus(
+                    updateStatus = true,
+                    silent = true,
+                ).message,
+            )
+        }
+    }
+
+    fun loginWebPassword(password: String) {
+        viewModelScope.launch {
+            val result = runCatching {
+                controller.loginWebPassword(password)
+            }
+            emitMessage(
+                result.getOrElse { error -> userMessage(error) },
+            )
+        }
+    }
+
+    fun registerWebPassword(password: String) {
+        viewModelScope.launch {
+            val result = runCatching {
+                controller.registerWebPassword(password)
+            }
+            emitMessage(
+                result.getOrElse { error -> userMessage(error) },
+            )
+        }
+    }
+
+    fun registerWebUser(input: CheckingWebRegistrationInput) {
+        viewModelScope.launch {
+            val result = runCatching {
+                controller.registerWebUser(input)
+            }
+            emitMessage(
+                result.getOrElse { error -> userMessage(error) },
+            )
+        }
+    }
+
+    fun logoutWebSession() {
+        viewModelScope.launch {
+            val result = runCatching {
+                controller.logoutWebSession()
+            }
+            emitMessage(
+                result.getOrElse { error -> userMessage(error) },
+            )
         }
     }
 
@@ -111,6 +167,13 @@ class CheckingViewModel @Inject constructor(
 
     fun setPermissionSettingsRefreshing(value: Boolean) {
         controller.setPermissionSettingsRefreshing(value)
+    }
+
+    fun markInitialAndroidSetupPrompted() {
+        viewModelScope.launch {
+            controller.initialize()
+            controller.markInitialAndroidSetupPrompted()
+        }
     }
 
     fun setBackgroundAccessEnabled(

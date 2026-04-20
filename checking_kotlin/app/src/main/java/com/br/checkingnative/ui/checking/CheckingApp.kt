@@ -37,6 +37,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -81,6 +82,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,6 +93,8 @@ import com.br.checkingnative.domain.logic.CheckingLocationLogic
 import com.br.checkingnative.domain.logic.CheckingRuntimeLogic
 import com.br.checkingnative.domain.model.CheckingPermissionSettingsState
 import com.br.checkingnative.domain.model.CheckingState
+import com.br.checkingnative.domain.model.CheckingWebAuthState
+import com.br.checkingnative.domain.model.CheckingWebRegistrationInput
 import com.br.checkingnative.domain.model.InformeType
 import com.br.checkingnative.domain.model.LocationFetchEntry
 import com.br.checkingnative.domain.model.ProjetoType
@@ -119,6 +124,11 @@ fun CheckingApp(
     uiState: CheckingUiState,
     messages: Flow<String>,
     onChaveChanged: (String) -> Unit,
+    onRefreshWebAuthStatus: () -> Unit,
+    onLoginWebPassword: (String) -> Unit,
+    onRegisterWebPassword: (String) -> Unit,
+    onRegisterWebUser: (CheckingWebRegistrationInput) -> Unit,
+    onLogoutWebSession: () -> Unit,
     onRegistroChanged: (RegistroType) -> Unit,
     onInformeChanged: (InformeType) -> Unit,
     onProjetoChanged: (ProjetoType) -> Unit,
@@ -134,16 +144,34 @@ fun CheckingApp(
     onNightModeAfterCheckoutChanged: (Boolean) -> Unit,
     onNightStartChanged: (Int) -> Unit,
     onNightEndChanged: (Int) -> Unit,
+    onInitialMonitoringAccepted: () -> Unit,
+    onInitialMonitoringSkipped: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showPresentation by rememberSaveable { mutableStateOf(true) }
     val snackbarHostState = remember { SnackbarHostState() }
     var showLocationSheet by remember { mutableStateOf(false) }
+    var showMonitoringSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showInitialMonitoringPrompt by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         delay(PRESENTATION_DURATION_MILLIS)
         showPresentation = false
+    }
+
+    LaunchedEffect(
+        showPresentation,
+        uiState.initialized,
+        uiState.hasPromptedInitialAndroidSetup,
+    ) {
+        if (
+            !showPresentation &&
+            uiState.initialized &&
+            !uiState.hasPromptedInitialAndroidSetup
+        ) {
+            showInitialMonitoringPrompt = true
+        }
     }
 
     LaunchedEffect(messages) {
@@ -180,8 +208,14 @@ fun CheckingApp(
             CheckingMainContent(
                 uiState = uiState,
                 onOpenLocationSheet = { showLocationSheet = true },
+                onOpenMonitoringSheet = { showMonitoringSheet = true },
                 onOpenSettingsSheet = { showSettingsSheet = true },
                 onChaveChanged = onChaveChanged,
+                onRefreshWebAuthStatus = onRefreshWebAuthStatus,
+                onLoginWebPassword = onLoginWebPassword,
+                onRegisterWebPassword = onRegisterWebPassword,
+                onRegisterWebUser = onRegisterWebUser,
+                onLogoutWebSession = onLogoutWebSession,
                 onRegistroChanged = onRegistroChanged,
                 onInformeChanged = onInformeChanged,
                 onProjetoChanged = onProjetoChanged,
@@ -207,6 +241,39 @@ fun CheckingApp(
                 onClose = { showLocationSheet = false },
             )
         }
+    }
+
+    if (showMonitoringSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showMonitoringSheet = false },
+            containerColor = CheckingSurface,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            dragHandle = { SheetHandle() },
+        ) {
+            MonitoringSheet(
+                uiState = uiState,
+                onLocationSharingChanged = onLocationSharingChanged,
+                onBackgroundAccessChanged = onBackgroundAccessChanged,
+                onNotificationsChanged = onNotificationsChanged,
+                onBatteryOptimizationChanged = onBatteryOptimizationChanged,
+                onOemBackgroundSetupChanged = onOemBackgroundSetupChanged,
+                onAutomaticCheckingChanged = onAutomaticCheckingChanged,
+                onClose = { showMonitoringSheet = false },
+            )
+        }
+    }
+
+    if (showInitialMonitoringPrompt) {
+        InitialMonitoringSetupDialog(
+            onAccept = {
+                showInitialMonitoringPrompt = false
+                onInitialMonitoringAccepted()
+            },
+            onSkip = {
+                showInitialMonitoringPrompt = false
+                onInitialMonitoringSkipped()
+            },
+        )
     }
 
     if (showSettingsSheet) {
@@ -312,8 +379,14 @@ private fun SheetHandle() {
 private fun CheckingMainContent(
     uiState: CheckingUiState,
     onOpenLocationSheet: () -> Unit,
+    onOpenMonitoringSheet: () -> Unit,
     onOpenSettingsSheet: () -> Unit,
     onChaveChanged: (String) -> Unit,
+    onRefreshWebAuthStatus: () -> Unit,
+    onLoginWebPassword: (String) -> Unit,
+    onRegisterWebPassword: (String) -> Unit,
+    onRegisterWebUser: (CheckingWebRegistrationInput) -> Unit,
+    onLogoutWebSession: () -> Unit,
     onRegistroChanged: (RegistroType) -> Unit,
     onInformeChanged: (InformeType) -> Unit,
     onProjetoChanged: (ProjetoType) -> Unit,
@@ -341,6 +414,7 @@ private fun CheckingMainContent(
                 Spacer(modifier = Modifier.height(20.dp))
                 Header(
                     onOpenLocationSheet = onOpenLocationSheet,
+                    onOpenMonitoringSheet = onOpenMonitoringSheet,
                     onOpenSettingsSheet = onOpenSettingsSheet,
                 )
                 HistorySection(state = state)
@@ -350,6 +424,16 @@ private fun CheckingMainContent(
                 ChaveInputField(
                     value = state.chave,
                     onValueChange = onChaveChanged,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                WebAccessPanel(
+                    authState = uiState.webAuth,
+                    selectedProject = state.projeto,
+                    onRefresh = onRefreshWebAuthStatus,
+                    onLogin = onLoginWebPassword,
+                    onRegisterPassword = onRegisterWebPassword,
+                    onRegisterUser = onRegisterWebUser,
+                    onLogout = onLogoutWebSession,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 RadioGroupSelector(
@@ -383,7 +467,8 @@ private fun CheckingMainContent(
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = onSubmit,
-                enabled = CheckingController.isRegisterActionInteractive(state),
+                enabled = CheckingController.isRegisterActionInteractive(state) &&
+                    uiState.webAuth.authenticated,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -431,6 +516,7 @@ private fun TopLogo() {
 @Composable
 private fun Header(
     onOpenLocationSheet: () -> Unit,
+    onOpenMonitoringSheet: () -> Unit,
     onOpenSettingsSheet: () -> Unit,
 ) {
     Column(
@@ -450,6 +536,16 @@ private fun Header(
                 overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HeaderIconButton(
+                    onClick = onOpenMonitoringSheet,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MyLocation,
+                        contentDescription = "Monitoramento em segundo plano",
+                        tint = CheckingSuccess,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
                 HeaderIconButton(
                     onClick = onOpenLocationSheet,
                 ) {
@@ -627,6 +723,272 @@ private fun ChaveInputField(
 }
 
 @Composable
+private fun WebAccessPanel(
+    authState: CheckingWebAuthState,
+    selectedProject: ProjetoType,
+    onRefresh: () -> Unit,
+    onLogin: (String) -> Unit,
+    onRegisterPassword: (String) -> Unit,
+    onRegisterUser: (CheckingWebRegistrationInput) -> Unit,
+    onLogout: () -> Unit,
+) {
+    var password by rememberSaveable(authState.chave, authState.authenticated) {
+        mutableStateOf("")
+    }
+    var confirmPassword by rememberSaveable(authState.chave, authState.authenticated) {
+        mutableStateOf("")
+    }
+    var name by rememberSaveable(authState.chave) { mutableStateOf("") }
+    var address by rememberSaveable(authState.chave) { mutableStateOf("") }
+    var zip by rememberSaveable(authState.chave) { mutableStateOf("") }
+    var email by rememberSaveable(authState.chave) { mutableStateOf("") }
+    var registrationProject by rememberSaveable(authState.chave) {
+        mutableStateOf(selectedProject)
+    }
+    val busy = authState.isChecking || authState.isAuthenticating
+
+    GroupBox(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(12.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Acesso Web",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = CheckingText,
+                    modifier = Modifier.weight(1f),
+                )
+                WebAuthStatusPill(authState)
+            }
+            Text(
+                text = authState.message.ifBlank {
+                    "Informe a chave para verificar o acesso web."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (authState.authenticated) CheckingSuccess else CheckingMuted,
+            )
+
+            when {
+                authState.authenticated -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = onRefresh,
+                            enabled = !busy,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Atualizar")
+                        }
+                        OutlinedButton(
+                            onClick = onLogout,
+                            enabled = !busy,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Sair")
+                        }
+                    }
+                }
+                authState.chave.length != 4 -> {
+                    Button(
+                        onClick = onRefresh,
+                        enabled = false,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("VERIFICAR ACESSO")
+                    }
+                }
+                authState.needsLogin -> {
+                    AccessTextField(
+                        label = "Senha",
+                        value = password,
+                        onValueChange = { password = it },
+                        password = true,
+                    )
+                    Button(
+                        onClick = { onLogin(password) },
+                        enabled = !busy,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        AuthButtonContent(busy = busy, label = "ENTRAR")
+                    }
+                }
+                authState.needsPasswordRegistration -> {
+                    AccessTextField(
+                        label = "Criar senha",
+                        value = password,
+                        onValueChange = { password = it },
+                        password = true,
+                    )
+                    Button(
+                        onClick = { onRegisterPassword(password) },
+                        enabled = !busy,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        AuthButtonContent(busy = busy, label = "CRIAR SENHA")
+                    }
+                }
+                authState.needsUserRegistration -> {
+                    AccessTextField("Nome", name, { name = it })
+                    AccessTextField(
+                        label = "E-mail",
+                        value = email,
+                        onValueChange = { email = it },
+                        keyboardType = KeyboardType.Email,
+                    )
+                    AccessTextField("Endereço", address, { address = it })
+                    AccessTextField(
+                        label = "ZIP/Código postal",
+                        value = zip,
+                        onValueChange = { zip = it },
+                        keyboardType = KeyboardType.Ascii,
+                    )
+                    RadioGroupSelector(
+                        value = registrationProject,
+                        options = ProjetoType.entries,
+                        label = ProjetoType::apiValue,
+                        onValueChange = { registrationProject = it },
+                    )
+                    AccessTextField(
+                        label = "Senha",
+                        value = password,
+                        onValueChange = { password = it },
+                        password = true,
+                    )
+                    AccessTextField(
+                        label = "Confirmar senha",
+                        value = confirmPassword,
+                        onValueChange = { confirmPassword = it },
+                        password = true,
+                    )
+                    Button(
+                        onClick = {
+                            onRegisterUser(
+                                CheckingWebRegistrationInput(
+                                    nome = name,
+                                    projeto = registrationProject,
+                                    endRua = address,
+                                    zip = zip,
+                                    email = email,
+                                    senha = password,
+                                    confirmarSenha = confirmPassword,
+                                ),
+                            )
+                        },
+                        enabled = !busy,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        AuthButtonContent(busy = busy, label = "CADASTRAR")
+                    }
+                }
+                else -> {
+                    Button(
+                        onClick = onRefresh,
+                        enabled = !busy,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        AuthButtonContent(busy = busy, label = "VERIFICAR ACESSO")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WebAuthStatusPill(authState: CheckingWebAuthState) {
+    val label = when {
+        authState.authenticated -> "ATIVO"
+        authState.isChecking || authState.isAuthenticating -> "..."
+        authState.hasStoredSession -> "SALVO"
+        else -> "PEND."
+    }
+    val color = if (authState.authenticated) CheckingSuccess else CheckingWarning
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = color.copy(alpha = 0.12f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f)),
+    ) {
+        Text(
+            text = label,
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .widthIn(min = 58.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun AccessTextField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    password: Boolean = false,
+) {
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text(label) },
+        visualTransformation = if (password) {
+            PasswordVisualTransformation()
+        } else {
+            VisualTransformation.None
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        shape = RoundedCornerShape(12.dp),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = CheckingInputFill,
+            unfocusedContainerColor = CheckingInputFill,
+            disabledContainerColor = CheckingInputFill,
+            cursorColor = MaterialTheme.colorScheme.primary,
+            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+            unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent,
+        ),
+    )
+}
+
+@Composable
+private fun AuthButtonContent(
+    busy: Boolean,
+    label: String,
+) {
+    if (busy) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    } else {
+        Text(
+            text = label,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
 private fun <T> RadioGroupSelector(
     value: T,
     options: List<T>,
@@ -745,6 +1107,411 @@ private fun LocationAutomationSheet(
             onDismiss = { showHistoryDialog = false },
         )
     }
+}
+
+@Composable
+private fun MonitoringSheet(
+    uiState: CheckingUiState,
+    onLocationSharingChanged: (Boolean) -> Unit,
+    onBackgroundAccessChanged: (Boolean) -> Unit,
+    onNotificationsChanged: (Boolean) -> Unit,
+    onBatteryOptimizationChanged: (Boolean) -> Unit,
+    onOemBackgroundSetupChanged: (Boolean) -> Unit,
+    onAutomaticCheckingChanged: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    val state = uiState.state
+    val permissionSettings = uiState.permissionSettings
+    val automaticEnabled = CheckingRuntimeLogic.isAutomaticCheckingEnabledInUi(state)
+    val androidGuidance = CheckingRuntimeLogic.resolveAndroidLimitationGuidance(
+        state = state,
+        permissionSettings = permissionSettings,
+    )
+    val backgroundConfigured = CheckingRuntimeLogic.isConfiguredToKeepRunningInBackground(
+        state = state,
+        permissionSettings = permissionSettings,
+        backgroundServiceSupported = permissionSettings.backgroundServiceSupported,
+    )
+    val coreReady = permissionSettings.locationServiceEnabled &&
+        permissionSettings.preciseLocationGranted &&
+        permissionSettings.backgroundAccessEnabled &&
+        permissionSettings.notificationsEnabled &&
+        uiState.webAuth.authenticated &&
+        state.locationSharingEnabled &&
+        automaticEnabled
+    val firstLocationEntry = state.locationFetchHistory.firstOrNull()
+
+    SheetContent {
+        SheetTitle("Monitoramento")
+        GroupBox {
+            Text(
+                text = androidGuidance.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (androidGuidance.blocking) CheckingWarning else CheckingSuccess,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = androidGuidance.message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = CheckingText,
+            )
+            AndroidLimitationDetailList(permissionSettings)
+        }
+        GroupBox {
+            MonitoringChecklistRow(
+                title = "Serviço de localização",
+                detail = if (permissionSettings.locationServiceEnabled) {
+                    "Ativo no Android"
+                } else {
+                    "Ative a localização do aparelho"
+                },
+                ready = permissionSettings.locationServiceEnabled,
+                actionLabel = if (permissionSettings.locationServiceEnabled) null else "Abrir",
+                onAction = if (permissionSettings.locationServiceEnabled) {
+                    null
+                } else {
+                    { onLocationSharingChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Localização precisa",
+                detail = if (permissionSettings.preciseLocationGranted) {
+                    "Permissão concedida"
+                } else {
+                    "Necessária para comparar coordenadas"
+                },
+                ready = permissionSettings.preciseLocationGranted,
+                actionLabel = if (permissionSettings.preciseLocationGranted) null else "Permitir",
+                onAction = if (permissionSettings.preciseLocationGranted) {
+                    null
+                } else {
+                    { onLocationSharingChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Permitir o tempo todo",
+                detail = if (permissionSettings.backgroundAccessEnabled) {
+                    "Acesso em segundo plano liberado"
+                } else {
+                    "Obrigatório para funcionar com o app fechado"
+                },
+                ready = permissionSettings.backgroundAccessEnabled,
+                actionLabel = if (permissionSettings.backgroundAccessEnabled) null else "Ajustar",
+                onAction = if (permissionSettings.backgroundAccessEnabled) {
+                    null
+                } else {
+                    { onBackgroundAccessChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Notificações",
+                detail = if (permissionSettings.notificationsEnabled) {
+                    "Notificação persistente permitida"
+                } else {
+                    "Necessária para manter o serviço ativo"
+                },
+                ready = permissionSettings.notificationsEnabled,
+                actionLabel = if (permissionSettings.notificationsEnabled) null else "Permitir",
+                onAction = if (permissionSettings.notificationsEnabled) {
+                    null
+                } else {
+                    { onNotificationsChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Bateria sem restrição",
+                detail = if (permissionSettings.batteryOptimizationIgnored) {
+                    "O Android não deve pausar o app"
+                } else {
+                    "Reduz pausas durante tela bloqueada"
+                },
+                ready = permissionSettings.batteryOptimizationIgnored,
+                actionLabel = if (permissionSettings.batteryOptimizationIgnored) null else "Ajustar",
+                onAction = if (permissionSettings.batteryOptimizationIgnored) {
+                    null
+                } else {
+                    { onBatteryOptimizationChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Auto-start/OEM",
+                detail = if (state.oemBackgroundSetupEnabled) {
+                    "Orientação do fabricante revisada"
+                } else {
+                    "Importante em Samsung, Motorola e Xiaomi"
+                },
+                ready = state.oemBackgroundSetupEnabled,
+                actionLabel = if (state.oemBackgroundSetupEnabled) null else "Revisar",
+                onAction = if (state.oemBackgroundSetupEnabled || !state.canEnableLocationSharing) {
+                    null
+                } else {
+                    { onOemBackgroundSetupChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Sessão web",
+                detail = if (uiState.webAuth.authenticated) {
+                    "Autenticada para API em segundo plano"
+                } else {
+                    "Entre com senha na tela principal"
+                },
+                ready = uiState.webAuth.authenticated,
+                actionLabel = null,
+                onAction = null,
+            )
+            MonitoringChecklistRow(
+                title = "Busca por coordenadas",
+                detail = if (state.locationSharingEnabled) {
+                    "Captura de localização habilitada"
+                } else {
+                    "Inicia o fluxo de permissões necessárias"
+                },
+                ready = state.locationSharingEnabled,
+                actionLabel = if (state.locationSharingEnabled) null else "Ativar",
+                onAction = if (state.locationSharingEnabled) {
+                    null
+                } else {
+                    { onLocationSharingChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Check-in/out automático",
+                detail = if (automaticEnabled) {
+                    "Automação habilitada"
+                } else {
+                    "Liga o envio automático após localizar"
+                },
+                ready = automaticEnabled,
+                actionLabel = if (automaticEnabled) null else "Ativar",
+                onAction = if (!state.locationSharingEnabled || automaticEnabled) {
+                    null
+                } else {
+                    { onAutomaticCheckingChanged(true) }
+                },
+            )
+            MonitoringChecklistRow(
+                title = "Segundo plano",
+                detail = if (backgroundConfigured) {
+                    "Pronto para serviço nativo"
+                } else {
+                    "Ainda há pendências acima"
+                },
+                ready = backgroundConfigured,
+                actionLabel = null,
+                onAction = null,
+            )
+        }
+
+        GroupBox {
+            DetailRow(
+                "Última coordenada",
+                firstLocationEntry?.let(::formatCoordinatePair) ?: "--",
+            )
+            DetailRow("Última atualização", formatDetailedInstant(state.lastLocationUpdateAt))
+            DetailRow(
+                "Histórico/API",
+                if (uiState.hasHydratedHistoryForCurrentKey) {
+                    "Sincronizado"
+                } else {
+                    "Aguardando sincronização"
+                },
+            )
+            DetailRow("Último Check-In", formatDetailedInstant(state.lastCheckIn))
+            DetailRow("Último Check-Out", formatDetailedInstant(state.lastCheckOut))
+        }
+
+        Button(
+            onClick = { onLocationSharingChanged(true) },
+            enabled = !permissionSettings.isRefreshing && !coreReady,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (permissionSettings.isRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            } else {
+                Text(
+                    text = if (coreReady) {
+                        "MONITORAMENTO ATIVO"
+                    } else {
+                        "ATIVAR MONITORAMENTO"
+                    },
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        DangerCloseButton(onClose)
+    }
+}
+
+@Composable
+private fun AndroidLimitationDetailList(
+    permissionSettings: CheckingPermissionSettingsState,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        AndroidLimitationDetail(
+            text = "As permissões são solicitadas em etapas; o Android não libera tudo em um único pedido.",
+        )
+        if (permissionSettings.backgroundAccessRequiresSettings) {
+            AndroidLimitationDetail(
+                text = "Em Android 11+, use a tela do app para selecionar Localização e Permitir o tempo todo.",
+            )
+        }
+        if (permissionSettings.foregroundServiceStartRequiresVisibleApp) {
+            AndroidLimitationDetail(
+                text = "Em Android 12+, ative o monitoramento com o app aberto para iniciar o serviço corretamente.",
+            )
+        }
+        if (permissionSettings.foregroundServiceLocationRequiresRuntimePermission) {
+            AndroidLimitationDetail(
+                text = "Em Android 14+, o serviço de localização só inicia depois que a permissão de localização estiver concedida.",
+            )
+        }
+        AndroidLimitationDetail(
+            text = "Fabricantes podem pausar apps em segundo plano; mantenha bateria sem restrição e revise auto-start/OEM.",
+        )
+    }
+}
+
+@Composable
+private fun AndroidLimitationDetail(text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = "•",
+            color = CheckingMuted,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            text = text,
+            modifier = Modifier.weight(1f),
+            color = CheckingMuted,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun MonitoringChecklistRow(
+    title: String,
+    detail: String,
+    ready: Boolean,
+    actionLabel: String?,
+    onAction: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 54.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = CheckingText,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = CheckingMuted,
+            )
+        }
+        MonitoringStatusPill(ready = ready)
+        if (actionLabel != null && onAction != null) {
+            TextButton(
+                onClick = onAction,
+                modifier = Modifier.widthIn(min = 72.dp),
+            ) {
+                Text(
+                    text = actionLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonitoringStatusPill(ready: Boolean) {
+    val color = if (ready) CheckingSuccess else CheckingWarning
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = color.copy(alpha = 0.12f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f)),
+    ) {
+        Text(
+            text = if (ready) "OK" else "PEND.",
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .widthIn(min = 50.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun InitialMonitoringSetupDialog(
+    onAccept: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = {
+            Text(
+                text = "Monitoramento automático",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "O Checking pode usar a localização em segundo plano para buscar coordenadas, comparar com os locais cadastrados e realizar check-in/check-out automático mesmo com o app fechado.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CheckingText,
+                )
+                Text(
+                    text = "O Android solicitará algumas permissões em etapas. Em alguns aparelhos, será necessário revisar a bateria e o auto-start nas configurações.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CheckingMuted,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onAccept,
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    text = "Ativar monitoramento automático",
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) {
+                Text("Agora não")
+            }
+        },
+        containerColor = CheckingSurface,
+    )
 }
 
 @Composable

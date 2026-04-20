@@ -12,7 +12,9 @@ import com.br.checkingnative.data.local.repository.ManagedLocationRepository
 import com.br.checkingnative.data.migration.LegacyFlutterMigrationReport
 import com.br.checkingnative.data.preferences.CheckingStateStorageSnapshot
 import com.br.checkingnative.data.preferences.CheckingStateStore
-import com.br.checkingnative.data.remote.CheckingApiService
+import com.br.checkingnative.data.preferences.WebSessionSnapshot
+import com.br.checkingnative.data.preferences.WebSessionStore
+import com.br.checkingnative.data.remote.WebCheckApiService
 import com.br.checkingnative.data.remote.CheckingHttpRequest
 import com.br.checkingnative.data.remote.CheckingHttpResponse
 import com.br.checkingnative.data.remote.CheckingHttpTransport
@@ -35,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -73,6 +76,21 @@ class CheckingControllerTest {
     }
 
     @Test
+    fun markInitialAndroidSetupPrompted_updatesUiAndStorageFlag() = runBlocking {
+        val fixture = createFixture("controller_initial_setup.preferences_pb")
+        fixture.controller.initialize()
+
+        assertFalse(fixture.controller.uiState.value.hasPromptedInitialAndroidSetup)
+
+        fixture.controller.markInitialAndroidSetupPrompted()
+
+        assertTrue(fixture.controller.uiState.value.hasPromptedInitialAndroidSetup)
+        assertTrue(
+            fixture.stateStore.storageSnapshot.first().hasPromptedInitialAndroidSetup,
+        )
+    }
+
+    @Test
     fun updateChave_normalizesValueAndClearsCurrentHistory() = runBlocking {
         val fixture = createFixture("controller_key.preferences_pb")
         fixture.stateStore.saveState(
@@ -103,6 +121,97 @@ class CheckingControllerTest {
         assertNull(state.lastDetectedLocation)
         assertNull(state.lastLocationUpdateAt)
         assertFalse(fixture.controller.uiState.value.hasHydratedHistoryForCurrentKey)
+    }
+
+    @Test
+    fun loginWebPassword_persistsWebSessionAndHydratesHistoryForBackground() = runBlocking {
+        val fixture = createFixture("controller_web_login.preferences_pb")
+        fixture.transport.enqueueResponse(
+            statusCode = 200,
+            body = """
+                {
+                  "ok": true,
+                  "authenticated": true,
+                  "has_password": true,
+                  "message": "Autenticacao concluida."
+                }
+            """.trimIndent(),
+            headers = mapOf("Set-Cookie" to listOf("session=login-cookie; path=/; httponly")),
+        )
+        fixture.transport.enqueueResponse(
+            statusCode = 200,
+            body = """
+                {
+                  "found": true,
+                  "chave": "AB12",
+                  "projeto": "P80",
+                  "current_action": "checkout",
+                  "current_local": "Fora do Local de Trabalho",
+                  "has_current_day_checkin": true,
+                  "last_checkout_at": "2026-04-18T18:00:00Z"
+                }
+            """.trimIndent(),
+        )
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                chave = "AB12",
+                isLoading = false,
+            ),
+        )
+        fixture.controller.initialize()
+
+        val message = fixture.controller.loginWebPassword("1234")
+
+        assertEquals("Autenticacao concluida.", message)
+        assertEquals("session=login-cookie", fixture.webSessionStore.webSessionSnapshot.value.cookieHeader)
+        assertEquals("https://tscode.com.br/api/web/auth/login", fixture.transport.requests[0].url)
+        assertEquals("https://tscode.com.br/api/web/check/state?chave=AB12", fixture.transport.requests[1].url)
+        assertEquals("session=login-cookie", fixture.transport.requests[1].headers["Cookie"])
+        assertTrue(fixture.controller.uiState.value.webAuth.authenticated)
+        assertTrue(fixture.controller.uiState.value.webAuth.hasStoredSession)
+        assertEquals(Instant.parse("2026-04-18T18:00:00Z"), fixture.controller.uiState.value.state.lastCheckOut)
+    }
+
+    @Test
+    fun logoutWebSession_clearsCookieAndStopsBackgroundAutomation() = runBlocking {
+        val fixture = createFixture("controller_web_logout.preferences_pb")
+        fixture.webSessionStore.saveWebSessionCookieHeader("session=old")
+        fixture.transport.enqueueResponse(
+            statusCode = 200,
+            body = """
+                {
+                  "ok": true,
+                  "authenticated": false,
+                  "has_password": true,
+                  "message": "Sessao encerrada."
+                }
+            """.trimIndent(),
+            headers = mapOf(
+                "Set-Cookie" to listOf(
+                    "session=null; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0",
+                ),
+            ),
+        )
+        fixture.stateStore.saveState(
+            CheckingState.initial().copy(
+                chave = "AB12",
+                canEnableLocationSharing = true,
+                locationSharingEnabled = true,
+                autoCheckInEnabled = true,
+                autoCheckOutEnabled = true,
+                isLoading = false,
+            ),
+        )
+        fixture.controller.initialize()
+
+        fixture.controller.logoutWebSession()
+
+        val state = fixture.controller.uiState.value.state
+        assertEquals("", fixture.webSessionStore.webSessionSnapshot.value.cookieHeader)
+        assertFalse(fixture.controller.uiState.value.webAuth.authenticated)
+        assertFalse(state.locationSharingEnabled)
+        assertFalse(state.autoCheckInEnabled)
+        assertFalse(state.autoCheckOutEnabled)
     }
 
     @Test
@@ -153,6 +262,19 @@ class CheckingControllerTest {
             statusCode = 200,
             body = """
                 {
+                  "found": true,
+                  "chave": "AB12",
+                  "has_password": true,
+                  "authenticated": true,
+                  "message": "Aplicacao liberada."
+                }
+            """.trimIndent(),
+            headers = mapOf("Set-Cookie" to listOf("session=submit; path=/; httponly")),
+        )
+        fixture.transport.enqueueResponse(
+            statusCode = 200,
+            body = """
+                {
                   "ok": true,
                   "duplicate": false,
                   "queued_forms": true,
@@ -178,18 +300,19 @@ class CheckingControllerTest {
             ),
         )
         fixture.controller.initialize()
+        fixture.controller.refreshWebAuthStatus(updateStatus = false, silent = true)
 
         val message = fixture.controller.submitCurrent()
 
-        val request = fixture.transport.requests.single()
+        val request = fixture.transport.requests.last()
         val payload = JsonParser.parseString(request.body).asJsonObject
         assertEquals("POST", request.method)
-        assertEquals("https://tscode.com.br/api/mobile/events/forms-submit", request.url)
+        assertEquals("https://tscode.com.br/api/web/check", request.url)
         assertEquals("AB12", payload["chave"].asString)
         assertEquals("P83", payload["projeto"].asString)
         assertEquals("checkin", payload["action"].asString)
         assertEquals("retroativo", payload["informe"].asString)
-        assertTrue(payload["client_event_id"].asString.startsWith("kotlin-"))
+        assertTrue(payload["client_event_id"].asString.startsWith("web-check-android-"))
         assertEquals("Registro enviado.", message)
 
         val state = fixture.controller.uiState.value.state
@@ -227,27 +350,13 @@ class CheckingControllerTest {
     }
 
     @Test
-    fun refreshLocationsCatalog_replacesCacheAndUpdatesAccuracyThreshold() = runBlocking {
+    fun refreshLocationsCatalog_usesWebEndpointAndKeepsSessionAuthenticated() = runBlocking {
         val fixture = createFixture("controller_catalog.preferences_pb")
         fixture.transport.enqueueResponse(
             statusCode = 200,
             body = """
                 {
-                  "synced_at": "2026-04-18T10:00:00Z",
-                  "location_accuracy_threshold_meters": 45,
-                  "items": [
-                    {
-                      "id": 7,
-                      "local": "Base Catalogo",
-                      "latitude": -22.9,
-                      "longitude": -43.2,
-                      "coordinates": [
-                        {"latitude": -22.9, "longitude": -43.2}
-                      ],
-                      "tolerance_meters": 80,
-                      "updated_at": "2026-04-18T09:00:00Z"
-                    }
-                  ]
+                  "items": ["Base Catalogo", "Zona de CheckOut"]
                 }
             """.trimIndent(),
         )
@@ -261,17 +370,13 @@ class CheckingControllerTest {
 
         val count = fixture.controller.refreshLocationsCatalog()
 
-        assertEquals(1, count)
+        assertEquals(2, count)
         assertEquals(
-            "https://tscode.com.br/api/mobile/locations",
+            "https://tscode.com.br/api/web/check/locations",
             fixture.transport.requests.single().url,
         )
-        assertEquals(45, fixture.controller.uiState.value.state.locationAccuracyThresholdMeters)
-        assertEquals("Base Catalogo", fixture.controller.uiState.value.managedLocations.single().local)
-        assertEquals(
-            "Base Catalogo",
-            fixture.locationRepository.loadLocations().single().local,
-        )
+        assertEquals("2 localizações disponíveis na API web.", fixture.controller.uiState.value.state.statusMessage)
+        assertTrue(fixture.controller.uiState.value.webAuth.authenticated)
     }
 
     @Test
@@ -450,11 +555,13 @@ class CheckingControllerTest {
         val dao = FakeManagedLocationDao()
         val locationRepository = ManagedLocationRepository(dao, cacheRepository)
         val transport = FakeCheckingHttpTransport()
-        val apiService = CheckingApiService(transport)
+        val webSessionStore = FakeWebSessionStore()
+        val webApiService = WebCheckApiService(transport, webSessionStore)
         val backgroundSnapshotRepository = CheckingBackgroundSnapshotRepository()
         val controller = CheckingController(
             checkingStateStore = stateStore,
-            apiService = apiService,
+            webApiService = webApiService,
+            webSessionStore = webSessionStore,
             locationRepository = locationRepository,
             backgroundSnapshotRepository = backgroundSnapshotRepository,
         )
@@ -464,6 +571,7 @@ class CheckingControllerTest {
             locationRepository = locationRepository,
             dao = dao,
             transport = transport,
+            webSessionStore = webSessionStore,
             backgroundSnapshotRepository = backgroundSnapshotRepository,
         )
     }
@@ -483,6 +591,7 @@ private data class ControllerFixture(
     val locationRepository: ManagedLocationRepository,
     val dao: FakeManagedLocationDao,
     val transport: FakeCheckingHttpTransport,
+    val webSessionStore: FakeWebSessionStore,
     val backgroundSnapshotRepository: CheckingBackgroundSnapshotRepository,
 )
 
@@ -566,8 +675,25 @@ private class FakeCheckingHttpTransport : CheckingHttpTransport {
     fun enqueueResponse(
         statusCode: Int,
         body: String,
+        headers: Map<String, List<String>> = emptyMap(),
     ) {
-        queuedResults.addLast(Result.success(CheckingHttpResponse(statusCode, body)))
+        queuedResults.addLast(Result.success(CheckingHttpResponse(statusCode, body, headers)))
+    }
+}
+
+private class FakeWebSessionStore(
+    initialCookieHeader: String = "",
+) : WebSessionStore {
+    private val snapshot = MutableStateFlow(WebSessionSnapshot(initialCookieHeader))
+
+    override val webSessionSnapshot: MutableStateFlow<WebSessionSnapshot> = snapshot
+
+    override suspend fun saveWebSessionCookieHeader(cookieHeader: String) {
+        snapshot.value = WebSessionSnapshot(cookieHeader.trim())
+    }
+
+    override suspend fun clearWebSessionCookie() {
+        snapshot.value = WebSessionSnapshot()
     }
 }
 

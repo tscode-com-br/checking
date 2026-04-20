@@ -13,6 +13,7 @@ import com.br.checkingnative.data.remote.CheckingHttpTransport
 import com.br.checkingnative.data.remote.JdkCheckingHttpTransport
 import com.br.checkingnative.data.preferences.CheckingStateRepository
 import com.br.checkingnative.data.preferences.CheckingStateStore
+import com.br.checkingnative.data.preferences.WebSessionStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -63,4 +64,10 @@ object AppModule {
     fun provideCheckingStateStore(
         repository: CheckingStateRepository,
     ): CheckingStateStore = repository
+
+    @Provides
+    @Singleton
+    fun provideWebSessionStore(
+        repository: CheckingStateRepository,
+    ): WebSessionStore = repository
 }

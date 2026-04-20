@@ -120,6 +120,11 @@ class MainActivity : ComponentActivity() {
                     uiState = uiState,
                     messages = viewModel.messages,
                     onChaveChanged = viewModel::updateChave,
+                    onRefreshWebAuthStatus = viewModel::refreshWebAuthStatus,
+                    onLoginWebPassword = viewModel::loginWebPassword,
+                    onRegisterWebPassword = viewModel::registerWebPassword,
+                    onRegisterWebUser = viewModel::registerWebUser,
+                    onLogoutWebSession = viewModel::logoutWebSession,
                     onRegistroChanged = viewModel::updateRegistro,
                     onInformeChanged = viewModel::updateInforme,
                     onProjetoChanged = viewModel::updateProjeto,
@@ -135,6 +140,11 @@ class MainActivity : ComponentActivity() {
                     onNightModeAfterCheckoutChanged = viewModel::setNightModeAfterCheckoutEnabled,
                     onNightStartChanged = viewModel::setNightPeriodStartMinutes,
                     onNightEndChanged = viewModel::setNightPeriodEndMinutes,
+                    onInitialMonitoringAccepted = {
+                        viewModel.markInitialAndroidSetupPrompted()
+                        requestLocationSharingChange(true)
+                    },
+                    onInitialMonitoringSkipped = viewModel::markInitialAndroidSetupPrompted,
                 )
             }
         }
@@ -396,6 +406,13 @@ class MainActivity : ComponentActivity() {
             notificationsEnabled = areNotificationsEnabled(),
             batteryOptimizationIgnored = isIgnoringBatteryOptimizations(),
             backgroundServiceSupported = true,
+            backgroundAccessRequiresSettings =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    !hasBackgroundLocationPermission(),
+            foregroundServiceStartRequiresVisibleApp =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+            foregroundServiceLocationRequiresRuntimePermission =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE,
         )
     }
 

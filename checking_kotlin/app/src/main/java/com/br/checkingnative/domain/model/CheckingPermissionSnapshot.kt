@@ -7,6 +7,9 @@ data class CheckingPermissionSnapshot(
     val notificationsEnabled: Boolean,
     val batteryOptimizationIgnored: Boolean,
     val backgroundServiceSupported: Boolean = true,
+    val backgroundAccessRequiresSettings: Boolean = false,
+    val foregroundServiceStartRequiresVisibleApp: Boolean = false,
+    val foregroundServiceLocationRequiresRuntimePermission: Boolean = false,
 ) {
     val canEnableLocationSharing: Boolean
         get() = locationServiceEnabled &&
@@ -21,6 +24,13 @@ data class CheckingPermissionSnapshot(
             notificationsEnabled = notificationsEnabled,
             batteryOptimizationIgnored = batteryOptimizationIgnored,
             isRefreshing = isRefreshing,
+            locationServiceEnabled = locationServiceEnabled,
+            preciseLocationGranted = preciseLocationGranted,
+            backgroundServiceSupported = backgroundServiceSupported,
+            backgroundAccessRequiresSettings = backgroundAccessRequiresSettings,
+            foregroundServiceStartRequiresVisibleApp = foregroundServiceStartRequiresVisibleApp,
+            foregroundServiceLocationRequiresRuntimePermission =
+                foregroundServiceLocationRequiresRuntimePermission,
         )
     }
 
@@ -33,6 +43,9 @@ data class CheckingPermissionSnapshot(
                 notificationsEnabled = true,
                 batteryOptimizationIgnored = true,
                 backgroundServiceSupported = false,
+                backgroundAccessRequiresSettings = false,
+                foregroundServiceStartRequiresVisibleApp = false,
+                foregroundServiceLocationRequiresRuntimePermission = false,
             )
         }
     }

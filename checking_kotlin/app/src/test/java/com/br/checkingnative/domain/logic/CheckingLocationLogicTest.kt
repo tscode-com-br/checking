@@ -7,6 +7,7 @@ import com.br.checkingnative.domain.model.ManagedLocationCoordinate
 import com.br.checkingnative.domain.model.MobileStateResponse
 import com.br.checkingnative.domain.model.RegistroType
 import com.br.checkingnative.domain.model.StatusTone
+import com.br.checkingnative.domain.model.WebLocationMatchResponse
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -208,6 +209,117 @@ class CheckingLocationLogicTest {
     }
 
     @Test
+    fun webLocationDecision_checkoutZoneUsesResolvedWebLocalAfterCheckIn() {
+        val decision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(
+                lastAction = RegistroType.CHECK_IN,
+                currentLocal = "Escritorio Principal",
+            ),
+            locationPayload = buildWebLocationPayload(
+                matched = true,
+                resolvedLocal = "Zona de CheckOut",
+                label = "Zona de Check-Out",
+                status = "matched",
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+
+        assertEquals(RegistroType.CHECK_OUT, decision?.action)
+        assertEquals("Zona de CheckOut", decision?.local)
+        assertEquals(WebAutomaticActivityReason.CHECKOUT_ZONE, decision?.reason)
+    }
+
+    @Test
+    fun webLocationDecision_matchesWebCheckInRulesAndAvoidsDuplicateCurrentLocal() {
+        val checkInDecision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_OUT),
+            locationPayload = buildWebLocationPayload(
+                matched = true,
+                resolvedLocal = "Base P80",
+                label = "Base P80",
+                status = "matched",
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+        val duplicateDecision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(
+                lastAction = RegistroType.CHECK_IN,
+                currentLocal = "Base P80",
+            ),
+            locationPayload = buildWebLocationPayload(
+                matched = true,
+                resolvedLocal = " Base   P80 ",
+                label = "Base P80",
+                status = "matched",
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+
+        assertEquals(RegistroType.CHECK_IN, checkInDecision?.action)
+        assertEquals("Base P80", checkInDecision?.local)
+        assertNull(duplicateDecision)
+    }
+
+    @Test
+    fun webLocationDecision_outOfRangeCheckoutUsesWebAutomaticLocation() {
+        val decision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(
+                lastAction = RegistroType.CHECK_IN,
+                currentLocal = "Base P80",
+            ),
+            locationPayload = buildWebLocationPayload(
+                matched = false,
+                resolvedLocal = null,
+                label = CheckingLocationLogic.outsideWorkplaceCapturedLocation,
+                status = "outside_workplace",
+                nearestWorkplaceDistanceMeters = 2_100.0,
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+
+        assertEquals(RegistroType.CHECK_OUT, decision?.action)
+        assertEquals(CheckingLocationLogic.automaticCheckoutLocation, decision?.local)
+        assertEquals(WebAutomaticActivityReason.OUT_OF_RANGE_CHECKOUT, decision?.reason)
+    }
+
+    @Test
+    fun webLocationDecision_nearbyUnknownLocationChecksInOnlyAfterCheckout() {
+        val decision = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_OUT),
+            locationPayload = buildWebLocationPayload(
+                matched = false,
+                resolvedLocal = null,
+                label = CheckingLocationLogic.uncatalogedCapturedLocation,
+                status = "not_in_known_location",
+                nearestWorkplaceDistanceMeters = 350.0,
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+        val noDecisionAfterCheckIn = CheckingLocationLogic.resolveAutomaticActionForWebLocation(
+            remoteState = buildScenarioRemoteState(lastAction = RegistroType.CHECK_IN),
+            locationPayload = buildWebLocationPayload(
+                matched = false,
+                resolvedLocal = null,
+                label = CheckingLocationLogic.uncatalogedCapturedLocation,
+                status = "not_in_known_location",
+                nearestWorkplaceDistanceMeters = 350.0,
+            ),
+            autoCheckInEnabled = true,
+            autoCheckOutEnabled = true,
+        )
+
+        assertEquals(RegistroType.CHECK_IN, decision?.action)
+        assertEquals(CheckingLocationLogic.uncatalogedCapturedLocation, decision?.local)
+        assertEquals(WebAutomaticActivityReason.NEARBY_WORKPLACE_CHECKIN, decision?.reason)
+        assertNull(noDecisionAfterCheckIn)
+    }
+
+    @Test
     fun outOfRangeCheckout_onlyHappensBeyondTwoKilometersAfterCheckIn() {
         assertEquals(
             RegistroType.CHECK_OUT,
@@ -400,4 +512,23 @@ private fun buildScenarioRemoteState(
             lastCheckOutAt = Instant.parse("2026-04-14T18:00:00Z"),
         )
     }
+}
+
+private fun buildWebLocationPayload(
+    matched: Boolean,
+    resolvedLocal: String?,
+    label: String,
+    status: String,
+    nearestWorkplaceDistanceMeters: Double? = 120.0,
+): WebLocationMatchResponse {
+    return WebLocationMatchResponse(
+        matched = matched,
+        resolvedLocal = resolvedLocal,
+        label = label,
+        status = status,
+        message = "",
+        accuracyMeters = 12.0,
+        accuracyThresholdMeters = 30,
+        nearestWorkplaceDistanceMeters = nearestWorkplaceDistanceMeters,
+    )
 }

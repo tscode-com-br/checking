@@ -1551,14 +1551,48 @@ function normalizeTolerance(value) {
   return String(tolerance);
 }
 
+function getLocationCoordinateValues(row) {
+  if (!Array.isArray(row?.coordinates)) {
+    return [];
+  }
+
+  return row.coordinates
+    .map((coordinate) => String(coordinate?.value ?? coordinate ?? "").trim())
+    .filter((value) => value);
+}
+
+function formatLocationCoordinateCount(count) {
+  return count === 1 ? "1 coordenada" : `${count} coordenadas`;
+}
+
+function makeLocationCoordinateSummary(row) {
+  const coordinates = getLocationCoordinateValues(row);
+  if (!coordinates.length) {
+    return '<span class="location-empty-copy">Sem coordenadas</span>';
+  }
+
+  const primaryCoordinate = coordinates[0];
+  const extraCoordinates = Math.max(0, coordinates.length - 1);
+  const tooltip = coordinates.join(" | ");
+
+  return `
+    <div class="location-coordinate-summary" title="${escapeHtml(tooltip)}">
+      <span class="location-coordinate-pill-index">1</span>
+      <span class="location-coordinate-summary-primary">${escapeHtml(primaryCoordinate)}</span>
+      ${extraCoordinates > 0 ? `<span class="location-coordinate-summary-count">+${extraCoordinates}</span>` : ""}
+    </div>
+  `;
+}
+
 function makeLocationCoordinateLines(row) {
   return row.coordinates.map((coordinate, index) => `
     <div class="location-coordinate-line">
+      <span class="location-coordinate-index">${index + 1}</span>
       <input
         class="inline location-coordinate-input"
         data-coordinate-id="${escapeHtml(String(coordinate.id))}"
         maxlength="40"
-        placeholder="1.255936, 103.611066"
+        placeholder="Latitude, longitude"
         value="${escapeHtml(coordinate.value)}"
         ${row.isEditing ? "" : "disabled"}
       />
@@ -1569,26 +1603,64 @@ function makeLocationCoordinateLines(row) {
 
 function makeLocationRow(row) {
   const tr = document.createElement("tr");
-  tr.className = "location-row";
+  tr.className = row.isEditing ? "location-row location-row-editing" : "location-row";
   tr.dataset.locationId = String(row.id);
+
+  const toleranceValue = String(row.tolerance ?? "").trim();
+  const coordinateValues = getLocationCoordinateValues(row);
+  const coordinateCountLabel = formatLocationCoordinateCount(coordinateValues.length || 0);
+  const locationCell = row.isEditing
+    ? `
+      <div class="location-cell-stack">
+        <input class="inline location-name" maxlength="100" value="${escapeHtml(row.local)}" />
+      </div>
+    `
+    : `
+      <div class="location-cell-stack">
+        <span class="location-static-value">${escapeHtml(row.local || "-")}</span>
+        <span class="location-static-meta">${escapeHtml(coordinateCountLabel)}</span>
+      </div>
+    `;
+
+  const coordinatesCell = row.isEditing
+    ? `<div class="location-coordinates-stack">${makeLocationCoordinateLines(row)}</div>`
+    : `<div class="location-coordinates-stack">${makeLocationCoordinateSummary(row)}</div>`;
+
+  const toleranceCell = row.isEditing
+    ? `
+      <div class="location-cell-stack">
+        <input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" />
+      </div>
+    `
+    : `
+      <div class="location-cell-stack">
+        <span class="location-tolerance-badge">${escapeHtml(toleranceValue ? `${toleranceValue} m` : "-")}</span>
+      </div>
+    `;
+
+  const actionsCell = row.isEditing
+    ? `
+      <button type="button" class="location-action-primary" data-location-edit="${row.id}">Salvar</button>
+      <button type="button" class="secondary-button location-action-secondary" data-location-add-coordinate="${row.id}">+ Coord.</button>
+      <button type="button" class="location-action-danger" data-location-remove="${row.id}">Remover</button>
+    `
+    : `
+      <button type="button" class="location-action-primary" data-location-edit="${row.id}">Editar</button>
+      <button type="button" class="secondary-button location-action-secondary" data-location-remove="${row.id}">Remover</button>
+    `;
+
   tr.innerHTML = `
     <td class="location-cell">
-      <div class="location-cell-stack">
-        <input class="inline location-name" maxlength="100" value="${escapeHtml(row.local)}" ${row.isEditing ? "" : "disabled"} />
-      </div>
+      ${locationCell}
     </td>
     <td class="location-cell location-coordinates-cell">
-      <div class="location-coordinates-stack">${makeLocationCoordinateLines(row)}</div>
+      ${coordinatesCell}
     </td>
     <td class="location-cell">
-      <div class="location-cell-stack">
-        <input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" ${row.isEditing ? "" : "disabled"} />
-      </div>
+      ${toleranceCell}
     </td>
-    <td class="pending-actions location-actions">
-      <button type="button" data-location-edit="${row.id}">${row.isEditing ? "Salvar" : "Editar"}</button>
-      <button type="button" class="secondary-button" data-location-add-coordinate="${row.id}">Adicionar Coordenadas</button>
-      <button type="button" data-location-remove="${row.id}">Remover</button>
+    <td class="location-actions">
+      ${actionsCell}
     </td>
   `;
   return tr;
@@ -1874,21 +1946,22 @@ function makePendingRow(row) {
 
 function makeRegisteredUserRow(user) {
   const tr = document.createElement("tr");
+  tr.className = "user-row";
   tr.dataset.userId = String(user.id);
   tr.innerHTML = `
-    <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" disabled /></td>
-    <td><textarea class="inline user-nome user-field-textarea" rows="2" disabled>${escapeHtml(user.nome)}</textarea></td>
-    <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" disabled /></td>
-    <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
+    <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" title="${escapeHtml(user.rfid ?? "")}" disabled /></td>
+    <td><input class="inline user-nome" maxlength="180" value="${escapeHtml(user.nome)}" title="${escapeHtml(user.nome)}" disabled /></td>
+    <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" title="${escapeHtml(user.chave)}" disabled /></td>
+    <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" title="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
     <td>
-      <select class="inline user-projeto" disabled>
+      <select class="inline user-projeto" title="${escapeHtml(user.projeto ?? "")}" disabled>
         ${buildProjectOptionsHtml(user.projeto, { includeDetachedValue: true })}
       </select>
     </td>
-    <td><textarea class="inline user-end-rua user-field-textarea" rows="3" maxlength="255" disabled>${escapeHtml(user.end_rua ?? "")}</textarea></td>
-    <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" disabled /></td>
-    <td><textarea class="inline user-cargo user-field-textarea" rows="2" maxlength="255" disabled>${escapeHtml(user.cargo ?? "")}</textarea></td>
-    <td><textarea class="inline user-email user-field-textarea" rows="2" maxlength="255" disabled>${escapeHtml(user.email ?? "")}</textarea></td>
+    <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" title="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
+    <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" title="${escapeHtml(user.zip ?? "")}" disabled /></td>
+    <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" title="${escapeHtml(user.cargo ?? "")}" disabled /></td>
+    <td><input class="inline user-email" type="email" maxlength="255" value="${escapeHtml(user.email ?? "")}" title="${escapeHtml(user.email ?? "")}" spellcheck="false" disabled /></td>
     <td class="pending-actions user-actions">
       <button data-user-edit="${user.id}">Editar</button>
       <button data-user-save="${user.id}" disabled>Salvar</button>
@@ -1897,7 +1970,6 @@ function makeRegisteredUserRow(user) {
     </td>
   `;
   tr.querySelector(".user-projeto").value = user.projeto;
-  tr.querySelectorAll(".user-field-textarea").forEach((textarea) => bindAutoTextareaHeight(textarea));
   return tr;
 }
 
@@ -1956,6 +2028,8 @@ function setRegisteredUserEditingState(userId, editing) {
     return;
   }
 
+  row.classList.toggle("user-row-editing", editing);
+
   const rfid = row.querySelector(".user-rfid");
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
@@ -1985,7 +2059,10 @@ function setRegisteredUserEditingState(userId, editing) {
   }
   scheduleUserFieldTextareaRefresh();
   if (editing) {
-    rfid.focus();
+    nome.focus();
+    if (typeof nome.select === "function") {
+      nome.select();
+    }
   }
 }
 
