@@ -385,6 +385,26 @@ test('transport vehicle route badges are rendered only for extra vehicles', () =
   );
 });
 
+test('transport vehicle list headers keep the add button visible when titles need to shrink or wrap', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-pane-title-row\s*\{[\s\S]*justify-content:\s*space-between;[\s\S]*flex-wrap:\s*wrap;[\s\S]*min-width:\s*0;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-pane-title\s*\{[\s\S]*flex:\s*1 1 auto;[\s\S]*min-width:\s*0;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-add-button\s*\{[\s\S]*flex:\s*0 0 auto;[\s\S]*width:\s*38px;/
+  );
+});
+
 test('transport frontend uses base-relative asset and API paths so the /checking prefix keeps working', () => {
   const transportScript = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/app.js'),
