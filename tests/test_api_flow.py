@@ -3654,6 +3654,169 @@ def test_transport_vehicle_delete_removes_legacy_notifications_before_assignment
             conn.execute(text("DROP TABLE IF EXISTS transport_notifications"))
 
 
+def test_transport_vehicle_delete_purges_generic_legacy_foreign_key_dependencies():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Generic Legacy Hub",
+            address="8 Generic Avenue",
+            zip="818181",
+            country="Singapore",
+        )
+        vehicle = Vehicle(placa="GLG1701", tipo="onibus", color="Blue", lugares=36, tolerance=10, service_scope="regular")
+        db.add_all([workplace, vehicle])
+        db.flush()
+
+        schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Generic Legacy Rider",
+            chave="GL17",
+            projeto="P80",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="17 Generic Road",
+            zip="171818",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:50",
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+
+        assignment = TransportAssignment(
+            request_id=request_row.id,
+            service_date=friday,
+            route_kind="home_to_work",
+            vehicle_id=vehicle.id,
+            status="confirmed",
+            response_message=None,
+            assigned_by_admin_id=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+            notified_at=None,
+        )
+        db.add(assignment)
+        db.commit()
+
+        user_id = user.id
+        vehicle_id = vehicle.id
+        schedule_id = schedule.id
+        assignment_id = assignment.id
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS legacy_vehicle_links"))
+        conn.execute(text("DROP TABLE IF EXISTS legacy_schedule_links"))
+        conn.execute(text("DROP TABLE IF EXISTS legacy_assignment_links"))
+        conn.execute(
+            text(
+                """
+                CREATE TABLE legacy_vehicle_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+                    note VARCHAR(120) NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE legacy_schedule_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    vehicle_schedule_id INTEGER NOT NULL REFERENCES transport_vehicle_schedules(id),
+                    note VARCHAR(120) NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE legacy_assignment_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    assignment_id INTEGER NOT NULL REFERENCES transport_assignments(id),
+                    note VARCHAR(120) NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text("INSERT INTO legacy_vehicle_links (vehicle_id, note) VALUES (:vehicle_id, 'legacy vehicle ref')"),
+            {"vehicle_id": vehicle_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO legacy_schedule_links (vehicle_schedule_id, note) VALUES (:schedule_id, 'legacy schedule ref')"
+            ),
+            {"schedule_id": schedule_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO legacy_assignment_links (assignment_id, note) VALUES (:assignment_id, 'legacy assignment ref')"
+            ),
+            {"assignment_id": assignment_id},
+        )
+
+    try:
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            removed = client.delete(
+                f"/api/transport/vehicles/{schedule_id}",
+                params={"service_date": friday.isoformat()},
+            )
+            assert removed.status_code == 200, removed.text
+
+        with engine.begin() as conn:
+            remaining_vehicle_links = conn.execute(text("SELECT COUNT(*) FROM legacy_vehicle_links")).scalar_one()
+            remaining_schedule_links = conn.execute(text("SELECT COUNT(*) FROM legacy_schedule_links")).scalar_one()
+            remaining_assignment_links = conn.execute(text("SELECT COUNT(*) FROM legacy_assignment_links")).scalar_one()
+
+        with SessionLocal() as db:
+            user_row = db.get(User, user_id)
+            vehicle_row = db.get(Vehicle, vehicle_id)
+            assignment_row = db.get(TransportAssignment, assignment_id)
+
+        assert remaining_vehicle_links == 0
+        assert remaining_schedule_links == 0
+        assert remaining_assignment_links == 0
+        assert user_row is not None
+        assert user_row.placa is None
+        assert vehicle_row is None
+        assert assignment_row is None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS legacy_vehicle_links"))
+            conn.execute(text("DROP TABLE IF EXISTS legacy_schedule_links"))
+            conn.execute(text("DROP TABLE IF EXISTS legacy_assignment_links"))
+
+
 def test_transport_regular_assignment_persists_across_weekdays_and_routes():
     friday = date(2026, 4, 17)
     monday = date(2026, 4, 20)

@@ -4,7 +4,7 @@ import calendar
 import json
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import bindparam, inspect, select, text
+from sqlalchemy import MetaData, Table, delete, inspect, select, update
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -562,7 +562,13 @@ def delete_transport_vehicle_registration(
     ).scalars().all()
 
     if assignment_ids:
-        _delete_legacy_transport_notifications_for_assignments(db, assignment_ids=assignment_ids)
+        _purge_foreign_key_dependencies(
+            db,
+            target_table="transport_assignments",
+            target_column="id",
+            values=assignment_ids,
+            mode="delete",
+        )
 
         assignments = db.execute(
             select(TransportAssignment).where(TransportAssignment.id.in_(assignment_ids))
@@ -571,6 +577,15 @@ def delete_transport_vehicle_registration(
             db.delete(assignment)
 
     if schedule_ids:
+        _purge_foreign_key_dependencies(
+            db,
+            target_table="transport_vehicle_schedules",
+            target_column="id",
+            values=schedule_ids,
+            mode="delete",
+            excluded_tables={"transport_vehicle_schedule_exceptions"},
+        )
+
         schedule_exceptions = db.execute(
             select(TransportVehicleScheduleException).where(
                 TransportVehicleScheduleException.vehicle_schedule_id.in_(schedule_ids)
@@ -585,22 +600,43 @@ def delete_transport_vehicle_registration(
         for vehicle_schedule in schedules:
             db.delete(vehicle_schedule)
 
+    _purge_foreign_key_dependencies(
+        db,
+        target_table="vehicles",
+        target_column="placa",
+        values=[vehicle.placa],
+        mode="set_null",
+    )
+
     linked_users = db.execute(
         select(User).where(User.placa == vehicle.placa)
     ).scalars().all()
     for linked_user in linked_users:
         linked_user.placa = None
 
+    _purge_foreign_key_dependencies(
+        db,
+        target_table="vehicles",
+        target_column="id",
+        values=[vehicle.id],
+        mode="delete",
+        excluded_tables={"transport_vehicle_schedules", "transport_assignments"},
+    )
+
     db.delete(vehicle)
     return vehicle
 
 
-def _delete_legacy_transport_notifications_for_assignments(
+def _purge_foreign_key_dependencies(
     db: Session,
     *,
-    assignment_ids: list[int],
+    target_table: str,
+    target_column: str,
+    values: list[object],
+    mode: str,
+    excluded_tables: set[str] | None = None,
 ) -> None:
-    if not assignment_ids:
+    if not values:
         return
 
     bind = db.get_bind()
@@ -608,20 +644,46 @@ def _delete_legacy_transport_notifications_for_assignments(
         return
 
     inspector = inspect(bind)
-    if not inspector.has_table("transport_notifications"):
-        return
+    metadata = MetaData()
+    skip_tables = set(excluded_tables or set())
+    normalized_values = list(dict.fromkeys(values))
 
-    column_names = {
-        column["name"]
-        for column in inspector.get_columns("transport_notifications")
-    }
-    if "assignment_id" not in column_names:
-        return
+    for table_name in inspector.get_table_names():
+        if table_name == target_table or table_name in skip_tables:
+            continue
 
-    statement = text(
-        "DELETE FROM transport_notifications WHERE assignment_id IN :assignment_ids"
-    ).bindparams(bindparam("assignment_ids", expanding=True))
-    db.execute(statement, {"assignment_ids": assignment_ids})
+        nullable_by_column = {
+            column["name"]: column.get("nullable", True)
+            for column in inspector.get_columns(table_name)
+        }
+        matched_columns: list[tuple[str, bool]] = []
+        for foreign_key in inspector.get_foreign_keys(table_name):
+            constrained_columns = foreign_key.get("constrained_columns") or []
+            referred_columns = foreign_key.get("referred_columns") or []
+            if foreign_key.get("referred_table") != target_table:
+                continue
+            if len(constrained_columns) != 1 or len(referred_columns) != 1:
+                continue
+            if referred_columns[0] != target_column:
+                continue
+            column_name = constrained_columns[0]
+            matched_columns.append((column_name, nullable_by_column.get(column_name, True)))
+
+        if not matched_columns:
+            continue
+
+        reflected_table = Table(table_name, metadata, autoload_with=bind)
+        for column_name, nullable in matched_columns:
+            target = reflected_table.c[column_name]
+            if mode == "set_null" and nullable:
+                db.execute(
+                    update(reflected_table)
+                    .where(target.in_(normalized_values))
+                    .values({column_name: None})
+                )
+                continue
+
+            db.execute(delete(reflected_table).where(target.in_(normalized_values)))
 
 
 def upsert_transport_request(
