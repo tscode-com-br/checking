@@ -294,6 +294,12 @@
     statusLoading: false,
   };
 
+  const pendingAuthFieldRestoreState = {
+    mode: null,
+    chave: '',
+    password: '',
+  };
+
   const notificationState = {
     message: '',
     tone: null,
@@ -738,7 +744,7 @@
       return 'Verificando...';
     }
     if (passwordRegisterInProgress) {
-      return 'Registrando...';
+      return 'Aguarde';
     }
     if (userSelfRegistrationInProgress) {
       return 'Cadastrando...';
@@ -781,6 +787,69 @@
       fieldElement.classList.toggle('auth-field-pending', !authenticated);
       fieldElement.classList.toggle('auth-field-authenticated', authenticated);
     });
+  }
+
+  function hasPendingAuthFieldRestoreState() {
+    return Boolean(pendingAuthFieldRestoreState.mode);
+  }
+
+  function clearPendingAuthFieldRestoreState() {
+    pendingAuthFieldRestoreState.mode = null;
+    pendingAuthFieldRestoreState.chave = '';
+    pendingAuthFieldRestoreState.password = '';
+  }
+
+  function rememberPendingAuthFieldRestoreState(mode) {
+    const hadPendingRestore = hasPendingAuthFieldRestoreState();
+    pendingAuthFieldRestoreState.mode = mode;
+    pendingAuthFieldRestoreState.chave = hadPendingRestore
+      ? pendingAuthFieldRestoreState.chave
+      : String(chaveInput.value || '');
+    pendingAuthFieldRestoreState.password = hadPendingRestore
+      ? pendingAuthFieldRestoreState.password
+      : String(passwordInput.value || '');
+  }
+
+  function restorePendingAuthFieldValuesIfNeeded() {
+    if (!hasPendingAuthFieldRestoreState()) {
+      return false;
+    }
+
+    const shouldRestore = pendingAuthFieldRestoreState.mode === 'chave'
+      ? !String(chaveInput.value || '').trim() && !String(passwordInput.value || '').trim()
+      : !String(passwordInput.value || '').trim();
+
+    if (!shouldRestore) {
+      return false;
+    }
+
+    chaveInput.value = pendingAuthFieldRestoreState.chave;
+    passwordInput.value = pendingAuthFieldRestoreState.password;
+    lastObservedPasswordFieldValue = pendingAuthFieldRestoreState.password;
+    writePersistedChave(pendingAuthFieldRestoreState.chave);
+    clearPendingAuthFieldRestoreState();
+    syncFormControlStates();
+    return true;
+  }
+
+  function isAuthInputAreaElement(element) {
+    return Boolean(
+      element
+      && element.closest('label[for="chaveInput"], label[for="passwordInput"], #chaveInput, #passwordInput')
+    );
+  }
+
+  function restorePendingAuthFieldValuesOnExternalFocus(event) {
+    if (!hasPendingAuthFieldRestoreState()) {
+      return;
+    }
+
+    const targetElement = resolveTransportEventTargetElement(event);
+    if (isAuthInputAreaElement(targetElement)) {
+      return;
+    }
+
+    restorePendingAuthFieldValuesIfNeeded();
   }
 
   function syncFormControlStates() {
@@ -847,6 +916,7 @@
         const canRegisterPassword = clientState.isPasswordLengthValid(passwordInput.value);
         const canOpenRegistration = authState.statusResolved && !authState.found;
         control.textContent = resolvePasswordActionButtonLabel();
+        control.classList.toggle('is-pending', passwordRegisterInProgress);
         control.disabled = dialogOpen
           || lockActive
           || submitInProgress
@@ -900,8 +970,9 @@
     });
 
     if (transportButton) {
-      transportButton.disabled = false;
-      transportButton.setAttribute('aria-disabled', 'false');
+      const transportButtonLocked = dialogOpen || lockActive || submitInProgress || authBusy || passwordLoginInProgress;
+      transportButton.disabled = transportButtonLocked;
+      transportButton.setAttribute('aria-disabled', String(transportButtonLocked));
     }
 
     transportScreenControls.forEach((control) => {
@@ -917,7 +988,7 @@
 
       if (control === transportRequestBuilderSubmitButton) {
         control.disabled = transportBusy;
-        control.textContent = transportRequestInProgress ? 'Solicitando...' : 'Solicitar Transporte';
+        control.textContent = transportRequestInProgress ? 'Solicitando...' : 'Solicitar';
         return;
       }
 
@@ -1410,12 +1481,18 @@
     const requestId = payload && payload.request_id !== null && payload.request_id !== undefined && Number.isFinite(Number(payload.request_id))
       ? Number(payload.request_id)
       : null;
+    const isActive = Boolean(payload && payload.is_active);
+    let normalizedStatus = normalizeTransportRequestStatusValue(payload && payload.status);
+
+    if (!isActive && normalizedStatus !== 'realized') {
+      normalizedStatus = 'cancelled';
+    }
 
     return {
       requestId,
       requestKind: payload && payload.request_kind ? String(payload.request_kind) : null,
-      status: normalizeTransportRequestStatusValue(payload && payload.status),
-      isActive: Boolean(payload && payload.is_active),
+      status: normalizedStatus,
+      isActive,
       serviceDate: payload && payload.service_date ? String(payload.service_date) : null,
       requestedTime: String(payload && payload.requested_time || ''),
       selectedWeekdays: Array.isArray(payload && payload.selected_weekdays)
@@ -2278,6 +2355,7 @@
   async function fetchTransportStatePayload(chave) {
     const response = await fetch(`${transportStateEndpoint}?chave=${encodeURIComponent(chave)}`, {
       method: 'GET',
+      credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
       },
@@ -2292,6 +2370,7 @@
   async function postTransportPayload(url, payload) {
     const response = await fetch(url, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -4338,52 +4417,32 @@
   }
 
   function prepareChaveInputForNewEntry() {
-    const hasVisibleValue = Boolean(chaveInput.value || passwordInput.value);
+    const hasVisibleValue = hasPendingAuthFieldRestoreState()
+      ? Boolean(pendingAuthFieldRestoreState.chave || pendingAuthFieldRestoreState.password)
+      : Boolean(chaveInput.value || passwordInput.value);
     if (!hasVisibleValue) {
       return;
     }
 
+    rememberPendingAuthFieldRestoreState('chave');
+
     chaveInput.value = '';
     passwordInput.value = '';
     lastObservedPasswordFieldValue = '';
-    writePersistedChave('');
-
-    if (authStatusAbortController) {
-      authStatusAbortController.abort();
-      authStatusAbortController = null;
-    }
-
-    authState.statusLoading = false;
-    authState.chave = '';
-    authState.found = false;
-    authState.hasPassword = false;
-    clearTypedPasswordAuthentication();
-    authState.statusResolved = false;
-    clearProtectedClientState();
-    syncFormControlStates();
-    setAuthenticationPrompt();
-
-    void logoutWebSession({ silent: true });
   }
 
   function preparePasswordInputForNewEntry() {
-    if (!passwordInput.value) {
+    const hasVisiblePassword = hasPendingAuthFieldRestoreState()
+      ? Boolean(pendingAuthFieldRestoreState.password)
+      : Boolean(passwordInput.value);
+    if (!hasVisiblePassword) {
       return;
     }
 
+    rememberPendingAuthFieldRestoreState('password');
+
     passwordInput.value = '';
     lastObservedPasswordFieldValue = '';
-    authState.statusLoading = false;
-    applyAuthenticationLockedState({
-      chave: getActiveChave(),
-      found: authState.found,
-      hasPassword: authState.hasPassword,
-      message: authState.hasPassword ? 'Digite sua senha para iniciar.' : undefined,
-    });
-
-    if (authState.hasPassword || authState.passwordVerified || authState.authenticated) {
-      void logoutWebSession({ silent: true });
-    }
   }
 
   chaveInput.addEventListener('pointerdown', () => {
@@ -4395,6 +4454,7 @@
   });
 
   chaveInput.addEventListener('input', () => {
+    clearPendingAuthFieldRestoreState();
     const previousChave = authState.chave;
     const sanitized = sanitizeChave(chaveInput.value);
     if (sanitized !== chaveInput.value) {
@@ -4452,6 +4512,7 @@
   });
 
   passwordInput.addEventListener('input', () => {
+    clearPendingAuthFieldRestoreState();
     syncPasswordInputState({ showReadyMessage: true });
   });
 
@@ -4503,6 +4564,9 @@
 
     void registerPasswordForCurrentUser();
   });
+
+  document.addEventListener('pointerdown', restorePendingAuthFieldValuesOnExternalFocus, true);
+  document.addEventListener('focusin', restorePendingAuthFieldValuesOnExternalFocus, true);
 
   if (transportButton) {
     transportButton.addEventListener('click', openTransportScreen);

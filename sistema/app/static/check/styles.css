@@ -576,6 +576,12 @@ body.portrait-lock-active > .orientation-lock-screen {
   color: #ffffff;
 }
 
+.auth-action-button.is-pending {
+  background: #e2e8f0;
+  color: #475569;
+  box-shadow: none;
+}
+
 .auth-action-button:disabled,
 .secondary-button:disabled {
   cursor: wait;
@@ -1034,7 +1040,7 @@ body.portrait-lock-active > .orientation-lock-screen {
 .transport-request-builder-form,
 .transport-request-builder-group {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .transport-request-builder {
@@ -1063,17 +1069,17 @@ body.portrait-lock-active > .orientation-lock-screen {
 .transport-request-weekday-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 7px;
 }
 
 .transport-request-day-chip {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  min-height: 48px;
-  padding: 12px 14px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 12px;
   border: 1px solid rgba(15, 118, 110, 0.14);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(240, 253, 250, 0.88);
   color: #0f172a;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
@@ -1087,11 +1093,11 @@ body.portrait-lock-active > .orientation-lock-screen {
 .transport-request-day-chip span {
   font-size: var(--body-size);
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.22;
 }
 
 .transport-request-actions {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .transport-request-history-section {
@@ -1613,6 +1619,12 @@ body.portrait-lock-active > .orientation-lock-screen {
 
   .transport-request-weekday-options {
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .transport-request-day-chip {
+    min-height: 40px;
+    padding: 8px 10px;
   }
 }
 

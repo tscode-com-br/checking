@@ -13,10 +13,10 @@
     extra: "requests.labels.extra",
   };
   const VEHICLE_ICON_PATHS = {
-    carro: "icons/car.svg",
-    minivan: "icons/minivan.svg",
-    van: "icons/van.svg",
-    onibus: "icons/bus.svg",
+    carro: "/assets/icons/car.svg",
+    minivan: "/assets/icons/minivan.svg",
+    van: "/assets/icons/van.svg",
+    onibus: "/assets/icons/bus.svg",
   };
   const ROUTE_KIND_KEYS = {
     home_to_work: "routes.home_to_work",
@@ -48,6 +48,8 @@
   const VEHICLE_DETAILS_MAX_ROWS = 5;
   const VEHICLE_GRID_FALLBACK_ITEM_WIDTH = 104;
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
+  const VEHICLE_DETAILS_VIEWPORT_MARGIN = 12;
+  const VEHICLE_DETAILS_PANEL_OFFSET = 10;
 
   function getDictionaryForLanguage(languageCode) {
     if (transportI18n && typeof transportI18n.getDictionary === "function") {
@@ -374,6 +376,56 @@
           sizeProperty: "height",
           startProperty: "top",
         };
+  }
+
+  function resolveVehicleDetailsPosition(options) {
+    const anchorRect = options.anchorRect || {};
+    const viewportWidth = Math.max(0, Number(options.viewportWidth) || 0);
+    const viewportHeight = Math.max(0, Number(options.viewportHeight) || 0);
+    const panelWidth = Math.max(1, Number(options.panelWidth) || 0);
+    const panelHeight = Math.max(1, Number(options.panelHeight) || 0);
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const viewportMargin = Math.max(0, Number(options.viewportMargin) || 0);
+    const anchorLeft = Number(anchorRect.left) || 0;
+    const anchorTop = Number(anchorRect.top) || 0;
+    const anchorRight = Number(anchorRect.right);
+    const anchorBottom = Number(anchorRect.bottom);
+    const anchorWidth = Math.max(
+      0,
+      Number(anchorRect.width)
+      || (Number.isFinite(anchorRight) ? anchorRight - anchorLeft : 0)
+    );
+    const anchorHeight = Math.max(
+      0,
+      Number(anchorRect.height)
+      || (Number.isFinite(anchorBottom) ? anchorBottom - anchorTop : 0)
+    );
+    const maxLeft = Math.max(viewportMargin, viewportWidth - panelWidth - viewportMargin);
+    const maxTop = Math.max(viewportMargin, viewportHeight - panelHeight - viewportMargin);
+    let left = (Number.isFinite(anchorRight) ? anchorRight : anchorLeft + anchorWidth) + offset;
+    let horizontalDirection = "right";
+
+    if (left + panelWidth + viewportMargin > viewportWidth) {
+      left = anchorLeft - panelWidth - offset;
+      horizontalDirection = "left";
+    }
+
+    if (left < viewportMargin) {
+      left = anchorLeft + ((anchorWidth - panelWidth) / 2);
+      horizontalDirection = "center";
+    }
+
+    return {
+      left: Math.round(clampValue(left, viewportMargin, maxLeft)),
+      top: Math.round(
+        clampValue(
+          anchorTop + ((anchorHeight - panelHeight) / 2),
+          viewportMargin,
+          maxTop
+        )
+      ),
+      horizontalDirection,
+    };
   }
 
   function getVehicleGridItemMetrics(gridElement) {
@@ -987,6 +1039,7 @@
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
       routeTimeSaving: false,
+      expandedVehiclePositionFrame: null,
       requestSectionCollapsedByKind: {
         extra: false,
         weekend: false,
@@ -994,6 +1047,8 @@
       },
       requestRowCollapseOverrides: {},
     };
+    const vehicleDetailsOverlayHost = document.querySelector("[data-vehicle-details-layer]")
+      || createNode("div", "transport-vehicle-details-layer");
     const statusMessage = document.querySelector("[data-status-message]");
     const projectListToggle = document.querySelector("[data-project-list-toggle]");
     const projectListPanel = document.querySelector("[data-project-list-panel]");
@@ -1031,6 +1086,11 @@
     const requestSectionToggleLinks = {};
     const vehicleViewToggleLinks = {};
 
+    vehicleDetailsOverlayHost.dataset.vehicleDetailsLayer = "true";
+    if (!vehicleDetailsOverlayHost.parentNode && document.body) {
+      document.body.appendChild(vehicleDetailsOverlayHost);
+    }
+
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
     });
@@ -1065,6 +1125,10 @@
         toggleVehicleViewMode(scope);
       });
     });
+
+    globalScope.addEventListener("scroll", function () {
+      scheduleExpandedVehicleDetailsPositionSync();
+    }, true);
 
     if (projectListToggle) {
       projectListToggle.addEventListener("click", function () {
@@ -2461,6 +2525,92 @@
       renderVehiclePanels();
     }
 
+    function findExpandedVehicleDetailsElements() {
+      if (!state.expandedVehicleKey) {
+        return null;
+      }
+
+      const anchorButton = document.querySelector(
+        `[data-vehicle-details-anchor-key="${state.expandedVehicleKey}"]`
+      );
+      const detailsPanel = vehicleDetailsOverlayHost.querySelector(
+        `[data-vehicle-details-panel-key="${state.expandedVehicleKey}"]`
+      );
+
+      if (!anchorButton || !detailsPanel) {
+        return null;
+      }
+
+      return {
+        anchorButton,
+        detailsPanel,
+      };
+    }
+
+    function syncExpandedVehicleDetailsPosition() {
+      const expandedElements = findExpandedVehicleDetailsElements();
+      if (!expandedElements) {
+        clearElement(vehicleDetailsOverlayHost);
+        return;
+      }
+
+      const anchorRect = expandedElements.anchorButton.getBoundingClientRect();
+      const detailsStyles = typeof globalScope.getComputedStyle === "function"
+        ? globalScope.getComputedStyle(expandedElements.detailsPanel)
+        : null;
+      const panelWidth = Math.max(
+        1,
+        expandedElements.detailsPanel.offsetWidth
+        || parsePixelValue(detailsStyles ? detailsStyles.width : "", 264)
+      );
+      const panelHeight = Math.max(
+        1,
+        expandedElements.detailsPanel.offsetHeight
+        || parsePixelValue(detailsStyles ? detailsStyles.height : "", 248)
+      );
+      const viewportWidth = Math.max(
+        0,
+        globalScope.innerWidth
+        || (document.documentElement ? document.documentElement.clientWidth : 0)
+      );
+      const viewportHeight = Math.max(
+        0,
+        globalScope.innerHeight
+        || (document.documentElement ? document.documentElement.clientHeight : 0)
+      );
+      const nextPosition = resolveVehicleDetailsPosition({
+        anchorRect,
+        panelWidth,
+        panelHeight,
+        viewportWidth,
+        viewportHeight,
+        offset: VEHICLE_DETAILS_PANEL_OFFSET,
+        viewportMargin: VEHICLE_DETAILS_VIEWPORT_MARGIN,
+      });
+
+      expandedElements.detailsPanel.style.left = `${nextPosition.left}px`;
+      expandedElements.detailsPanel.style.top = `${nextPosition.top}px`;
+      expandedElements.detailsPanel.dataset.horizontalDirection = nextPosition.horizontalDirection;
+      expandedElements.detailsPanel.classList.add("is-positioned");
+    }
+
+    function scheduleExpandedVehicleDetailsPositionSync() {
+      if (state.expandedVehiclePositionFrame !== null && typeof globalScope.cancelAnimationFrame === "function") {
+        globalScope.cancelAnimationFrame(state.expandedVehiclePositionFrame);
+        state.expandedVehiclePositionFrame = null;
+      }
+
+      if (typeof globalScope.requestAnimationFrame !== "function") {
+        syncExpandedVehicleDetailsPosition();
+        return;
+      }
+
+      state.expandedVehiclePositionFrame = globalScope.requestAnimationFrame(function () {
+        state.expandedVehiclePositionFrame = null;
+        syncExpandedVehicleDetailsPosition();
+      });
+    }
+
     function createPassengerRemoveButton(requestRow, routeKind) {
       const removeButton = createNode("button", "transport-passenger-remove-button", "×");
       const normalizedRouteKind = routeKind || getSelectedRouteKind();
@@ -2868,6 +3018,7 @@
       vehicleButton.type = "button";
       vehicleButton.dataset.vehicleId = String(vehicle.id);
       vehicleButton.dataset.vehicleScope = scope;
+      vehicleButton.dataset.vehicleDetailsAnchorKey = vehicleDetailsKey;
       vehicleButton.title = t("misc.vehicleButtonTitle", {
         type: mapVehicleTypeLabel(vehicle.tipo),
         occupancy: formatVehicleOccupancyLabel(vehicle, assignedCount),
@@ -2971,10 +3122,11 @@
 
       tileElement.appendChild(vehicleButton);
       if (isExpanded) {
-        tileElement.appendChild(createVehicleDetailsPanel(vehicle, assignedRows, {
+        tileElement.expandedDetailsPanel = createVehicleDetailsPanel(vehicle, assignedRows, {
           previewRequestRow,
           routeKind: pendingPreview ? pendingPreview.routeKind : getSelectedRouteKind(),
-        }));
+        });
+        tileElement.expandedDetailsPanel.dataset.vehicleDetailsPanelKey = vehicleDetailsKey;
       }
       return tileElement;
     }
@@ -3047,6 +3199,7 @@
 
     function renderVehiclePanels() {
       syncVehicleViewToggleState();
+      clearElement(vehicleDetailsOverlayHost);
 
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
         const container = vehicleContainers[scope];
@@ -3076,11 +3229,17 @@
 
         vehicles.forEach(function (vehicle) {
           const assignedRows = assignedRowsByVehicle[String(vehicle.id)] || [];
-          container.appendChild(createVehicleIconButton(scope, vehicle, assignedRows));
+          const tileElement = createVehicleIconButton(scope, vehicle, assignedRows);
+          container.appendChild(tileElement);
+          if (tileElement.expandedDetailsPanel) {
+            vehicleDetailsOverlayHost.appendChild(tileElement.expandedDetailsPanel);
+          }
         });
 
         updateVehicleGridLayout(container);
       });
+
+      scheduleExpandedVehicleDetailsPositionSync();
     }
 
     function renderDashboard() {
@@ -3110,6 +3269,7 @@
           container.style.removeProperty("grid-auto-columns");
         }
       });
+      clearElement(vehicleDetailsOverlayHost);
       state.expandedVehicleKey = null;
       state.pendingAssignmentPreview = null;
       state.dragRequestId = null;
@@ -3173,6 +3333,7 @@
       refreshVehicleGridLayouts: function () {
         updateVehicleGridLayouts(document);
         scheduleSettingsTriggerPositionSync();
+        scheduleExpandedVehicleDetailsPositionSync();
       },
     };
   }
@@ -3230,6 +3391,7 @@
     parsePositiveNumber,
     resolvePanelSizes,
     resolveResizeConfig,
+    resolveVehicleDetailsPosition,
     startOfLocalDay,
     shiftLocalDay,
   };

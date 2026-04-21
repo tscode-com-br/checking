@@ -25,6 +25,10 @@ test('transport request history normalizes API realized status back to confirmed
   assert.match(checkApp, /return normalizedStatus === 'realized' \? 'confirmed' : normalizedStatus;/);
 });
 
+test('transport request history treats inactive requests as cancelled in the webapp UI', () => {
+  assert.match(checkApp, /if \(!isActive && normalizedStatus !== 'realized'\) \{[\s\S]*normalizedStatus = 'cancelled';[\s\S]*\}/);
+});
+
 test('transport request history only allows dismissing realized or cancelled cards', () => {
   assert.match(
     checkApp,
@@ -41,4 +45,9 @@ test('transport request history exposes a local Realizado action after departure
   assert.match(checkApp, /function markTransportRequestAsRealized\(requestId\)/);
   assert.match(checkApp, /realizedButton\.dataset\.transportRequestRealized = 'true'/);
   assert.match(checkCss, /\.transport-request-card-realized-button/);
+});
+
+test('transport webapp fetches transport state and actions with same-origin credentials', () => {
+  assert.match(checkApp, /fetch\(`\$\{transportStateEndpoint\}\?chave=\$\{encodeURIComponent\(chave\)\}`, \{[\s\S]*credentials: 'same-origin'/);
+  assert.match(checkApp, /async function postTransportPayload\(url, payload\) \{[\s\S]*credentials: 'same-origin'/);
 });

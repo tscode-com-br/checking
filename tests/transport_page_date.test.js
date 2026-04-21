@@ -132,11 +132,39 @@ test('resolvePanelSizes clamps resize positions to the configured limits', () =>
   );
 });
 
+test('resolveVehicleDetailsPosition keeps the vehicle passenger table inside the viewport', () => {
+  assert.deepEqual(
+    transportPage.resolveVehicleDetailsPosition({
+      anchorRect: { left: 480, top: 0, right: 584, bottom: 96, width: 104, height: 96 },
+      panelWidth: 264,
+      panelHeight: 240,
+      viewportWidth: 600,
+      viewportHeight: 400,
+      offset: 10,
+      viewportMargin: 12,
+    }),
+    { left: 206, top: 12, horizontalDirection: 'left' }
+  );
+
+  assert.deepEqual(
+    transportPage.resolveVehicleDetailsPosition({
+      anchorRect: { left: 8, top: 340, right: 112, bottom: 436, width: 104, height: 96 },
+      panelWidth: 264,
+      panelHeight: 240,
+      viewportWidth: 320,
+      viewportHeight: 440,
+      offset: 10,
+      viewportMargin: 12,
+    }),
+    { left: 12, top: 188, horizontalDirection: 'center' }
+  );
+});
+
 test('mapVehicleIconPath resolves each transport vehicle type to its icon asset', () => {
-  assert.equal(transportPage.mapVehicleIconPath('carro'), 'icons/car.svg');
-  assert.equal(transportPage.mapVehicleIconPath('minivan'), 'icons/minivan.svg');
-  assert.equal(transportPage.mapVehicleIconPath('van'), 'icons/van.svg');
-  assert.equal(transportPage.mapVehicleIconPath('onibus'), 'icons/bus.svg');
+  assert.equal(transportPage.mapVehicleIconPath('carro'), '/assets/icons/car.svg');
+  assert.equal(transportPage.mapVehicleIconPath('minivan'), '/assets/icons/minivan.svg');
+  assert.equal(transportPage.mapVehicleIconPath('van'), '/assets/icons/van.svg');
+  assert.equal(transportPage.mapVehicleIconPath('onibus'), '/assets/icons/bus.svg');
 });
 
 test('formatVehicleOccupancyLabel shows the current and total allocated seats', () => {
@@ -386,6 +414,30 @@ test('transport vehicle details panel inserts the delete button before the passe
   );
 
   assert.match(transportScript, /detailsPanel\.insertBefore\(deleteButton, passengerTableShell\);/);
+});
+
+test('transport vehicle details render in a fixed overlay layer above the layout', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-vehicle-details-layer\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*z-index:\s*32;[\s\S]*pointer-events:\s*none;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-vehicle-details\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*auto;/
+  );
+  assert.match(
+    transportScript,
+    /vehicleDetailsOverlayHost\.appendChild\(tileElement\.expandedDetailsPanel\);/
+  );
 });
 
 test('buildVehiclePassengerPreviewRows keeps the dragged passenger visible in the preview table', () => {
