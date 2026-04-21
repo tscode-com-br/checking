@@ -184,36 +184,6 @@ class TransportAssignment(Base):
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class TransportBotSession(Base):
-    __tablename__ = "transport_bot_sessions"
-    __table_args__ = (UniqueConstraint("chat_id", name="uq_transport_bot_sessions_chat_id"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    chat_id: Mapped[str] = mapped_column(String(120), nullable=False)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    chave: Mapped[str | None] = mapped_column(String(4), nullable=True)
-    state: Mapped[str] = mapped_column(String(32), nullable=False, default="awaiting_key")
-    context_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class TransportNotification(Base):
-    __tablename__ = "transport_notifications"
-    __table_args__ = (CheckConstraint("status IN ('pending', 'sent')", name="ck_transport_notifications_status_allowed"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    chat_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    request_id: Mapped[int | None] = mapped_column(ForeignKey("transport_requests.id"), nullable=True)
-    assignment_id: Mapped[int | None] = mapped_column(ForeignKey("transport_assignments.id"), nullable=True)
-    message: Mapped[str] = mapped_column(String(500), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
 class PendingRegistration(Base):
     __tablename__ = "pending_registrations"
     __table_args__ = (UniqueConstraint("rfid", name="uq_pending_rfid"),)

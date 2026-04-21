@@ -784,66 +784,6 @@ class TransportDateSettingsUpdateRequest(BaseModel):
         return _normalize_transport_time(value)
 
 
-class TransportBotIncomingMessage(BaseModel):
-    chat_id: str = Field(min_length=2, max_length=120)
-    message: str = Field(min_length=1, max_length=500)
-
-    @field_validator("chat_id", mode="before")
-    @classmethod
-    def validate_chat_id(cls, value: str) -> str:
-        return _normalize_required_compact_text(value, "O chat_id", max_length=120)
-
-    @field_validator("message", mode="before")
-    @classmethod
-    def validate_bot_message(cls, value: str) -> str:
-        normalized = " ".join(str(value or "").strip().split())
-        if not normalized:
-            raise ValueError("A mensagem e obrigatoria")
-        if len(normalized) > 500:
-            raise ValueError("A mensagem deve ter no maximo 500 caracteres")
-        return normalized
-
-
-class TransportBotReplyMessage(BaseModel):
-    text: str
-    options: list[str] = Field(default_factory=list)
-
-
-class TransportBotConversationResponse(BaseModel):
-    ok: bool
-    state: str
-    user_key: str | None = None
-    registration_completed: bool = False
-    request_created: bool = False
-    messages: list[TransportBotReplyMessage]
-
-
-class TransportNotificationRow(BaseModel):
-    id: int
-    chat_id: str | None = None
-    message: str
-    created_at: datetime
-    request_id: int | None = None
-    assignment_id: int | None = None
-
-
-class TransportNotificationListResponse(BaseModel):
-    items: list[TransportNotificationRow]
-
-
-class TransportNotificationAckResponse(BaseModel):
-    ok: bool
-
-
-class TransportWhatsAppDispatchResponse(BaseModel):
-    ok: bool
-    attempted: int
-    sent: int
-    failed: int
-    skipped: int
-    message: str
-
-
 class PendingRow(BaseModel):
     id: int
     rfid: str

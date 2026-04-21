@@ -54,7 +54,7 @@ test('createTransportDateStore shares one selected date across subscribers', () 
   assert.deepEqual(secondSubscriberDates, firstSubscriberDates);
 });
 
-test('resolveStoredTransportDate restores a previously selected dashboard date', () => {
+test('resolveStoredTransportDate always falls back to the current reference date on reload', () => {
   const originalLocalStorage = global.localStorage;
   global.localStorage = {
     getItem(key) {
@@ -65,7 +65,7 @@ test('resolveStoredTransportDate restores a previously selected dashboard date',
 
   try {
     const restoredDate = transportPage.resolveStoredTransportDate(new Date(2026, 3, 17));
-    assert.equal(transportPage.formatIsoDate(restoredDate), '2026-04-19');
+    assert.equal(transportPage.formatIsoDate(restoredDate), '2026-04-17');
   } finally {
     global.localStorage = originalLocalStorage;
   }
@@ -88,21 +88,21 @@ test('resolveStoredTransportDate falls back to the reference date for invalid st
   }
 });
 
-test('setStoredTransportDate persists the selected date as an ISO string', () => {
+test('setStoredTransportDate clears the persisted dashboard date so reload starts from today', () => {
   const originalLocalStorage = global.localStorage;
   const writes = [];
   global.localStorage = {
     getItem() {
       return null;
     },
-    setItem(key, value) {
-      writes.push([key, value]);
+    removeItem(key) {
+      writes.push(key);
     },
   };
 
   try {
     transportPage.setStoredTransportDate(new Date(2026, 3, 20));
-    assert.deepEqual(writes, [['checking.transport.dashboard.selectedDate', '2026-04-20']]);
+    assert.deepEqual(writes, ['checking.transport.dashboard.selectedDate']);
   } finally {
     global.localStorage = originalLocalStorage;
   }
@@ -161,10 +161,10 @@ test('resolveVehicleDetailsPosition keeps the vehicle passenger table inside the
 });
 
 test('mapVehicleIconPath resolves each transport vehicle type to its icon asset', () => {
-  assert.equal(transportPage.mapVehicleIconPath('carro'), '/assets/icons/car.svg');
-  assert.equal(transportPage.mapVehicleIconPath('minivan'), '/assets/icons/minivan.svg');
-  assert.equal(transportPage.mapVehicleIconPath('van'), '/assets/icons/van.svg');
-  assert.equal(transportPage.mapVehicleIconPath('onibus'), '/assets/icons/bus.svg');
+  assert.equal(transportPage.mapVehicleIconPath('carro'), '../assets/icons/car.svg');
+  assert.equal(transportPage.mapVehicleIconPath('minivan'), '../assets/icons/minivan.svg');
+  assert.equal(transportPage.mapVehicleIconPath('van'), '../assets/icons/van.svg');
+  assert.equal(transportPage.mapVehicleIconPath('onibus'), '../assets/icons/bus.svg');
 });
 
 test('formatVehicleOccupancyLabel shows the current and total allocated seats', () => {
@@ -365,6 +365,23 @@ test('transport topbar uses a single route selector instead of a radio pair and 
   assert.match(transportScript, /const shouldShowRouteTime = isWorkToHomeSelected && state\.isAuthenticated;/);
   assert.match(transportScript, /routeTimePopover\.hidden = !shouldShowRouteTime;/);
   assert.match(transportCss, /\.transport-route-select\s*\{[\s\S]*text-align:\s*center;[\s\S]*color-scheme:\s*dark;[\s\S]*cursor:\s*pointer;/);
+});
+
+test('transport frontend uses base-relative asset and API paths so the /checking prefix keeps working', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(transportScript, /const TRANSPORT_ASSETS_PREFIX = "\.\.\/assets";/);
+  assert.match(transportScript, /const TRANSPORT_API_PREFIX = "\.\.\/api\/transport";/);
+  assert.match(transportScript, /new globalScope\.EventSource\(`\$\{TRANSPORT_API_PREFIX\}\/stream`\);/);
+  assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/vehicles`, \{/);
+  assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/assignments`, \{/);
+  assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/requests\/reject`, \{/);
+  assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/auth\/session`\)/);
+  assert.doesNotMatch(transportScript, /"\/api\/transport/);
+  assert.doesNotMatch(transportScript, /"\/assets\/icons/);
 });
 
 test('transport request sections size themselves by their own content instead of sharing equal-height rows', () => {

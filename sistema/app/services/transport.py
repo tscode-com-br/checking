@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import calendar
-import hashlib
 import json
-import unicodedata
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
@@ -11,8 +9,6 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     TransportAssignment,
-    TransportBotSession,
-    TransportNotification,
     TransportRequest,
     TransportVehicleSchedule,
     TransportVehicleScheduleException,
@@ -22,8 +18,6 @@ from ..models import (
 )
 from ..schemas import (
     ProjectRow,
-    TransportBotConversationResponse,
-    TransportBotReplyMessage,
     TransportDashboardResponse,
     TransportRequestRow,
     TransportVehicleCreate,
@@ -38,20 +32,8 @@ from .location_settings import (
     get_transport_work_to_home_time,
     get_transport_work_to_home_time_for_date,
 )
-from .project_catalog import list_project_names, list_projects, normalize_project_name
+from .project_catalog import list_projects
 from .time_utils import now_sgt
-from .user_profiles import normalize_person_name
-from .user_sync import (
-    APP_IMPORTED_USER_NAME,
-    WEB_IMPORTED_USER_NAME,
-    apply_user_state,
-    create_user_sync_event,
-    ensure_current_user_state_event,
-    find_user_by_chave,
-    is_same_singapore_day,
-    normalize_user_key,
-    resolve_latest_user_activity,
-)
 
 
 _REQUEST_KIND_TO_RECURRENCE = {
@@ -81,8 +63,6 @@ _PAIRED_ROUTE_KIND = {
     "home_to_work": "work_to_home",
     "work_to_home": "home_to_work",
 }
-_PLACEHOLDER_NAMES = {APP_IMPORTED_USER_NAME, WEB_IMPORTED_USER_NAME}
-_MENU_OPTIONS = ["REGULAR", "WEEKEND", "EXTRA", "CHANGE", "CANCEL"]
 
 
 def _resolve_web_transport_route_order(preferred_route_kind: str | None) -> list[str]:
@@ -582,12 +562,6 @@ def delete_transport_vehicle_registration(
     ).scalars().all()
 
     if assignment_ids:
-        notifications = db.execute(
-            select(TransportNotification).where(TransportNotification.assignment_id.in_(assignment_ids))
-        ).scalars().all()
-        for notification in notifications:
-            db.delete(notification)
-
         assignments = db.execute(
             select(TransportAssignment).where(TransportAssignment.id.in_(assignment_ids))
         ).scalars().all()
@@ -1062,7 +1036,6 @@ def _build_web_transport_request_items(
 
     return request_items
 
-
 def build_web_transport_state(
     db: Session,
     *,
@@ -1205,225 +1178,6 @@ def build_web_transport_state(
         awareness_confirmed=False,
         requests=request_items,
     )
-
-
-def get_or_create_bot_session(db: Session, *, chat_id: str) -> TransportBotSession:
-    session = db.execute(select(TransportBotSession).where(TransportBotSession.chat_id == chat_id)).scalar_one_or_none()
-    if session is not None:
-        return session
-
-    timestamp = now_sgt()
-    session = TransportBotSession(
-        chat_id=chat_id,
-        user_id=None,
-        chave=None,
-        state="awaiting_key",
-        context_json=None,
-        created_at=timestamp,
-        updated_at=timestamp,
-        last_message_at=timestamp,
-    )
-    db.add(session)
-    db.flush()
-    return session
-
-
-def process_bot_message(db: Session, *, chat_id: str, message: str) -> TransportBotConversationResponse:
-    session = get_or_create_bot_session(db, chat_id=chat_id)
-    timestamp = now_sgt()
-    session.last_message_at = timestamp
-    session.updated_at = timestamp
-
-    context = _load_session_context(session)
-    normalized_message = " ".join(str(message or "").strip().split())
-    replies: list[TransportBotReplyMessage] = []
-    registration_completed = False
-    request_created = False
-
-    if session.state == "awaiting_key":
-        normalized_key = _normalize_key_candidate(normalized_message)
-        if normalized_key is None:
-            replies.append(TransportBotReplyMessage(text="Send your 4-character alphanumeric key first."))
-            return _save_bot_response(session, context, replies)
-
-        session.chave = normalized_key
-        user = find_user_by_chave(db, normalized_key)
-        session.user_id = user.id if user is not None else None
-        if user is not None and is_transport_registered_user(user):
-            session.state = "ready"
-            replies.append(TransportBotReplyMessage(text=f"Key {normalized_key} validated for {user.nome}."))
-            replies.append(_menu_reply())
-            return _save_bot_response(session, context, replies)
-
-        session.state = "awaiting_name"
-        if user is not None:
-            _remember_existing_user(context, user)
-        replies.append(TransportBotReplyMessage(text="Registration is incomplete. Enter your full name."))
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_name":
-        try:
-            context["nome"] = normalize_person_name(normalized_message)
-        except ValueError:
-            replies.append(TransportBotReplyMessage(text="The name must contain at least 3 characters."))
-            return _save_bot_response(session, context, replies)
-        project_options = list_project_names(db)
-        if not project_options:
-            replies.append(TransportBotReplyMessage(text="No project is registered in the system. Add a project before continuing."))
-            return _save_bot_response(session, context, replies)
-        session.state = "awaiting_project"
-        replies.append(TransportBotReplyMessage(text="Enter the project.", options=project_options))
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_project":
-        project_options = list_project_names(db)
-        project = _normalize_project_code(db, normalized_message)
-        if project is None:
-            replies.append(TransportBotReplyMessage(text="Invalid project. Choose a registered project.", options=project_options))
-            return _save_bot_response(session, context, replies)
-        context["projeto"] = project
-        workplaces = list_workplaces(db)
-        if not workplaces:
-            replies.append(TransportBotReplyMessage(text="No workplace is registered in the system. Add a workplace before continuing."))
-            return _save_bot_response(session, context, replies)
-        session.state = "awaiting_workplace"
-        replies.append(
-            TransportBotReplyMessage(
-                text="Choose your workplace by sending the name or the list number.",
-                options=[f"{index + 1}. {row.workplace}" for index, row in enumerate(workplaces)],
-            )
-        )
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_workplace":
-        selected_workplace = _resolve_workplace_choice(db, normalized_message)
-        if selected_workplace is None:
-            workplaces = list_workplaces(db)
-            replies.append(
-                TransportBotReplyMessage(
-                    text="Invalid workplace. Choose an existing workplace by name or number.",
-                    options=[f"{index + 1}. {row.workplace}" for index, row in enumerate(workplaces)],
-                )
-            )
-            return _save_bot_response(session, context, replies)
-        context["workplace"] = selected_workplace.workplace
-        session.state = "awaiting_address"
-        replies.append(TransportBotReplyMessage(text="Enter your home address."))
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_address":
-        address = _normalize_free_text(normalized_message, min_length=3, max_length=255)
-        if address is None:
-            replies.append(TransportBotReplyMessage(text="Enter a valid home address."))
-            return _save_bot_response(session, context, replies)
-        context["end_rua"] = address
-        session.state = "awaiting_zip"
-        replies.append(TransportBotReplyMessage(text="Enter your ZIP code."))
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_zip":
-        zip_code = _normalize_compact_text(normalized_message, max_length=10)
-        if zip_code is None:
-            replies.append(TransportBotReplyMessage(text="Enter a valid ZIP code."))
-            return _save_bot_response(session, context, replies)
-        context["zip"] = zip_code
-        user = _upsert_registered_user_from_session(db, session=session, context=context)
-        session.user_id = user.id
-        session.state = "ready"
-        registration_completed = True
-        _ensure_transport_registration_checkin(db, user=user, chat_id=chat_id)
-        replies.append(TransportBotReplyMessage(text=f"Registration completed for {user.nome}."))
-        replies.append(_menu_reply())
-        return _save_bot_response(
-            session,
-            context,
-            replies,
-            registration_completed=registration_completed,
-        )
-
-    if session.state == "awaiting_cancel_kind":
-        request_kind = _resolve_request_kind(normalized_message)
-        if request_kind is None:
-            replies.append(TransportBotReplyMessage(text="Choose REGULAR, WEEKEND, or EXTRA.", options=_MENU_OPTIONS[:3]))
-            return _save_bot_response(session, context, replies)
-        user = _require_session_user(db, session)
-        cancelled = cancel_transport_requests(db, user=user, request_kind=request_kind, reference_date=timestamp.date())
-        if context.get("replace_after_cancel"):
-            context.pop("replace_after_cancel", None)
-            context["pending_kind"] = request_kind
-            session.state = "awaiting_request_time"
-            if cancelled == 0:
-                replies.append(TransportBotReplyMessage(text=f"No active {_REQUEST_KIND_TO_LABEL[request_kind]} request was found. Enter the new time anyway."))
-            else:
-                replies.append(TransportBotReplyMessage(text=f"The {_REQUEST_KIND_TO_LABEL[request_kind]} request was removed. Enter the new time in hh:mm format."))
-            return _save_bot_response(session, context, replies)
-
-        session.state = "ready"
-        if cancelled == 0:
-            replies.append(TransportBotReplyMessage(text=f"No active {_REQUEST_KIND_TO_LABEL[request_kind]} request was found."))
-        else:
-            replies.append(TransportBotReplyMessage(text=f"The {_REQUEST_KIND_TO_LABEL[request_kind]} request was cancelled."))
-        replies.append(_menu_reply())
-        return _save_bot_response(session, context, replies)
-
-    if session.state == "awaiting_request_time":
-        requested_time = _normalize_time_message(normalized_message)
-        request_kind = str(context.get("pending_kind") or "")
-        if requested_time is None or request_kind not in _REQUEST_KIND_TO_RECURRENCE:
-            replies.append(TransportBotReplyMessage(text="Enter the time in hh:mm format."))
-            return _save_bot_response(session, context, replies)
-        user = _require_session_user(db, session)
-        transport_request, _created = upsert_transport_request(
-            db,
-            user=user,
-            request_kind=request_kind,
-            requested_time=requested_time,
-            requested_date=(timestamp.date() if request_kind == "extra" else None),
-            created_via="bot",
-        )
-        session.state = "ready"
-        context.pop("pending_kind", None)
-        request_created = True
-        replies.append(
-            TransportBotReplyMessage(
-                text=(
-                    f"The {_REQUEST_KIND_TO_LABEL[transport_request.request_kind]} request was recorded for {transport_request.requested_time}. "
-                    "Your name stays red until a vehicle is assigned."
-                )
-            )
-        )
-        replies.append(_menu_reply())
-        return _save_bot_response(session, context, replies, request_created=request_created)
-
-    user = _require_session_user(db, session)
-    command = _normalize_command(normalized_message)
-    request_kind = _resolve_request_kind(command)
-    if request_kind is not None:
-        session.state = "awaiting_request_time"
-        context["pending_kind"] = request_kind
-        replies.append(TransportBotReplyMessage(text="Enter the desired time in hh:mm format."))
-        return _save_bot_response(session, context, replies)
-
-    if command in {"CHANGE", "ALTERAR"}:
-        session.state = "awaiting_cancel_kind"
-        replies.append(
-            TransportBotReplyMessage(
-                text="Choose which type you want to replace. After that, send the new time.",
-                options=_MENU_OPTIONS[:3],
-            )
-        )
-        context["replace_after_cancel"] = True
-        return _save_bot_response(session, context, replies)
-
-    if command in {"CANCEL", "CANCELAR"}:
-        session.state = "awaiting_cancel_kind"
-        replies.append(TransportBotReplyMessage(text="Choose which type you want to cancel.", options=_MENU_OPTIONS[:3]))
-        context.pop("replace_after_cancel", None)
-        return _save_bot_response(session, context, replies)
-
-    replies.append(TransportBotReplyMessage(text=f"Key validated for {user.nome}."))
-    replies.append(_menu_reply())
-    return _save_bot_response(session, context, replies)
 
 
 def update_transport_assignment(
@@ -1942,45 +1696,6 @@ def _build_transport_vehicle_registry_rows(
     return registry_rows
 
 
-def queue_assignment_notification(
-    db: Session,
-    *,
-    transport_request: TransportRequest,
-    assignment: TransportAssignment,
-    user: User,
-    vehicle: Vehicle | None,
-    is_update: bool,
-) -> TransportNotification | None:
-    session = db.execute(
-        select(TransportBotSession)
-        .where(TransportBotSession.user_id == user.id)
-        .order_by(TransportBotSession.updated_at.desc(), TransportBotSession.id.desc())
-        .limit(1)
-    ).scalars().first()
-    if session is None:
-        return None
-
-    timestamp = now_sgt()
-    message = _build_assignment_message(
-        transport_request=transport_request,
-        assignment=assignment,
-        vehicle=vehicle,
-        is_update=is_update,
-    )
-    notification = TransportNotification(
-        user_id=user.id,
-        chat_id=session.chat_id,
-        request_id=transport_request.id,
-        assignment_id=assignment.id,
-        message=message,
-        status="pending",
-        created_at=timestamp,
-        sent_at=None,
-    )
-    db.add(notification)
-    return notification
-
-
 def _build_vehicle_row(vehicle: Vehicle) -> TransportVehicleRow:
     return _build_vehicle_row_for_schedule(vehicle, schedule=None)
 
@@ -2003,29 +1718,6 @@ def _build_vehicle_row_for_schedule(
         route_kind=(schedule.route_kind if schedule is not None else None),
         departure_time=departure_time,
     )
-
-
-def _build_assignment_message(
-    *,
-    transport_request: TransportRequest,
-    assignment: TransportAssignment,
-    vehicle: Vehicle | None,
-    is_update: bool,
-) -> str:
-    kind_label = _REQUEST_KIND_TO_LABEL[transport_request.request_kind]
-    route_label = _ROUTE_KIND_TO_LABEL.get(assignment.route_kind, assignment.route_kind)
-    if assignment.status == "confirmed" and vehicle is not None:
-        prefix = "Your transport has been updated" if is_update else "Your transport has been confirmed"
-        vehicle_description = f"{vehicle.tipo} {vehicle.placa}"
-        if vehicle.color:
-            vehicle_description = f"{vehicle_description}, color {vehicle.color}"
-        return (
-            f"{prefix}: {kind_label} at {transport_request.requested_time} ({route_label}) with {vehicle_description}. "
-            f"Tolerance: {vehicle.tolerance} minutes."
-        )
-    if assignment.status == "rejected":
-        return f"Your {kind_label} transport at {transport_request.requested_time} ({route_label}) was rejected."
-    return f"Your {kind_label} transport at {transport_request.requested_time} ({route_label}) was cancelled."
 
 
 def _build_vehicle_rows_for_dashboard(
@@ -2325,213 +2017,3 @@ def find_transport_vehicle_schedule(
 
 def get_paired_route_kind(route_kind: str) -> str | None:
     return _PAIRED_ROUTE_KIND.get(route_kind)
-
-
-def _upsert_registered_user_from_session(db: Session, *, session: TransportBotSession, context: dict[str, str]) -> User:
-    timestamp = now_sgt()
-    user = db.get(User, session.user_id) if session.user_id is not None else None
-    if user is None:
-        if session.chave is None:
-            raise ValueError("The user key is missing from the session.")
-        user = find_user_by_chave(db, session.chave)
-    if user is None:
-        user = User(
-            rfid=None,
-            chave=normalize_user_key(session.chave or ""),
-            nome=context["nome"],
-            projeto=context["projeto"],
-            workplace=context["workplace"],
-            placa=None,
-            end_rua=context["end_rua"],
-            zip=context["zip"],
-            cargo=None,
-            email=None,
-            local=None,
-            checkin=None,
-            time=None,
-            last_active_at=timestamp,
-            inactivity_days=0,
-        )
-        db.add(user)
-        db.flush()
-        return user
-
-    user.nome = context["nome"]
-    user.projeto = context["projeto"]
-    user.workplace = context["workplace"]
-    user.end_rua = context["end_rua"]
-    user.zip = context["zip"]
-    user.last_active_at = timestamp
-    return user
-
-
-def _ensure_transport_registration_checkin(db: Session, *, user: User, chat_id: str) -> bool:
-    timestamp = now_sgt()
-    latest_activity = resolve_latest_user_activity(db, user=user)
-    if latest_activity is not None and latest_activity.action == "checkin" and is_same_singapore_day(latest_activity.event_time, timestamp):
-        return False
-
-    ensure_current_user_state_event(db, user=user)
-    apply_user_state(
-        user,
-        action="checkin",
-        event_time=timestamp,
-        projeto=user.projeto,
-        local=user.workplace or user.local,
-    )
-    request_hash = hashlib.sha1(f"bot-register|{chat_id}|{timestamp.isoformat()}".encode("utf-8")).hexdigest()
-    create_user_sync_event(
-        db,
-        user=user,
-        source="bot",
-        action="checkin",
-        event_time=timestamp,
-        projeto=user.projeto,
-        local=user.workplace or user.local,
-        ontime=True,
-        source_request_id=request_hash,
-        device_id="transport-bot",
-    )
-    return True
-
-
-def is_transport_registered_user(user: User) -> bool:
-    normalized_name = " ".join(str(user.nome or "").strip().split())
-    return bool(
-        normalized_name
-        and normalized_name not in _PLACEHOLDER_NAMES
-        and user.projeto
-        and user.workplace
-        and user.end_rua
-        and user.zip
-    )
-
-
-def _remember_existing_user(context: dict[str, str], user: User) -> None:
-    if user.nome and user.nome not in _PLACEHOLDER_NAMES:
-        context.setdefault("nome", user.nome)
-    if user.projeto:
-        context.setdefault("projeto", user.projeto)
-    if user.workplace:
-        context.setdefault("workplace", user.workplace)
-    if user.end_rua:
-        context.setdefault("end_rua", user.end_rua)
-    if user.zip:
-        context.setdefault("zip", user.zip)
-
-
-def _load_session_context(session: TransportBotSession) -> dict[str, str]:
-    raw_value = str(session.context_json or "").strip()
-    if not raw_value:
-        return {}
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _save_bot_response(
-    session: TransportBotSession,
-    context: dict[str, str],
-    replies: list[TransportBotReplyMessage],
-    *,
-    registration_completed: bool = False,
-    request_created: bool = False,
-) -> TransportBotConversationResponse:
-    session.context_json = json.dumps(context, ensure_ascii=True, separators=(",", ":")) if context else None
-    return TransportBotConversationResponse(
-        ok=True,
-        state=session.state,
-        user_key=session.chave,
-        registration_completed=registration_completed,
-        request_created=request_created,
-        messages=replies,
-    )
-
-
-def _require_session_user(db: Session, session: TransportBotSession) -> User:
-    user = db.get(User, session.user_id) if session.user_id is not None else None
-    if user is None and session.chave:
-        user = find_user_by_chave(db, session.chave)
-    if user is None:
-        raise ValueError("The bot session does not have a linked user.")
-    return user
-
-
-def _normalize_key_candidate(value: str) -> str | None:
-    normalized = str(value or "").strip().upper()
-    if len(normalized) != 4 or not normalized.isalnum():
-        return None
-    return normalized
-
-
-def _normalize_project_code(db: Session, value: str) -> str | None:
-    try:
-        normalized = normalize_project_name(value)
-    except ValueError:
-        return None
-    return normalized if normalized in set(list_project_names(db)) else None
-
-
-def _normalize_free_text(value: str, *, min_length: int, max_length: int) -> str | None:
-    normalized = " ".join(str(value or "").strip().split())
-    if len(normalized) < min_length or len(normalized) > max_length:
-        return None
-    return normalized
-
-
-def _normalize_compact_text(value: str, *, max_length: int) -> str | None:
-    normalized = str(value or "").strip()
-    if not normalized or len(normalized) > max_length:
-        return None
-    return normalized
-
-
-def _normalize_time_message(value: str) -> str | None:
-    normalized = str(value or "").strip()
-    parts = normalized.split(":")
-    if len(parts) != 2 or any(not part.isdigit() for part in parts):
-        return None
-    hour, minute = int(parts[0]), int(parts[1])
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        return None
-    return f"{hour:02d}:{minute:02d}"
-
-
-def _normalize_command(value: str) -> str:
-    collapsed = " ".join(str(value or "").strip().split())
-    normalized = unicodedata.normalize("NFKD", collapsed)
-    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    return normalized.upper()
-
-
-def _resolve_request_kind(value: str) -> str | None:
-    normalized = _normalize_command(value)
-    if normalized == "REGULAR":
-        return "regular"
-    if normalized in {"FIM DE SEMANA", "WEEKEND"}:
-        return "weekend"
-    if normalized == "EXTRA":
-        return "extra"
-    return None
-
-
-def _resolve_workplace_choice(db: Session, value: str) -> Workplace | None:
-    workplaces = db.execute(select(Workplace).order_by(Workplace.workplace, Workplace.id)).scalars().all()
-    if not workplaces:
-        return None
-    normalized = str(value or "").strip()
-    if normalized.isdigit():
-        index = int(normalized) - 1
-        if 0 <= index < len(workplaces):
-            return workplaces[index]
-    lowered = normalized.casefold()
-    for workplace in workplaces:
-        if workplace.workplace.casefold() == lowered:
-            return workplace
-    return None
-
-
-def _menu_reply() -> TransportBotReplyMessage:
-    return TransportBotReplyMessage(text="Choose an option.", options=_MENU_OPTIONS)

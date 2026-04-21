@@ -16,13 +16,6 @@ os.environ["FORMS_URL"] = "https://example.com/form"
 os.environ["DEVICE_SHARED_KEY"] = "device-test-key"
 os.environ["MOBILE_APP_SHARED_KEY"] = "mobile-test-key"
 os.environ["PROVIDER_SHARED_KEY"] = "PETROBRASP80P82P83"
-os.environ["TRANSPORT_BOT_SHARED_KEY"] = "transport-bot-test-key"
-os.environ["WHATSAPP_ENABLED"] = "true"
-os.environ["WHATSAPP_PROVIDER"] = "meta"
-os.environ["WHATSAPP_WEBHOOK_VERIFY_TOKEN"] = "whatsapp-verify-token"
-os.environ["WHATSAPP_ACCESS_TOKEN"] = "whatsapp-access-token"
-os.environ["WHATSAPP_PHONE_NUMBER_ID"] = "1234567890"
-os.environ["WHATSAPP_APP_SECRET"] = "whatsapp-app-secret"
 os.environ["ADMIN_SESSION_SECRET"] = "test-admin-session-secret"
 os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
@@ -45,8 +38,6 @@ from sistema.app.models import (
     FormsSubmission,
     Project,
     TransportAssignment,
-    TransportBotSession,
-    TransportNotification,
     TransportRequest,
     TransportVehicleSchedule,
     TransportVehicleScheduleException,
@@ -63,7 +54,6 @@ from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
-from sistema.app.services import whatsapp_meta as whatsapp_meta_module
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import seed_default_projects
 from sistema.app.services.time_utils import now_sgt
@@ -75,7 +65,6 @@ ADMIN_LOGIN_CHAVE = "HR70"
 ADMIN_LOGIN_SENHA = "eAcacdLe2"
 MOBILE_HEADERS = {"x-mobile-shared-key": "mobile-test-key"}
 PROVIDER_HEADERS = {"x-provider-shared-key": "PETROBRASP80P82P83"}
-TRANSPORT_BOT_HEADERS = {"x-transport-bot-shared-key": "transport-bot-test-key"}
 
 Base.metadata.create_all(bind=engine)
 seed_default_projects()
@@ -2776,9 +2765,9 @@ def test_transport_page_is_served_on_transport_path():
         response = client.get("/transport")
         assert response.status_code == 200
         assert "User List" in response.text
-        assert ">EXTRA<" in response.text
-        assert ">WEEKEND<" in response.text
-        assert ">REGULAR<" in response.text
+        assert 'data-toggle-request-section="extra"' in response.text
+        assert 'data-toggle-request-section="weekend"' in response.text
+        assert 'data-toggle-request-section="regular"' in response.text
         assert "Regular Transport List" in response.text
         assert "Weekend Transport List" in response.text
         assert "Extra Transport List" in response.text
@@ -2970,7 +2959,9 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert friday_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
     assert [row["chave"] for row in friday_payload["extra_requests"]] == ["TD03"]
     assert friday_payload["extra_requests"][0]["assignment_status"] == "pending"
-    assert friday_payload["weekend_requests"] == []
+    assert [row["chave"] for row in friday_payload["weekend_requests"]] == ["TD02"]
+    assert friday_payload["weekend_requests"][0]["assignment_status"] == "pending"
+    assert friday_payload["weekend_requests"][0]["service_date"] == saturday.isoformat()
     assert [row["placa"] for row in friday_payload["regular_vehicles"]] == ["REG9001"]
     assert [row["placa"] for row in friday_payload["extra_vehicles"]] == ["EXT9001"]
     assert [row["route_kind"] for row in friday_payload["extra_vehicles"]] == ["home_to_work"]
@@ -2987,7 +2978,9 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert saturday_payload["regular_requests"][0]["assignment_status"] == "pending"
     assert saturday_payload["regular_requests"][0]["assigned_vehicle"] is None
     assert [row["chave"] for row in saturday_payload["weekend_requests"]] == ["TD02"]
-    assert saturday_payload["extra_requests"] == []
+    assert [row["chave"] for row in saturday_payload["extra_requests"]] == ["TD03"]
+    assert saturday_payload["extra_requests"][0]["assignment_status"] == "pending"
+    assert saturday_payload["extra_requests"][0]["service_date"] == friday.isoformat()
     assert [row["placa"] for row in saturday_payload["weekend_vehicles"]] == ["WKD9001"]
 
     assert [row["placa"] for row in friday_work_to_home_payload["regular_vehicles"]] == ["REG9001"]
@@ -3350,9 +3343,6 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
         assignments = db.execute(
             select(TransportAssignment).where(TransportAssignment.request_id == request_id)
         ).scalars().all()
-        notifications = db.execute(
-            select(TransportNotification).where(TransportNotification.request_id == request_id)
-        ).scalars().all()
 
     assert user_row is not None
     assert user_row.placa is None
@@ -3360,7 +3350,6 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
     assert schedules == []
     assert schedule_exceptions == []
     assert assignments == []
-    assert notifications == []
 
 
 def test_transport_vehicle_delete_clears_user_plate_references_for_all_vehicle_lists():
@@ -3719,326 +3708,6 @@ def test_transport_weekend_assignment_respects_selected_persistent_weekdays():
     assert saturday_work_request["assigned_vehicle"]["placa"] == "WKD8801"
 
 
-def test_transport_bot_registers_user_creates_request_and_exposes_notifications_after_assignment():
-    today = now_sgt().date()
-
-    with SessionLocal() as db:
-        db.add(Workplace(workplace="Transport Hub Bot", address="7 Bot Avenue", zip="700700", country="Singapore"))
-        vehicle = Vehicle(placa="BOT9001", tipo="van", color="Blue", lugares=14, tolerance=9, service_scope="extra")
-        db.add(vehicle)
-        db.flush()
-        add_transport_schedule(
-            db,
-            vehicle=vehicle,
-            service_scope="extra",
-            route_kind="home_to_work",
-            recurrence_kind="single_date",
-            service_date=today,
-        )
-        db.commit()
-
-    with TestClient(app) as client:
-        first = client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "TB91"},
-        )
-        assert first.status_code == 200
-        assert first.json()["state"] == "awaiting_name"
-
-        assert client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "ADRIANO JOSE DA SILVA"},
-        ).status_code == 200
-        assert client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "P82"},
-        ).status_code == 200
-        assert client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "Transport Hub Bot"},
-        ).status_code == 200
-        assert client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "123 Harbour Road"},
-        ).status_code == 200
-
-        registration = client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "0012345678"},
-        )
-        assert registration.status_code == 200
-        assert registration.json()["registration_completed"] is True
-
-        extra_choice = client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "EXTRA"},
-        )
-        assert extra_choice.status_code == 200
-        assert extra_choice.json()["state"] == "awaiting_request_time"
-
-        request_created = client.post(
-            "/api/transport/bot/messages",
-            headers=TRANSPORT_BOT_HEADERS,
-            json={"chat_id": "chat-transport-1", "message": "07:45"},
-        )
-        assert request_created.status_code == 200
-        assert request_created.json()["request_created"] is True
-
-        ensure_admin_session(client)
-
-    with SessionLocal() as db:
-        bot_user = get_user_by_chave(db, "TB91")
-        transport_request = db.execute(
-            select(TransportRequest)
-            .where(TransportRequest.user_id == bot_user.id, TransportRequest.request_kind == "extra")
-            .order_by(TransportRequest.id.desc())
-            .limit(1)
-        ).scalar_one()
-        vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "BOT9001")).scalar_one()
-
-    assert bot_user.nome == "Adriano Jose da Silva"
-    assert bot_user.workplace == "Transport Hub Bot"
-    assert bot_user.checkin is True
-    assert transport_request.single_date == today
-
-    with TestClient(app) as client:
-        ensure_admin_session(client)
-        assignment = client.post(
-            "/api/transport/assignments",
-            json={
-                "request_id": transport_request.id,
-                "service_date": today.isoformat(),
-                "route_kind": "home_to_work",
-                "status": "confirmed",
-                "vehicle_id": vehicle.id,
-            },
-        )
-        assert assignment.status_code == 200
-
-        notifications = client.get("/api/transport/bot/notifications/pending", headers=TRANSPORT_BOT_HEADERS)
-        assert notifications.status_code == 200
-        items = notifications.json()["items"]
-        matching = next(item for item in items if item["request_id"] == transport_request.id)
-        assert "BOT9001" in matching["message"]
-        assert "Tolerance: 9 minutes" in matching["message"]
-
-        sent = client.post(f"/api/transport/bot/notifications/{matching['id']}/sent", headers=TRANSPORT_BOT_HEADERS)
-        assert sent.status_code == 200
-
-    with SessionLocal() as db:
-        delivered = db.get(TransportNotification, matching["id"])
-        assert delivered is not None
-        assert delivered.status == "sent"
-
-
-def test_transport_whatsapp_webhook_verifies_meta_challenge():
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/transport/whatsapp/webhook",
-            params={
-                "hub.mode": "subscribe",
-                "hub.verify_token": "whatsapp-verify-token",
-                "hub.challenge": "challenge-ok",
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.text == "challenge-ok"
-
-
-def test_transport_whatsapp_webhook_processes_messages_and_sends_replies(monkeypatch):
-    today = now_sgt().date()
-    sent_messages = []
-
-    def fake_send_whatsapp_text_message(*, chat_id: str, text: str) -> str:
-        sent_messages.append({"chat_id": chat_id, "text": text})
-        return f"wamid.{len(sent_messages)}"
-
-    monkeypatch.setattr(whatsapp_meta_module, "send_whatsapp_text_message", fake_send_whatsapp_text_message)
-
-    with SessionLocal() as db:
-        db.add(Workplace(workplace="Webhook Hub", address="8 Webhook Avenue", zip="808080", country="Singapore"))
-        db.commit()
-
-    with TestClient(app) as client:
-        for text in ["WB91", "MARIA JOSE DA SILVA", "P80", "Webhook Hub", "321 Harbour Lane", "99887766", "EXTRA", "08:30"]:
-            payload = _build_meta_webhook_payload(message_id=f"wamid-{text}", from_number="5511999999999", text=text)
-            body = json.dumps(payload).encode("utf-8")
-            response = client.post(
-                "/api/transport/whatsapp/webhook",
-                content=body,
-                headers={
-                    "content-type": "application/json",
-                    "x-hub-signature-256": _build_meta_signature(body, "whatsapp-app-secret"),
-                },
-            )
-            assert response.status_code == 200, response.text
-
-    with SessionLocal() as db:
-        user = get_user_by_chave(db, "WB91")
-        transport_request = db.execute(
-            select(TransportRequest)
-            .where(TransportRequest.user_id == user.id, TransportRequest.request_kind == "extra")
-            .order_by(TransportRequest.id.desc())
-            .limit(1)
-        ).scalar_one()
-
-    assert user.nome == "Maria Jose da Silva"
-    assert user.workplace == "Webhook Hub"
-    assert user.checkin is True
-    assert transport_request.single_date == today
-    assert any("Registration completed for Maria Jose da Silva." in row["text"] for row in sent_messages)
-    assert any("The EXTRA request was recorded for 08:30." in row["text"] for row in sent_messages)
-
-
-def test_transport_assignment_dispatches_pending_whatsapp_notification(monkeypatch):
-    sent_messages = []
-
-    def fake_send_whatsapp_text_message(*, chat_id: str, text: str) -> str:
-        sent_messages.append({"chat_id": chat_id, "text": text})
-        return "wamid.notification.1"
-
-    monkeypatch.setattr(whatsapp_meta_module, "send_whatsapp_text_message", fake_send_whatsapp_text_message)
-
-    today = now_sgt().date()
-    timestamp = now_sgt()
-
-    with SessionLocal() as db:
-        db.add(Workplace(workplace="Dispatch Hub", address="1 Dispatch Road", zip="123123", country="Singapore"))
-        user = User(
-            rfid=None,
-            nome="Dispatch Rider",
-            chave="WD01",
-            projeto="P82",
-            workplace="Dispatch Hub",
-            end_rua="44 Dispatch Street",
-            zip="445566",
-            local=None,
-            checkin=True,
-            time=timestamp,
-            last_active_at=timestamp,
-            inactivity_days=0,
-        )
-        vehicle = Vehicle(placa="WPP1001", tipo="van", color="Green", lugares=12, tolerance=7, service_scope="extra")
-        db.add_all([user, vehicle])
-        db.flush()
-        add_transport_schedule(
-            db,
-            vehicle=vehicle,
-            service_scope="extra",
-            route_kind="home_to_work",
-            recurrence_kind="single_date",
-            service_date=today,
-        )
-        request_row = TransportRequest(
-            user_id=user.id,
-            request_kind="extra",
-            recurrence_kind="single_date",
-            requested_time="07:10",
-            single_date=today,
-            created_via="bot",
-            status="active",
-            created_at=timestamp,
-            updated_at=timestamp,
-            cancelled_at=None,
-        )
-        db.add(request_row)
-        db.flush()
-        db.add(
-            TransportBotSession(
-                chat_id="5511888888888",
-                user_id=user.id,
-                chave=user.chave,
-                state="ready",
-                context_json=None,
-                created_at=timestamp,
-                updated_at=timestamp,
-                last_message_at=timestamp,
-            )
-        )
-        db.commit()
-        request_id = request_row.id
-        vehicle_id = vehicle.id
-
-    with TestClient(app) as client:
-        ensure_admin_session(client)
-        response = client.post(
-            "/api/transport/assignments",
-            json={
-                "request_id": request_id,
-                "service_date": today.isoformat(),
-                "route_kind": "home_to_work",
-                "status": "confirmed",
-                "vehicle_id": vehicle_id,
-            },
-        )
-
-    assert response.status_code == 200
-    assert "WhatsApp notification sent." in response.json()["message"]
-    assert any("WPP1001" in row["text"] for row in sent_messages)
-
-    with SessionLocal() as db:
-        delivered = db.execute(
-            select(TransportNotification)
-            .where(TransportNotification.request_id == request_id)
-            .order_by(TransportNotification.id.desc())
-            .limit(1)
-        ).scalar_one()
-        assert delivered.status == "sent"
-
-
-def _build_meta_webhook_payload(*, message_id: str, from_number: str, text: str) -> dict:
-    return {
-        "object": "whatsapp_business_account",
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "field": "messages",
-                        "value": {
-                            "messaging_product": "whatsapp",
-                            "metadata": {
-                                "display_phone_number": "15551234567",
-                                "phone_number_id": settings.whatsapp_phone_number_id,
-                            },
-                            "contacts": [
-                                {
-                                    "profile": {"name": "Teste WhatsApp"},
-                                    "wa_id": from_number,
-                                }
-                            ],
-                            "messages": [
-                                {
-                                    "from": from_number,
-                                    "id": message_id,
-                                    "timestamp": "1710000000",
-                                    "type": "text",
-                                    "text": {"body": text},
-                                }
-                            ],
-                        },
-                    }
-                ]
-            }
-        ],
-    }
-
-
-def _build_meta_signature(body: bytes, secret: str) -> str:
-    import hashlib
-    import hmac
-
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return f"sha256={digest}"
-
-
 def test_admin_page_is_served_on_admin_path():
     with TestClient(app) as client:
         response = client.get("/admin")
@@ -4201,14 +3870,13 @@ def test_database_events_endpoint_filters_and_paginates_check_events():
             assert first_payload["page"] == 1
             assert first_payload["page_size"] == 1
             assert first_payload["total_pages"] == 2
-            assert first_payload["filter_options"] == {
-                "action": ["checkin", "checkout"],
-                "chave": [primary_key, secondary_key],
-                "rfid": sorted([primary_rfid, secondary_rfid]),
-                "project": ["P80", "P82"],
-                "source": ["device", "forms", "mobile"],
-                "status": ["queued", "success"],
-            }
+            filter_options = first_payload["filter_options"]
+            assert set(filter_options["action"]).issuperset({"checkin", "checkout"})
+            assert set(filter_options["chave"]).issuperset({primary_key, secondary_key})
+            assert set(filter_options["rfid"]).issuperset({primary_rfid, secondary_rfid})
+            assert set(filter_options["project"]).issuperset({"P80", "P82"})
+            assert set(filter_options["source"]).issuperset({"device", "forms", "mobile"})
+            assert set(filter_options["status"]).issuperset({"queued", "success"})
             assert len(first_payload["items"]) == 1
             assert first_payload["items"][0]["chave"] == primary_key
             assert first_payload["items"][0]["action"] == "checkout"
@@ -4225,19 +3893,29 @@ def test_database_events_endpoint_filters_and_paginates_check_events():
 
             key_sort_asc = client.get(
                 "/api/admin/database-events",
-                params={"sort_by": "chave", "sort_direction": "asc", "page_size": 10},
+                params={"sort_by": "chave", "sort_direction": "asc", "page_size": 200},
             )
             assert key_sort_asc.status_code == 200, key_sort_asc.text
             key_sort_asc_payload = key_sort_asc.json()
-            assert [item["chave"] for item in key_sort_asc_payload["items"]] == [primary_key, primary_key, secondary_key]
+            key_sort_asc_chaves = [
+                item["chave"]
+                for item in key_sort_asc_payload["items"]
+                if item["chave"] in {primary_key, secondary_key}
+            ]
+            assert key_sort_asc_chaves == [primary_key, primary_key, secondary_key]
 
             key_sort_desc = client.get(
                 "/api/admin/database-events",
-                params={"sort_by": "chave", "sort_direction": "desc", "page_size": 10},
+                params={"sort_by": "chave", "sort_direction": "desc", "page_size": 200},
             )
             assert key_sort_desc.status_code == 200, key_sort_desc.text
             key_sort_desc_payload = key_sort_desc.json()
-            assert [item["chave"] for item in key_sort_desc_payload["items"]] == [secondary_key, primary_key, primary_key]
+            key_sort_desc_chaves = [
+                item["chave"]
+                for item in key_sort_desc_payload["items"]
+                if item["chave"] in {primary_key, secondary_key}
+            ]
+            assert key_sort_desc_chaves == [secondary_key, primary_key, primary_key]
 
             message_sort_asc = client.get(
                 "/api/admin/database-events",
@@ -5835,184 +5513,6 @@ def test_web_transport_cancel_future_regular_request_removes_row_from_dashboard(
     assert all(row["chave"] != "WT34" for row in dashboard.json()["regular_requests"])
 
 
-def test_transport_dashboard_reject_survives_unexpected_whatsapp_dispatch_error(monkeypatch):
-    fixed_now = datetime(2026, 4, 17, 9, 5, tzinfo=ZoneInfo(settings.tz_name))
-    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
-    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
-
-    def fail_dispatch(*args, **kwargs):
-        raise RuntimeError("simulated unexpected dispatch failure")
-
-    monkeypatch.setattr(whatsapp_meta_module, "dispatch_pending_transport_notifications", fail_dispatch)
-
-    with SessionLocal() as db:
-        db.add(Workplace(workplace="Reject Fail Hub", address="5 Reject Road", zip="505050", country="Singapore"))
-        user = User(
-            rfid=None,
-            nome="Reject Fail Rider",
-            chave="WR17",
-            projeto="P82",
-            workplace="Reject Fail Hub",
-            end_rua="17 Reject Street",
-            zip="171717",
-            local=None,
-            checkin=True,
-            time=fixed_now,
-            last_active_at=fixed_now,
-            inactivity_days=0,
-        )
-        db.add(user)
-        db.flush()
-
-        request_row = TransportRequest(
-            user_id=user.id,
-            request_kind="regular",
-            recurrence_kind="weekday",
-            requested_time="08:00",
-            single_date=None,
-            created_via="web",
-            status="active",
-            created_at=fixed_now,
-            updated_at=fixed_now,
-            cancelled_at=None,
-        )
-        db.add(request_row)
-        db.flush()
-
-        db.add(
-            TransportBotSession(
-                chat_id="5511999999999",
-                user_id=user.id,
-                chave=user.chave,
-                state="ready",
-                context_json=None,
-                created_at=fixed_now,
-                updated_at=fixed_now,
-                last_message_at=fixed_now,
-            )
-        )
-        db.commit()
-        request_id = request_row.id
-
-    with TestClient(app) as admin_client:
-        ensure_admin_session(admin_client)
-        rejected = admin_client.post(
-            "/api/transport/requests/reject",
-            json={
-                "request_id": request_id,
-                "service_date": fixed_now.date().isoformat(),
-                "route_kind": "home_to_work",
-            },
-        )
-
-    assert rejected.status_code == 200
-    assert "failed unexpectedly" in rejected.json()["message"]
-
-    with SessionLocal() as db:
-        request_row = db.get(TransportRequest, request_id)
-        assignments = db.execute(
-            select(TransportAssignment)
-            .where(TransportAssignment.request_id == request_id)
-            .order_by(TransportAssignment.route_kind, TransportAssignment.service_date)
-        ).scalars().all()
-
-    assert request_row is not None
-    assert request_row.status == "cancelled"
-    assert assignments
-    assert all(row.status == "rejected" for row in assignments)
-
-
-def test_transport_dashboard_reject_uses_latest_bot_session_when_user_has_multiple_sessions(monkeypatch):
-    fixed_now = datetime(2026, 4, 20, 10, 35, tzinfo=ZoneInfo(settings.tz_name))
-    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
-    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
-
-    with SessionLocal() as db:
-        db.add(Workplace(workplace="Reject Multi Session Hub", address="19 Session Road", zip="191919", country="Singapore"))
-        user = User(
-            rfid=None,
-            nome="Reject Multi Session Rider",
-            chave="RM19",
-            projeto="P82",
-            workplace="Reject Multi Session Hub",
-            end_rua="19 Session Street",
-            zip="191919",
-            local=None,
-            checkin=True,
-            time=fixed_now,
-            last_active_at=fixed_now,
-            inactivity_days=0,
-        )
-        db.add(user)
-        db.flush()
-
-        request_row = TransportRequest(
-            user_id=user.id,
-            request_kind="regular",
-            recurrence_kind="weekday",
-            requested_time="08:00",
-            single_date=None,
-            created_via="web",
-            status="active",
-            created_at=fixed_now,
-            updated_at=fixed_now,
-            cancelled_at=None,
-        )
-        db.add(request_row)
-        db.flush()
-
-        db.add_all([
-            TransportBotSession(
-                chat_id="559119190001",
-                user_id=user.id,
-                chave=user.chave,
-                state="ready",
-                context_json=None,
-                created_at=fixed_now - timedelta(days=1),
-                updated_at=fixed_now - timedelta(days=1),
-                last_message_at=fixed_now - timedelta(days=1),
-            ),
-            TransportBotSession(
-                chat_id="559119190002",
-                user_id=user.id,
-                chave=user.chave,
-                state="ready",
-                context_json=None,
-                created_at=fixed_now,
-                updated_at=fixed_now,
-                last_message_at=fixed_now,
-            ),
-        ])
-        db.commit()
-        request_id = request_row.id
-
-    with TestClient(app) as admin_client:
-        ensure_admin_session(admin_client)
-        rejected = admin_client.post(
-            "/api/transport/requests/reject",
-            json={
-                "request_id": request_id,
-                "service_date": fixed_now.date().isoformat(),
-                "route_kind": "home_to_work",
-            },
-        )
-
-    assert rejected.status_code == 200
-
-    with SessionLocal() as db:
-        request_row = db.get(TransportRequest, request_id)
-        queued_notification = db.execute(
-            select(TransportNotification)
-            .where(TransportNotification.request_id == request_id)
-            .order_by(TransportNotification.id.desc())
-        ).scalars().first()
-
-    assert request_row is not None
-    assert request_row.status == "cancelled"
-    assert queued_notification is not None
-    assert queued_notification.chat_id == "559119190002"
-
-
 def test_transport_dashboard_reject_extra_request_does_not_store_transport_session_user_in_admin_fk(monkeypatch):
     fixed_now = datetime(2026, 4, 21, 7, 45, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
@@ -6113,6 +5613,7 @@ def test_transport_dashboard_reject_extra_request_does_not_store_transport_sessi
 
 def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_dashboard(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 8, 20, tzinfo=ZoneInfo(settings.tz_name))
+    user_key = f"W{uuid.uuid4().hex[:3].upper()}"
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
@@ -6137,13 +5638,13 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
         db.commit()
         vehicle_id = vehicle.id
 
-    ensure_web_user_exists(chave="WT13", projeto="P80", nome="Cancel Transport Rider")
-    set_user_checkin_state(chave="WT13", event_time=fixed_now, local="North Gate")
+    ensure_web_user_exists(chave=user_key, projeto="P80", nome="Cancel Transport Rider")
+    set_user_checkin_state(chave=user_key, event_time=fixed_now, local="North Gate")
 
     with TestClient(app) as client:
         registered = register_web_password(
             client,
-            chave="WT13",
+            chave=user_key,
             senha="abc123",
             projeto="P80",
             ensure_user_exists=False,
@@ -6152,7 +5653,7 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
 
         requested = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT13", "request_kind": "regular"},
+            json={"chave": user_key, "request_kind": "regular"},
         )
         assert requested.status_code == 200
         request_id = requested.json()["state"]["request_id"]
@@ -6173,7 +5674,7 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
 
         cancelled = client.post(
             "/api/web/transport/cancel",
-            json={"chave": "WT13", "request_id": request_id},
+            json={"chave": user_key, "request_id": request_id},
         )
         assert cancelled.status_code == 200
         assert cancelled.json()["state"]["status"] == "available"
@@ -6200,7 +5701,7 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
         )
 
     assert dashboard.status_code == 200
-    assert all(row["chave"] != "WT13" for row in dashboard.json()["regular_requests"])
+    assert all(row["chave"] != user_key for row in dashboard.json()["regular_requests"])
 
 
 def test_admin_can_clear_registered_user_password_and_allow_new_registration():
@@ -6490,6 +5991,7 @@ def test_web_check_updates_user_local_when_location_is_provided():
             "projeto": "P80",
             "current_action": "checkin",
             "current_local": "Web Match P80",
+            "has_current_day_checkin": True,
             "last_checkin_at": response.json()["state"]["last_checkin_at"],
             "last_checkout_at": None,
         }

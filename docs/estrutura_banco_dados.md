@@ -127,48 +127,6 @@ transport_assignments
     \-- check -> status IN ('confirmed', 'rejected', 'cancelled')
 ```
 
-## Tabela: transport_bot_sessions
-
-```text
-transport_bot_sessions
-|-- descricao -> sessao de conversa do bot de WhatsApp por chat
-|-- campos
-|   |-- id -> Integer | nulo: nao | PK | autoincremento
-|   |-- chat_id -> String(120) | nulo: nao | unico
-|   |-- user_id -> Integer | nulo: sim | FK -> users.id
-|   |-- chave -> String(4) | nulo: sim
-|   |-- state -> String(32) | nulo: nao | default logico na aplicacao: 'awaiting_key'
-|   |-- context_json -> Text | nulo: sim | JSON textual do andamento da conversa
-|   |-- created_at -> DateTime(timezone=True) | nulo: nao
-|   |-- updated_at -> DateTime(timezone=True) | nulo: nao
-|   \-- last_message_at -> DateTime(timezone=True) | nulo: nao
-\-- restricoes de tabela
-    |-- unique -> chat_id
-    \-- foreign key -> user_id referencia users.id
-```
-
-## Tabela: transport_notifications
-
-```text
-transport_notifications
-|-- descricao -> fila de notificacoes que a API entrega ao integrador do bot
-|-- campos
-|   |-- id -> Integer | nulo: nao | PK | autoincremento
-|   |-- user_id -> Integer | nulo: nao | FK -> users.id
-|   |-- chat_id -> String(120) | nulo: sim
-|   |-- request_id -> Integer | nulo: sim | FK -> transport_requests.id
-|   |-- assignment_id -> Integer | nulo: sim | FK -> transport_assignments.id
-|   |-- message -> String(500) | nulo: nao
-|   |-- status -> String(16) | nulo: nao | default logico na aplicacao: 'pending'
-|   |-- created_at -> DateTime(timezone=True) | nulo: nao
-|   \-- sent_at -> DateTime(timezone=True) | nulo: sim
-\-- restricoes de tabela
-    |-- foreign key -> user_id referencia users.id
-    |-- foreign key -> request_id referencia transport_requests.id
-    |-- foreign key -> assignment_id referencia transport_assignments.id
-    \-- check -> status IN ('pending', 'sent')
-```
-
 ## Tabela: pending_registrations
 
 ```text

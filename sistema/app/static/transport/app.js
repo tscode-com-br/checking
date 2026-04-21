@@ -12,11 +12,13 @@
     weekend: "requests.labels.weekend",
     extra: "requests.labels.extra",
   };
+  const TRANSPORT_ASSETS_PREFIX = "../assets";
+  const TRANSPORT_API_PREFIX = "../api/transport";
   const VEHICLE_ICON_PATHS = {
-    carro: "/assets/icons/car.svg",
-    minivan: "/assets/icons/minivan.svg",
-    van: "/assets/icons/van.svg",
-    onibus: "/assets/icons/bus.svg",
+    carro: `${TRANSPORT_ASSETS_PREFIX}/icons/car.svg`,
+    minivan: `${TRANSPORT_ASSETS_PREFIX}/icons/minivan.svg`,
+    van: `${TRANSPORT_ASSETS_PREFIX}/icons/van.svg`,
+    onibus: `${TRANSPORT_ASSETS_PREFIX}/icons/bus.svg`,
   };
   const ROUTE_KIND_KEYS = {
     home_to_work: "routes.home_to_work",
@@ -237,17 +239,7 @@
   }
 
   function resolveStoredTransportDate(referenceValue) {
-    const fallbackDate = startOfLocalDay(referenceValue || new Date());
-    if (!globalScope.localStorage) {
-      return fallbackDate;
-    }
-
-    try {
-      const storedValue = globalScope.localStorage.getItem(TRANSPORT_SELECTED_DATE_STORAGE_KEY);
-      return parseStoredTransportDate(storedValue) || fallbackDate;
-    } catch (error) {
-      return fallbackDate;
-    }
+    return startOfLocalDay(referenceValue || new Date());
   }
 
   function setStoredTransportDate(value) {
@@ -256,7 +248,7 @@
     }
 
     try {
-      globalScope.localStorage.setItem(TRANSPORT_SELECTED_DATE_STORAGE_KEY, formatIsoDate(value));
+      globalScope.localStorage.removeItem(TRANSPORT_SELECTED_DATE_STORAGE_KEY);
     } catch (error) {
       // Ignore storage failures so the dashboard remains usable in restricted browsers.
     }
@@ -1592,7 +1584,7 @@
 
       state.routeTimeSaving = true;
       syncRouteTimeControls();
-      return requestJson("/api/transport/date-settings", {
+      return requestJson(`${TRANSPORT_API_PREFIX}/date-settings`, {
         method: "PUT",
         body: JSON.stringify({
           service_date: getCurrentServiceDateIso(),
@@ -1727,7 +1719,7 @@
         return;
       }
 
-      state.realtimeEventStream = new globalScope.EventSource("/api/transport/stream");
+      state.realtimeEventStream = new globalScope.EventSource(`${TRANSPORT_API_PREFIX}/stream`);
       state.realtimeEventStream.onopen = function () {
         state.realtimeConnected = true;
       };
@@ -1781,7 +1773,7 @@
       state.authVerifyToken += 1;
       clearPendingAuthVerification();
       setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
-      requestJson("/api/transport/auth/logout", { method: "POST" }).catch(function () {});
+      requestJson(`${TRANSPORT_API_PREFIX}/auth/logout`, { method: "POST" }).catch(function () {});
       setStatus(message || getTransportLockedMessage(), "warning");
     }
 
@@ -1815,7 +1807,7 @@
 
       state.settingsLoading = true;
       syncSettingsControls();
-      return requestJson("/api/transport/settings")
+      return requestJson(`${TRANSPORT_API_PREFIX}/settings`)
         .then(function (response) {
           state.settingsLoaded = true;
           state.workToHomeTime = String(
@@ -1865,7 +1857,7 @@
       state.lastUpdateTime = normalizedLastUpdateTime;
       state.settingsSaving = true;
       syncSettingsControls();
-      return requestJson("/api/transport/settings", {
+      return requestJson(`${TRANSPORT_API_PREFIX}/settings`, {
         method: "PUT",
         body: JSON.stringify({
           work_to_home_time: normalizedTime,
@@ -1940,7 +1932,7 @@
         return Promise.resolve(null);
       }
 
-      return requestJson("/api/transport/auth/verify", {
+      return requestJson(`${TRANSPORT_API_PREFIX}/auth/verify`, {
         method: "POST",
         body: JSON.stringify({ chave: chave, senha: senha }),
       })
@@ -2005,7 +1997,7 @@
     }
 
     function bootstrapTransportSession() {
-      return requestJson("/api/transport/auth/session")
+      return requestJson(`${TRANSPORT_API_PREFIX}/auth/session`)
         .then(function (response) {
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, { fillKey: true });
@@ -2157,7 +2149,7 @@
           submitButton.disabled = true;
         }
 
-        requestJson("/api/transport/vehicles", {
+        requestJson(`${TRANSPORT_API_PREFIX}/vehicles`, {
           method: "POST",
           body: JSON.stringify(payload),
         })
@@ -2972,7 +2964,7 @@
     }
 
     function submitAssignment(payload) {
-      return requestJson("/api/transport/assignments", {
+      return requestJson(`${TRANSPORT_API_PREFIX}/assignments`, {
         method: "POST",
         body: JSON.stringify(payload),
       }).then(function () {
@@ -2992,7 +2984,7 @@
         return Promise.resolve();
       }
 
-      return requestJson("/api/transport/requests/reject", {
+      return requestJson(`${TRANSPORT_API_PREFIX}/requests/reject`, {
         method: "POST",
         body: JSON.stringify({
           request_id: requestRow.id,
@@ -3041,7 +3033,7 @@
       const deleteServiceDate = vehicle.service_date || getCurrentServiceDateIso();
 
       return requestJson(
-        `/api/transport/vehicles/${encodeURIComponent(String(vehicle.schedule_id))}?service_date=${encodeURIComponent(deleteServiceDate)}`,
+        `${TRANSPORT_API_PREFIX}/vehicles/${encodeURIComponent(String(vehicle.schedule_id))}?service_date=${encodeURIComponent(deleteServiceDate)}`,
         {
           method: "DELETE",
         }
@@ -3360,7 +3352,7 @@
         setStatus(t("status.loadingDashboard", { route: getRouteKindLabel(routeKind) }), "info");
       }
       return requestJson(
-        `/api/transport/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
+        `${TRANSPORT_API_PREFIX}/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
       )
         .then(function (dashboard) {
           state.dashboard = dashboard || null;
