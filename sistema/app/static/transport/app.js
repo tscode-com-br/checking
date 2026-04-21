@@ -1359,9 +1359,6 @@
       if (transportTopbar) {
         transportTopbar.setAttribute("aria-label", t("layout.quickActions"));
       }
-      if (routeSelect) {
-        routeSelect.setAttribute("aria-label", t("layout.selectedTransportRoute"));
-      }
       const datePanel = document.querySelector("[data-date-panel]");
       if (datePanel) {
         datePanel.setAttribute("aria-label", t("layout.selectedServiceDate"));

@@ -364,6 +364,7 @@ test('transport topbar removes route controls and keeps only the selected-date t
   assert.match(transportHtml, /data-route-time-label/);
   assert.match(transportHtml, /data-route-time-input/);
   assert.doesNotMatch(transportScript, /const routeSelect = document\.querySelector\("\[data-route-select\]"\);/);
+  assert.doesNotMatch(transportScript, /\brouteSelect\b/);
   assert.match(transportScript, /const shouldShowRouteTime = state\.isAuthenticated;/);
   assert.match(transportScript, /routeTimePopover\.hidden = !shouldShowRouteTime;/);
   assert.match(transportCss, /\.transport-route-inline-time-label\s*\{[\s\S]*text-transform:\s*uppercase;[\s\S]*white-space:\s*nowrap;/);
