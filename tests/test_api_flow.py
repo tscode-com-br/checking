@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 # Override settings before app import.
 os.environ["APP_ENV"] = "development"
@@ -3493,6 +3493,165 @@ def test_transport_vehicle_delete_clears_user_plate_references_for_all_vehicle_l
             assert user_row.placa is None
             assert vehicle_row is None
             assert schedule_rows == []
+
+
+def test_transport_vehicle_delete_removes_legacy_notifications_before_assignments():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Legacy Notification Hub",
+            address="9 Legacy Avenue",
+            zip="919191",
+            country="Singapore",
+        )
+        vehicle = Vehicle(placa="LEG1701", tipo="onibus", color="White", lugares=40, tolerance=12, service_scope="regular")
+        db.add_all([workplace, vehicle])
+        db.flush()
+
+        schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Legacy Notification Rider",
+            chave="LN17",
+            projeto="P80",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="17 Legacy Lane",
+            zip="171717",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:30",
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+
+        assignment = TransportAssignment(
+            request_id=request_row.id,
+            service_date=friday,
+            route_kind="home_to_work",
+            vehicle_id=vehicle.id,
+            status="confirmed",
+            response_message=None,
+            assigned_by_admin_id=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+            notified_at=None,
+        )
+        db.add(assignment)
+        db.commit()
+
+        user_id = user.id
+        vehicle_id = vehicle.id
+        request_id = request_row.id
+        assignment_id = assignment.id
+        schedule_id = schedule.id
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS transport_notifications"))
+        conn.execute(
+            text(
+                """
+                CREATE TABLE transport_notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    chat_id VARCHAR(120),
+                    request_id INTEGER REFERENCES transport_requests(id),
+                    assignment_id INTEGER REFERENCES transport_assignments(id),
+                    message VARCHAR(500) NOT NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                    created_at DATETIME NOT NULL,
+                    sent_at DATETIME
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO transport_notifications (
+                    user_id,
+                    chat_id,
+                    request_id,
+                    assignment_id,
+                    message,
+                    status,
+                    created_at,
+                    sent_at
+                ) VALUES (
+                    :user_id,
+                    NULL,
+                    :request_id,
+                    :assignment_id,
+                    :message,
+                    'pending',
+                    :created_at,
+                    NULL
+                )
+                """
+            ),
+            {
+                "user_id": user_id,
+                "request_id": request_id,
+                "assignment_id": assignment_id,
+                "message": "Legacy notification row",
+                "created_at": timestamp.isoformat(),
+            },
+        )
+
+    try:
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            removed = client.delete(
+                f"/api/transport/vehicles/{schedule_id}",
+                params={"service_date": friday.isoformat()},
+            )
+            assert removed.status_code == 200, removed.text
+
+        with engine.begin() as conn:
+            remaining_notifications = conn.execute(
+                text("SELECT COUNT(*) FROM transport_notifications WHERE assignment_id = :assignment_id"),
+                {"assignment_id": assignment_id},
+            ).scalar_one()
+
+        with SessionLocal() as db:
+            user_row = db.get(User, user_id)
+            vehicle_row = db.get(Vehicle, vehicle_id)
+            assignment_row = db.get(TransportAssignment, assignment_id)
+
+        assert remaining_notifications == 0
+        assert user_row is not None
+        assert user_row.placa is None
+        assert vehicle_row is None
+        assert assignment_row is None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS transport_notifications"))
 
 
 def test_transport_regular_assignment_persists_across_weekdays_and_routes():

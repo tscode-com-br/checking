@@ -4,7 +4,7 @@ import calendar
 import json
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import bindparam, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -562,6 +562,8 @@ def delete_transport_vehicle_registration(
     ).scalars().all()
 
     if assignment_ids:
+        _delete_legacy_transport_notifications_for_assignments(db, assignment_ids=assignment_ids)
+
         assignments = db.execute(
             select(TransportAssignment).where(TransportAssignment.id.in_(assignment_ids))
         ).scalars().all()
@@ -591,6 +593,35 @@ def delete_transport_vehicle_registration(
 
     db.delete(vehicle)
     return vehicle
+
+
+def _delete_legacy_transport_notifications_for_assignments(
+    db: Session,
+    *,
+    assignment_ids: list[int],
+) -> None:
+    if not assignment_ids:
+        return
+
+    bind = db.get_bind()
+    if bind is None:
+        return
+
+    inspector = inspect(bind)
+    if not inspector.has_table("transport_notifications"):
+        return
+
+    column_names = {
+        column["name"]
+        for column in inspector.get_columns("transport_notifications")
+    }
+    if "assignment_id" not in column_names:
+        return
+
+    statement = text(
+        "DELETE FROM transport_notifications WHERE assignment_id IN :assignment_ids"
+    ).bindparams(bindparam("assignment_ids", expanding=True))
+    db.execute(statement, {"assignment_ids": assignment_ids})
 
 
 def upsert_transport_request(
