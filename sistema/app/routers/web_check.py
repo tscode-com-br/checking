@@ -1,4 +1,8 @@
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,7 +30,11 @@ from ..schemas import (
     WebTransportRequestCreate,
     WebTransportStateResponse,
 )
-from ..services.admin_updates import notify_admin_data_changed
+from ..services.admin_updates import (
+    notify_admin_data_changed,
+    notify_transport_data_changed,
+    transport_updates_broker,
+)
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.location_matching import (
     resolve_captured_location_label,
@@ -88,6 +96,10 @@ def _get_web_session_chave(request: Request) -> str | None:
         request.session.pop(WEB_USER_SESSION_KEY, None)
         return None
     return normalized
+
+
+def _encode_sse(payload: dict[str, str]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def _set_web_session_chave(request: Request, chave: str) -> None:
@@ -214,6 +226,7 @@ def _create_web_transport_request_response(
     if created:
         db.commit()
         notify_admin_data_changed("event")
+        notify_transport_data_changed("event")
 
     return WebTransportActionResponse(
         ok=True,
@@ -405,6 +418,41 @@ def get_web_transport_state(
     return _resolve_web_transport_state(db=db, user=user)
 
 
+@router.get("/transport/stream")
+async def stream_web_transport_updates(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    _require_matching_authenticated_web_user(request, db, chave)
+    subscriber_id, queue = transport_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield _encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            transport_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/transport/address", response_model=WebTransportActionResponse)
 def update_web_transport_address(
     payload: WebTransportAddressUpdateRequest,
@@ -416,6 +464,7 @@ def update_web_transport_address(
     user.zip = payload.zip
     db.commit()
     notify_admin_data_changed("register")
+    notify_transport_data_changed("register")
     return WebTransportActionResponse(
         ok=True,
         message="Endereco atualizado com sucesso.",
@@ -452,6 +501,7 @@ def cancel_web_transport_request(
     cancel_transport_request_and_assignments(db, transport_request=transport_request)
     db.commit()
     notify_admin_data_changed("event")
+    notify_transport_data_changed("event")
     return WebTransportActionResponse(
         ok=True,
         message="Solicitacao de transporte cancelada.",
@@ -477,6 +527,7 @@ def acknowledge_web_transport_request(
 
     db.commit()
     notify_admin_data_changed("event")
+    notify_transport_data_changed("event")
     return WebTransportActionResponse(
         ok=True,
         message="Ciencia registrada com sucesso.",

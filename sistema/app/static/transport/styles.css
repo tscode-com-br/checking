@@ -1232,8 +1232,15 @@ button {
 .transport-vehicle-details-layer {
   position: fixed;
   inset: 0;
-  z-index: 32;
+  z-index: 360;
   pointer-events: none;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+
+.transport-vehicle-details-layer.is-active {
+  pointer-events: auto;
+  background: rgba(4, 5, 7, 0.18);
 }
 
 .transport-vehicle-tile {
@@ -1305,7 +1312,7 @@ button {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 1;
+  z-index: 2;
   width: 264px;
   max-height: min(248px, calc(100dvh - 24px));
   display: grid;

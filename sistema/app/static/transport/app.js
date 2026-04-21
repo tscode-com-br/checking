@@ -1090,6 +1090,12 @@
     if (!vehicleDetailsOverlayHost.parentNode && document.body) {
       document.body.appendChild(vehicleDetailsOverlayHost);
     }
+    vehicleDetailsOverlayHost.addEventListener("click", function (event) {
+      if (event.target !== vehicleDetailsOverlayHost) {
+        return;
+      }
+      closeExpandedVehicleDetails({ restoreFocus: true });
+    });
 
     document.querySelectorAll("[data-request-kind]").forEach(function (element) {
       requestContainers[element.dataset.requestKind] = element;
@@ -1129,6 +1135,18 @@
     globalScope.addEventListener("scroll", function () {
       scheduleExpandedVehicleDetailsPositionSync();
     }, true);
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (!state.expandedVehicleKey && !state.pendingAssignmentPreview) {
+        return;
+      }
+      if ((settingsModal && !settingsModal.hidden) || (vehicleModal && !vehicleModal.hidden)) {
+        return;
+      }
+      closeExpandedVehicleDetails({ restoreFocus: true });
+    });
 
     if (projectListToggle) {
       projectListToggle.addEventListener("click", function () {
@@ -2228,6 +2246,7 @@
       if (!settingsModal) {
         return;
       }
+      closeExpandedVehicleDetails({ render: false });
       if (state.isAuthenticated && !state.settingsLoaded) {
         void loadTransportSettings({ silent: true });
       }
@@ -2331,6 +2350,7 @@
       if (!canOpenVehicleModal(normalizedScope)) {
         return;
       }
+      closeExpandedVehicleDetails({ render: false });
       vehicleModal.hidden = false;
       vehicleModal.dataset.scope = normalizedScope;
       vehicleForm.reset();
@@ -2525,6 +2545,41 @@
       renderVehiclePanels();
     }
 
+    function closeExpandedVehicleDetails(options) {
+      const closeOptions = options || {};
+      const expandedElements = closeOptions.restoreFocus ? findExpandedVehicleDetailsElements() : null;
+
+      if (!state.expandedVehicleKey && !state.pendingAssignmentPreview) {
+        clearElement(vehicleDetailsOverlayHost);
+        vehicleDetailsOverlayHost.classList.remove("is-active");
+        return;
+      }
+
+      state.expandedVehicleKey = null;
+      state.pendingAssignmentPreview = null;
+      clearElement(vehicleDetailsOverlayHost);
+      vehicleDetailsOverlayHost.classList.remove("is-active");
+
+      if (closeOptions.render !== false) {
+        renderVehiclePanels();
+      }
+
+      if (
+        closeOptions.restoreFocus
+        && expandedElements
+        && expandedElements.anchorButton
+        && typeof expandedElements.anchorButton.focus === "function"
+      ) {
+        if (typeof globalScope.requestAnimationFrame === "function") {
+          globalScope.requestAnimationFrame(function () {
+            expandedElements.anchorButton.focus();
+          });
+        } else {
+          expandedElements.anchorButton.focus();
+        }
+      }
+    }
+
     function findExpandedVehicleDetailsElements() {
       if (!state.expandedVehicleKey) {
         return null;
@@ -2551,6 +2606,7 @@
       const expandedElements = findExpandedVehicleDetailsElements();
       if (!expandedElements) {
         clearElement(vehicleDetailsOverlayHost);
+        vehicleDetailsOverlayHost.classList.remove("is-active");
         return;
       }
 
@@ -3200,6 +3256,8 @@
     function renderVehiclePanels() {
       syncVehicleViewToggleState();
       clearElement(vehicleDetailsOverlayHost);
+      vehicleDetailsOverlayHost.classList.remove("is-active");
+      let hasExpandedDetailsPanel = false;
 
       VEHICLE_SCOPE_ORDER.forEach(function (scope) {
         const container = vehicleContainers[scope];
@@ -3233,11 +3291,14 @@
           container.appendChild(tileElement);
           if (tileElement.expandedDetailsPanel) {
             vehicleDetailsOverlayHost.appendChild(tileElement.expandedDetailsPanel);
+            hasExpandedDetailsPanel = true;
           }
         });
 
         updateVehicleGridLayout(container);
       });
+
+      vehicleDetailsOverlayHost.classList.toggle("is-active", hasExpandedDetailsPanel);
 
       scheduleExpandedVehicleDetailsPositionSync();
     }
@@ -3270,6 +3331,7 @@
         }
       });
       clearElement(vehicleDetailsOverlayHost);
+      vehicleDetailsOverlayHost.classList.remove("is-active");
       state.expandedVehicleKey = null;
       state.pendingAssignmentPreview = null;
       state.dragRequestId = null;

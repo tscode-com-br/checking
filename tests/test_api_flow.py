@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import uuid
@@ -55,7 +56,7 @@ from sistema.app.models import (
     Workplace,
 )
 from sistema.app.routers import admin as admin_router
-from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker
+from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker, notify_transport_data_changed
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
@@ -4512,6 +4513,57 @@ def test_web_transport_vehicle_request_returns_pending_state_without_same_day_ch
 
     assert dashboard.status_code == 200
     assert any(row["chave"] == "WT11" for row in dashboard.json()["regular_requests"])
+
+
+def test_web_transport_stream_requires_authenticated_matching_session():
+    ensure_web_user_exists(chave="WT12", projeto="P80", nome="Transport Stream Guard")
+
+    with TestClient(app) as client:
+        response = client.get("/api/web/transport/stream", params={"chave": "WT12"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Sessao do usuario invalida ou expirada"
+
+
+def test_web_transport_stream_emits_connected_and_transport_events():
+    ensure_web_user_exists(chave="WT13", projeto="P80", nome="Transport Stream Rider")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT13")
+        user.senha = hash_password("abc123")
+        db.commit()
+
+    class DummyWebTransportStreamRequest:
+        def __init__(self, session):
+            self.session = session
+
+        async def is_disconnected(self):
+            return False
+
+    request = DummyWebTransportStreamRequest({web_check_router.WEB_USER_SESSION_KEY: "WT13"})
+
+    with SessionLocal() as db:
+        response = asyncio.run(
+            web_check_router.stream_web_transport_updates(
+                request,
+                chave="WT13",
+                db=db,
+            )
+        )
+        assert response.media_type == "text/event-stream"
+        assert response.headers["cache-control"] == "no-cache"
+
+        first_chunk = asyncio.run(asyncio.wait_for(anext(response.body_iterator), timeout=1))
+        first_payload = json.loads(first_chunk.removeprefix("data: ").strip())
+        assert first_payload["reason"] == "connected"
+
+        notify_transport_data_changed("event")
+
+        second_chunk = asyncio.run(asyncio.wait_for(anext(response.body_iterator), timeout=1))
+        second_payload = json.loads(second_chunk.removeprefix("data: ").strip())
+        assert second_payload["reason"] == "event"
+
+        asyncio.run(response.body_iterator.aclose())
 
 
 def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypatch):

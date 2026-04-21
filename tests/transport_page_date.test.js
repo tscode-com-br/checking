@@ -428,7 +428,11 @@ test('transport vehicle details render in a fixed overlay layer above the layout
 
   assert.match(
     transportCss,
-    /\.transport-vehicle-details-layer\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*z-index:\s*32;[\s\S]*pointer-events:\s*none;/
+    /\.transport-vehicle-details-layer\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*z-index:\s*360;[\s\S]*pointer-events:\s*none;[\s\S]*background:\s*transparent;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-vehicle-details-layer\.is-active\s*\{[\s\S]*pointer-events:\s*auto;[\s\S]*background:\s*rgba\(4, 5, 7, 0\.18\);/
   );
   assert.match(
     transportCss,
@@ -437,6 +441,18 @@ test('transport vehicle details render in a fixed overlay layer above the layout
   assert.match(
     transportScript,
     /vehicleDetailsOverlayHost\.appendChild\(tileElement\.expandedDetailsPanel\);/
+  );
+  assert.match(
+    transportScript,
+    /vehicleDetailsOverlayHost\.classList\.toggle\("is-active", hasExpandedDetailsPanel\);/
+  );
+  assert.match(
+    transportScript,
+    /vehicleDetailsOverlayHost\.addEventListener\("click", function \(event\) \{[\s\S]*closeExpandedVehicleDetails\(\{ restoreFocus: true \}\);/
+  );
+  assert.match(
+    transportScript,
+    /document\.addEventListener\("keydown", function \(event\) \{[\s\S]*event\.key !== "Escape"[\s\S]*closeExpandedVehicleDetails\(\{ restoreFocus: true \}\);/
   );
 });
 

@@ -44,7 +44,7 @@ from ..services.admin_auth import (
     user_has_transport_access,
     verify_password,
 )
-from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
+from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_transport_data_changed
 from ..services.event_logger import log_event
 from ..services.location_settings import (
     get_transport_last_update_time,
@@ -245,6 +245,7 @@ def update_transport_date_settings(
         work_to_home_time=payload.work_to_home_time,
     )
     db.commit()
+    notify_transport_data_changed("settings")
     return TransportDateSettingsResponse(
         service_date=daily_setting.service_date,
         work_to_home_time=daily_setting.work_to_home_time,
@@ -296,6 +297,7 @@ def create_transport_vehicle(
 
     db.commit()
     notify_admin_data_changed("register")
+    notify_transport_data_changed("register")
     return AdminActionResponse(ok=True, message="Vehicle saved successfully.")
 
 
@@ -312,6 +314,7 @@ def delete_transport_vehicle_for_route(
 
     db.commit()
     notify_admin_data_changed("event")
+    notify_transport_data_changed("event")
     return AdminActionResponse(ok=True, message="Vehicle deleted from the database.")
 
 
@@ -376,6 +379,7 @@ def save_transport_assignment(
     )
 
     notify_admin_data_changed("event")
+    notify_transport_data_changed("event")
     return AdminActionResponse(ok=True, message=f"Transport assignment saved successfully.{notification_message_suffix}")
 
 
@@ -423,6 +427,7 @@ def reject_transport_request(
     )
 
     notify_admin_data_changed("event")
+    notify_transport_data_changed("event")
     return AdminActionResponse(
         ok=True,
         message=f"Transport request rejected successfully.{notification_message_suffix}",

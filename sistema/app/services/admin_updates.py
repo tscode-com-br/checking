@@ -38,7 +38,12 @@ class AdminUpdatesBroker:
 
 
 admin_updates_broker = AdminUpdatesBroker()
+transport_updates_broker = AdminUpdatesBroker()
 
 
 def notify_admin_data_changed(reason: str = "refresh") -> None:
     admin_updates_broker.publish(reason=reason)
+
+
+def notify_transport_data_changed(reason: str = "refresh") -> None:
+    transport_updates_broker.publish(reason=reason)

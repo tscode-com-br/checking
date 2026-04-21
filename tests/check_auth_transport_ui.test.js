@@ -52,3 +52,13 @@ test('auth fields restore cleared chave and senha when the user leaves without t
   assert.match(checkApp, /document\.addEventListener\('pointerdown', restorePendingAuthFieldValuesOnExternalFocus, true\);/);
   assert.match(checkApp, /document\.addEventListener\('focusin', restorePendingAuthFieldValuesOnExternalFocus, true\);/);
 });
+
+test('transport widget subscribes to realtime updates while the transport screen is open', () => {
+  assert.match(checkHtml, /data-transport-stream-endpoint="\/api\/web\/transport\/stream"/);
+  assert.match(checkApp, /const transportStreamEndpoint = form\.dataset\.transportStreamEndpoint \|\| '\/api\/web\/transport\/stream';/);
+  assert.match(checkApp, /function startTransportRealtimeUpdates\(\)/);
+  assert.match(checkApp, /new window\.EventSource\(/);
+  assert.match(checkApp, /function stopTransportRealtimeUpdates\(\)/);
+  assert.match(checkApp, /startTransportRealtimeUpdates\(\);[\s\S]*void loadTransportState\(\);/);
+  assert.match(checkApp, /stopTransportRealtimeUpdates\(\);[\s\S]*clearTransportAutoRefresh\(\);/);
+});

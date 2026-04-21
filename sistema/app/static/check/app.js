@@ -11,6 +11,7 @@
   const authChangeEndpoint = form.dataset.authChangeEndpoint || '/api/web/auth/change-password';
   const authLogoutEndpoint = form.dataset.authLogoutEndpoint || '/api/web/auth/logout';
   const transportStateEndpoint = form.dataset.transportStateEndpoint || '/api/web/transport/state';
+  const transportStreamEndpoint = form.dataset.transportStreamEndpoint || '/api/web/transport/stream';
   const transportAddressEndpoint = form.dataset.transportAddressEndpoint || '/api/web/transport/address';
   const transportRequestEndpoint = form.dataset.transportRequestEndpoint || '/api/web/transport/request';
   const transportCancelEndpoint = form.dataset.transportCancelEndpoint || '/api/web/transport/cancel';
@@ -161,6 +162,7 @@
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
   const defaultManualLocationLabel = 'Escritório Principal';
   const transportAutoRefreshIntervalMs = 10000;
+  const transportRealtimeRefreshDebounceMs = 220;
   let allowedProjectValues = Array.from(projectSelect.options)
     .map((option) => String(option.value || '').trim().toUpperCase())
     .filter(Boolean);
@@ -260,6 +262,10 @@
   let transportCancelInProgress = false;
   let transportAcknowledgeInProgress = false;
   let transportAutoRefreshTimeoutId = null;
+  let transportRealtimeEventSource = null;
+  let transportRealtimeStreamChave = '';
+  let transportRealtimeRefreshTimeoutId = null;
+  let transportRealtimeRefreshPending = false;
   let projectCatalogPromise = null;
   let projectCatalogLoading = false;
   let projectUpdateInProgress = false;
@@ -703,6 +709,103 @@
       && !transportCancelInProgress
       && !transportAcknowledgeInProgress
       && getTransportRequests().some(shouldAutoRefreshTransportRequest);
+  }
+
+  function clearPendingTransportRealtimeRefresh() {
+    if (transportRealtimeRefreshTimeoutId !== null) {
+      window.clearTimeout(transportRealtimeRefreshTimeoutId);
+      transportRealtimeRefreshTimeoutId = null;
+    }
+  }
+
+  function stopTransportRealtimeUpdates() {
+    clearPendingTransportRealtimeRefresh();
+    transportRealtimeRefreshPending = false;
+    transportRealtimeStreamChave = '';
+    if (transportRealtimeEventSource) {
+      transportRealtimeEventSource.close();
+      transportRealtimeEventSource = null;
+    }
+  }
+
+  function canProcessTransportRealtimeRefresh() {
+    return isTransportScreenOpen()
+      && isApplicationUnlocked()
+      && !transportUiState.addressEditorOpen
+      && !transportUiState.requestBuilderKind
+      && !transportStateLoading
+      && !transportAddressSaveInProgress
+      && !transportRequestInProgress
+      && !transportCancelInProgress
+      && !transportAcknowledgeInProgress;
+  }
+
+  function requestTransportRealtimeRefresh() {
+    transportRealtimeRefreshPending = true;
+    if (!canProcessTransportRealtimeRefresh()) {
+      return;
+    }
+    if (transportRealtimeRefreshTimeoutId !== null) {
+      return;
+    }
+
+    transportRealtimeRefreshTimeoutId = window.setTimeout(() => {
+      transportRealtimeRefreshTimeoutId = null;
+      if (!transportRealtimeRefreshPending || !canProcessTransportRealtimeRefresh()) {
+        return;
+      }
+
+      transportRealtimeRefreshPending = false;
+      void loadTransportState();
+    }, transportRealtimeRefreshDebounceMs);
+  }
+
+  function handleTransportRealtimeMessage(event) {
+    const rawData = event && typeof event.data === 'string' ? event.data : '';
+    if (!rawData) {
+      return;
+    }
+
+    let payload = null;
+    try {
+      payload = JSON.parse(rawData);
+    } catch {
+      payload = null;
+    }
+
+    if (payload && payload.reason === 'connected') {
+      return;
+    }
+
+    requestTransportRealtimeRefresh();
+  }
+
+  function startTransportRealtimeUpdates() {
+    if (typeof window.EventSource !== 'function' || !isTransportScreenOpen()) {
+      return;
+    }
+
+    const normalizedChave = getActiveChave();
+    if (normalizedChave.length !== 4 || !isApplicationUnlocked(normalizedChave)) {
+      stopTransportRealtimeUpdates();
+      return;
+    }
+
+    if (transportRealtimeEventSource && transportRealtimeStreamChave === normalizedChave) {
+      return;
+    }
+
+    stopTransportRealtimeUpdates();
+    transportRealtimeStreamChave = normalizedChave;
+    transportRealtimeEventSource = new window.EventSource(
+      `${transportStreamEndpoint}?chave=${encodeURIComponent(normalizedChave)}`
+    );
+    transportRealtimeEventSource.onmessage = handleTransportRealtimeMessage;
+    transportRealtimeEventSource.onerror = () => {
+      if (!isTransportScreenOpen() || !isApplicationUnlocked(normalizedChave)) {
+        stopTransportRealtimeUpdates();
+      }
+    };
   }
 
   function scheduleTransportAutoRefresh() {
@@ -2263,6 +2366,10 @@
       canShow: !transportUiState.addressEditorOpen && !activeBuilderConfig && hasRequests,
     });
 
+    if (transportRealtimeRefreshPending) {
+      requestTransportRealtimeRefresh();
+    }
+
     scheduleTransportAutoRefresh();
   }
 
@@ -2309,6 +2416,7 @@
       return;
     }
 
+    stopTransportRealtimeUpdates();
     clearTransportAutoRefresh();
     dismissActiveKeyboard();
     transportScreen.hidden = true;
@@ -2349,6 +2457,7 @@
     renderTransportScreen();
     syncFormControlStates();
     realignViewport();
+    startTransportRealtimeUpdates();
     void loadTransportState();
   }
 
