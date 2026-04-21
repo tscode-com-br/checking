@@ -101,7 +101,7 @@
         workToHomeTime: "Work to Home Time:",
         lastUpdateTime: "Last Update Time:",
         workToHomeNote:
-          "Base default for all dates. Switch the route selector to Work to Home to edit only the selected date; it updates Regular and Weekend lists only and resets on the next day.",
+          "Base default for all dates. Use the top bar time field to edit only the selected date; it updates Regular and Weekend lists only and resets on the next day.",
         close: "Close",
       },
       routes: {
@@ -125,8 +125,8 @@
         couldNotUpdateAllocation: "Could not update the transport allocation.",
         couldNotConfirmSelectedRequest: "Could not confirm the selected request.",
         couldNotRejectSelectedRequest: "Could not reject the selected request.",
-        loadingDashboard: "Loading {route} dashboard.",
-        dashboardUpdated: "{route} dashboard updated.",
+        loadingDashboard: "Loading transport dashboard.",
+        dashboardUpdated: "Transport dashboard updated.",
         couldNotLoadDashboard: "Could not load the transport dashboard.",
         settingsSaved: "Settings saved in real time.",
         couldNotLoadSettings: "Could not load transport settings.",
@@ -281,7 +281,7 @@
         workToHomeTime: "Horário de Work to Home:",
         lastUpdateTime: "Horário da Última Atualização:",
         workToHomeNote:
-          "Padrão base para todas as datas. Selecione Work to Home no seletor de trajeto para editar apenas a data escolhida; isso atualiza apenas as listas Rotineiro e Fim de semana e volta ao padrão no dia seguinte.",
+          "Padrão base para todas as datas. Use o campo de horário na barra superior para editar apenas a data escolhida; isso atualiza apenas as listas Rotineiro e Fim de semana e volta ao padrão no dia seguinte.",
         close: "Fechar",
       },
       routes: {
@@ -305,8 +305,8 @@
         couldNotUpdateAllocation: "Não foi possível atualizar a alocação de transporte.",
         couldNotConfirmSelectedRequest: "Não foi possível confirmar a solicitação selecionada.",
         couldNotRejectSelectedRequest: "Não foi possível rejeitar a solicitação selecionada.",
-        loadingDashboard: "Carregando o painel {route}.",
-        dashboardUpdated: "Painel {route} atualizado.",
+        loadingDashboard: "Carregando o painel de transporte.",
+        dashboardUpdated: "Painel de transporte atualizado.",
         couldNotLoadDashboard: "Não foi possível carregar o painel de transporte.",
         settingsSaved: "Configurações salvas em tempo real.",
         couldNotLoadSettings: "Não foi possível carregar as configurações de transporte.",
@@ -460,7 +460,7 @@
         workToHomeTime: "Work to Home 时间：",
         lastUpdateTime: "最后更新时间：",
         workToHomeNote:
-          "这是所有日期的基础默认时间。若只想修改当前选定日期，请在顶部的路线选择器中切换到 Work to Home；它只会更新常规和周末列表，并会在第二天恢复默认值。",
+          "这是所有日期的基础默认时间。若只想修改当前选定日期，请使用顶部栏中的时间字段；它只会更新常规和周末列表，并会在第二天恢复默认值。",
         close: "关闭",
       },
       routes: {
@@ -484,8 +484,8 @@
         couldNotUpdateAllocation: "无法更新交通分配。",
         couldNotConfirmSelectedRequest: "无法确认所选请求。",
         couldNotRejectSelectedRequest: "无法拒绝所选请求。",
-        loadingDashboard: "正在加载{route}面板。",
-        dashboardUpdated: "{route}面板已更新。",
+        loadingDashboard: "正在加载交通面板。",
+        dashboardUpdated: "交通面板已更新。",
         couldNotLoadDashboard: "无法加载交通面板。",
         settingsSaved: "设置已实时保存。",
         couldNotLoadSettings: "无法加载交通设置。",
@@ -638,7 +638,7 @@
         workToHomeTime: "Masa Work to Home:",
         lastUpdateTime: "Masa Kemas Kini Terakhir:",
         workToHomeNote:
-          "Ini ialah masa lalai asas untuk semua tarikh. Tukar pemilih laluan kepada Work to Home untuk ubah hanya tarikh yang dipilih; ia hanya mengemas kini senarai Biasa dan Hujung minggu dan akan kembali kepada lalai pada hari berikutnya.",
+          "Ini ialah masa lalai asas untuk semua tarikh. Gunakan medan masa pada bar atas untuk ubah hanya tarikh yang dipilih; ia hanya mengemas kini senarai Biasa dan Hujung minggu dan akan kembali kepada lalai pada hari berikutnya.",
         close: "Tutup",
       },
       routes: {
@@ -662,8 +662,8 @@
         couldNotUpdateAllocation: "Tidak dapat mengemas kini peruntukan pengangkutan.",
         couldNotConfirmSelectedRequest: "Tidak dapat mengesahkan permintaan yang dipilih.",
         couldNotRejectSelectedRequest: "Tidak dapat menolak permintaan yang dipilih.",
-        loadingDashboard: "Memuatkan papan pemuka {route}.",
-        dashboardUpdated: "Papan pemuka {route} dikemas kini.",
+        loadingDashboard: "Memuatkan papan pemuka pengangkutan.",
+        dashboardUpdated: "Papan pemuka pengangkutan dikemas kini.",
         couldNotLoadDashboard: "Tidak dapat memuatkan papan pemuka pengangkutan.",
         settingsSaved: "Tetapan disimpan serta-merta.",
         couldNotLoadSettings: "Tidak dapat memuatkan tetapan pengangkutan.",
@@ -816,7 +816,7 @@
         workToHomeTime: "Oras ng Work to Home:",
         lastUpdateTime: "Oras ng Huling Update:",
         workToHomeNote:
-          "Ito ang batayang default para sa lahat ng petsa. Ilipat ang route selector sa Work to Home para ang kasalukuyang napiling petsa lang ang ma-edit; regular at weekend na mga listahan lang ang maaapektuhan at babalik ito sa default sa susunod na araw.",
+          "Ito ang batayang default para sa lahat ng petsa. Gamitin ang time field sa itaas para ang kasalukuyang napiling petsa lang ang ma-edit; regular at weekend na mga listahan lang ang maaapektuhan at babalik ito sa default sa susunod na araw.",
         close: "Isara",
       },
       routes: {
@@ -840,8 +840,8 @@
         couldNotUpdateAllocation: "Hindi ma-update ang allocation ng transport.",
         couldNotConfirmSelectedRequest: "Hindi makumpirma ang napiling request.",
         couldNotRejectSelectedRequest: "Hindi matanggihan ang napiling request.",
-        loadingDashboard: "Nilo-load ang {route} dashboard.",
-        dashboardUpdated: "Na-update ang {route} dashboard.",
+        loadingDashboard: "Nilo-load ang transport dashboard.",
+        dashboardUpdated: "Na-update ang transport dashboard.",
         couldNotLoadDashboard: "Hindi ma-load ang dashboard ng transport.",
         settingsSaved: "Na-save na agad ang settings.",
         couldNotLoadSettings: "Hindi ma-load ang settings ng transport.",

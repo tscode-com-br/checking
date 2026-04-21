@@ -920,6 +920,31 @@
     );
   }
 
+  function groupAssignedRequestsByVehicleForDate(requestRows, selectedDate) {
+    const normalizedSelectedDate = String(selectedDate || "");
+    return (Array.isArray(requestRows) ? requestRows : []).reduce(function (grouped, requestRow) {
+      if (
+        !requestRow
+        || requestRow.assignment_status !== "confirmed"
+        || !requestRow.assigned_vehicle
+        || requestRow.assigned_vehicle.id === undefined
+      ) {
+        return grouped;
+      }
+
+      if (normalizedSelectedDate && String(requestRow.service_date || "") !== normalizedSelectedDate) {
+        return grouped;
+      }
+
+      const vehicleId = String(requestRow.assigned_vehicle.id);
+      if (!grouped[vehicleId]) {
+        grouped[vehicleId] = [];
+      }
+      grouped[vehicleId].push(requestRow);
+      return grouped;
+    }, {});
+  }
+
   function canRequestBeDroppedOnVehicle(requestRow, scope, vehicle, routeKind) {
     if (!requestRow || !vehicle || requestRow.request_kind !== scope) {
       return false;
@@ -929,7 +954,7 @@
       return false;
     }
 
-    return scope !== "extra" || !vehicle.route_kind || vehicle.route_kind === routeKind;
+    return scope !== "extra" || Boolean(vehicle.route_kind || routeKind);
   }
 
   function buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow, maxRows) {
@@ -1067,8 +1092,8 @@
     const extraDepartureField = document.querySelector("[data-extra-departure-field]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
-    const routeSelect = document.querySelector("[data-route-select]");
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
+    const routeTimeLabel = document.querySelector("[data-route-time-label]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
@@ -1166,7 +1191,6 @@
       const brandKicker = document.querySelector(".transport-topbar-brand .transport-topbar-kicker");
       const brandTitle = document.querySelector(".transport-topbar-brand .transport-topbar-title");
       const supportKicker = document.querySelector(".transport-topbar-support .transport-topbar-kicker");
-      const topbarRouteOptions = routeSelect ? Array.from(routeSelect.options) : [];
       const authLabels = document.querySelectorAll(".transport-auth-label");
       const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title-link");
       const paneLinks = document.querySelectorAll(".transport-pane-title-link");
@@ -1188,11 +1212,8 @@
       if (supportKicker) {
         supportKicker.textContent = t("topbar.systemSupport");
       }
-      if (topbarRouteOptions[0]) {
-        topbarRouteOptions[0].text = getRouteKindLabel("home_to_work");
-      }
-      if (topbarRouteOptions[1]) {
-        topbarRouteOptions[1].text = getRouteKindLabel("work_to_home");
+      if (routeTimeLabel) {
+        routeTimeLabel.textContent = t("settings.workToHomeTime");
       }
       if (authLabels[0]) {
         authLabels[0].textContent = t("auth.key");
@@ -1541,15 +1562,9 @@
     }
 
     function syncRouteTimeControls() {
-      const isWorkToHomeSelected = getSelectedRouteKind() === "work_to_home";
-      const canEditRouteTime = state.isAuthenticated && isWorkToHomeSelected;
-      const shouldShowRouteTime = isWorkToHomeSelected && state.isAuthenticated;
+      const canEditRouteTime = state.isAuthenticated;
+      const shouldShowRouteTime = state.isAuthenticated;
       const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
-
-      if (routeSelect) {
-        routeSelect.value = getSelectedRouteKind();
-        routeSelect.disabled = state.isLoading;
-      }
 
       if (routeTimeInput) {
         routeTimeInput.value = effectiveDepartureTime;
@@ -1909,7 +1924,7 @@
           syncRouteTimeControls();
           scheduleSettingsTriggerPositionSync();
           if (state.isAuthenticated) {
-            setStatus(t("status.dashboardUpdated", { route: getRouteKindLabel(getSelectedRouteKind()) }), "info");
+            setStatus(t("status.dashboardUpdated"), "info");
           } else {
             setStatus(getTransportLockedMessage(), "warning");
           }
@@ -2067,18 +2082,6 @@
     applyStaticTranslations();
     syncSettingsControls();
     syncRouteTimeControls();
-
-    if (routeSelect) {
-      if (routeSelect.value) {
-        state.selectedRouteKind = routeSelect.value || state.selectedRouteKind;
-      }
-      routeSelect.addEventListener("change", function () {
-        closeRouteTimePopover();
-        state.selectedRouteKind = routeSelect.value || "home_to_work";
-        syncRouteTimeControls();
-        loadDashboard(dateStore.getValue());
-      });
-    }
 
     if (settingsTrigger) {
       settingsTrigger.addEventListener("click", openSettingsModal);
@@ -2262,14 +2265,29 @@
       }
     }
 
-    function syncRouteInputs() {
-      if (routeSelect) {
-        routeSelect.value = getSelectedRouteKind();
-      }
-    }
+    function syncRouteInputs() {}
 
     function getSelectedRouteKind() {
       return state.selectedRouteKind || "home_to_work";
+    }
+
+    function getRouteKindForVehicle(scope, vehicle) {
+      if (scope === "extra" && vehicle && vehicle.route_kind) {
+        return vehicle.route_kind;
+      }
+      return getSelectedRouteKind();
+    }
+
+    function getRouteKindForRequestRow(requestRow, fallbackRouteKind) {
+      if (
+        requestRow
+        && requestRow.request_kind === "extra"
+        && requestRow.assigned_vehicle
+        && requestRow.assigned_vehicle.route_kind
+      ) {
+        return requestRow.assigned_vehicle.route_kind;
+      }
+      return fallbackRouteKind || getSelectedRouteKind();
     }
 
     function getCurrentServiceDateIso() {
@@ -2661,7 +2679,7 @@
 
     function createPassengerRemoveButton(requestRow, routeKind) {
       const removeButton = createNode("button", "transport-passenger-remove-button", "×");
-      const normalizedRouteKind = routeKind || getSelectedRouteKind();
+      const normalizedRouteKind = getRouteKindForRequestRow(requestRow, routeKind);
       const removeLabel = t("misc.removeFromVehicle", { name: String(requestRow && requestRow.nome || "") });
 
       removeButton.type = "button";
@@ -2742,7 +2760,7 @@
           submitAssignment({
             request_id: previewRequestRow.id,
             service_date: state.dashboard.selected_date,
-            route_kind: detailOptions.routeKind || getSelectedRouteKind(),
+            route_kind: detailOptions.routeKind || getRouteKindForVehicle(vehicle.service_scope, vehicle),
             status: "confirmed",
             vehicle_id: vehicle.id,
           })
@@ -2947,20 +2965,10 @@
     }
 
     function groupAssignedRequestsByVehicle(scope) {
-      return getRequestsForKind(scope).reduce(function (grouped, requestRow) {
-        if (
-          requestRow.assignment_status === "confirmed" &&
-          requestRow.assigned_vehicle &&
-          requestRow.assigned_vehicle.id !== undefined
-        ) {
-          const vehicleId = String(requestRow.assigned_vehicle.id);
-          if (!grouped[vehicleId]) {
-            grouped[vehicleId] = [];
-          }
-          grouped[vehicleId].push(requestRow);
-        }
-        return grouped;
-      }, {});
+      return groupAssignedRequestsByVehicleForDate(
+        getRequestsForKind(scope),
+        state.dashboard ? state.dashboard.selected_date : ""
+      );
     }
 
     function submitAssignment(payload) {
@@ -2989,7 +2997,7 @@
         body: JSON.stringify({
           request_id: requestRow.id,
           service_date: requestRow.service_date,
-          route_kind: getSelectedRouteKind(),
+          route_kind: getRouteKindForRequestRow(requestRow),
         }),
       }).then(function () {
         setStatus(t("status.requestRejected"), "success");
@@ -3094,11 +3102,11 @@
       const departureLabel = departureTime
         ? createNode("span", "transport-vehicle-departure", departureTime)
         : null;
-      const routeLabel = vehicle.route_kind
+      const routeLabel = scope === "extra" && vehicle.route_kind
         ? createNode("span", "transport-vehicle-route", getRouteKindLabel(vehicle.route_kind))
         : null;
 
-      if (vehicle.route_kind) {
+      if (scope === "extra" && vehicle.route_kind) {
         vehicleButton.title = `${vehicleButton.title} | ${getRouteKindLabel(vehicle.route_kind)}`;
       }
       if (departureLabel) {
@@ -3150,7 +3158,7 @@
           requestId: droppedRequest.id,
           vehicleId: vehicle.id,
           scope,
-          routeKind: getSelectedRouteKind(),
+          routeKind: getRouteKindForVehicle(scope, vehicle),
         };
         state.dragRequestId = null;
         renderRequestTables();
@@ -3172,7 +3180,7 @@
       if (isExpanded) {
         tileElement.expandedDetailsPanel = createVehicleDetailsPanel(vehicle, assignedRows, {
           previewRequestRow,
-          routeKind: pendingPreview ? pendingPreview.routeKind : getSelectedRouteKind(),
+          routeKind: pendingPreview ? pendingPreview.routeKind : getRouteKindForVehicle(scope, vehicle),
         });
         tileElement.expandedDetailsPanel.dataset.vehicleDetailsPanelKey = vehicleDetailsKey;
       }
@@ -3349,7 +3357,7 @@
       const serviceDate = formatIsoDate(selectedDate);
       const routeKind = getSelectedRouteKind();
       if (shouldAnnounce) {
-        setStatus(t("status.loadingDashboard", { route: getRouteKindLabel(routeKind) }), "info");
+        setStatus(t("status.loadingDashboard"), "info");
       }
       return requestJson(
         `${TRANSPORT_API_PREFIX}/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
@@ -3361,7 +3369,7 @@
           syncRouteInputs();
           syncRouteTimeControls();
           if (shouldAnnounce) {
-            setStatus(t("status.dashboardUpdated", { route: getRouteKindLabel(getSelectedRouteKind()) }), "info");
+            setStatus(t("status.dashboardUpdated"), "info");
           }
           renderDashboard();
         })
@@ -3441,6 +3449,7 @@
     shouldHighlightRequestName,
     mapVehicleIconPath,
     buildVehiclePassengerPreviewRows,
+    groupAssignedRequestsByVehicleForDate,
     canRequestBeDroppedOnVehicle,
     parsePositiveNumber,
     resolvePanelSizes,

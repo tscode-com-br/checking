@@ -180,6 +180,7 @@ def add_transport_schedule(
     recurrence_kind: str,
     service_date: date | None = None,
     weekday: int | None = None,
+    departure_time: str | None = None,
 ) -> TransportVehicleSchedule:
     timestamp = now_sgt()
     schedule = TransportVehicleSchedule(
@@ -189,6 +190,7 @@ def add_transport_schedule(
         recurrence_kind=recurrence_kind,
         service_date=service_date,
         weekday=weekday,
+        departure_time=departure_time,
         is_active=True,
         created_at=timestamp,
         updated_at=timestamp,
@@ -3923,6 +3925,222 @@ def test_transport_regular_assignment_persists_across_weekdays_and_routes():
     assert monday_work_request["assigned_vehicle"]["placa"] == "REG8001"
 
 
+def test_transport_regular_vehicle_registry_ignores_non_selected_weekdays_for_assigned_count():
+    monday = date(2026, 4, 20)
+    tuesday = date(2026, 4, 21)
+    wednesday = date(2026, 4, 22)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Selected Weekday Hub", address="3 Weekday Road", zip="333333", country="Singapore"))
+        vehicle = Vehicle(placa="REG8101", tipo="van", color="Gray", lugares=10, tolerance=7, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Weekday Filter Rider",
+            chave="WF01",
+            projeto="P80",
+            workplace="Selected Weekday Hub",
+            end_rua="33 Filter Street",
+            zip="330033",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:10",
+            selected_weekdays_json=json.dumps([0, 2, 4], ensure_ascii=True, separators=(",", ":")),
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": monday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        tuesday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": tuesday.isoformat(), "route_kind": "home_to_work"},
+        )
+        wednesday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": wednesday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert tuesday_dashboard.status_code == 200
+    assert wednesday_dashboard.status_code == 200
+
+    tuesday_payload = tuesday_dashboard.json()
+    wednesday_payload = wednesday_dashboard.json()
+    tuesday_request = next(row for row in tuesday_payload["regular_requests"] if row["id"] == request_id)
+    wednesday_request = next(row for row in wednesday_payload["regular_requests"] if row["id"] == request_id)
+    tuesday_vehicle_registry_row = next(
+        row for row in tuesday_payload["regular_vehicle_registry"] if row["placa"] == "REG8101"
+    )
+    wednesday_vehicle_registry_row = next(
+        row for row in wednesday_payload["regular_vehicle_registry"] if row["placa"] == "REG8101"
+    )
+
+    assert tuesday_request["service_date"] == wednesday.isoformat()
+    assert tuesday_request["assignment_status"] == "confirmed"
+    assert tuesday_request["assigned_vehicle"]["placa"] == "REG8101"
+    assert tuesday_vehicle_registry_row["assigned_count"] == 0
+    assert wednesday_vehicle_registry_row["assigned_count"] == 1
+    assert wednesday_request["service_date"] == wednesday.isoformat()
+    assert wednesday_request["assignment_status"] == "confirmed"
+    assert wednesday_request["assigned_vehicle"]["placa"] == "REG8101"
+
+
+def test_transport_weekend_vehicle_registry_ignores_non_selected_days_for_assigned_count():
+    saturday = date(2026, 4, 18)
+    sunday = date(2026, 4, 19)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Weekend Selected Hub", address="7 Weekend Lane", zip="777777", country="Singapore"))
+        vehicle = Vehicle(placa="WKD8101", tipo="van", color="Silver", lugares=10, tolerance=8, service_scope="weekend")
+        db.add(vehicle)
+        db.flush()
+        for weekday in (saturday.weekday(), sunday.weekday()):
+            add_transport_schedule(
+                db,
+                vehicle=vehicle,
+                service_scope="weekend",
+                route_kind="home_to_work",
+                recurrence_kind="matching_weekday",
+                weekday=weekday,
+            )
+            add_transport_schedule(
+                db,
+                vehicle=vehicle,
+                service_scope="weekend",
+                route_kind="work_to_home",
+                recurrence_kind="matching_weekday",
+                weekday=weekday,
+            )
+
+        user = User(
+            rfid=None,
+            nome="Weekend Selected Rider",
+            chave="WS01",
+            projeto="P80",
+            workplace="Weekend Selected Hub",
+            end_rua="71 Weekend Street",
+            zip="770071",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="weekend",
+            recurrence_kind="weekend",
+            requested_time="09:10",
+            selected_weekdays_json=json.dumps([6], ensure_ascii=True, separators=(",", ":")),
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": sunday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        saturday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "home_to_work"},
+        )
+        sunday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": sunday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert saturday_dashboard.status_code == 200
+    assert sunday_dashboard.status_code == 200
+
+    saturday_payload = saturday_dashboard.json()
+    sunday_payload = sunday_dashboard.json()
+    saturday_request = next(row for row in saturday_payload["weekend_requests"] if row["id"] == request_id)
+    sunday_request = next(row for row in sunday_payload["weekend_requests"] if row["id"] == request_id)
+    saturday_vehicle_registry_row = next(
+        row for row in saturday_payload["weekend_vehicle_registry"] if row["placa"] == "WKD8101"
+    )
+    sunday_vehicle_registry_row = next(
+        row for row in sunday_payload["weekend_vehicle_registry"] if row["placa"] == "WKD8101"
+    )
+
+    assert saturday_request["service_date"] == sunday.isoformat()
+    assert saturday_request["assignment_status"] == "confirmed"
+    assert saturday_request["assigned_vehicle"]["placa"] == "WKD8101"
+    assert saturday_vehicle_registry_row["assigned_count"] == 0
+    assert sunday_vehicle_registry_row["assigned_count"] == 1
+    assert sunday_request["service_date"] == sunday.isoformat()
+    assert sunday_request["assignment_status"] == "confirmed"
+    assert sunday_request["assigned_vehicle"]["placa"] == "WKD8101"
+
+
 def test_transport_weekend_assignment_respects_selected_persistent_weekdays():
     saturday = date(2026, 4, 18)
     sunday = date(2026, 4, 19)
@@ -4028,6 +4246,88 @@ def test_transport_weekend_assignment_respects_selected_persistent_weekdays():
     assert sunday_home_request["assignment_status"] == "pending"
     assert saturday_home_request["assigned_vehicle"]["placa"] == "WKD8801"
     assert saturday_work_request["assigned_vehicle"]["placa"] == "WKD8801"
+
+
+def test_transport_dashboard_surfaces_extra_assignment_from_any_route():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        db.add(Workplace(workplace="Extra Route Hub", address="14 Route Way", zip="414141", country="Singapore"))
+        vehicle = Vehicle(placa="EXT8101", tipo="carro", color="Black", lugares=4, tolerance=5, service_scope="extra")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="extra",
+            route_kind="work_to_home",
+            recurrence_kind="single_date",
+            service_date=friday,
+            departure_time="18:10",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Extra Route Rider",
+            chave="ER01",
+            projeto="P80",
+            workplace="Extra Route Hub",
+            end_rua="14 Route Street",
+            zip="410014",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="extra",
+            recurrence_kind="single_date",
+            requested_time="18:10",
+            selected_weekdays_json=None,
+            single_date=friday,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert dashboard.status_code == 200
+
+    payload = dashboard.json()
+    extra_request = next(row for row in payload["extra_requests"] if row["id"] == request_id)
+
+    assert extra_request["assignment_status"] == "confirmed"
+    assert extra_request["assigned_vehicle"]["placa"] == "EXT8101"
+    assert extra_request["assigned_vehicle"]["route_kind"] == "work_to_home"
 
 
 def test_admin_page_is_served_on_admin_path():

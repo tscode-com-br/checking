@@ -33,18 +33,8 @@
             </svg>
           </button>
           <div class="transport-topbar-route-slot" data-route-slot>
-            <div class="transport-route-select-shell">
-              <select
-                class="transport-route-select transport-topbar-route-select"
-                data-route-select
-                data-settings-route-anchor
-                aria-label="Selected transport route"
-              >
-                <option value="home_to_work" selected>Home to Work</option>
-                <option value="work_to_home">Work to Home</option>
-              </select>
-            </div>
-            <div class="transport-route-inline-time" data-route-time-popover hidden>
+            <label class="transport-route-inline-time" data-route-time-popover hidden>
+              <span class="transport-route-inline-time-label" data-route-time-label>Work to Home Time:</span>
               <input
                 type="time"
                 step="60"
@@ -53,7 +43,7 @@
                 value="16:45"
                 aria-label="Work to Home Time"
               />
-            </div>
+            </label>
           </div>
           <div class="transport-topbar-center" data-date-panel aria-label="Selected service date">
             <div class="transport-date-stack transport-topbar-date-stack">
@@ -427,7 +417,7 @@
             </label>
 
             <p class="transport-settings-note" data-settings-time-note>
-              Base default for all dates. To change only the selected date, click Work to Home again in the top bar; it updates Regular and Weekend lists only and resets on the next day.
+              Base default for all dates. To change only the selected date, use the time field in the top bar; it updates Regular and Weekend lists only and resets on the next day.
             </p>
           </section>
 

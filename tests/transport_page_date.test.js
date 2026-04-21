@@ -345,7 +345,7 @@ test('transport page request section titles are rendered as links that control e
   assert.match(transportHtml, /id="transportRequestScopeRegular"/);
 });
 
-test('transport topbar uses a single route selector instead of a radio pair and only shows the inline time field after authentication on Work to Home', () => {
+test('transport topbar removes route controls and keeps only the selected-date time field', () => {
   const transportHtml = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/index.html'),
     'utf8'
@@ -359,12 +359,30 @@ test('transport topbar uses a single route selector instead of a radio pair and 
     'utf8'
   );
 
-  assert.match(transportHtml, /data-route-select/);
+  assert.doesNotMatch(transportHtml, /data-route-select/);
   assert.doesNotMatch(transportHtml, /type="radio"\s+name="transport_route_kind"/);
-  assert.match(transportScript, /const routeSelect = document\.querySelector\("\[data-route-select\]"\);/);
-  assert.match(transportScript, /const shouldShowRouteTime = isWorkToHomeSelected && state\.isAuthenticated;/);
+  assert.match(transportHtml, /data-route-time-label/);
+  assert.match(transportHtml, /data-route-time-input/);
+  assert.doesNotMatch(transportScript, /const routeSelect = document\.querySelector\("\[data-route-select\]"\);/);
+  assert.match(transportScript, /const shouldShowRouteTime = state\.isAuthenticated;/);
   assert.match(transportScript, /routeTimePopover\.hidden = !shouldShowRouteTime;/);
-  assert.match(transportCss, /\.transport-route-select\s*\{[\s\S]*text-align:\s*center;[\s\S]*color-scheme:\s*dark;[\s\S]*cursor:\s*pointer;/);
+  assert.match(transportCss, /\.transport-route-inline-time-label\s*\{[\s\S]*text-transform:\s*uppercase;[\s\S]*white-space:\s*nowrap;/);
+});
+
+test('transport vehicle route badges are rendered only for extra vehicles', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    transportScript,
+    /const routeLabel = scope === "extra" && vehicle\.route_kind[\s\S]*createNode\("span", "transport-vehicle-route", getRouteKindLabel\(vehicle\.route_kind\)\)/
+  );
+  assert.match(
+    transportScript,
+    /if \(scope === "extra" && vehicle\.route_kind\) \{[\s\S]*vehicleButton\.title = `\$\{vehicleButton\.title\} \| \$\{getRouteKindLabel\(vehicle\.route_kind\)\}`;/
+  );
 });
 
 test('transport frontend uses base-relative asset and API paths so the /checking prefix keeps working', () => {
@@ -492,7 +510,103 @@ test('buildVehiclePassengerPreviewRows keeps the dragged passenger visible in th
   );
 });
 
-test('canRequestBeDroppedOnVehicle only accepts compatible request and vehicle combinations', () => {
+test('groupAssignedRequestsByVehicleForDate only includes confirmed passengers for the selected service date', () => {
+  assert.deepEqual(
+    transportPage.groupAssignedRequestsByVehicleForDate(
+      [
+        {
+          id: 1,
+          nome: 'Monday Rider',
+          service_date: '2026-04-21',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 77, placa: 'REG1001' },
+        },
+        {
+          id: 2,
+          nome: 'Wednesday Rider',
+          service_date: '2026-04-22',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 77, placa: 'REG1001' },
+        },
+        {
+          id: 3,
+          nome: 'Pending Rider',
+          service_date: '2026-04-21',
+          assignment_status: 'pending',
+          assigned_vehicle: { id: 77, placa: 'REG1001' },
+        },
+        {
+          id: 4,
+          nome: 'Other Vehicle Rider',
+          service_date: '2026-04-21',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 88, placa: 'REG2002' },
+        },
+      ],
+      '2026-04-21'
+    ),
+    {
+      '77': [
+        {
+          id: 1,
+          nome: 'Monday Rider',
+          service_date: '2026-04-21',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 77, placa: 'REG1001' },
+        },
+      ],
+      '88': [
+        {
+          id: 4,
+          nome: 'Other Vehicle Rider',
+          service_date: '2026-04-21',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 88, placa: 'REG2002' },
+        },
+      ],
+    }
+  );
+});
+
+test('groupAssignedRequestsByVehicleForDate keeps weekend passengers out of the vehicle on off-days', () => {
+  assert.deepEqual(
+    transportPage.groupAssignedRequestsByVehicleForDate(
+      [
+        {
+          id: 11,
+          nome: 'Sunday Rider',
+          request_kind: 'weekend',
+          service_date: '2026-04-19',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 99, placa: 'WKD1001' },
+        },
+        {
+          id: 12,
+          nome: 'Saturday Rider',
+          request_kind: 'weekend',
+          service_date: '2026-04-18',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 99, placa: 'WKD1001' },
+        },
+      ],
+      '2026-04-18'
+    ),
+    {
+      '99': [
+        {
+          id: 12,
+          nome: 'Saturday Rider',
+          request_kind: 'weekend',
+          service_date: '2026-04-18',
+          assignment_status: 'confirmed',
+          assigned_vehicle: { id: 99, placa: 'WKD1001' },
+        },
+      ],
+    }
+  );
+});
+
+test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations and lets extra vehicles carry their own route', () => {
   assert.equal(
     transportPage.canRequestBeDroppedOnVehicle(
       { id: 10, request_kind: 'regular' },
@@ -527,7 +641,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible request and vehicle c
       { id: 8, route_kind: 'work_to_home' },
       'home_to_work'
     ),
-    false
+    true
   );
 });
 

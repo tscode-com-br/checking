@@ -262,6 +262,23 @@ def _resolve_vehicle_departure_time(
     return work_to_home_departure_time
 
 
+def _transport_dashboard_assignment_priority(
+    assignment: TransportAssignment,
+) -> tuple[int, int, datetime, int]:
+    status_rank = {
+        "confirmed": 3,
+        "rejected": 2,
+        "cancelled": 1,
+        "pending": 0,
+    }
+    return (
+        status_rank.get(assignment.status, -1),
+        1 if assignment.vehicle_id is not None else 0,
+        assignment.updated_at,
+        assignment.id,
+    )
+
+
 def build_transport_dashboard(
     db: Session,
     *,
@@ -271,7 +288,7 @@ def build_transport_dashboard(
     projects = [ProjectRow(id=row.id, name=row.name) for row in list_projects(db)]
     workplaces = list_workplaces(db)
     work_to_home_departure_time = get_transport_work_to_home_time_for_date(db, service_date=service_date)
-    vehicles_by_scope, vehicle_rows_by_id = _build_vehicle_rows_for_dashboard(
+    vehicles_by_scope, vehicle_rows_by_id, vehicle_rows_by_assignment_key = _build_vehicle_rows_for_dashboard(
         db,
         service_date=service_date,
         route_kind=route_kind,
@@ -299,6 +316,12 @@ def build_transport_dashboard(
         (assignment.request_id, assignment.service_date, assignment.route_kind): assignment
         for assignment in assignments
     }
+    explicit_assignments_by_request_date: dict[tuple[int, date], TransportAssignment] = {}
+    for assignment in assignments:
+        lookup_key = (assignment.request_id, assignment.service_date)
+        current_assignment = explicit_assignments_by_request_date.get(lookup_key)
+        if current_assignment is None or _transport_dashboard_assignment_priority(assignment) > _transport_dashboard_assignment_priority(current_assignment):
+            explicit_assignments_by_request_date[lookup_key] = assignment
 
     active_schedule_rows = _list_active_transport_schedule_rows(db)
     schedules_by_vehicle_id: dict[int, list[TransportVehicleSchedule]] = {}
@@ -349,13 +372,22 @@ def build_transport_dashboard(
         response_message = None
         awareness_status = "pending"
         assignment = explicit_assignments_by_key.get((transport_request.id, row_service_date, route_kind))
+        if assignment is None and transport_request.request_kind == "extra":
+            assignment = explicit_assignments_by_request_date.get((transport_request.id, row_service_date))
         if assignment is not None:
             assignment_status = assignment.status
             response_message = assignment.response_message
             awareness_status = "aware" if assignment.acknowledged_by_user else "pending"
             if assignment.vehicle_id is not None:
                 explicit_vehicle = vehicles_by_id.get(assignment.vehicle_id)
-                assigned_vehicle = vehicle_rows_by_id.get(assignment.vehicle_id)
+                assigned_vehicle = vehicle_rows_by_assignment_key.get(
+                    (
+                        assignment.vehicle_id,
+                        assignment.route_kind if explicit_vehicle is not None and explicit_vehicle.service_scope == "extra" else None,
+                    )
+                )
+                if assigned_vehicle is None:
+                    assigned_vehicle = vehicle_rows_by_id.get(assignment.vehicle_id)
                 if assigned_vehicle is None and explicit_vehicle is not None:
                     assigned_vehicle = _build_vehicle_row(explicit_vehicle)
         elif transport_request.request_kind in {"regular", "weekend"}:
@@ -365,7 +397,11 @@ def build_transport_dashboard(
                 if find_available_schedule_for_date(template_vehicle, row_service_date) is not None:
                     assignment_status = "confirmed"
                     response_message = template_assignment.response_message
-                    assigned_vehicle = vehicle_rows_by_id.get(template_vehicle.id) or _build_vehicle_row(template_vehicle)
+                    assigned_vehicle = (
+                        vehicle_rows_by_assignment_key.get((template_vehicle.id, None))
+                        or vehicle_rows_by_id.get(template_vehicle.id)
+                        or _build_vehicle_row(template_vehicle)
+                    )
 
         request_rows[transport_request.request_kind].append(
             TransportRequestRow(
@@ -395,6 +431,7 @@ def build_transport_dashboard(
         request_kind_by_id=request_kind_by_id,
         recurring_assignment_templates=recurring_assignment_templates,
         explicit_assignments=assignments,
+        service_date=service_date,
         route_kind=route_kind,
         work_to_home_departure_time=work_to_home_departure_time,
     )
@@ -1691,6 +1728,7 @@ def _build_transport_vehicle_registry_rows(
     request_kind_by_id: dict[int, str],
     recurring_assignment_templates: dict[tuple[int, int], tuple[TransportAssignment, Vehicle]],
     explicit_assignments: list[TransportAssignment],
+    service_date: date,
     route_kind: str,
     work_to_home_departure_time: str,
 ) -> dict[str, list[TransportVehicleManagementRow]]:
@@ -1704,7 +1742,9 @@ def _build_transport_vehicle_registry_rows(
         "regular": {},
         "weekend": {},
     }
-    for (request_id, _weekday), (_assignment, vehicle) in recurring_assignment_templates.items():
+    for (request_id, weekday), (_assignment, vehicle) in recurring_assignment_templates.items():
+        if weekday != service_date.weekday():
+            continue
         request_kind = request_kind_by_id.get(request_id)
         if request_kind not in {"regular", "weekend"}:
             continue
@@ -1819,13 +1859,18 @@ def _build_vehicle_rows_for_dashboard(
     service_date: date,
     route_kind: str,
     work_to_home_departure_time: str,
-) -> tuple[dict[str, list[TransportVehicleRow]], dict[int, TransportVehicleRow]]:
+) -> tuple[
+    dict[str, list[TransportVehicleRow]],
+    dict[int, TransportVehicleRow],
+    dict[tuple[int, str | None], TransportVehicleRow],
+]:
     vehicles_by_scope: dict[str, list[TransportVehicleRow]] = {
         "regular": [],
         "weekend": [],
         "extra": [],
     }
     vehicle_rows_by_id: dict[int, TransportVehicleRow] = {}
+    vehicle_rows_by_assignment_key: dict[tuple[int, str | None], TransportVehicleRow] = {}
 
     schedule_rows = db.execute(
         select(TransportVehicleSchedule, Vehicle)
@@ -1863,12 +1908,13 @@ def _build_vehicle_rows_for_dashboard(
             ),
         )
         vehicles_by_scope.setdefault(schedule.service_scope, []).append(vehicle_row)
-        vehicle_rows_by_id[vehicle.id] = vehicle_row
+        vehicle_rows_by_assignment_key[(vehicle.id, schedule.route_kind if schedule.service_scope == "extra" else None)] = vehicle_row
+        vehicle_rows_by_id.setdefault(vehicle.id, vehicle_row)
 
     for rows in vehicles_by_scope.values():
         rows.sort(key=lambda item: (item.placa, item.id))
 
-    return vehicles_by_scope, vehicle_rows_by_id
+    return vehicles_by_scope, vehicle_rows_by_id, vehicle_rows_by_assignment_key
 
 
 def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[dict[str, object]]:
