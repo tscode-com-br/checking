@@ -19,7 +19,7 @@ from .user_sync import (
     create_user_sync_event,
     ensure_current_user_state_event,
     normalize_event_time,
-    resolve_latest_user_activity,
+    resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
 )
 
@@ -71,8 +71,8 @@ def submit_forms_event(
 
     user, _created = ensure_user(db, chave=chave, projeto=projeto)
     normalized_event_time = normalize_event_time(event_time)
-    ensure_current_user_state_event(db, user=user)
-    latest_activity = resolve_latest_user_activity(db, user=user)
+    ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
+    latest_activity = resolve_latest_internal_user_activity(db, user=user)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,

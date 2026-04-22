@@ -14,8 +14,9 @@ from ..services.time_utils import now_sgt
 from ..services.user_sync import (
     apply_user_state,
     create_user_sync_event,
+    ensure_current_user_state_event,
     find_user_by_rfid,
-    resolve_latest_user_activity,
+    resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
 )
 
@@ -151,7 +152,8 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
 
     action = payload.action
     activity_time = now_sgt()
-    latest_activity = resolve_latest_user_activity(db, user=user)
+    ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
+    latest_activity = resolve_latest_internal_user_activity(db, user=user)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,

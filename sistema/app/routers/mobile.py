@@ -33,7 +33,7 @@ from ..services.user_sync import (
     ensure_current_user_state_event,
     normalize_event_time,
     normalize_user_key,
-    resolve_latest_user_activity,
+    resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
 )
 from ..services.time_utils import now_sgt
@@ -119,8 +119,8 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
     event_time = normalize_event_time(payload.event_time)
-    ensure_current_user_state_event(db, user=user)
-    latest_activity = resolve_latest_user_activity(db, user=user)
+    ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
+    latest_activity = resolve_latest_internal_user_activity(db, user=user)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=payload.action,

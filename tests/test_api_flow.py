@@ -1,12 +1,15 @@
 import asyncio
+import io
 import os
 import json
+import shutil
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from openpyxl import load_workbook
 from sqlalchemy import select, text
 
 # Override settings before app import.
@@ -21,10 +24,15 @@ os.environ["BOOTSTRAP_ADMIN_KEY"] = "HR70"
 os.environ["BOOTSTRAP_ADMIN_NAME"] = "Tamer Salmem"
 os.environ["BOOTSTRAP_ADMIN_PASSWORD"] = "eAcacdLe2"
 os.environ["FORMS_QUEUE_ENABLED"] = "false"
+os.environ["TRANSPORT_EXPORTS_DIR"] = "./test_transport_exports"
 
 test_db = Path("test_checking.db")
 if test_db.exists():
     test_db.unlink()
+
+test_transport_exports_dir = Path("test_transport_exports")
+if test_transport_exports_dir.exists():
+    shutil.rmtree(test_transport_exports_dir)
 
 from fastapi.testclient import TestClient
 
@@ -53,6 +61,7 @@ from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
+from sistema.app.services import transport_exports as transport_exports_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import seed_default_projects
@@ -879,6 +888,67 @@ def test_provider_current_state_uses_forms_as_local_when_provider_event_wins():
         assert forms_row["hora"] == "18:05:00"
 
 
+def test_web_check_ignores_provider_checkout_when_deciding_same_day_submission():
+    first_event_time = datetime(2026, 4, 22, 8, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+    second_event_time = datetime(2026, 4, 22, 11, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="PV33", senha="web123", projeto="P80")
+        assert registered.status_code == 200, registered.text
+
+        first = client.post(
+            "/api/web/check",
+            json={
+                "chave": "PV33",
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "local": "Web",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"web-provider-ignore-1-{uuid.uuid4().hex}",
+            },
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["queued_forms"] is True
+
+        provider_checkout = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV33",
+                "nome": "USUARIO WEB IGNORA PROVIDER",
+                "projeto": "P80",
+                "atividade": "check-out",
+                "informe": "normal",
+                "data": "22/04/2026",
+                "hora": "10:00:00",
+            },
+        )
+        assert provider_checkout.status_code == 200, provider_checkout.text
+        assert provider_checkout.json()["updated_current_state"] is True
+
+        second = client.post(
+            "/api/web/check",
+            json={
+                "chave": "PV33",
+                "projeto": "P80",
+                "action": "checkout",
+                "informe": "normal",
+                "local": "Web",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"web-provider-ignore-2-{uuid.uuid4().hex}",
+            },
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["queued_forms"] is True
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.chave == "PV33").order_by(FormsSubmission.id)
+            ).scalars().all()
+            assert len(queued) == 2
+
+
 def test_admin_can_clear_forms_rows_without_archiving():
     timestamp = now_sgt().replace(microsecond=0)
     provider_event_key = uuid.uuid4().hex
@@ -1256,6 +1326,52 @@ def test_repeated_same_day_checkout_updates_state_without_forms_submission(monke
             assert user.checkin is False
             assert user.local == "co80-b"
             assert len(queued) == 2
+
+
+def test_device_checkout_ignores_provider_only_history():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": "CARDPROV1", "nome": "Usuario Provider Ignorado", "chave": "EG59", "projeto": "P80"},
+        )
+        assert save_user.status_code == 200, save_user.text
+
+        provider_checkin = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "EG59",
+                "nome": "USUARIO DEVICE IGNORA PROVIDER",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "22/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert provider_checkin.status_code == 200, provider_checkin.text
+        assert provider_checkin.json()["updated_current_state"] is True
+
+        scan_checkout = client.post(
+            "/api/scan",
+            json={
+                "local": "main",
+                "rfid": "CARDPROV1",
+                "action": "checkout",
+                "device_id": "ESP32-TEST",
+                "request_id": f"req-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+        assert scan_checkout.status_code == 200, scan_checkout.text
+        assert scan_checkout.json()["outcome"] == "failed"
+        assert scan_checkout.json()["led"] == "red_2s"
+        assert "Check-in not found" in scan_checkout.json()["message"]
+
+        with SessionLocal() as db:
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.rfid == "CARDPROV1")).scalars().all()
+            assert queued == []
 
 
 def test_repeated_checkout_after_singapore_midnight_is_queued_again(monkeypatch):
@@ -2416,6 +2532,68 @@ def test_mobile_forms_submit_skips_same_day_repeated_action():
             assert user.local == "Area B"
             assert len(queued) == 1
             assert len(sync_events) == 2
+
+
+def test_mobile_submit_ignores_provider_checkout_when_evaluating_same_day_repeat():
+    first_event_time = datetime(2026, 4, 22, 8, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+    second_event_time = datetime(2026, 4, 22, 11, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/mobile/events/submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AS12",
+                "projeto": "P82",
+                "action": "checkin",
+                "local": "Area A",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"mobile-provider-ignore-1-{uuid.uuid4().hex}",
+            },
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["queued_forms"] is True
+
+        provider_checkout = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "AS12",
+                "nome": "USUARIO MOBILE IGNORA PROVIDER",
+                "projeto": "P82",
+                "atividade": "check-out",
+                "informe": "normal",
+                "data": "22/04/2026",
+                "hora": "10:00:00",
+            },
+        )
+        assert provider_checkout.status_code == 200, provider_checkout.text
+        assert provider_checkout.json()["updated_current_state"] is True
+
+        second = client.post(
+            "/api/mobile/events/submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AS12",
+                "projeto": "P82",
+                "action": "checkin",
+                "local": "Area B",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"mobile-provider-ignore-2-{uuid.uuid4().hex}",
+            },
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["queued_forms"] is False
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "AS12")
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.chave == "AS12").order_by(FormsSubmission.id)
+            ).scalars().all()
+
+            assert user.checkin is True
+            assert user.local == "Area B"
+            assert len(queued) == 1
 
 
 def test_mobile_forms_submit_requeues_same_action_after_singapore_midnight():
@@ -5841,6 +6019,183 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
     paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
     assert home_row["awareness_status"] == "aware"
     assert paired_row["awareness_status"] == "aware"
+
+
+def test_transport_export_endpoint_builds_xlsx_download_and_saves_server_copy(monkeypatch):
+    fixed_now = datetime(2026, 4, 22, 15, 26, 45, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_exports_module, "now_sgt", lambda: fixed_now)
+
+    export_dir = Path(settings.transport_exports_dir)
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="EXP4521", tipo="van", color="White", lugares=9, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        export_home_user = User(
+            nome="Export Home Rider",
+            chave="EH01",
+            projeto="P80",
+            end_rua="10 Export Avenue",
+            zip="111111",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        export_work_user = User(
+            nome="Export Work Rider",
+            chave="EW02",
+            projeto="P81",
+            end_rua="20 Return Road",
+            zip="222222",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        export_pending_user = User(
+            nome="Pending Export Rider",
+            chave="EP03",
+            projeto="P82",
+            end_rua="30 Waiting Street",
+            zip="333333",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add_all([export_home_user, export_work_user, export_pending_user])
+        db.flush()
+
+        home_request, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=export_home_user,
+            request_kind="regular",
+            requested_time="07:15",
+            requested_date=None,
+            created_via="web",
+        )
+        work_request, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=export_work_user,
+            request_kind="regular",
+            requested_time="18:10",
+            requested_date=None,
+            created_via="web",
+        )
+        pending_request, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=export_pending_user,
+            request_kind="regular",
+            requested_time="08:05",
+            requested_date=None,
+            created_via="web",
+        )
+        db.commit()
+
+        home_request_id = home_request.id
+        work_request_id = work_request.id
+        pending_request_id = pending_request.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        home_assignment = admin_client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": home_request_id,
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        assert home_assignment.status_code == 200
+
+        work_assignment = admin_client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": work_request_id,
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "work_to_home",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+        assert work_assignment.status_code == 200
+
+        pending_assignment = admin_client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": pending_request_id,
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+                "status": "pending",
+                "vehicle_id": None,
+            },
+        )
+        assert pending_assignment.status_code == 200
+
+        exported = admin_client.get(
+            "/api/transport/exports/transport-list",
+            params={"service_date": fixed_now.date().isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Transport List - 20260422 - 152645.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    worksheet = workbook.active
+    assert worksheet.title == "Transport List"
+    assert [worksheet["A1"].value, worksheet["B1"].value, worksheet["C1"].value, worksheet["D1"].value, worksheet["E1"].value, worksheet["F1"].value] == [
+        "Nome/Name",
+        "Chave/Key",
+        "Projeto/Project",
+        "Endereço/Address",
+        "Data/Date",
+        "Partida/Departure",
+    ]
+    assert [worksheet["A2"].value, worksheet["B2"].value, worksheet["C2"].value, worksheet["D2"].value, worksheet["E2"].value, worksheet["F2"].value] == [
+        "Export Home Rider",
+        "EH01",
+        "P80",
+        "10 Export Avenue",
+        "2026-04-22",
+        None,
+    ]
+    assert [worksheet["A3"].value, worksheet["B3"].value, worksheet["C3"].value, worksheet["D3"].value, worksheet["E3"].value, worksheet["F3"].value] == [
+        "Export Work Rider",
+        "EW02",
+        "P81",
+        "20 Return Road",
+        "2026-04-22",
+        None,
+    ]
+    assert worksheet.max_row == 3
+    workbook.close()
+
+    saved_exports = sorted(Path(settings.transport_exports_dir).glob("Transport List - 20260422 - 152645*.xlsx"))
+    assert len(saved_exports) == 1
+    assert saved_exports[0].is_file()
 
 
 def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypatch):
