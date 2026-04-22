@@ -277,6 +277,27 @@ test('transport topbar uses an inline red dashboard settings link below the allo
   assert.doesNotMatch(transportScript, /settingsRouteAnchor|scheduleSettingsTriggerPositionSync|syncSettingsTriggerPosition/);
 });
 
+test('transport auth inputs do not clear the session on click anymore', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(transportScript, /function resetAuthenticatedTransportField\(/);
+  assert.doesNotMatch(transportScript, /authKeyInput\.addEventListener\("pointerdown",\s*resetAuthenticatedTransportField\)/);
+  assert.doesNotMatch(transportScript, /authPasswordInput\.addEventListener\("pointerdown",\s*resetAuthenticatedTransportField\)/);
+});
+
+test('transport page controller declares the topbar element before applying translations', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(transportScript, /const transportTopbar = document\.querySelector\("\[data-transport-topbar\]"\);/);
+  assert.match(transportScript, /if \(transportTopbar\) \{[\s\S]*transportTopbar\.setAttribute\("aria-label", t\("layout\.quickActions"\)\);/);
+});
+
 test('transport settings modal includes editable default seat counts for each vehicle type', () => {
   const transportHtml = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/index.html'),

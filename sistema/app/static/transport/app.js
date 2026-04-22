@@ -1112,6 +1112,7 @@
     const vehicleDetailsOverlayHost = document.querySelector("[data-vehicle-details-layer]")
       || createNode("div", "transport-vehicle-details-layer");
     const statusMessage = document.querySelector("[data-status-message]");
+    const transportTopbar = document.querySelector("[data-transport-topbar]");
     const projectListToggle = document.querySelector("[data-project-list-toggle]");
     const projectListPanel = document.querySelector("[data-project-list-panel]");
     const projectListContainer = document.querySelector("[data-project-list]");
@@ -2135,20 +2136,6 @@
       }, TRANSPORT_AUTH_VERIFY_DELAY_MS);
     }
 
-    function resetAuthenticatedTransportField(event) {
-      if (!state.isAuthenticated) {
-        return;
-      }
-      event.preventDefault();
-      clearTransportSession(t("status.accessReset"));
-      const fieldElement = event.currentTarget;
-      globalScope.setTimeout(function () {
-        if (fieldElement && typeof fieldElement.focus === "function") {
-          fieldElement.focus();
-        }
-      }, 0);
-    }
-
     function bootstrapTransportSession() {
       return requestJson(`${TRANSPORT_API_PREFIX}/auth/session`)
         .then(function (response) {
@@ -2174,12 +2161,10 @@
 
     if (authKeyInput) {
       authKeyInput.addEventListener("input", scheduleTransportVerification);
-      authKeyInput.addEventListener("pointerdown", resetAuthenticatedTransportField);
     }
 
     if (authPasswordInput) {
       authPasswordInput.addEventListener("input", scheduleTransportVerification);
-      authPasswordInput.addEventListener("pointerdown", resetAuthenticatedTransportField);
     }
 
     if (requestUserButton) {
