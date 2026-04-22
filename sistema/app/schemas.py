@@ -124,6 +124,30 @@ def _normalize_transport_weekday_list(value: object) -> list[int] | None:
     return sorted(dict.fromkeys(normalized))
 
 
+_REGULAR_VEHICLE_WEEKDAY_FIELDS = (
+    ("every_monday", 0),
+    ("every_tuesday", 1),
+    ("every_wednesday", 2),
+    ("every_thursday", 3),
+    ("every_friday", 4),
+)
+
+
+def _resolve_regular_vehicle_weekdays(source: object) -> list[int]:
+    if isinstance(source, dict):
+        return [
+            weekday
+            for field_name, weekday in _REGULAR_VEHICLE_WEEKDAY_FIELDS
+            if bool(source.get(field_name))
+        ]
+
+    return [
+        weekday
+        for field_name, weekday in _REGULAR_VEHICLE_WEEKDAY_FIELDS
+        if bool(getattr(source, field_name, False))
+    ]
+
+
 def _validate_web_password(value: str, field_name: str) -> str:
     password = str(value)
     if len(password) < 3 or len(password) > 10:
@@ -520,14 +544,34 @@ class TransportVehicleCreate(BaseModel):
     every_weekend: bool = False
     every_saturday: bool = False
     every_sunday: bool = False
+    every_monday: bool = False
+    every_tuesday: bool = False
+    every_wednesday: bool = False
+    every_thursday: bool = False
+    every_friday: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_regular_weekday_defaults(cls, value: object):
+        if not isinstance(value, dict):
+            return value
+
+        if str(value.get("service_scope") or "").strip().lower() != "regular":
+            return value
+
+        if any(field_name in value for field_name, _ in _REGULAR_VEHICLE_WEEKDAY_FIELDS):
+            return value
+
+        normalized = dict(value)
+        for field_name, _ in _REGULAR_VEHICLE_WEEKDAY_FIELDS:
+            normalized[field_name] = True
+        return normalized
 
     @model_validator(mode="after")
     def validate_scope_specific_rules(self):
         if self.service_scope == "weekend" and self.every_weekend and not (self.every_saturday or self.every_sunday):
-            if self.service_date.weekday() == 5:
-                self.every_saturday = True
-            elif self.service_date.weekday() == 6:
-                self.every_sunday = True
+            self.every_saturday = True
+            self.every_sunday = True
 
         if self.service_scope == "extra":
             if self.route_kind is None:
@@ -536,6 +580,8 @@ class TransportVehicleCreate(BaseModel):
                 raise ValueError("departure_time is required for extra vehicles")
             if self.every_weekend or self.every_saturday or self.every_sunday:
                 raise ValueError("weekend persistence is not allowed for extra vehicles")
+            if _resolve_regular_vehicle_weekdays(self):
+                raise ValueError("regular persistence is not allowed for extra vehicles")
             return self
 
         if self.route_kind is not None:
@@ -544,8 +590,8 @@ class TransportVehicleCreate(BaseModel):
             raise ValueError("departure_time is only allowed for extra vehicles")
 
         if self.service_scope == "weekend":
-            if self.service_date.weekday() < 5:
-                raise ValueError("Weekend vehicles can only be created on Saturday or Sunday")
+            if _resolve_regular_vehicle_weekdays(self):
+                raise ValueError("regular persistence is only allowed for regular vehicles")
             if not self.every_saturday and not self.every_sunday:
                 raise ValueError(
                     "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List"
@@ -554,8 +600,8 @@ class TransportVehicleCreate(BaseModel):
 
         if self.every_weekend or self.every_saturday or self.every_sunday:
             raise ValueError("weekend persistence is only allowed for weekend vehicles")
-        if self.service_date.weekday() >= 5:
-            raise ValueError("Regular vehicles can only be created from Monday to Friday")
+        if not _resolve_regular_vehicle_weekdays(self):
+            raise ValueError("Regular vehicles must be persistent. Select at least one weekday")
         return self
 
     @field_validator("placa", mode="before")

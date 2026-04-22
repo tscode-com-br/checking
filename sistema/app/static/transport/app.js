@@ -724,6 +724,7 @@
       "Transport request rejected successfully.": "status.requestRejected",
       "departure_time is required for extra vehicles": "warnings.extraDepartureRequired",
       "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": "warnings.weekendPersistence",
+      "Regular vehicles must be persistent. Select at least one weekday": "warnings.regularPersistence",
       "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
       "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
       "This vehicle cannot be removed from the selected route.": "warnings.vehicleCannotBeRemoved",
@@ -846,7 +847,14 @@
     if (serviceScope === "weekend") {
       payload.every_saturday = Boolean(formData.get("every_saturday"));
       payload.every_sunday = Boolean(formData.get("every_sunday"));
+      return payload;
     }
+
+    payload.every_monday = Boolean(formData.get("every_monday"));
+    payload.every_tuesday = Boolean(formData.get("every_tuesday"));
+    payload.every_wednesday = Boolean(formData.get("every_wednesday"));
+    payload.every_thursday = Boolean(formData.get("every_thursday"));
+    payload.every_friday = Boolean(formData.get("every_friday"));
 
     return payload;
   }
@@ -1092,6 +1100,7 @@
     const extraDepartureField = document.querySelector("[data-extra-departure-field]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
+    const regularPersistenceFields = Array.from(document.querySelectorAll("[data-regular-persistence-field]"));
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
     const routeTimeLabel = document.querySelector("[data-route-time-label]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
@@ -1197,6 +1206,9 @@
       const addVehicleButtons = document.querySelectorAll("[data-open-vehicle-modal]");
       const modalFieldLabels = vehicleForm ? vehicleForm.querySelectorAll(".transport-field > span") : [];
       const weekendLabels = weekendPersistenceFields.map(function (fieldElement) {
+        return fieldElement.querySelector("span");
+      });
+      const regularLabels = regularPersistenceFields.map(function (fieldElement) {
         return fieldElement.querySelector("span");
       });
       const modalActionButtons = vehicleForm ? vehicleForm.querySelectorAll(".transport-modal-actions button") : [];
@@ -1314,6 +1326,21 @@
       }
       if (weekendLabels[1]) {
         weekendLabels[1].textContent = t("modal.fields.everySunday");
+      }
+      if (regularLabels[0]) {
+        regularLabels[0].textContent = t("modal.fields.everyMonday");
+      }
+      if (regularLabels[1]) {
+        regularLabels[1].textContent = t("modal.fields.everyTuesday");
+      }
+      if (regularLabels[2]) {
+        regularLabels[2].textContent = t("modal.fields.everyWednesday");
+      }
+      if (regularLabels[3]) {
+        regularLabels[3].textContent = t("modal.fields.everyThursday");
+      }
+      if (regularLabels[4]) {
+        regularLabels[4].textContent = t("modal.fields.everyFriday");
       }
       if (modalActionButtons[1]) {
         modalActionButtons[1].textContent = t("modal.actions.save");
@@ -2145,6 +2172,17 @@
           );
           return;
         }
+        if (
+          payload.service_scope === "regular"
+          && !payload.every_monday
+          && !payload.every_tuesday
+          && !payload.every_wednesday
+          && !payload.every_thursday
+          && !payload.every_friday
+        ) {
+          setVehicleModalFeedback(t("warnings.regularPersistence"), "error");
+          return;
+        }
         if (submitButton) {
           submitButton.disabled = true;
         }
@@ -2296,15 +2334,6 @@
         setStatus(getTransportLockedMessage(), "warning");
         return false;
       }
-      const selectedDate = dateStore.getValue();
-      if (scope === "regular" && isWeekendDate(selectedDate)) {
-        setStatus(t("warnings.regularWeekdayOnly"), "warning");
-        return false;
-      }
-      if (scope === "weekend" && !isWeekendDate(selectedDate)) {
-        setStatus(t("warnings.weekendWeekendOnly"), "warning");
-        return false;
-      }
       return true;
     }
 
@@ -2329,6 +2358,9 @@
       }
       weekendPersistenceFields.forEach(function (fieldElement) {
         fieldElement.hidden = normalizedScope !== "weekend";
+      });
+      regularPersistenceFields.forEach(function (fieldElement) {
+        fieldElement.hidden = normalizedScope !== "regular";
       });
       if (vehicleForm.elements.route_kind) {
         vehicleForm.elements.route_kind.value = getSelectedRouteKind();

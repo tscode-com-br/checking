@@ -247,6 +247,8 @@ test('vehicle modal markup includes the default places and tolerance values', ()
   assert.match(transportHtml, /<option value="carro" selected>Car<\/option>/);
   assert.match(transportHtml, /<input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" required \/>/);
   assert.match(transportHtml, /<input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" required \/>/);
+  assert.match(transportHtml, /<input type="checkbox" name="every_monday" checked \/>/);
+  assert.match(transportHtml, /<input type="checkbox" name="every_friday" checked \/>/);
 });
 
 test('syncVehicleTypeDependentDefaults updates the vehicle type, places, and tolerance fields together', () => {
@@ -421,6 +423,22 @@ test('transport frontend uses base-relative asset and API paths so the /checking
   assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/auth\/session`\)/);
   assert.doesNotMatch(transportScript, /"\/api\/transport/);
   assert.doesNotMatch(transportScript, /"\/assets\/icons/);
+});
+
+test('transport vehicle modal no longer blocks regular or weekend creation by the selected dashboard date', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    transportScript,
+    /function canOpenVehicleModal\(scope\) \{[\s\S]*if \(!state\.isAuthenticated\) \{[\s\S]*return false;[\s\S]*\}[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(
+    transportScript,
+    /function canOpenVehicleModal\(scope\) \{[\s\S]*isWeekendDate\(selectedDate\)/
+  );
 });
 
 test('transport request sections size themselves by their own content instead of sharing equal-height rows', () => {
@@ -666,7 +684,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
   );
 });
 
-test('buildVehicleCreatePayload sends weekend persistence and extra departure time only for extra vehicles', () => {
+test('buildVehicleCreatePayload sends recurrence selections for regular and weekend vehicles and extra departure time only for extra vehicles', () => {
   const regularFormData = new FormData();
   regularFormData.set('service_scope', 'regular');
   regularFormData.set('tipo', 'carro');
@@ -674,6 +692,8 @@ test('buildVehicleCreatePayload sends weekend persistence and extra departure ti
   regularFormData.set('color', 'Black');
   regularFormData.set('lugares', '4');
   regularFormData.set('tolerance', '12');
+  regularFormData.set('every_monday', 'on');
+  regularFormData.set('every_wednesday', 'on');
   regularFormData.set('route_kind', 'work_to_home');
 
   assert.deepEqual(
@@ -686,6 +706,11 @@ test('buildVehicleCreatePayload sends weekend persistence and extra departure ti
       color: 'Black',
       lugares: 4,
       tolerance: 12,
+      every_monday: true,
+      every_tuesday: false,
+      every_wednesday: true,
+      every_thursday: false,
+      every_friday: false,
     }
   );
 

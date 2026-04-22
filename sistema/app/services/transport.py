@@ -59,6 +59,13 @@ _DEFAULT_REQUEST_SELECTED_WEEKDAYS = {
     "regular": (0, 1, 2, 3, 4),
     "weekend": (5, 6),
 }
+_REGULAR_VEHICLE_WEEKDAY_FIELDS = (
+    ("every_monday", 0),
+    ("every_tuesday", 1),
+    ("every_wednesday", 2),
+    ("every_thursday", 3),
+    ("every_friday", 4),
+)
 _PAIRED_ROUTE_KIND = {
     "home_to_work": "work_to_home",
     "work_to_home": "home_to_work",
@@ -488,8 +495,18 @@ def request_is_visible_on_service_date(transport_request: TransportRequest, serv
     )
 
 
+def _resolve_regular_vehicle_selected_weekdays(payload: TransportVehicleCreate) -> tuple[int, ...]:
+    return tuple(
+        weekday
+        for field_name, weekday in _REGULAR_VEHICLE_WEEKDAY_FIELDS
+        if getattr(payload, field_name, False)
+    )
+
+
 def vehicle_schedule_applies_to_date(schedule: TransportVehicleSchedule, service_date: date) -> bool:
     if not schedule.is_active:
+        return False
+    if schedule.recurrence_kind != "single_date" and schedule.service_date is not None and service_date < schedule.service_date:
         return False
     if schedule.recurrence_kind == "weekday":
         return service_date.weekday() < 5
@@ -1942,7 +1959,7 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
                 "service_scope": payload.service_scope,
                 "route_kind": route_kind,
                 "recurrence_kind": "matching_weekday",
-                "service_date": None,
+                "service_date": payload.service_date,
                 "weekday": weekday,
                 "departure_time": None,
             }
@@ -1950,15 +1967,30 @@ def _build_schedule_specs_from_payload(payload: TransportVehicleCreate) -> list[
             for route_kind in route_kinds
         ]
 
+    selected_regular_weekdays = _resolve_regular_vehicle_selected_weekdays(payload)
+    if selected_regular_weekdays == _DEFAULT_REQUEST_SELECTED_WEEKDAYS["regular"]:
+        return [
+            {
+                "service_scope": payload.service_scope,
+                "route_kind": route_kind,
+                "recurrence_kind": "weekday",
+                "service_date": payload.service_date,
+                "weekday": None,
+                "departure_time": None,
+            }
+            for route_kind in route_kinds
+        ]
+
     return [
         {
             "service_scope": payload.service_scope,
             "route_kind": route_kind,
-            "recurrence_kind": "weekday",
-            "service_date": None,
-            "weekday": None,
+            "recurrence_kind": "matching_weekday",
+            "service_date": payload.service_date,
+            "weekday": weekday,
             "departure_time": None,
         }
+        for weekday in selected_regular_weekdays
         for route_kind in route_kinds
     ]
 

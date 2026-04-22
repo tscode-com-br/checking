@@ -85,7 +85,7 @@ class TransportVehicleSchedule(Base):
             name="ck_transport_vehicle_schedules_single_date_required",
         ),
         CheckConstraint(
-            "(recurrence_kind = 'matching_weekday' AND weekday IS NOT NULL AND weekday >= 5) OR (recurrence_kind != 'matching_weekday')",
+            "(recurrence_kind = 'matching_weekday' AND weekday IS NOT NULL) OR (recurrence_kind != 'matching_weekday')",
             name="ck_transport_vehicle_schedules_matching_weekday_required",
         ),
         CheckConstraint(

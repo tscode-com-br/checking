@@ -74,6 +74,11 @@
           route: "Route",
           everySaturday: "Every Saturday",
           everySunday: "Every Sunday",
+          everyMonday: "Every Monday",
+          everyTuesday: "Every Tuesday",
+          everyWednesday: "Every Wednesday",
+          everyThursday: "Every Thursday",
+          everyFriday: "Every Friday",
         },
         options: {
           car: "Car",
@@ -84,8 +89,8 @@
         notes: {
           extra: "Extra vehicles are created only for the selected route and selected date.",
           weekend:
-            "Weekend vehicles must be persistent. Select Every Saturday, Every Sunday, or both. If you need a one-date weekend vehicle, create it in Extra Transport List.",
-          regular: "Regular vehicles are created for both routes and remain active from Monday to Friday.",
+            "Weekend vehicles must be persistent. Select Every Saturday, Every Sunday, or both. They become visible from the next matching weekend day on or after the selected dashboard date.",
+          regular: "Regular vehicles are created for both routes. Select the weekdays that should stay active from the selected dashboard date onward.",
         },
         actions: {
           cancel: "Cancel",
@@ -137,6 +142,7 @@
         extraDepartureRequired: "Departure Time is required for extra vehicles.",
         regularWeekdayOnly: "Regular vehicles can only be created from Monday to Friday.",
         weekendWeekendOnly: "Weekend vehicles can only be created on Saturdays or Sundays.",
+        regularPersistence: "Regular vehicles must be persistent. Select at least one weekday.",
         weekendPersistence:
           "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.",
         vehicleCannotBeRemoved: "This vehicle cannot be removed from the selected route.",
@@ -254,6 +260,11 @@
           route: "Trajeto",
           everySaturday: "Todo sábado",
           everySunday: "Todo domingo",
+          everyMonday: "Toda segunda-feira",
+          everyTuesday: "Toda terça-feira",
+          everyWednesday: "Toda quarta-feira",
+          everyThursday: "Toda quinta-feira",
+          everyFriday: "Toda sexta-feira",
         },
         options: {
           car: "Carro",
@@ -264,8 +275,8 @@
         notes: {
           extra: "Veículos extras são criados apenas para o trajeto e a data selecionados.",
           weekend:
-            "Veículos de fim de semana devem ser persistentes. Selecione Todo sábado, Todo domingo ou ambos. Se você precisa de um veículo para apenas uma data, crie-o na Lista de Transporte Extra.",
-          regular: "Veículos rotineiros são criados para ambos os trajetos e permanecem ativos de segunda a sexta-feira.",
+            "Veículos de fim de semana devem ser persistentes. Selecione Todo sábado, Todo domingo ou ambos. Eles aparecem a partir do próximo dia de fim de semana compatível na data selecionada ou depois dela.",
+          regular: "Veículos rotineiros são criados para ambos os trajetos. Selecione os dias da semana em que devem permanecer ativos a partir da data escolhida no dashboard.",
         },
         actions: {
           cancel: "Cancelar",
@@ -317,6 +328,7 @@
         extraDepartureRequired: "O campo Departure Time é obrigatório para veículos extra.",
         regularWeekdayOnly: "Veículos rotineiros só podem ser criados de segunda a sexta-feira.",
         weekendWeekendOnly: "Veículos de fim de semana só podem ser criados aos sábados ou domingos.",
+        regularPersistence: "Veículos rotineiros devem ser persistentes. Selecione ao menos um dia da semana.",
         weekendPersistence:
           "Veículos de fim de semana devem ser persistentes. Selecione Todo sábado e/ou Todo domingo, ou crie o veículo na Lista de Transporte Extra.",
         vehicleCannotBeRemoved: "Este veículo não pode ser removido do trajeto selecionado.",
@@ -434,6 +446,11 @@
           route: "路线",
           everySaturday: "每周六",
           everySunday: "每周日",
+          everyMonday: "每周一",
+          everyTuesday: "每周二",
+          everyWednesday: "每周三",
+          everyThursday: "每周四",
+          everyFriday: "每周五",
         },
         options: {
           car: "汽车",
@@ -443,8 +460,8 @@
         },
         notes: {
           extra: "额外车辆仅针对所选路线和所选日期创建。",
-          weekend: "周末车辆必须是持久的。请选择每周六、每周日或两者。如果你需要仅限某一天的周末车辆，请在额外运输列表中创建。",
-          regular: "常规车辆适用于两个路线，并在周一到周五保持激活。",
+          weekend: "周末车辆必须是持续的。请选择每周六、每周日或两者。它们会从所选看板日期当天或之后的下一个匹配周末日开始显示。",
+          regular: "常规车辆会为两个路线创建。请选择从当前看板日期开始需要保持激活的工作日。",
         },
         actions: {
           cancel: "取消",
@@ -496,6 +513,7 @@
         extraDepartureRequired: "额外车辆必须填写发车时间。",
         regularWeekdayOnly: "常规车辆只能在周一到周五创建。",
         weekendWeekendOnly: "周末车辆只能在周六或周日创建。",
+        regularPersistence: "常规车辆必须是持续的。请至少选择一个工作日。",
         weekendPersistence: "周末车辆必须是持久的。请选择每周六和/或每周日，或在额外运输列表中创建该车辆。",
         vehicleCannotBeRemoved: "该车辆无法从所选路线中移除。",
       },
@@ -612,6 +630,11 @@
           route: "Laluan",
           everySaturday: "Setiap Sabtu",
           everySunday: "Setiap Ahad",
+          everyMonday: "Setiap Isnin",
+          everyTuesday: "Setiap Selasa",
+          everyWednesday: "Setiap Rabu",
+          everyThursday: "Setiap Khamis",
+          everyFriday: "Setiap Jumaat",
         },
         options: {
           car: "Kereta",
@@ -621,8 +644,8 @@
         },
         notes: {
           extra: "Kenderaan tambahan dicipta hanya untuk laluan dan tarikh yang dipilih.",
-          weekend: "Kenderaan hujung minggu mesti berterusan. Pilih Setiap Sabtu, Setiap Ahad, atau kedua-duanya. Jika anda perlukan kenderaan hujung minggu untuk satu tarikh sahaja, cipta dalam Senarai Pengangkutan Tambahan.",
-          regular: "Kenderaan biasa dicipta untuk kedua-dua laluan dan kekal aktif dari Isnin hingga Jumaat.",
+          weekend: "Kenderaan hujung minggu mesti berterusan. Pilih Setiap Sabtu, Setiap Ahad, atau kedua-duanya. Ia akan muncul mulai hari hujung minggu yang seterusnya yang sepadan pada atau selepas tarikh papan pemuka yang dipilih.",
+          regular: "Kenderaan biasa dicipta untuk kedua-dua laluan. Pilih hari bekerja yang perlu kekal aktif bermula daripada tarikh papan pemuka yang dipilih.",
         },
         actions: {
           cancel: "Batal",
@@ -674,6 +697,7 @@
         extraDepartureRequired: "Masa berlepas wajib diisi untuk kenderaan tambahan.",
         regularWeekdayOnly: "Kenderaan biasa hanya boleh dicipta dari Isnin hingga Jumaat.",
         weekendWeekendOnly: "Kenderaan hujung minggu hanya boleh dicipta pada Sabtu atau Ahad.",
+        regularPersistence: "Kenderaan biasa mesti berterusan. Pilih sekurang-kurangnya satu hari bekerja.",
         weekendPersistence: "Kenderaan hujung minggu mesti berterusan. Pilih Setiap Sabtu dan/atau Setiap Ahad, atau cipta kenderaan itu dalam Senarai Pengangkutan Tambahan.",
         vehicleCannotBeRemoved: "Kenderaan ini tidak boleh dibuang daripada laluan yang dipilih.",
       },
@@ -790,6 +814,11 @@
           route: "Ruta",
           everySaturday: "Tuwing Sabado",
           everySunday: "Tuwing Linggo",
+          everyMonday: "Tuwing Lunes",
+          everyTuesday: "Tuwing Martes",
+          everyWednesday: "Tuwing Miyerkules",
+          everyThursday: "Tuwing Huwebes",
+          everyFriday: "Tuwing Biyernes",
         },
         options: {
           car: "Kotse",
@@ -799,8 +828,8 @@
         },
         notes: {
           extra: "Ang mga extra na sasakyan ay ginagawa lamang para sa napiling ruta at napiling petsa.",
-          weekend: "Dapat persistent ang mga weekend na sasakyan. Piliin ang Tuwing Sabado, Tuwing Linggo, o pareho. Kung kailangan mo ng sasakyan para sa isang petsa lamang, gawin ito sa Listahan ng Extra na Transport.",
-          regular: "Ang mga regular na sasakyan ay ginagawa para sa parehong ruta at mananatiling aktibo mula Lunes hanggang Biyernes.",
+          weekend: "Dapat persistent ang mga weekend na sasakyan. Piliin ang Tuwing Sabado, Tuwing Linggo, o pareho. Lalabas sila simula sa susunod na tumutugmang araw ng weekend sa o pagkatapos ng napiling petsa sa dashboard.",
+          regular: "Ang mga regular na sasakyan ay ginagawa para sa parehong ruta. Piliin ang mga weekday na dapat manatiling aktibo simula sa napiling petsa sa dashboard.",
         },
         actions: {
           cancel: "Kanselahin",
@@ -852,6 +881,7 @@
         extraDepartureRequired: "Kailangan ang Departure Time para sa extra na sasakyan.",
         regularWeekdayOnly: "Ang mga regular na sasakyan ay maaari lamang gawin mula Lunes hanggang Biyernes.",
         weekendWeekendOnly: "Ang mga weekend na sasakyan ay maaari lamang gawin tuwing Sabado o Linggo.",
+        regularPersistence: "Dapat persistent ang mga regular na sasakyan. Pumili ng kahit isang weekday.",
         weekendPersistence: "Dapat persistent ang mga weekend na sasakyan. Piliin ang Tuwing Sabado at/o Tuwing Linggo, o gawin ang sasakyan sa Listahan ng Extra na Transport.",
         vehicleCannotBeRemoved: "Hindi maaaring alisin ang sasakyang ito sa napiling ruta.",
       },

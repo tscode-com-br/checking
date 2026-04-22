@@ -3075,10 +3075,49 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
     assert {row.route_kind for row in weekend_schedules} == {"home_to_work", "work_to_home"}
     assert all(row.recurrence_kind == "matching_weekday" for row in weekend_schedules)
     assert {row.weekday for row in weekend_schedules} == {5, 6}
+    assert all(row.service_date == sunday for row in weekend_schedules)
 
     assert len(regular_schedules) == 2
     assert {row.route_kind for row in regular_schedules} == {"home_to_work", "work_to_home"}
     assert all(row.recurrence_kind == "weekday" for row in regular_schedules)
+    assert all(row.service_date == friday for row in regular_schedules)
+
+
+def test_transport_regular_vehicle_registration_supports_selected_weekdays():
+    saturday = date(2026, 4, 18)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": saturday.isoformat(),
+                "every_monday": True,
+                "every_thursday": True,
+                "tipo": "minivan",
+                "placa": "REG7021",
+                "color": "Silver",
+                "lugares": 7,
+                "tolerance": 9,
+            },
+        )
+
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        regular_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "REG7021")).scalar_one()
+        regular_schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == regular_vehicle.id)
+            .order_by(TransportVehicleSchedule.route_kind, TransportVehicleSchedule.weekday)
+        ).scalars().all()
+
+    assert len(regular_schedules) == 4
+    assert {row.route_kind for row in regular_schedules} == {"home_to_work", "work_to_home"}
+    assert all(row.recurrence_kind == "matching_weekday" for row in regular_schedules)
+    assert {row.weekday for row in regular_schedules} == {0, 3}
+    assert all(row.service_date == saturday for row in regular_schedules)
 
 
 def test_transport_extra_vehicle_registration_requires_departure_time():
@@ -3124,6 +3163,106 @@ def test_transport_weekend_vehicle_registration_requires_persistent_weekday_sele
 
     assert response.status_code == 422
     assert "Weekend vehicles must be persistent" in json.dumps(response.json()["detail"])
+
+
+def test_transport_weekend_vehicle_registration_can_start_from_weekday_dashboard_date():
+    wednesday = date(2026, 4, 22)
+    friday = date(2026, 4, 24)
+    saturday = date(2026, 4, 25)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "weekend",
+                "service_date": wednesday.isoformat(),
+                "every_saturday": True,
+                "tipo": "van",
+                "placa": "WKD7022",
+                "color": "Blue",
+                "lugares": 10,
+                "tolerance": 10,
+            },
+        )
+        wednesday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": wednesday.isoformat(), "route_kind": "home_to_work"},
+        )
+        friday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+        saturday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert wednesday_dashboard.status_code == 200
+    assert friday_dashboard.status_code == 200
+    assert saturday_dashboard.status_code == 200
+    assert all(row["placa"] != "WKD7022" for row in wednesday_dashboard.json()["weekend_vehicles"])
+    assert all(row["placa"] != "WKD7022" for row in friday_dashboard.json()["weekend_vehicles"])
+    assert any(row["placa"] == "WKD7022" for row in saturday_dashboard.json()["weekend_vehicles"])
+
+
+def test_transport_regular_vehicle_registration_can_start_from_weekend_dashboard_date():
+    saturday = date(2026, 4, 18)
+    monday = date(2026, 4, 20)
+    tuesday = date(2026, 4, 21)
+    wednesday = date(2026, 4, 22)
+    thursday = date(2026, 4, 23)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": saturday.isoformat(),
+                "every_monday": True,
+                "every_tuesday": True,
+                "every_thursday": True,
+                "tipo": "carro",
+                "placa": "REG7022",
+                "color": "White",
+                "lugares": 4,
+                "tolerance": 7,
+            },
+        )
+        saturday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "home_to_work"},
+        )
+        monday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "home_to_work"},
+        )
+        tuesday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": tuesday.isoformat(), "route_kind": "home_to_work"},
+        )
+        wednesday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": wednesday.isoformat(), "route_kind": "home_to_work"},
+        )
+        thursday_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": thursday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200
+    assert saturday_dashboard.status_code == 200
+    assert monday_dashboard.status_code == 200
+    assert tuesday_dashboard.status_code == 200
+    assert wednesday_dashboard.status_code == 200
+    assert thursday_dashboard.status_code == 200
+    assert all(row["placa"] != "REG7022" for row in saturday_dashboard.json()["regular_vehicles"])
+    assert any(row["placa"] == "REG7022" for row in monday_dashboard.json()["regular_vehicles"])
+    assert any(row["placa"] == "REG7022" for row in tuesday_dashboard.json()["regular_vehicles"])
+    assert all(row["placa"] != "REG7022" for row in wednesday_dashboard.json()["regular_vehicles"])
+    assert any(row["placa"] == "REG7022" for row in thursday_dashboard.json()["regular_vehicles"])
 
 
 def test_transport_vehicle_registration_conflict_messages_are_in_english():
