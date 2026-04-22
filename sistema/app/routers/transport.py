@@ -39,8 +39,10 @@ from ..services.admin_auth import (
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_transport_data_changed
 from ..services.location_settings import (
     get_transport_last_update_time,
+    get_transport_vehicle_default_seat_counts,
     get_transport_work_to_home_time,
     upsert_transport_last_update_time,
+    upsert_transport_vehicle_default_seat_counts,
     upsert_transport_work_to_home_time,
     upsert_transport_work_to_home_time_for_date,
 )
@@ -152,9 +154,14 @@ def get_transport_dashboard(
 
 @router.get("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])
 def get_transport_settings(db: Session = Depends(get_db)) -> TransportSettingsResponse:
+    default_seat_counts = get_transport_vehicle_default_seat_counts(db)
     return TransportSettingsResponse(
         work_to_home_time=get_transport_work_to_home_time(db),
         last_update_time=get_transport_last_update_time(db),
+        default_car_seats=default_seat_counts["default_car_seats"],
+        default_minivan_seats=default_seat_counts["default_minivan_seats"],
+        default_van_seats=default_seat_counts["default_van_seats"],
+        default_bus_seats=default_seat_counts["default_bus_seats"],
     )
 
 
@@ -165,10 +172,21 @@ def update_transport_settings(
 ) -> TransportSettingsResponse:
     settings_row = upsert_transport_work_to_home_time(db, work_to_home_time=payload.work_to_home_time)
     upsert_transport_last_update_time(db, last_update_time=payload.last_update_time)
+    upsert_transport_vehicle_default_seat_counts(
+        db,
+        default_car_seats=payload.default_car_seats,
+        default_minivan_seats=payload.default_minivan_seats,
+        default_van_seats=payload.default_van_seats,
+        default_bus_seats=payload.default_bus_seats,
+    )
     db.commit()
     return TransportSettingsResponse(
         work_to_home_time=settings_row.transport_work_to_home_time,
         last_update_time=settings_row.transport_last_update_time,
+        default_car_seats=settings_row.transport_default_car_seats,
+        default_minivan_seats=settings_row.transport_default_minivan_seats,
+        default_van_seats=settings_row.transport_default_van_seats,
+        default_bus_seats=settings_row.transport_default_bus_seats,
     )
 
 

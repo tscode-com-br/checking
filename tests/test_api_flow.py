@@ -5719,14 +5719,29 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert current_settings.status_code == 200
         assert current_settings.json()["work_to_home_time"] == "16:45"
         assert current_settings.json()["last_update_time"] == "16:00"
+        assert current_settings.json()["default_car_seats"] == 3
+        assert current_settings.json()["default_minivan_seats"] == 6
+        assert current_settings.json()["default_van_seats"] == 10
+        assert current_settings.json()["default_bus_seats"] == 40
 
         updated_settings = admin_client.put(
             "/api/transport/settings",
-            json={"work_to_home_time": "18:10", "last_update_time": "16:20"},
+            json={
+                "work_to_home_time": "18:10",
+                "last_update_time": "16:20",
+                "default_car_seats": 4,
+                "default_minivan_seats": 7,
+                "default_van_seats": 11,
+                "default_bus_seats": 44,
+            },
         )
         assert updated_settings.status_code == 200
         assert updated_settings.json()["work_to_home_time"] == "18:10"
         assert updated_settings.json()["last_update_time"] == "16:20"
+        assert updated_settings.json()["default_car_seats"] == 4
+        assert updated_settings.json()["default_minivan_seats"] == 7
+        assert updated_settings.json()["default_van_seats"] == 11
+        assert updated_settings.json()["default_bus_seats"] == 44
 
     with TestClient(app) as client:
         registered = register_web_password(

@@ -11,6 +11,10 @@ DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS = 30
 DEFAULT_TRANSPORT_WORK_TO_HOME_TIME = "16:45"
 DEFAULT_TRANSPORT_LAST_UPDATE_TIME = "16:00"
+DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS = 3
+DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS = 6
+DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS = 10
+DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS = 40
 
 
 def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
@@ -24,6 +28,10 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             location_accuracy_threshold_meters=DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS,
             transport_work_to_home_time=DEFAULT_TRANSPORT_WORK_TO_HOME_TIME,
             transport_last_update_time=DEFAULT_TRANSPORT_LAST_UPDATE_TIME,
+            transport_default_car_seats=DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS,
+            transport_default_minivan_seats=DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
+            transport_default_van_seats=DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
+            transport_default_bus_seats=DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -53,6 +61,24 @@ def get_transport_last_update_time(db: Session) -> str:
     if settings is None or not settings.transport_last_update_time:
         return DEFAULT_TRANSPORT_LAST_UPDATE_TIME
     return settings.transport_last_update_time
+
+
+def get_transport_vehicle_default_seat_counts(db: Session) -> dict[str, int]:
+    settings = db.get(MobileAppSettings, 1)
+    if settings is None:
+        return {
+            "default_car_seats": DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS,
+            "default_minivan_seats": DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
+            "default_van_seats": DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
+            "default_bus_seats": DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+        }
+
+    return {
+        "default_car_seats": settings.transport_default_car_seats or DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS,
+        "default_minivan_seats": settings.transport_default_minivan_seats or DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
+        "default_van_seats": settings.transport_default_van_seats or DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
+        "default_bus_seats": settings.transport_default_bus_seats or DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+    }
 
 
 def get_transport_work_to_home_time_for_date(
@@ -105,6 +131,26 @@ def upsert_transport_last_update_time(
     timestamp = now_sgt()
 
     settings.transport_last_update_time = last_update_time
+    settings.updated_at = timestamp
+    db.flush()
+    return settings
+
+
+def upsert_transport_vehicle_default_seat_counts(
+    db: Session,
+    *,
+    default_car_seats: int,
+    default_minivan_seats: int,
+    default_van_seats: int,
+    default_bus_seats: int,
+) -> MobileAppSettings:
+    settings = _get_or_create_mobile_app_settings(db)
+    timestamp = now_sgt()
+
+    settings.transport_default_car_seats = default_car_seats
+    settings.transport_default_minivan_seats = default_minivan_seats
+    settings.transport_default_van_seats = default_van_seats
+    settings.transport_default_bus_seats = default_bus_seats
     settings.updated_at = timestamp
     db.flush()
     return settings

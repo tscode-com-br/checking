@@ -36,12 +36,13 @@
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
   const VEHICLE_DEFAULT_TOLERANCE_MINUTES = 5;
-  const VEHICLE_DEFAULT_SEAT_COUNT = {
+  const DEFAULT_VEHICLE_SEAT_COUNT = {
     carro: 3,
     minivan: 6,
     van: 10,
     onibus: 40,
   };
+  let vehicleDefaultSeatCount = Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT);
   const transportLanguages = Array.isArray(transportI18n.languages) && transportI18n.languages.length
     ? transportI18n.languages.slice()
     : [{ code: "en", label: "English", locale: "en-US" }];
@@ -733,8 +734,43 @@
     return messageKey ? t(messageKey) : normalizedMessage;
   }
 
+  function normalizeVehicleSeatCountSetting(value, fallbackValue) {
+    const parsed = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 99) {
+      return fallbackValue;
+    }
+    return parsed;
+  }
+
+  function resolveTransportVehicleSeatDefaults(source, fallbackValues) {
+    const fallbackSeatDefaults = fallbackValues || DEFAULT_VEHICLE_SEAT_COUNT;
+    return {
+      carro: normalizeVehicleSeatCountSetting(
+        source && (source.carro !== undefined ? source.carro : source.default_car_seats),
+        fallbackSeatDefaults.carro
+      ),
+      minivan: normalizeVehicleSeatCountSetting(
+        source && (source.minivan !== undefined ? source.minivan : source.default_minivan_seats),
+        fallbackSeatDefaults.minivan
+      ),
+      van: normalizeVehicleSeatCountSetting(
+        source && (source.van !== undefined ? source.van : source.default_van_seats),
+        fallbackSeatDefaults.van
+      ),
+      onibus: normalizeVehicleSeatCountSetting(
+        source && (source.onibus !== undefined ? source.onibus : source.default_bus_seats),
+        fallbackSeatDefaults.onibus
+      ),
+    };
+  }
+
+  function applyTransportVehicleSeatDefaults(nextValues) {
+    vehicleDefaultSeatCount = resolveTransportVehicleSeatDefaults(nextValues, vehicleDefaultSeatCount);
+    return Object.assign({}, vehicleDefaultSeatCount);
+  }
+
   function getDefaultVehicleSeatCount(vehicleType) {
-    return VEHICLE_DEFAULT_SEAT_COUNT[vehicleType] || VEHICLE_DEFAULT_SEAT_COUNT.carro;
+    return vehicleDefaultSeatCount[vehicleType] || DEFAULT_VEHICLE_SEAT_COUNT.carro;
   }
 
   function getDefaultVehicleToleranceMinutes() {
@@ -742,7 +778,7 @@
   }
 
   function getDefaultVehicleFormValues(vehicleType) {
-    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(VEHICLE_DEFAULT_SEAT_COUNT, vehicleType)
+    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(DEFAULT_VEHICLE_SEAT_COUNT, vehicleType)
       ? vehicleType
       : "carro";
 
@@ -792,7 +828,7 @@
       return;
     }
 
-    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(VEHICLE_DEFAULT_SEAT_COUNT, vehicleType)
+    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(DEFAULT_VEHICLE_SEAT_COUNT, vehicleType)
       ? vehicleType
       : "carro";
 
@@ -1063,6 +1099,7 @@
       languageLoading: false,
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
+      vehicleSeatDefaults: Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT),
       routeTimeSaving: false,
       expandedVehiclePositionFrame: null,
       requestSectionCollapsedByKind: {
@@ -1078,12 +1115,10 @@
     const projectListToggle = document.querySelector("[data-project-list-toggle]");
     const projectListPanel = document.querySelector("[data-project-list-panel]");
     const projectListContainer = document.querySelector("[data-project-list]");
-    const transportTopbar = document.querySelector("[data-transport-topbar]");
     const settingsTrigger = document.querySelector("[data-open-settings-modal]");
-    const settingsTitleAnchor = document.querySelector("[data-settings-title-anchor]");
-    const settingsRouteAnchor = document.querySelector("[data-settings-route-anchor]");
     const settingsModal = document.querySelector("[data-settings-modal]");
     const settingsPreferencesTitle = document.querySelector("[data-settings-preferences-title]");
+    const settingsVehicleDefaultsTitle = document.querySelector("[data-settings-vehicle-defaults-title]");
     const settingsLanguageLabel = document.querySelector("[data-settings-language-label]");
     const settingsLanguageSelect = document.querySelector("[data-settings-language-select]");
     const settingsTimeLabel = document.querySelector("[data-settings-time-label]");
@@ -1091,7 +1126,20 @@
     const settingsLastUpdateLabel = document.querySelector("[data-settings-last-update-label]");
     const settingsLastUpdateInput = document.querySelector("[data-settings-last-update-time]");
     const settingsTimeNote = document.querySelector("[data-settings-time-note]");
+    const settingsVehicleDefaultsNote = document.querySelector("[data-settings-vehicle-defaults-note]");
     const settingsCloseButton = document.querySelector("[data-settings-close-button]");
+    const settingsDefaultSeatLabels = {
+      carro: document.querySelector('[data-settings-default-seat-label="carro"]'),
+      minivan: document.querySelector('[data-settings-default-seat-label="minivan"]'),
+      van: document.querySelector('[data-settings-default-seat-label="van"]'),
+      onibus: document.querySelector('[data-settings-default-seat-label="onibus"]'),
+    };
+    const settingsDefaultSeatInputs = {
+      carro: document.querySelector('[data-settings-default-seat="carro"]'),
+      minivan: document.querySelector('[data-settings-default-seat="minivan"]'),
+      van: document.querySelector('[data-settings-default-seat="van"]'),
+      onibus: document.querySelector('[data-settings-default-seat="onibus"]'),
+    };
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
     const vehicleForm = document.querySelector("[data-vehicle-form]");
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
@@ -1267,6 +1315,10 @@
         }
         buttonElement.setAttribute("aria-label", t(`vehicles.addAria.${scope}`));
       });
+      if (settingsTrigger) {
+        settingsTrigger.textContent = t("settings.dashboardLink");
+        settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
+      }
 
       if (modalScopeLabel) {
         modalScopeLabel.textContent = mapScopeTitle(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
@@ -1346,9 +1398,6 @@
         modalActionButtons[1].textContent = t("modal.actions.save");
       }
 
-      if (settingsTrigger) {
-        settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
-      }
       const settingsTitle = document.getElementById("transport-settings-modal-title");
       if (settingsTitle) {
         settingsTitle.textContent = t("settings.title");
@@ -1363,6 +1412,9 @@
       if (settingsPreferencesTitle) {
         settingsPreferencesTitle.textContent = t("settings.preferences");
       }
+      if (settingsVehicleDefaultsTitle) {
+        settingsVehicleDefaultsTitle.textContent = t("settings.vehicleDefaults");
+      }
       if (settingsLanguageLabel) {
         settingsLanguageLabel.textContent = t("settings.languages");
       }
@@ -1374,6 +1426,29 @@
       }
       if (settingsTimeNote) {
         settingsTimeNote.textContent = t("settings.workToHomeNote");
+      }
+      if (settingsVehicleDefaultsNote) {
+        settingsVehicleDefaultsNote.textContent = t("settings.vehicleDefaultsNote");
+      }
+      if (settingsDefaultSeatLabels.carro) {
+        settingsDefaultSeatLabels.carro.textContent = t("settings.defaultPlacesLabel", {
+          type: mapVehicleTypeLabel("carro"),
+        });
+      }
+      if (settingsDefaultSeatLabels.minivan) {
+        settingsDefaultSeatLabels.minivan.textContent = t("settings.defaultPlacesLabel", {
+          type: mapVehicleTypeLabel("minivan"),
+        });
+      }
+      if (settingsDefaultSeatLabels.van) {
+        settingsDefaultSeatLabels.van.textContent = t("settings.defaultPlacesLabel", {
+          type: mapVehicleTypeLabel("van"),
+        });
+      }
+      if (settingsDefaultSeatLabels.onibus) {
+        settingsDefaultSeatLabels.onibus.textContent = t("settings.defaultPlacesLabel", {
+          type: mapVehicleTypeLabel("onibus"),
+        });
       }
       if (settingsCloseButton) {
         settingsCloseButton.textContent = t("settings.close");
@@ -1583,6 +1658,25 @@
         settingsLastUpdateInput.value = normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME);
         settingsLastUpdateInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
       }
+      Object.keys(settingsDefaultSeatInputs).forEach(function (vehicleType) {
+        const seatInput = settingsDefaultSeatInputs[vehicleType];
+        if (!seatInput) {
+          return;
+        }
+        seatInput.value = String(getDefaultVehicleSeatCount(vehicleType));
+        seatInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+      });
+    }
+
+    function readTransportSettingsDraft() {
+      return {
+        workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
+        lastUpdateTime: settingsLastUpdateInput ? settingsLastUpdateInput.value : state.lastUpdateTime,
+        defaultCarSeats: settingsDefaultSeatInputs.carro ? settingsDefaultSeatInputs.carro.value : state.vehicleSeatDefaults.carro,
+        defaultMinivanSeats: settingsDefaultSeatInputs.minivan ? settingsDefaultSeatInputs.minivan.value : state.vehicleSeatDefaults.minivan,
+        defaultVanSeats: settingsDefaultSeatInputs.van ? settingsDefaultSeatInputs.van.value : state.vehicleSeatDefaults.van,
+        defaultBusSeats: settingsDefaultSeatInputs.onibus ? settingsDefaultSeatInputs.onibus.value : state.vehicleSeatDefaults.onibus,
+      };
     }
 
     function syncRouteTimeControls() {
@@ -1840,6 +1934,7 @@
       if (!state.isAuthenticated) {
         state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
         state.lastUpdateTime = state.lastUpdateTime || DEFAULT_LAST_UPDATE_TIME;
+        state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -1855,6 +1950,7 @@
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : DEFAULT_LAST_UPDATE_TIME
           );
+          state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
           return response;
         })
         .catch(function (error) {
@@ -1874,6 +1970,7 @@
     function saveTransportSettings(nextValues) {
       const previousWorkToHomeTime = state.workToHomeTime;
       const previousLastUpdateTime = state.lastUpdateTime;
+      const previousVehicleSeatDefaults = Object.assign({}, state.vehicleSeatDefaults);
       const normalizedTime = normalizeTransportTimeValue(
         nextValues && nextValues.workToHomeTime,
         normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME)
@@ -1881,6 +1978,15 @@
       const normalizedLastUpdateTime = normalizeTransportTimeValue(
         nextValues && nextValues.lastUpdateTime,
         normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME)
+      );
+      const normalizedSeatDefaults = resolveTransportVehicleSeatDefaults(
+        {
+          default_car_seats: nextValues && nextValues.defaultCarSeats,
+          default_minivan_seats: nextValues && nextValues.defaultMinivanSeats,
+          default_van_seats: nextValues && nextValues.defaultVanSeats,
+          default_bus_seats: nextValues && nextValues.defaultBusSeats,
+        },
+        state.vehicleSeatDefaults
       );
       if (!isValidTransportTimeValue(normalizedTime) || !isValidTransportTimeValue(normalizedLastUpdateTime)) {
         syncSettingsControls();
@@ -1894,6 +2000,8 @@
 
       state.workToHomeTime = normalizedTime;
       state.lastUpdateTime = normalizedLastUpdateTime;
+      state.vehicleSeatDefaults = Object.assign({}, normalizedSeatDefaults);
+      applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
       state.settingsSaving = true;
       syncSettingsControls();
       return requestJson(`${TRANSPORT_API_PREFIX}/settings`, {
@@ -1901,6 +2009,10 @@
         body: JSON.stringify({
           work_to_home_time: normalizedTime,
           last_update_time: normalizedLastUpdateTime,
+          default_car_seats: normalizedSeatDefaults.carro,
+          default_minivan_seats: normalizedSeatDefaults.minivan,
+          default_van_seats: normalizedSeatDefaults.van,
+          default_bus_seats: normalizedSeatDefaults.onibus,
         }),
       })
         .then(function (response) {
@@ -1911,6 +2023,7 @@
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : normalizedLastUpdateTime
           );
+          state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
           return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
             setStatus(t("status.settingsSaved"), "success");
             return response;
@@ -1919,6 +2032,8 @@
         .catch(function (error) {
           state.workToHomeTime = previousWorkToHomeTime;
           state.lastUpdateTime = previousLastUpdateTime;
+          state.vehicleSeatDefaults = previousVehicleSeatDefaults;
+          applyTransportVehicleSeatDefaults(previousVehicleSeatDefaults);
           handleProtectedRequestError(error, t("status.couldNotSaveSettings"));
           return null;
         })
@@ -1946,7 +2061,6 @@
           state.languageLoading = false;
           syncSettingsControls();
           syncRouteTimeControls();
-          scheduleSettingsTriggerPositionSync();
           if (state.isAuthenticated) {
             setStatus(t("status.dashboardUpdated"), "info");
           } else {
@@ -2080,21 +2194,25 @@
 
     if (settingsTimeInput) {
       settingsTimeInput.addEventListener("change", function () {
-        void saveTransportSettings({
-          workToHomeTime: settingsTimeInput.value,
-          lastUpdateTime: settingsLastUpdateInput ? settingsLastUpdateInput.value : state.lastUpdateTime,
-        });
+        void saveTransportSettings(readTransportSettingsDraft());
       });
     }
 
     if (settingsLastUpdateInput) {
       settingsLastUpdateInput.addEventListener("change", function () {
-        void saveTransportSettings({
-          workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
-          lastUpdateTime: settingsLastUpdateInput.value,
-        });
+        void saveTransportSettings(readTransportSettingsDraft());
       });
     }
+
+    Object.keys(settingsDefaultSeatInputs).forEach(function (vehicleType) {
+      const seatInput = settingsDefaultSeatInputs[vehicleType];
+      if (!seatInput) {
+        return;
+      }
+      seatInput.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    });
 
     if (routeTimeInput) {
       routeTimeInput.addEventListener("change", function () {
@@ -2108,7 +2226,10 @@
     syncRouteTimeControls();
 
     if (settingsTrigger) {
-      settingsTrigger.addEventListener("click", openSettingsModal);
+      settingsTrigger.addEventListener("click", function (event) {
+        event.preventDefault();
+        openSettingsModal();
+      });
     }
 
     document.querySelectorAll("[data-close-settings-modal]").forEach(function (buttonElement) {
@@ -2208,8 +2329,6 @@
       });
     }
 
-    scheduleSettingsTriggerPositionSync();
-
     function setStatus(message, tone) {
       if (!statusMessage) {
         return;
@@ -2239,37 +2358,6 @@
 
     function clearVehicleModalFeedback() {
       setVehicleModalFeedback("", "error");
-    }
-
-    function syncSettingsTriggerPosition() {
-      if (!settingsTrigger || !transportTopbar || !settingsTitleAnchor || !settingsRouteAnchor) {
-        return;
-      }
-
-      if (typeof globalScope.matchMedia === "function" && globalScope.matchMedia("(max-width: 860px)").matches) {
-        settingsTrigger.style.left = "";
-        settingsTrigger.style.top = "";
-        return;
-      }
-
-      const topbarRect = transportTopbar.getBoundingClientRect();
-      const titleRect = settingsTitleAnchor.getBoundingClientRect();
-      const routeRect = settingsRouteAnchor.getBoundingClientRect();
-      const triggerWidth = settingsTrigger.offsetWidth || 42;
-      const triggerHeight = settingsTrigger.offsetHeight || 42;
-      const left = (titleRect.right + routeRect.left) / 2 - topbarRect.left - triggerWidth / 2;
-      const top = (routeRect.top + routeRect.bottom) / 2 - topbarRect.top - triggerHeight / 2;
-
-      settingsTrigger.style.left = `${Math.max(0, left)}px`;
-      settingsTrigger.style.top = `${Math.max(0, top)}px`;
-    }
-
-    function scheduleSettingsTriggerPositionSync() {
-      if (typeof globalScope.requestAnimationFrame === "function") {
-        globalScope.requestAnimationFrame(syncSettingsTriggerPosition);
-        return;
-      }
-      syncSettingsTriggerPosition();
     }
 
     function openSettingsModal() {
@@ -3423,7 +3511,6 @@
       loadDashboard,
       refreshVehicleGridLayouts: function () {
         updateVehicleGridLayouts(document);
-        scheduleSettingsTriggerPositionSync();
         scheduleExpandedVehicleDetailsPositionSync();
       },
     };

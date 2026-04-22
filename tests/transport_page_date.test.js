@@ -251,6 +251,47 @@ test('vehicle modal markup includes the default places and tolerance values', ()
   assert.match(transportHtml, /<input type="checkbox" name="every_friday" checked \/>/);
 });
 
+test('transport topbar uses an inline red dashboard settings link below the allocation board title', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    transportHtml,
+    /<a[\s\S]*class="transport-settings-link"[\s\S]*data-open-settings-modal[\s\S]*>\s*Dashboard Settings\s*<\/a>/
+  );
+  assert.doesNotMatch(transportHtml, /<button[\s\S]*class="transport-settings-trigger"/);
+  assert.match(
+    transportCss,
+    /\.transport-settings-link\s*\{[\s\S]*align-self:\s*center;[\s\S]*color:\s*var\(--transport-danger\);/
+  );
+  assert.doesNotMatch(transportScript, /settingsRouteAnchor|scheduleSettingsTriggerPositionSync|syncSettingsTriggerPosition/);
+});
+
+test('transport settings modal includes editable default seat counts for each vehicle type', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+
+  assert.match(transportHtml, /data-settings-vehicle-defaults-title/);
+  assert.match(transportHtml, /data-settings-default-seat="carro"/);
+  assert.match(transportHtml, /data-settings-default-seat="minivan"/);
+  assert.match(transportHtml, /data-settings-default-seat="van"/);
+  assert.match(transportHtml, /data-settings-default-seat="onibus"/);
+  assert.match(transportHtml, /id="transportSettingsCarSeats"[\s\S]*value="3"/);
+  assert.match(transportHtml, /id="transportSettingsBusSeats"[\s\S]*value="40"/);
+});
+
 test('syncVehicleTypeDependentDefaults updates the vehicle type, places, and tolerance fields together', () => {
   const formStub = {
     elements: {

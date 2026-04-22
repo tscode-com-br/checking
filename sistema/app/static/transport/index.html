@@ -16,22 +16,19 @@
         <section id="tela01menu" class="tela01menu" data-transport-topbar aria-label="Transport quick actions">
           <div class="transport-topbar-copy transport-topbar-brand">
             <span class="transport-topbar-kicker">Checking Transport</span>
-            <strong class="transport-topbar-title" data-settings-title-anchor>Allocation board</strong>
+            <strong class="transport-topbar-title">Allocation board</strong>
+            <a
+              href="#transport-settings-modal"
+              class="transport-settings-link"
+              data-open-settings-modal
+              aria-label="Open settings"
+              aria-haspopup="dialog"
+              aria-controls="transport-settings-modal"
+              aria-expanded="false"
+            >
+              Dashboard Settings
+            </a>
           </div>
-          <button
-            type="button"
-            class="transport-settings-trigger"
-            data-open-settings-modal
-            aria-label="Open settings"
-            aria-haspopup="dialog"
-            aria-controls="transport-settings-modal"
-            aria-expanded="false"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 2.75 13.38 5.43 16.37 5.18 16.18 8.17 18.86 9.55 16.94 12 18.86 14.45 16.18 15.83 16.37 18.82 13.38 18.57 12 21.25 10.62 18.57 7.63 18.82 7.82 15.83 5.14 14.45 7.06 12 5.14 9.55 7.82 8.17 7.63 5.18 10.62 5.43 12 2.75Z" />
-              <circle cx="12" cy="12" r="3.2" />
-            </svg>
-          </button>
           <div class="transport-topbar-route-slot" data-route-slot>
             <label class="transport-route-inline-time" data-route-time-popover hidden>
               <span class="transport-route-inline-time-label" data-route-time-label>Work to Home Time:</span>
@@ -443,6 +440,66 @@
 
             <p class="transport-settings-note" data-settings-time-note>
               Base default for all dates. To change only the selected date, use the time field in the top bar; it updates Regular and Weekend lists only and resets on the next day.
+            </p>
+          </section>
+
+          <section class="transport-settings-section">
+            <h3 class="transport-settings-section-title" data-settings-vehicle-defaults-title>Vehicle Form Defaults</h3>
+
+            <label class="transport-settings-row" for="transportSettingsCarSeats">
+              <span class="transport-settings-label" data-settings-default-seat-label="carro">Car default places:</span>
+              <input
+                id="transportSettingsCarSeats"
+                class="transport-settings-number-input"
+                type="number"
+                min="1"
+                max="99"
+                value="3"
+                data-settings-default-seat="carro"
+              />
+            </label>
+
+            <label class="transport-settings-row" for="transportSettingsMinivanSeats">
+              <span class="transport-settings-label" data-settings-default-seat-label="minivan">Minivan default places:</span>
+              <input
+                id="transportSettingsMinivanSeats"
+                class="transport-settings-number-input"
+                type="number"
+                min="1"
+                max="99"
+                value="6"
+                data-settings-default-seat="minivan"
+              />
+            </label>
+
+            <label class="transport-settings-row" for="transportSettingsVanSeats">
+              <span class="transport-settings-label" data-settings-default-seat-label="van">Van default places:</span>
+              <input
+                id="transportSettingsVanSeats"
+                class="transport-settings-number-input"
+                type="number"
+                min="1"
+                max="99"
+                value="10"
+                data-settings-default-seat="van"
+              />
+            </label>
+
+            <label class="transport-settings-row" for="transportSettingsBusSeats">
+              <span class="transport-settings-label" data-settings-default-seat-label="onibus">Bus default places:</span>
+              <input
+                id="transportSettingsBusSeats"
+                class="transport-settings-number-input"
+                type="number"
+                min="1"
+                max="99"
+                value="40"
+                data-settings-default-seat="onibus"
+              />
+            </label>
+
+            <p class="transport-settings-note" data-settings-vehicle-defaults-note>
+              These values prefill Places in the create vehicle form.
             </p>
           </section>
 

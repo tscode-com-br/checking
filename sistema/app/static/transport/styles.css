@@ -93,44 +93,26 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
 }
 
-.transport-settings-trigger {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 42px;
-  height: 42px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2;
+.transport-settings-link {
+  align-self: center;
+  color: var(--transport-danger);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
   transition:
-    transform 160ms ease,
-    filter 160ms ease,
+    color 160ms ease,
     opacity 160ms ease;
 }
 
-.transport-settings-trigger svg {
-  width: 24px;
-  height: 24px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.transport-settings-link:hover {
+  color: #ff8a78;
+  text-decoration: underline;
 }
 
-.transport-settings-trigger:hover {
-  transform: scale(1.06);
-  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.24));
-}
-
-.transport-settings-trigger:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.72);
+.transport-settings-link:focus-visible {
+  outline: 2px solid rgba(255, 109, 84, 0.72);
   outline-offset: 4px;
   border-radius: 999px;
 }
@@ -1646,7 +1628,7 @@ button {
 }
 
 .transport-settings-modal {
-  width: min(100%, 420px);
+  width: min(100%, 560px);
 }
 
 .transport-settings-modal-title {
@@ -1697,7 +1679,8 @@ button {
 }
 
 .transport-settings-select,
-.transport-settings-time-input {
+.transport-settings-time-input,
+.transport-settings-number-input {
   width: 100%;
   min-height: 42px;
   padding: 0 14px;
@@ -1709,7 +1692,8 @@ button {
 }
 
 .transport-settings-select:disabled,
-.transport-settings-time-input:disabled {
+.transport-settings-time-input:disabled,
+.transport-settings-number-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1812,9 +1796,8 @@ button {
     padding: 16px 18px;
   }
 
-  .transport-settings-trigger {
-    position: static;
-    margin: -2px auto 2px;
+  .transport-settings-link {
+    margin-top: 2px;
   }
 
   .transport-topbar-route-slot,

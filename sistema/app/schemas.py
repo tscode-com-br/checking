@@ -783,6 +783,10 @@ class TransportDashboardResponse(BaseModel):
 class TransportSettingsResponse(BaseModel):
     work_to_home_time: str = Field(min_length=5, max_length=5)
     last_update_time: str = Field(min_length=5, max_length=5)
+    default_car_seats: int = Field(ge=1, le=99)
+    default_minivan_seats: int = Field(ge=1, le=99)
+    default_van_seats: int = Field(ge=1, le=99)
+    default_bus_seats: int = Field(ge=1, le=99)
 
     @field_validator("work_to_home_time")
     @classmethod
@@ -798,6 +802,10 @@ class TransportSettingsResponse(BaseModel):
 class TransportSettingsUpdateRequest(BaseModel):
     work_to_home_time: str = Field(min_length=5, max_length=5)
     last_update_time: str = Field(min_length=5, max_length=5)
+    default_car_seats: int = Field(ge=1, le=99)
+    default_minivan_seats: int = Field(ge=1, le=99)
+    default_van_seats: int = Field(ge=1, le=99)
+    default_bus_seats: int = Field(ge=1, le=99)
 
     @field_validator("work_to_home_time")
     @classmethod
