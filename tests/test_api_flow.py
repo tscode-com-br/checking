@@ -879,6 +879,82 @@ def test_provider_current_state_uses_forms_as_local_when_provider_event_wins():
         assert forms_row["hora"] == "18:05:00"
 
 
+def test_admin_can_clear_forms_rows_without_archiving():
+    timestamp = now_sgt().replace(microsecond=0)
+    provider_event_key = uuid.uuid4().hex
+    device_event_key = uuid.uuid4().hex
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                CheckEvent(
+                    idempotency_key=provider_event_key,
+                    source="provider",
+                    rfid=None,
+                    action="checkin",
+                    status="success",
+                    message="Entrada Forms registrada",
+                    details="chave=PF99; nome=USUARIO LIMPAR FORMS; projeto=P80; atividade=check-in; informe=normal; data=22/04/2026; hora=08:00:00",
+                    project="P80",
+                    device_id="FORMS-CLEAR-01",
+                    local="Forms",
+                    request_path="/api/provider/updaterecords",
+                    http_status=200,
+                    ontime=True,
+                    event_time=timestamp,
+                    submitted_at=timestamp,
+                    retry_count=0,
+                ),
+                CheckEvent(
+                    idempotency_key=device_event_key,
+                    source="device",
+                    rfid="rfid-clear-forms",
+                    action="checkin",
+                    status="success",
+                    message="Entrada por leitor",
+                    details="reader=gate-clear",
+                    project="P82",
+                    device_id="ESP-CLEAR-01",
+                    local="Portaria",
+                    request_path="/api/scan",
+                    http_status=200,
+                    ontime=True,
+                    event_time=timestamp,
+                    submitted_at=timestamp,
+                    retry_count=0,
+                ),
+            ]
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        forms_before = client.get("/api/admin/forms")
+        assert forms_before.status_code == 200, forms_before.text
+        assert any(row["chave"] == "PF99" for row in forms_before.json())
+
+        cleared = client.delete("/api/admin/forms")
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["ok"] is True
+        assert "Forms" in cleared.json()["message"]
+
+        forms_after = client.get("/api/admin/forms")
+        assert forms_after.status_code == 200, forms_after.text
+        assert all(row["chave"] != "PF99" for row in forms_after.json())
+
+    with SessionLocal() as db:
+        provider_event = db.execute(
+            select(CheckEvent).where(CheckEvent.idempotency_key == provider_event_key)
+        ).scalar_one_or_none()
+        device_event = db.execute(
+            select(CheckEvent).where(CheckEvent.idempotency_key == device_event_key)
+        ).scalar_one_or_none()
+
+    assert provider_event is None
+    assert device_event is not None
+
+
 def test_admin_stream_requires_valid_session():
     with TestClient(app) as client:
         forbidden = client.get("/api/admin/stream")
@@ -3083,6 +3159,32 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
     assert all(row.service_date == friday for row in regular_schedules)
 
 
+def test_transport_vehicle_registration_accepts_long_plate_with_special_characters():
+    friday = date(2026, 4, 17)
+    long_plate = "SG-1234.ABC-789"
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": friday.isoformat(),
+                "tipo": "van",
+                "placa": long_plate,
+                "color": "Gray",
+                "lugares": 11,
+                "tolerance": 9,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == long_plate)).scalar_one()
+        assert persisted_vehicle.placa == long_plate
+
+
 def test_transport_regular_vehicle_registration_supports_selected_weekdays():
     saturday = date(2026, 4, 18)
 
@@ -4782,7 +4884,7 @@ def test_web_password_registration_returns_not_found_for_unknown_key():
         assert response.json()["detail"] == "A chave do usuario nao esta cadastrada"
 
 
-def test_web_user_self_registration_creates_user_hashes_password_and_authenticates():
+def test_web_user_self_registration_creates_user_requests_transport_access_and_authenticates_web_session():
     with TestClient(app) as client:
         response = client.post(
             "/api/web/auth/register-user",
@@ -4790,8 +4892,6 @@ def test_web_user_self_registration_creates_user_hashes_password_and_authenticat
                 "chave": "WU11",
                 "nome": "maria jose da silva",
                 "projeto": "P83",
-                "end_rua": "Bloco 2, Rua das Flores, 100",
-                "zip": "12345678",
                 "email": "maria.jose@petrobras.com.br",
                 "senha": "cad123",
                 "confirmar_senha": "cad123",
@@ -4803,6 +4903,7 @@ def test_web_user_self_registration_creates_user_hashes_password_and_authenticat
         assert payload["ok"] is True
         assert payload["authenticated"] is True
         assert payload["has_password"] is True
+        assert "aguarde aprovacao" in payload["message"].lower()
 
         status = client.get("/api/web/auth/status", params={"chave": "WU11"})
         assert status.status_code == 200
@@ -4814,16 +4915,75 @@ def test_web_user_self_registration_creates_user_hashes_password_and_authenticat
             "message": "Aplicacao liberada.",
         }
 
-        with SessionLocal() as db:
-            user = get_user_by_chave(db, "WU11")
-            assert user.nome == "Maria Jose da Silva"
-            assert user.projeto == "P83"
-            assert user.end_rua == "Bloco 2, Rua das Flores, 100"
-            assert user.zip == "12345678"
-            assert user.email == "maria.jose@petrobras.com.br"
-            assert user.senha is not None
-            assert user.senha != "cad123"
-            assert verify_password("cad123", user.senha) is True
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WU11")
+        pending = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "WU11")).scalar_one_or_none()
+        assert user is not None
+        assert user.nome == "Maria Jose da Silva"
+        assert user.projeto == "P83"
+        assert user.perfil == 0
+        assert user.end_rua is None
+        assert user.zip is None
+        assert user.email == "maria.jose@petrobras.com.br"
+        assert user.senha is not None
+        assert user.senha != "cad123"
+        assert verify_password("cad123", user.senha) is True
+        assert pending is not None
+        assert pending.requested_profile == 2
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        administrators = admin_client.get("/api/admin/administrators")
+        assert administrators.status_code == 200
+        pending_row = next(row for row in administrators.json() if row["row_type"] == "request" and row["chave"] == "WU11")
+        assert pending_row["perfil"] == 2
+        assert pending_row["status"] == "pending"
+        assert "transport" in pending_row["status_label"].lower()
+
+        approve_response = admin_client.post(f"/api/admin/administrators/requests/{pending_row['id']}/approve")
+        assert approve_response.status_code == 200
+        assert approve_response.json()["ok"] is True
+
+    with SessionLocal() as db:
+        approved_user = get_user_by_chave(db, "WU11")
+        pending_after = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "WU11")).scalar_one_or_none()
+        assert approved_user is not None
+        assert approved_user.perfil == 2
+        assert pending_after is None
+
+    with TestClient(app) as transport_client:
+        denied_before_login = transport_client.get("/api/transport/auth/session")
+        assert denied_before_login.status_code == 200
+        assert denied_before_login.json()["authenticated"] is False
+
+        transport_login = transport_client.post(
+            "/api/transport/auth/verify",
+            json={"chave": "WU11", "senha": "cad123"},
+        )
+        assert transport_login.status_code == 200
+        assert transport_login.json()["authenticated"] is True
+        assert transport_login.json()["user"]["perfil"] == 2
+
+
+def test_web_user_self_registration_accepts_optional_email_blank():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/auth/register-user",
+            json={
+                "chave": "WU12",
+                "nome": "joao sem email",
+                "projeto": "P82",
+                "senha": "cad321",
+                "confirmar_senha": "cad321",
+            },
+        )
+
+        assert response.status_code == 201
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WU12")
+        assert user is not None
+        assert user.email is None
 
 
 def test_web_check_endpoints_require_authenticated_password_session():
@@ -5723,6 +5883,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert current_settings.json()["default_minivan_seats"] == 6
         assert current_settings.json()["default_van_seats"] == 10
         assert current_settings.json()["default_bus_seats"] == 40
+        assert current_settings.json()["default_tolerance_minutes"] == 5
 
         updated_settings = admin_client.put(
             "/api/transport/settings",
@@ -5733,6 +5894,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 "default_minivan_seats": 7,
                 "default_van_seats": 11,
                 "default_bus_seats": 44,
+                "default_tolerance_minutes": 9,
             },
         )
         assert updated_settings.status_code == 200
@@ -5742,6 +5904,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert updated_settings.json()["default_minivan_seats"] == 7
         assert updated_settings.json()["default_van_seats"] == 11
         assert updated_settings.json()["default_bus_seats"] == 44
+        assert updated_settings.json()["default_tolerance_minutes"] == 9
 
     with TestClient(app) as client:
         registered = register_web_password(

@@ -162,6 +162,7 @@ def get_transport_settings(db: Session = Depends(get_db)) -> TransportSettingsRe
         default_minivan_seats=default_seat_counts["default_minivan_seats"],
         default_van_seats=default_seat_counts["default_van_seats"],
         default_bus_seats=default_seat_counts["default_bus_seats"],
+        default_tolerance_minutes=default_seat_counts["default_tolerance_minutes"],
     )
 
 
@@ -178,6 +179,7 @@ def update_transport_settings(
         default_minivan_seats=payload.default_minivan_seats,
         default_van_seats=payload.default_van_seats,
         default_bus_seats=payload.default_bus_seats,
+        default_tolerance_minutes=payload.default_tolerance_minutes,
     )
     db.commit()
     return TransportSettingsResponse(
@@ -187,6 +189,7 @@ def update_transport_settings(
         default_minivan_seats=settings_row.transport_default_minivan_seats,
         default_van_seats=settings_row.transport_default_van_seats,
         default_bus_seats=settings_row.transport_default_bus_seats,
+        default_tolerance_minutes=settings_row.transport_default_tolerance_minutes,
     )
 
 

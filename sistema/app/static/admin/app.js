@@ -2227,6 +2227,7 @@ async function loadForms() {
   const body = document.getElementById("formsBody");
   if (!body) {
     formsTotal = 0;
+    updateFormsClearButtonState();
     updateDashboardSummary();
     return;
   }
@@ -2234,6 +2235,7 @@ async function loadForms() {
   const rows = await fetchJson("/api/admin/forms");
   formsTotal = Array.isArray(rows) ? rows.length : 0;
   setTextContentIfPresent("formsTitle", `Forms (${formsTotal})`);
+  updateFormsClearButtonState();
   body.innerHTML = "";
   if (formsTotal === 0) {
     renderEmptyStateRow("formsBody", 8, "Nenhum registro recebido do endpoint updaterecords.");
@@ -2248,6 +2250,35 @@ async function loadForms() {
   });
   applyResponsiveLabels("formsBody");
   updateDashboardSummary();
+}
+
+function updateFormsClearButtonState() {
+  const clearButton = document.getElementById("clearFormsButton");
+  if (!clearButton) {
+    return;
+  }
+  clearButton.disabled = formsTotal === 0;
+}
+
+async function clearForms() {
+  const confirmed = window.confirm("Deseja remover todos os registros da aba Forms?");
+  if (!confirmed) {
+    return;
+  }
+
+  const clearButton = document.getElementById("clearFormsButton");
+  if (clearButton) {
+    clearButton.disabled = true;
+  }
+
+  try {
+    const payload = await deleteJson("/api/admin/forms");
+    await loadForms();
+    requestRefreshAllTables();
+    setStatus(payload?.message || "Registros de Forms removidos com sucesso.", true);
+  } finally {
+    updateFormsClearButtonState();
+  }
 }
 
 async function refreshActiveTab() {
@@ -2869,6 +2900,13 @@ function bindActions() {
   document.getElementById("logoutButton").addEventListener("click", () => {
     logout().catch((error) => setAuthStatus(error.message, "error"));
   });
+
+  const clearFormsButton = document.getElementById("clearFormsButton");
+  if (clearFormsButton) {
+    clearFormsButton.addEventListener("click", () => {
+      clearForms().catch((error) => setStatus(error.message, false));
+    });
+  }
 
   const requestAdminButton = document.getElementById("requestAdminButton");
   const resetPasswordButton = document.getElementById("resetPasswordButton");

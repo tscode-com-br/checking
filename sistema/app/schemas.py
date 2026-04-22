@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import Literal, Optional
 
@@ -5,6 +6,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .services.project_catalog import normalize_project_name
 from .services.user_profiles import normalize_person_name
+
+
+PLATE_MAX_LENGTH = 15
+PLATE_ALLOWED_PATTERN = re.compile(r"^[A-Z0-9.-]+$")
 
 
 def _normalize_optional_local(value: str | None) -> str | None:
@@ -73,10 +78,10 @@ def _normalize_optional_plate(value: str | None) -> str | None:
     normalized = str(value).strip().upper().replace(" ", "")
     if not normalized:
         return None
-    if len(normalized) > 9:
-        raise ValueError("A placa deve ter no maximo 9 caracteres")
-    if not normalized.isalnum():
-        raise ValueError("A placa deve conter apenas caracteres alfanumericos")
+    if len(normalized) > PLATE_MAX_LENGTH:
+        raise ValueError(f"A placa deve ter no maximo {PLATE_MAX_LENGTH} caracteres")
+    if not PLATE_ALLOWED_PATTERN.fullmatch(normalized):
+        raise ValueError("A placa deve conter apenas letras, numeros, '-' e '.'")
     return normalized
 
 
@@ -194,7 +199,7 @@ class AdminUserUpsert(BaseModel):
     perfil: int = Field(default=0, ge=0, le=999)
     projeto: str = Field(min_length=2, max_length=120)
     workplace: str | None = Field(default=None, max_length=120)
-    placa: str | None = Field(default=None, max_length=9)
+    placa: str | None = Field(default=None, max_length=PLATE_MAX_LENGTH)
     end_rua: str | None = Field(default=None, max_length=255)
     zip: str | None = Field(default=None, max_length=10)
     cargo: str | None = Field(default=None, max_length=255)
@@ -532,7 +537,7 @@ class WorkplaceRow(BaseModel):
 
 
 class TransportVehicleCreate(BaseModel):
-    placa: str = Field(max_length=9)
+    placa: str = Field(max_length=PLATE_MAX_LENGTH)
     tipo: Literal["carro", "minivan", "van", "onibus"]
     color: str = Field(min_length=2, max_length=40)
     lugares: int = Field(ge=1, le=99)
@@ -787,6 +792,7 @@ class TransportSettingsResponse(BaseModel):
     default_minivan_seats: int = Field(ge=1, le=99)
     default_van_seats: int = Field(ge=1, le=99)
     default_bus_seats: int = Field(ge=1, le=99)
+    default_tolerance_minutes: int = Field(ge=0, le=240)
 
     @field_validator("work_to_home_time")
     @classmethod
@@ -806,6 +812,7 @@ class TransportSettingsUpdateRequest(BaseModel):
     default_minivan_seats: int = Field(ge=1, le=99)
     default_van_seats: int = Field(ge=1, le=99)
     default_bus_seats: int = Field(ge=1, le=99)
+    default_tolerance_minutes: int = Field(ge=0, le=240)
 
     @field_validator("work_to_home_time")
     @classmethod
@@ -1049,9 +1056,7 @@ class WebUserSelfRegistrationRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     nome: str = Field(min_length=3, max_length=180)
     projeto: str = Field(min_length=2, max_length=120)
-    end_rua: str = Field(min_length=2, max_length=255)
-    zip: str = Field(min_length=1, max_length=10)
-    email: str = Field(min_length=3, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
     senha: str = Field(min_length=3, max_length=10)
     confirmar_senha: str = Field(min_length=3, max_length=10)
 
@@ -1068,33 +1073,23 @@ class WebUserSelfRegistrationRequest(BaseModel):
     def validate_web_user_self_registration_nome(cls, value: str) -> str:
         return normalize_person_name(str(value))
 
-    @field_validator("end_rua", mode="before")
-    @classmethod
-    def validate_web_user_self_registration_end_rua(cls, value: str) -> str:
-        return _normalize_required_label(str(value), "O endereco", max_length=255)
-
     @field_validator("projeto", mode="before")
     @classmethod
     def validate_web_user_self_registration_project(cls, value: str) -> str:
         return _normalize_project_value(value)
 
-    @field_validator("zip", mode="before")
-    @classmethod
-    def validate_web_user_self_registration_zip(cls, value: str) -> str:
-        normalized = _normalize_required_compact_text(str(value), "O ZIP code", max_length=10)
-        if not normalized.isdigit():
-            raise ValueError("O ZIP code deve conter apenas numeros")
-        return normalized
-
     @field_validator("email", mode="before")
     @classmethod
-    def validate_web_user_self_registration_email(cls, value: str) -> str:
-        normalized = _normalize_required_compact_text(str(value), "O email", max_length=255).lower()
+    def validate_web_user_self_registration_email(cls, value: str | None) -> str | None:
+        normalized = _normalize_optional_compact_text(value, "O email", max_length=255)
+        if normalized is None:
+            return None
+        normalized = normalized.lower()
         if normalized.count("@") != 1:
-            raise ValueError("O email deve ser um endereco Petrobras valido")
+            raise ValueError("O email deve ser um endereco valido")
         local_part, domain = normalized.split("@", 1)
-        if not local_part or domain != "petrobras.com.br":
-            raise ValueError("O email deve ser um endereco Petrobras valido")
+        if not local_part or not domain:
+            raise ValueError("O email deve ser um endereco valido")
         return normalized
 
     @field_validator("senha", mode="before")

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ManagedLocation, TransportRequest, User
+from ..models import AdminAccessRequest, ManagedLocation, TransportRequest, User
 from ..schemas import (
     ProjectRow,
     WebCheckHistoryResponse,
@@ -42,6 +42,7 @@ from ..services.location_matching import (
     resolve_submission_local,
 )
 from ..services.location_settings import get_location_accuracy_threshold_meters
+from ..services.admin_auth import TRANSPORT_ACCESS_DIGIT
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.time_utils import now_sgt
@@ -286,6 +287,9 @@ def register_web_user(
     existing_user = find_user_by_chave(db, normalized)
     if existing_user is not None:
         raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
+    pending_request = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == normalized)).scalar_one_or_none()
+    if pending_request is not None:
+        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave")
 
     user = User(
         rfid=None,
@@ -295,8 +299,8 @@ def register_web_user(
         projeto=payload.projeto,
         workplace=None,
         placa=None,
-        end_rua=payload.end_rua,
-        zip=payload.zip,
+        end_rua=None,
+        zip=None,
         cargo=None,
         email=payload.email,
         local=None,
@@ -306,13 +310,24 @@ def register_web_user(
         inactivity_days=0,
     )
     db.add(user)
+    db.add(
+        AdminAccessRequest(
+            chave=normalized,
+            nome_completo=user.nome,
+            password_hash=user.senha,
+            requested_profile=int(TRANSPORT_ACCESS_DIGIT),
+            requested_at=now_sgt(),
+        )
+    )
     db.commit()
     _set_web_session_chave(request, normalized)
+    notify_admin_data_changed("admin")
+    notify_admin_data_changed("register")
     return WebPasswordActionResponse(
         ok=True,
         authenticated=True,
         has_password=True,
-        message="Usuario cadastrado com sucesso.",
+        message="Usuario cadastrado com sucesso. Aguarde aprovacao para acessar o Transport.",
     )
 
 

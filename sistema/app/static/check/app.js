@@ -27,6 +27,7 @@
   const chaveInput = document.getElementById('chaveInput');
   const passwordInput = document.getElementById('passwordInput');
   const passwordActionButton = document.getElementById('passwordActionButton');
+  const requestRegistrationButton = document.getElementById('requestRegistrationButton');
   const chaveAuthField = chaveInput ? chaveInput.closest('.auth-field') : null;
   const passwordAuthField = passwordInput ? passwordInput.closest('.auth-field') : null;
   const projectField = document.getElementById('projectField');
@@ -59,8 +60,6 @@
   const registrationChaveInput = document.getElementById('registrationChaveInput');
   const registrationNameInput = document.getElementById('registrationNameInput');
   const registrationProjectSelect = document.getElementById('registrationProjectSelect');
-  const registrationAddressInput = document.getElementById('registrationAddressInput');
-  const registrationZipInput = document.getElementById('registrationZipInput');
   const registrationEmailInput = document.getElementById('registrationEmailInput');
   const registrationPasswordInput = document.getElementById('registrationPasswordInput');
   const registrationConfirmPasswordInput = document.getElementById('registrationConfirmPasswordInput');
@@ -115,7 +114,7 @@
     submitButton,
     refreshLocationButton,
   ].filter(Boolean);
-  const authControls = [chaveInput, passwordInput, passwordActionButton].filter(Boolean);
+  const authControls = [chaveInput, passwordInput, passwordActionButton, requestRegistrationButton].filter(Boolean);
   const highlightedAuthFields = [chaveAuthField, passwordAuthField].filter(Boolean);
   const passwordDialogControls = [
     oldPasswordInput,
@@ -128,8 +127,6 @@
     registrationChaveInput,
     registrationNameInput,
     registrationProjectSelect,
-    registrationAddressInput,
-    registrationZipInput,
     registrationEmailInput,
     registrationPasswordInput,
     registrationConfirmPasswordInput,
@@ -1026,6 +1023,11 @@
           || authBusy
           || activeChave.length !== 4
           || (!authState.hasPassword && !canRegisterPassword && !canOpenRegistration);
+        return;
+      }
+
+      if (control === requestRegistrationButton) {
+        control.disabled = dialogOpen || lockActive || submitInProgress || authBusy || userSelfRegistrationInProgress;
       }
     });
 
@@ -1060,7 +1062,7 @@
 
       if (control === registrationDialogSubmitButton) {
         control.disabled = userSelfRegistrationInProgress;
-        control.textContent = userSelfRegistrationInProgress ? 'Cadastrando...' : 'Cadastrar';
+        control.textContent = userSelfRegistrationInProgress ? 'Enviando...' : 'Enviar';
         return;
       }
 
@@ -1390,6 +1392,13 @@
     registrationDialogBackdrop.classList.remove('is-hidden');
     syncFormControlStates();
     realignViewport();
+    if (registrationNameInput && activeChave.length === 4) {
+      registrationNameInput.focus();
+      return;
+    }
+    if (registrationChaveInput) {
+      registrationChaveInput.focus();
+    }
   }
 
   function buildProtectedRequestError(response, payload) {
@@ -3168,19 +3177,37 @@
     }
 
     const normalizedChave = sanitizeChave(registrationChaveInput.value);
-    const nome = registrationNameInput.value;
+    const nome = String(registrationNameInput.value || '').trim().replace(/\s+/g, ' ');
     const projeto = registrationProjectSelect.value;
-    const endereco = registrationAddressInput.value;
-    const zipCode = registrationZipInput.value;
-    const email = registrationEmailInput.value;
+    const email = String(registrationEmailInput.value || '').trim();
     const password = registrationPasswordInput.value;
     const confirmPassword = registrationConfirmPasswordInput.value;
 
     registrationChaveInput.value = normalizedChave;
+    registrationNameInput.value = nome;
+    registrationEmailInput.value = email;
 
     if (normalizedChave.length !== 4) {
       setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
       registrationChaveInput.focus();
+      return;
+    }
+
+    if (nome.length < 3) {
+      setStatus('Informe o nome completo.', 'error');
+      registrationNameInput.focus();
+      return;
+    }
+
+    if (!String(projeto || '').trim()) {
+      setStatus('Selecione um projeto.', 'error');
+      registrationProjectSelect.focus();
+      return;
+    }
+
+    if (email && email.indexOf('@') === -1) {
+      setStatus('Informe um e-mail válido ou deixe o campo em branco.', 'error');
+      registrationEmailInput.focus();
       return;
     }
 
@@ -3198,7 +3225,7 @@
 
     userSelfRegistrationInProgress = true;
     syncFormControlStates();
-    setStatus('Cadastrando usuário...', 'info');
+  setStatus('Enviando solicitação de cadastro...', 'info');
 
     try {
       const response = await fetch(authUserRegisterEndpoint, {
@@ -3211,9 +3238,7 @@
           chave: normalizedChave,
           nome,
           projeto,
-          end_rua: endereco,
-          zip: zipCode,
-          email,
+          email: email || null,
           senha: password,
           confirmar_senha: confirmPassword,
         }),
@@ -3244,10 +3269,10 @@
       closeRegistrationDialog();
       dismissActiveKeyboard();
       syncFormControlStates();
-      setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
+      setStatus('Cadastro enviado. Aguarde aprovação para acessar o Transport.', 'success');
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Não foi possível cadastrar o usuário.', 'error');
+      setStatus(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação de cadastro.', 'error');
     } finally {
       userSelfRegistrationInProgress = false;
       syncFormControlStates();
@@ -4674,6 +4699,12 @@
     void registerPasswordForCurrentUser();
   });
 
+  if (requestRegistrationButton) {
+    requestRegistrationButton.addEventListener('click', () => {
+      openRegistrationDialog();
+    });
+  }
+
   document.addEventListener('pointerdown', restorePendingAuthFieldValuesOnExternalFocus, true);
   document.addEventListener('focusin', restorePendingAuthFieldValuesOnExternalFocus, true);
 
@@ -5034,24 +5065,6 @@
       const sanitized = sanitizeChave(registrationChaveInput.value);
       if (sanitized !== registrationChaveInput.value) {
         registrationChaveInput.value = sanitized;
-      }
-    });
-  }
-
-  if (registrationZipInput) {
-    registrationZipInput.addEventListener('input', () => {
-      const digitsOnly = String(registrationZipInput.value || '').replace(/\D/g, '').slice(0, 10);
-      if (digitsOnly !== registrationZipInput.value) {
-        registrationZipInput.value = digitsOnly;
-      }
-    });
-  }
-
-  if (registrationEmailInput) {
-    registrationEmailInput.addEventListener('input', () => {
-      const autofilledValue = clientState.autofillPetrobrasEmailDomain(registrationEmailInput.value);
-      if (autofilledValue !== registrationEmailInput.value) {
-        registrationEmailInput.value = autofilledValue;
       }
     });
   }

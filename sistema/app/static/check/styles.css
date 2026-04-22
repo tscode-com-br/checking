@@ -480,6 +480,30 @@ body.portrait-lock-active > .orientation-lock-screen {
   min-width: 0;
 }
 
+.auth-link-button {
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #0f766e;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-link-button:hover,
+.auth-link-button:focus-visible {
+  color: #115e59;
+  text-decoration: underline;
+}
+
+.auth-link-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  text-decoration: none;
+}
+
 .auth-field-button {
   align-content: end;
 }
@@ -757,6 +781,13 @@ body.portrait-lock-active > .orientation-lock-screen {
   justify-content: center;
   padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
   overflow-y: auto;
+}
+
+.registration-dialog-note {
+  margin: 0 0 10px;
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .password-dialog-card {
@@ -1665,6 +1696,7 @@ body.portrait-lock-active > .orientation-lock-screen {
   }
 
   .auth-action-button,
+  .auth-link-button,
   .check-field input,
   .check-field select,
   .submit-button,

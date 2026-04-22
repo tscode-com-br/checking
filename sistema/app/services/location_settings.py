@@ -15,6 +15,7 @@ DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS = 3
 DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS = 6
 DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS = 10
 DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS = 40
+DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES = 5
 
 
 def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
@@ -32,6 +33,7 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             transport_default_minivan_seats=DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
             transport_default_van_seats=DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
             transport_default_bus_seats=DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+            transport_default_tolerance_minutes=DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES,
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -71,6 +73,7 @@ def get_transport_vehicle_default_seat_counts(db: Session) -> dict[str, int]:
             "default_minivan_seats": DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
             "default_van_seats": DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
             "default_bus_seats": DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+            "default_tolerance_minutes": DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES,
         }
 
     return {
@@ -78,6 +81,11 @@ def get_transport_vehicle_default_seat_counts(db: Session) -> dict[str, int]:
         "default_minivan_seats": settings.transport_default_minivan_seats or DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
         "default_van_seats": settings.transport_default_van_seats or DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
         "default_bus_seats": settings.transport_default_bus_seats or DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+        "default_tolerance_minutes": (
+            settings.transport_default_tolerance_minutes
+            if settings.transport_default_tolerance_minutes is not None
+            else DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES
+        ),
     }
 
 
@@ -143,6 +151,7 @@ def upsert_transport_vehicle_default_seat_counts(
     default_minivan_seats: int,
     default_van_seats: int,
     default_bus_seats: int,
+    default_tolerance_minutes: int,
 ) -> MobileAppSettings:
     settings = _get_or_create_mobile_app_settings(db)
     timestamp = now_sgt()
@@ -151,6 +160,7 @@ def upsert_transport_vehicle_default_seat_counts(
     settings.transport_default_minivan_seats = default_minivan_seats
     settings.transport_default_van_seats = default_van_seats
     settings.transport_default_bus_seats = default_bus_seats
+    settings.transport_default_tolerance_minutes = default_tolerance_minutes
     settings.updated_at = timestamp
     db.flush()
     return settings

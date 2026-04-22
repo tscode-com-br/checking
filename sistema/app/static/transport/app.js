@@ -35,7 +35,7 @@
   const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
-  const VEHICLE_DEFAULT_TOLERANCE_MINUTES = 5;
+  const DEFAULT_VEHICLE_TOLERANCE_MINUTES = 5;
   const DEFAULT_VEHICLE_SEAT_COUNT = {
     carro: 3,
     minivan: 6,
@@ -43,6 +43,7 @@
     onibus: 40,
   };
   let vehicleDefaultSeatCount = Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT);
+  let vehicleDefaultToleranceMinutes = DEFAULT_VEHICLE_TOLERANCE_MINUTES;
   const transportLanguages = Array.isArray(transportI18n.languages) && transportI18n.languages.length
     ? transportI18n.languages.slice()
     : [{ code: "en", label: "English", locale: "en-US" }];
@@ -769,12 +770,25 @@
     return Object.assign({}, vehicleDefaultSeatCount);
   }
 
+  function normalizeVehicleToleranceSetting(value, fallbackValue) {
+    const parsed = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 240) {
+      return fallbackValue;
+    }
+    return parsed;
+  }
+
+  function applyTransportVehicleToleranceDefault(nextValue) {
+    vehicleDefaultToleranceMinutes = normalizeVehicleToleranceSetting(nextValue, vehicleDefaultToleranceMinutes);
+    return vehicleDefaultToleranceMinutes;
+  }
+
   function getDefaultVehicleSeatCount(vehicleType) {
     return vehicleDefaultSeatCount[vehicleType] || DEFAULT_VEHICLE_SEAT_COUNT.carro;
   }
 
   function getDefaultVehicleToleranceMinutes() {
-    return VEHICLE_DEFAULT_TOLERANCE_MINUTES;
+    return vehicleDefaultToleranceMinutes;
   }
 
   function getDefaultVehicleFormValues(vehicleType) {
@@ -942,9 +956,18 @@
     return normalizeTransportTimeValue(fallbackTime, DEFAULT_WORK_TO_HOME_TIME);
   }
 
-  function getVehicleDepartureTime(vehicle) {
+  function getVehicleDepartureTime(vehicle, fallbackTime, scopeOverride) {
     const departureTime = String(vehicle && vehicle.departure_time || "").trim();
-    return isValidTransportTimeValue(departureTime) ? departureTime : "";
+    if (isValidTransportTimeValue(departureTime)) {
+      return departureTime;
+    }
+
+    const resolvedScope = String(vehicle && vehicle.service_scope || scopeOverride || "").trim();
+    if (resolvedScope !== "regular" && resolvedScope !== "weekend") {
+      return "";
+    }
+
+    return isValidTransportTimeValue(fallbackTime) ? String(fallbackTime).trim() : "";
   }
 
   function shouldHighlightRequestName(assignmentStatus) {
@@ -1100,6 +1123,7 @@
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
       vehicleSeatDefaults: Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT),
+      vehicleToleranceDefaultMinutes: DEFAULT_VEHICLE_TOLERANCE_MINUTES,
       routeTimeSaving: false,
       expandedVehiclePositionFrame: null,
       requestSectionCollapsedByKind: {
@@ -1128,6 +1152,8 @@
     const settingsLastUpdateInput = document.querySelector("[data-settings-last-update-time]");
     const settingsTimeNote = document.querySelector("[data-settings-time-note]");
     const settingsVehicleDefaultsNote = document.querySelector("[data-settings-vehicle-defaults-note]");
+    const settingsDefaultToleranceLabel = document.querySelector("[data-settings-default-tolerance-label]");
+    const settingsDefaultToleranceInput = document.querySelector("[data-settings-default-tolerance]");
     const settingsCloseButton = document.querySelector("[data-settings-close-button]");
     const settingsDefaultSeatLabels = {
       carro: document.querySelector('[data-settings-default-seat-label="carro"]'),
@@ -1431,6 +1457,9 @@
       if (settingsVehicleDefaultsNote) {
         settingsVehicleDefaultsNote.textContent = t("settings.vehicleDefaultsNote");
       }
+      if (settingsDefaultToleranceLabel) {
+        settingsDefaultToleranceLabel.textContent = t("settings.standardTolerance");
+      }
       if (settingsDefaultSeatLabels.carro) {
         settingsDefaultSeatLabels.carro.textContent = t("settings.defaultPlacesLabel", {
           type: mapVehicleTypeLabel("carro"),
@@ -1667,6 +1696,10 @@
         seatInput.value = String(getDefaultVehicleSeatCount(vehicleType));
         seatInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
       });
+      if (settingsDefaultToleranceInput) {
+        settingsDefaultToleranceInput.value = String(getDefaultVehicleToleranceMinutes());
+        settingsDefaultToleranceInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+      }
     }
 
     function readTransportSettingsDraft() {
@@ -1677,6 +1710,7 @@
         defaultMinivanSeats: settingsDefaultSeatInputs.minivan ? settingsDefaultSeatInputs.minivan.value : state.vehicleSeatDefaults.minivan,
         defaultVanSeats: settingsDefaultSeatInputs.van ? settingsDefaultSeatInputs.van.value : state.vehicleSeatDefaults.van,
         defaultBusSeats: settingsDefaultSeatInputs.onibus ? settingsDefaultSeatInputs.onibus.value : state.vehicleSeatDefaults.onibus,
+        defaultToleranceMinutes: settingsDefaultToleranceInput ? settingsDefaultToleranceInput.value : state.vehicleToleranceDefaultMinutes,
       };
     }
 
@@ -1936,6 +1970,7 @@
         state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
         state.lastUpdateTime = state.lastUpdateTime || DEFAULT_LAST_UPDATE_TIME;
         state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
+        state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(state.vehicleToleranceDefaultMinutes);
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -1952,6 +1987,11 @@
             response && response.last_update_time ? response.last_update_time : DEFAULT_LAST_UPDATE_TIME
           );
           state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
+          state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(
+            response && response.default_tolerance_minutes !== undefined
+              ? response.default_tolerance_minutes
+              : state.vehicleToleranceDefaultMinutes
+          );
           return response;
         })
         .catch(function (error) {
@@ -1972,6 +2012,7 @@
       const previousWorkToHomeTime = state.workToHomeTime;
       const previousLastUpdateTime = state.lastUpdateTime;
       const previousVehicleSeatDefaults = Object.assign({}, state.vehicleSeatDefaults);
+      const previousVehicleToleranceDefaultMinutes = state.vehicleToleranceDefaultMinutes;
       const normalizedTime = normalizeTransportTimeValue(
         nextValues && nextValues.workToHomeTime,
         normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME)
@@ -1989,6 +2030,10 @@
         },
         state.vehicleSeatDefaults
       );
+      const normalizedToleranceDefault = normalizeVehicleToleranceSetting(
+        nextValues && nextValues.defaultToleranceMinutes,
+        state.vehicleToleranceDefaultMinutes
+      );
       if (!isValidTransportTimeValue(normalizedTime) || !isValidTransportTimeValue(normalizedLastUpdateTime)) {
         syncSettingsControls();
         return Promise.resolve(null);
@@ -2002,7 +2047,9 @@
       state.workToHomeTime = normalizedTime;
       state.lastUpdateTime = normalizedLastUpdateTime;
       state.vehicleSeatDefaults = Object.assign({}, normalizedSeatDefaults);
+      state.vehicleToleranceDefaultMinutes = normalizedToleranceDefault;
       applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
+      applyTransportVehicleToleranceDefault(state.vehicleToleranceDefaultMinutes);
       state.settingsSaving = true;
       syncSettingsControls();
       return requestJson(`${TRANSPORT_API_PREFIX}/settings`, {
@@ -2014,6 +2061,7 @@
           default_minivan_seats: normalizedSeatDefaults.minivan,
           default_van_seats: normalizedSeatDefaults.van,
           default_bus_seats: normalizedSeatDefaults.onibus,
+          default_tolerance_minutes: normalizedToleranceDefault,
         }),
       })
         .then(function (response) {
@@ -2025,6 +2073,11 @@
             response && response.last_update_time ? response.last_update_time : normalizedLastUpdateTime
           );
           state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
+          state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(
+            response && response.default_tolerance_minutes !== undefined
+              ? response.default_tolerance_minutes
+              : normalizedToleranceDefault
+          );
           return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
             setStatus(t("status.settingsSaved"), "success");
             return response;
@@ -2034,7 +2087,9 @@
           state.workToHomeTime = previousWorkToHomeTime;
           state.lastUpdateTime = previousLastUpdateTime;
           state.vehicleSeatDefaults = previousVehicleSeatDefaults;
+          state.vehicleToleranceDefaultMinutes = previousVehicleToleranceDefaultMinutes;
           applyTransportVehicleSeatDefaults(previousVehicleSeatDefaults);
+          applyTransportVehicleToleranceDefault(previousVehicleToleranceDefaultMinutes);
           handleProtectedRequestError(error, t("status.couldNotSaveSettings"));
           return null;
         })
@@ -2198,6 +2253,12 @@
         void saveTransportSettings(readTransportSettingsDraft());
       });
     });
+
+    if (settingsDefaultToleranceInput) {
+      settingsDefaultToleranceInput.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
 
     if (routeTimeInput) {
       routeTimeInput.addEventListener("change", function () {
@@ -3161,7 +3222,8 @@
       const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
-      const departureTime = getVehicleDepartureTime(vehicle);
+      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
+      const departureTime = getVehicleDepartureTime(vehicle, effectiveDepartureTime, scope);
       const vehicleDetailsKey = getVehicleDetailsKey(scope, vehicle.id);
       const draggedRequest = getDraggedRequest();
       const pendingPreview = getPendingAssignmentPreview();
@@ -3308,7 +3370,8 @@
         );
         const actionsCell = createNode("td", "transport-vehicle-management-actions");
         const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", rowData.placa);
-        const departureTime = getVehicleDepartureTime(rowData);
+        const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
+        const departureTime = getVehicleDepartureTime(rowData, effectiveDepartureTime, scope);
         const deleteButton = createNode(
           "button",
           "transport-vehicle-delete-button transport-vehicle-management-delete",
@@ -3541,6 +3604,7 @@
     getDefaultVehicleFormValues,
     getDefaultVehicleSeatCount,
     getDefaultVehicleToleranceMinutes,
+    applyTransportVehicleToleranceDefault,
     syncVehicleTypeDependentDefaults,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,

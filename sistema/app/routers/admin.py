@@ -52,6 +52,7 @@ from ..schemas import (
 )
 from ..services.admin_auth import (
     ADMIN_ACCESS_DIGIT,
+    TRANSPORT_ACCESS_DIGIT,
     add_profile_access,
     clear_admin_session,
     describe_user_profile,
@@ -168,6 +169,17 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
         )
 
     return payload
+
+
+def delete_provider_forms_rows(db: Session) -> int:
+    result = db.execute(
+        delete(CheckEvent).where(
+            CheckEvent.source == "provider",
+            CheckEvent.request_path == PROVIDER_FORMS_REQUEST_PATH,
+            CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
+        )
+    )
+    return max(int(result.rowcount or 0), 0)
 
 
 def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -> str | None:
@@ -483,15 +495,16 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
         )
 
     for request_row in requests:
+        requested_profile = request_row.requested_profile or 1
         rows.append(
             AdminManagementRow(
                 id=request_row.id,
                 row_type="request",
                 chave=request_row.chave,
                 nome=request_row.nome_completo,
-                perfil=None,
+                perfil=requested_profile,
                 status="pending",
-                status_label="Solicitacao Pendente",
+                status_label=f"Solicitacao Pendente | {describe_user_profile(requested_profile)}",
                 can_revoke=False,
                 can_approve=True,
                 can_reject=True,
@@ -647,6 +660,7 @@ def request_admin_access(payload: AdminAccessRequestCreate, db: Session = Depend
             chave=key,
             nome_completo=payload.nome_completo.strip(),
             password_hash=hash_password(payload.senha),
+            requested_profile=1,
             requested_at=now_sgt(),
         )
     )
@@ -851,6 +865,8 @@ def approve_administrator_request(
 
     existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
     default_project_name = resolve_default_project_name(db)
+    requested_profile = access_request.requested_profile or 1
+    requested_digit = str(requested_profile)
     if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
             db,
@@ -872,7 +888,7 @@ def approve_administrator_request(
                 rfid=None,
                 chave=access_request.chave,
                 senha=access_request.password_hash,
-                perfil=1,
+                perfil=requested_profile,
                 nome=access_request.nome_completo,
                 projeto=default_project_name,
                 workplace=None,
@@ -890,8 +906,9 @@ def approve_administrator_request(
         )
     else:
         existing_admin.nome = access_request.nome_completo
-        existing_admin.senha = access_request.password_hash
-        existing_admin.perfil = add_profile_access(existing_admin.perfil, ADMIN_ACCESS_DIGIT)
+        if requested_digit != TRANSPORT_ACCESS_DIGIT or existing_admin.senha is None:
+            existing_admin.senha = access_request.password_hash
+        existing_admin.perfil = add_profile_access(existing_admin.perfil, requested_digit)
 
     log_event(
         db,
@@ -1088,6 +1105,30 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
 @router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_admin_session)])
 def list_provider_forms(db: Session = Depends(get_db)) -> list[ProviderFormRow]:
     return build_provider_forms_rows(db)
+
+
+@router.delete("/forms", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+def clear_provider_forms(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> AdminActionResponse:
+    removed_count = delete_provider_forms_rows(db)
+    log_event(
+        db,
+        source="admin",
+        action="event",
+        status="removed",
+        message="Provider forms cleared via admin",
+        request_path="/api/admin/forms",
+        http_status=200,
+        details=f"updated_by={current_admin.chave}; removed_count={removed_count}",
+    )
+    db.commit()
+    notify_admin_views("event")
+    return AdminActionResponse(
+        ok=True,
+        message=f"{format_quantity(removed_count, 'registro removido', 'registros removidos')} da aba Forms.",
+    )
 
 
 @router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])

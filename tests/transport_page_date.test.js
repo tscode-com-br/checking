@@ -196,9 +196,20 @@ test('getEffectiveWorkToHomeDepartureTime prefers the dashboard override and fal
   );
 });
 
-test('getVehicleDepartureTime returns only valid departure times', () => {
+test('getVehicleDepartureTime prefers the vehicle time and falls back to the topbar time for regular and weekend rows', () => {
   assert.equal(transportPage.getVehicleDepartureTime({ departure_time: '17:20' }), '17:20');
-  assert.equal(transportPage.getVehicleDepartureTime({ departure_time: '17h20' }), '');
+  assert.equal(
+    transportPage.getVehicleDepartureTime({ departure_time: '17h20', service_scope: 'regular' }, '18:10'),
+    '18:10'
+  );
+  assert.equal(
+    transportPage.getVehicleDepartureTime({ service_scope: 'weekend' }, '16:45'),
+    '16:45'
+  );
+  assert.equal(
+    transportPage.getVehicleDepartureTime({ departure_time: '', service_scope: 'extra' }, '18:10'),
+    ''
+  );
   assert.equal(transportPage.getVehicleDepartureTime({}), '');
 });
 
@@ -245,6 +256,7 @@ test('vehicle modal markup includes the default places and tolerance values', ()
   );
 
   assert.match(transportHtml, /<option value="carro" selected>Car<\/option>/);
+  assert.match(transportHtml, /<input type="text" name="placa" maxlength="15" autocomplete="off" required \/>/);
   assert.match(transportHtml, /<input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" required \/>/);
   assert.match(transportHtml, /<input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" required \/>/);
   assert.match(transportHtml, /<input type="checkbox" name="every_monday" checked \/>/);
@@ -309,8 +321,22 @@ test('transport settings modal includes editable default seat counts for each ve
   assert.match(transportHtml, /data-settings-default-seat="minivan"/);
   assert.match(transportHtml, /data-settings-default-seat="van"/);
   assert.match(transportHtml, /data-settings-default-seat="onibus"/);
+  assert.match(transportHtml, /data-settings-default-tolerance-label/);
+  assert.match(transportHtml, /data-settings-default-tolerance/);
   assert.match(transportHtml, /id="transportSettingsCarSeats"[\s\S]*value="3"/);
   assert.match(transportHtml, /id="transportSettingsBusSeats"[\s\S]*value="40"/);
+  assert.match(transportHtml, /id="transportSettingsDefaultTolerance"[\s\S]*value="5"/);
+});
+
+test('applyTransportVehicleToleranceDefault updates the shared vehicle form tolerance default', () => {
+  assert.equal(transportPage.getDefaultVehicleToleranceMinutes(), 5);
+  assert.equal(transportPage.applyTransportVehicleToleranceDefault(9), 9);
+  assert.equal(transportPage.getDefaultVehicleToleranceMinutes(), 9);
+  assert.equal(transportPage.applyTransportVehicleToleranceDefault(0), 0);
+  assert.equal(transportPage.getDefaultVehicleToleranceMinutes(), 0);
+  assert.equal(transportPage.applyTransportVehicleToleranceDefault(undefined), 0);
+  assert.equal(transportPage.getDefaultVehicleToleranceMinutes(), 0);
+  transportPage.applyTransportVehicleToleranceDefault(5);
 });
 
 test('syncVehicleTypeDependentDefaults updates the vehicle type, places, and tolerance fields together', () => {
@@ -750,7 +776,7 @@ test('buildVehicleCreatePayload sends recurrence selections for regular and week
   const regularFormData = new FormData();
   regularFormData.set('service_scope', 'regular');
   regularFormData.set('tipo', 'carro');
-  regularFormData.set('placa', 'ABC1234');
+  regularFormData.set('placa', 'ABC-1234.56-DE');
   regularFormData.set('color', 'Black');
   regularFormData.set('lugares', '4');
   regularFormData.set('tolerance', '12');
@@ -764,7 +790,7 @@ test('buildVehicleCreatePayload sends recurrence selections for regular and week
       service_scope: 'regular',
       service_date: '2026-04-18',
       tipo: 'carro',
-      placa: 'ABC1234',
+      placa: 'ABC-1234.56-DE',
       color: 'Black',
       lugares: 4,
       tolerance: 12,

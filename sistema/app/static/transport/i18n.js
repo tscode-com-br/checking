@@ -107,10 +107,11 @@
         languages: "Languages:",
         workToHomeTime: "Work to Home Time:",
         lastUpdateTime: "Last Update Time:",
+        standardTolerance: "Standard Tolerance:",
         defaultPlacesLabel: "{type} default places:",
         workToHomeNote:
           "Base default for all dates. Use the top bar time field to edit only the selected date; it updates Regular and Weekend lists only and resets on the next day.",
-        vehicleDefaultsNote: "These values prefill Places in the create vehicle form.",
+        vehicleDefaultsNote: "These values prefill Places and Tolerance in the create vehicle form.",
         close: "Close",
       },
       routes: {
@@ -297,10 +298,11 @@
         languages: "Idiomas:",
         workToHomeTime: "Horário de Work to Home:",
         lastUpdateTime: "Horário da Última Atualização:",
+        standardTolerance: "Tolerância padrão:",
         defaultPlacesLabel: "Lugares padrão para {type}:",
         workToHomeNote:
           "Padrão base para todas as datas. Use o campo de horário na barra superior para editar apenas a data escolhida; isso atualiza apenas as listas Rotineiro e Fim de semana e volta ao padrão no dia seguinte.",
-        vehicleDefaultsNote: "Esses valores preenchem o campo Lugares no formulário de cadastro de veículos.",
+        vehicleDefaultsNote: "Esses valores preenchem os campos Lugares e Tolerância no formulário de cadastro de veículos.",
         close: "Fechar",
       },
       routes: {
@@ -486,10 +488,11 @@
         languages: "语言：",
         workToHomeTime: "Work to Home 时间：",
         lastUpdateTime: "最后更新时间：",
+        standardTolerance: "标准容差：",
         defaultPlacesLabel: "{type} 默认座位数：",
         workToHomeNote:
           "这是所有日期的基础默认时间。若只想修改当前选定日期，请使用顶部栏中的时间字段；它只会更新常规和周末列表，并会在第二天恢复默认值。",
-        vehicleDefaultsNote: "这些值会预填到车辆创建表单中的座位数字段。",
+        vehicleDefaultsNote: "这些值会预填到车辆创建表单中的座位数和容差字段。",
         close: "关闭",
       },
       routes: {
@@ -509,7 +512,6 @@
         vehicleDeleted: "车辆已从数据库中删除。",
         requestRejected: "运输请求已被拒绝。",
         couldNotDeleteVehicle: "无法删除所选车辆。",
-        allocationUpdated: "交通分配已更新。",
         couldNotUpdateAllocation: "无法更新交通分配。",
         couldNotConfirmSelectedRequest: "无法确认所选请求。",
         couldNotRejectSelectedRequest: "无法拒绝所选请求。",
@@ -674,10 +676,11 @@
         languages: "Bahasa:",
         workToHomeTime: "Masa Work to Home:",
         lastUpdateTime: "Masa Kemas Kini Terakhir:",
+        standardTolerance: "Toleransi Standard:",
         defaultPlacesLabel: "Tempat duduk lalai untuk {type}:",
         workToHomeNote:
           "Ini ialah masa lalai asas untuk semua tarikh. Gunakan medan masa pada bar atas untuk ubah hanya tarikh yang dipilih; ia hanya mengemas kini senarai Biasa dan Hujung minggu dan akan kembali kepada lalai pada hari berikutnya.",
-        vehicleDefaultsNote: "Nilai ini akan dipraisi pada medan Places dalam borang cipta kenderaan.",
+        vehicleDefaultsNote: "Nilai ini akan dipraisi pada medan Places dan Tolerance dalam borang cipta kenderaan.",
         close: "Tutup",
       },
       routes: {
@@ -862,10 +865,11 @@
         languages: "Mga wika:",
         workToHomeTime: "Oras ng Work to Home:",
         lastUpdateTime: "Oras ng Huling Update:",
+        standardTolerance: "Karaniwang Tolerance:",
         defaultPlacesLabel: "Default na upuan para sa {type}:",
         workToHomeNote:
           "Ito ang batayang default para sa lahat ng petsa. Gamitin ang time field sa itaas para ang kasalukuyang napiling petsa lang ang ma-edit; regular at weekend na mga listahan lang ang maaapektuhan at babalik ito sa default sa susunod na araw.",
-        vehicleDefaultsNote: "Ang mga halagang ito ang awtomatikong ilalagay sa Places field ng form ng paggawa ng sasakyan.",
+        vehicleDefaultsNote: "Ang mga halagang ito ang awtomatikong ilalagay sa Places at Tolerance field ng form ng paggawa ng sasakyan.",
         close: "Isara",
       },
       routes: {

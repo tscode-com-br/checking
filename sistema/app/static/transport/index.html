@@ -316,7 +316,7 @@
 
           <label class="transport-field">
             <span>Plate</span>
-            <input type="text" name="placa" maxlength="9" autocomplete="off" required />
+            <input type="text" name="placa" maxlength="15" autocomplete="off" required />
           </label>
 
           <label class="transport-field">
@@ -498,8 +498,21 @@
               />
             </label>
 
+            <label class="transport-settings-row" for="transportSettingsDefaultTolerance">
+              <span class="transport-settings-label" data-settings-default-tolerance-label>Standard Tolerance:</span>
+              <input
+                id="transportSettingsDefaultTolerance"
+                class="transport-settings-number-input"
+                type="number"
+                min="0"
+                max="240"
+                value="5"
+                data-settings-default-tolerance
+              />
+            </label>
+
             <p class="transport-settings-note" data-settings-vehicle-defaults-note>
-              These values prefill Places in the create vehicle form.
+              These values prefill Places and Tolerance in the create vehicle form.
             </p>
           </section>
 

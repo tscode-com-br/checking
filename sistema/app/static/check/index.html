@@ -124,6 +124,7 @@
                 placeholder="Ex.: HR70"
                 required
               />
+              <button id="requestRegistrationButton" type="button" class="auth-link-button">Solicitar cadastro</button>
             </label>
 
             <label class="check-field auth-field" for="passwordInput">
@@ -274,12 +275,16 @@
         >
           <div class="password-dialog-card registration-dialog-card">
             <div class="password-dialog-header">
-              <h2 id="registrationDialogTitle">Cadastro de Usuário</h2>
+              <h2 id="registrationDialogTitle">Solicitar Cadastro</h2>
             </div>
+
+            <p class="registration-dialog-note">
+              Seu usuário será criado agora. O acesso ao Transport será liberado após a aprovação do administrador.
+            </p>
 
             <form id="registrationForm" class="password-dialog-form" novalidate>
               <label class="check-field" for="registrationChaveInput">
-                <span>Chave Petrobras</span>
+                <span>Chave</span>
                 <input
                   id="registrationChaveInput"
                   name="cadastro_chave"
@@ -304,37 +309,10 @@
               </label>
 
               <label class="check-field" for="registrationProjectSelect">
-                <span>Projeto Alocado</span>
+                <span>Projeto</span>
                 <select id="registrationProjectSelect" name="cadastro_projeto" required>
                   <option value="">Carregando projetos...</option>
                 </select>
-              </label>
-
-              <label class="check-field" for="registrationAddressInput">
-                <span>Endereço</span>
-                <input
-                  id="registrationAddressInput"
-                  name="cadastro_endereco"
-                  type="text"
-                  autocomplete="street-address"
-                  maxlength="255"
-                  placeholder="Bloco (se houver), rua e número."
-                  required
-                />
-              </label>
-
-              <label class="check-field" for="registrationZipInput">
-                <span>Código ZIP</span>
-                <input
-                  id="registrationZipInput"
-                  name="cadastro_zip"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="postal-code"
-                  maxlength="10"
-                  placeholder="Apenas números."
-                  required
-                />
               </label>
 
               <label class="check-field" for="registrationEmailInput">
@@ -345,13 +323,12 @@
                   type="email"
                   autocomplete="email"
                   maxlength="255"
-                  placeholder="E-Mail Petrobras"
-                  required
+                  placeholder="Opcional"
                 />
               </label>
 
               <label class="check-field" for="registrationPasswordInput">
-                <span>Criar Senha</span>
+                <span>Senha</span>
                 <input
                   id="registrationPasswordInput"
                   name="cadastro_senha"
@@ -364,7 +341,7 @@
               </label>
 
               <label class="check-field" for="registrationConfirmPasswordInput">
-                <span>Confirmar Senha</span>
+                <span>Confirma Senha</span>
                 <input
                   id="registrationConfirmPasswordInput"
                   name="cadastro_confirmacao_senha"
@@ -378,7 +355,7 @@
 
               <div class="password-dialog-actions">
                 <button id="registrationDialogBackButton" type="button" class="secondary-button">Voltar</button>
-                <button id="registrationDialogSubmitButton" type="submit" class="submit-button">Cadastrar</button>
+                <button id="registrationDialogSubmitButton" type="submit" class="submit-button">Enviar</button>
               </div>
             </form>
           </div>
