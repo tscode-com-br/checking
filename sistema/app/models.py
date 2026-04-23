@@ -257,6 +257,7 @@ class ManagedLocation(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     coordinates_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    projects_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     tolerance_meters: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

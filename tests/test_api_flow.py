@@ -7148,6 +7148,7 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
                 "local": "Web Match P80",
                 "latitude": 1.255936,
                 "longitude": 103.611066,
+                "projects": ["P80"],
                 "tolerance_meters": 150,
             },
         )
@@ -7177,6 +7178,66 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
         assert payload["accuracy_threshold_meters"] == 25
 
 
+def test_web_location_endpoints_filter_locations_by_authenticated_user_project():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P80")
+        assert auth_response.status_code == 200
+
+        create_p80_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Projeto P80",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_p80_location.status_code == 200
+
+        create_p82_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Projeto P82",
+                "latitude": 1.355936,
+                "longitude": 103.711066,
+                "projects": ["P82"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_p82_location.status_code == 200
+
+        locations_response = client.get("/api/web/check/locations")
+        assert locations_response.status_code == 200
+        assert "Projeto P80" in locations_response.json()["items"]
+        assert "Projeto P82" not in locations_response.json()["items"]
+
+        p80_match = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+        assert p80_match.status_code == 200
+        assert p80_match.json()["matched"] is True
+        assert p80_match.json()["resolved_local"] == "Projeto P80"
+
+        p82_match = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.355936,
+                "longitude": 103.711066,
+                "accuracy_meters": 8,
+            },
+        )
+        assert p82_match.status_code == 200
+        assert p82_match.json()["matched"] is False
+        assert p82_match.json()["resolved_local"] is None
+
+
 def test_web_location_match_blocks_low_accuracy_before_matching():
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -7189,6 +7250,7 @@ def test_web_location_match_blocks_low_accuracy_before_matching():
                 "local": "Web Accuracy P80",
                 "latitude": 1.300001,
                 "longitude": 103.800001,
+                "projects": ["P80"],
                 "tolerance_meters": 120,
             },
         )
@@ -7230,6 +7292,7 @@ def test_web_location_match_returns_unregistered_location_without_message_within
                 "local": "Web Nearby P80",
                 "latitude": 1.255936,
                 "longitude": 103.611066,
+                "projects": ["P80"],
                 "tolerance_meters": 120,
             },
         )
@@ -7272,6 +7335,7 @@ def test_web_location_match_returns_outside_workplace_without_message():
                 "local": "Web Far P80",
                 "latitude": 1.255936,
                 "longitude": 103.611066,
+                "projects": ["P80"],
                 "tolerance_meters": 120,
             },
         )
@@ -8399,6 +8463,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
                 "local": "Base P80",
                 "latitude": 1.255936,
                 "longitude": 103.611066,
+                "projects": ["P80", "P82"],
                 "tolerance_meters": 150,
             },
         )
@@ -8410,6 +8475,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert locations.json()["location_accuracy_threshold_meters"] == 30
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["coordinates"] == [{"latitude": 1.255936, "longitude": 103.611066}]
+        assert base_p80["projects"] == ["P80", "P82"]
         assert base_p80["tolerance_meters"] == 150
 
         update_location_settings = client.post(
@@ -8441,6 +8507,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
                     {"latitude": 1.255936, "longitude": 103.611066},
                     {"latitude": 1.260001, "longitude": 103.612002},
                 ],
+                "projects": ["P82"],
                 "tolerance_meters": 250,
             },
         )
@@ -8454,6 +8521,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             {"latitude": 1.255936, "longitude": 103.611066},
             {"latitude": 1.260001, "longitude": 103.612002},
         ]
+        assert updated_base_p80["projects"] == ["P82"]
         assert updated_base_p80["latitude"] == 1.255936
         assert updated_base_p80["longitude"] == 103.611066
 

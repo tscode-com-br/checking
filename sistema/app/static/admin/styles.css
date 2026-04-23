@@ -137,6 +137,11 @@ header {
   color: #ffffff;
 }
 
+button.is-loading {
+  cursor: wait;
+  opacity: 0.78;
+}
+
 .auth-status {
   min-height: 22px;
   margin: 14px 0 0;
@@ -962,7 +967,7 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-locations-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1280px;
   table-layout: fixed;
 }
 
@@ -974,21 +979,26 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-locations-table th:nth-child(1),
 .cadastro-locations-table td:nth-child(1) {
-  width: 220px;
+  width: 260px;
 }
 
 .cadastro-locations-table th:nth-child(2),
 .cadastro-locations-table td:nth-child(2) {
-  width: auto;
+  width: 220px;
 }
 
 .cadastro-locations-table th:nth-child(3),
 .cadastro-locations-table td:nth-child(3) {
-  width: 120px;
+  width: auto;
 }
 
 .cadastro-locations-table th:nth-child(4),
 .cadastro-locations-table td:nth-child(4) {
+  width: 120px;
+}
+
+.cadastro-locations-table th:nth-child(5),
+.cadastro-locations-table td:nth-child(5) {
   width: 248px;
 }
 
@@ -1002,8 +1012,8 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-locations-table .location-coordinates-cell,
 .cadastro-locations-table .location-coordinate-input,
-.cadastro-locations-table td:nth-child(1) .inline,
-.cadastro-locations-table td:nth-child(3) .inline {
+.cadastro-locations-table td:nth-child(2) .inline,
+.cadastro-locations-table td:nth-child(4) .inline {
   min-width: 0;
 }
 
@@ -1085,6 +1095,62 @@ input.inline, select.inline, textarea.inline {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.location-projects-cell {
+  gap: 8px;
+}
+
+.location-projects-button {
+  align-self: flex-start;
+  min-width: 92px;
+}
+
+.location-projects-button[aria-expanded="true"] {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.location-projects-summary {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.location-projects-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.location-project-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.location-project-option input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.location-project-option span {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .location-static-value {

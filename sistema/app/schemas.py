@@ -281,6 +281,7 @@ class LocationRow(BaseModel):
     latitude: float
     longitude: float
     coordinates: list[LocationCoordinate]
+    projects: list[str] = Field(default_factory=list)
     tolerance_meters: int
 
 
@@ -295,6 +296,7 @@ class AdminLocationUpsert(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     coordinates: list[LocationCoordinate] | None = None
+    projects: list[str] = Field(min_length=1)
     tolerance_meters: int = Field(ge=1, le=9999)
 
     @model_validator(mode="before")
@@ -318,6 +320,31 @@ class AdminLocationUpsert(BaseModel):
     @classmethod
     def validate_location_name(cls, value: str) -> str:
         return _normalize_required_local(value)
+
+    @field_validator("projects", mode="before")
+    @classmethod
+    def validate_location_projects(cls, value: object) -> list[str]:
+        if value is None:
+            raise ValueError("Selecione ao menos um projeto para a localização")
+        if isinstance(value, str):
+            raw_items = [value]
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            raise ValueError("Os projetos da localização devem ser enviados como lista")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            project_name = _normalize_project_value(str(item))
+            if project_name in seen:
+                continue
+            seen.add(project_name)
+            normalized.append(project_name)
+
+        if not normalized:
+            raise ValueError("Selecione ao menos um projeto para a localização")
+        return normalized
 
     @field_validator("latitude")
     @classmethod

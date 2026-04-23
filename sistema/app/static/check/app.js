@@ -1025,6 +1025,7 @@
     const authBusy = isPasswordActionBusy();
     const dialogOpen = isAnyDialogOpen();
     const unlocked = isApplicationUnlocked();
+    const automaticActivitiesEnabled = isAutomaticActivitiesEnabled();
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
@@ -1050,6 +1051,11 @@
         return;
       }
 
+      if (actionInputs.includes(control)) {
+        control.disabled = dialogOpen || lockActive || !unlocked || automaticActivitiesEnabled;
+        return;
+      }
+
       if (control === manualLocationSelect) {
         control.disabled = dialogOpen || lockActive || !unlocked || gpsLocationPermissionGranted || availableLocations.length === 0;
         return;
@@ -1061,7 +1067,7 @@
       }
 
       if (control === submitButton) {
-        control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress;
+        control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress || automaticActivitiesEnabled;
         return;
       }
 
@@ -3956,6 +3962,7 @@
   function setGpsLocationPermissionGranted(value) {
     gpsLocationPermissionGranted = Boolean(value);
     syncManualLocationControl();
+    syncProjectVisibility();
   }
 
   function getDefaultManualLocation() {
@@ -4658,11 +4665,13 @@
   }
 
   function syncProjectVisibility() {
-    const isCheckIn = getSelectedValue('action') === 'checkin';
-    projectField.classList.toggle('is-hidden', !isCheckIn);
-    projectField.setAttribute('aria-hidden', String(!isCheckIn));
-    locationSelectField.classList.toggle('is-hidden', !isCheckIn);
-    locationSelectField.setAttribute('aria-hidden', String(!isCheckIn));
+    const hideProjectField = isAutomaticActivitiesEnabled();
+    const hideLocationField = isAutomaticActivitiesEnabled() || gpsLocationPermissionGranted;
+
+    projectField.classList.toggle('is-hidden', hideProjectField);
+    projectField.setAttribute('aria-hidden', String(hideProjectField));
+    locationSelectField.classList.toggle('is-hidden', hideLocationField);
+    locationSelectField.setAttribute('aria-hidden', String(hideLocationField));
 
     if (informeField) {
       const hideInforme = isAutomaticActivitiesEnabled();
@@ -5045,6 +5054,11 @@
         return;
       }
 
+      if (gpsLocationPermissionGranted && isApplicationUnlocked()) {
+        void runLifecycleUpdateSequence({ ignoreCooldown: true });
+        return;
+      }
+
       setStatus('Atividades automáticas desabilitadas.', 'success');
     });
   }
@@ -5102,6 +5116,11 @@
     const chave = sanitizeChave(chaveInput.value);
     const selectedAction = getSelectedValue('action');
     chaveInput.value = chave;
+
+    if (isAutomaticActivitiesEnabled()) {
+      setStatus('Desative Atividades Automáticas para registrar manualmente.', 'error');
+      return;
+    }
 
     if (chave.length !== 4) {
       setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');

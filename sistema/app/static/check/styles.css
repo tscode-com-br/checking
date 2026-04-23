@@ -724,6 +724,20 @@ body.portrait-lock-active > .orientation-lock-screen {
   transform: translateY(-1px);
 }
 
+.choice-card:has(input:disabled) {
+  cursor: not-allowed;
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  box-shadow: none;
+  transform: none;
+}
+
+.choice-card:has(input:disabled:checked) {
+  background: #e2e8f0;
+  color: #475569;
+}
+
 .choice-card-static {
   appearance: none;
   color: #475569;
@@ -745,6 +759,10 @@ body.portrait-lock-active > .orientation-lock-screen {
 .transport-choice-button:hover {
   box-shadow: 0 14px 30px rgba(107, 189, 255, 0.34);
   transform: translateY(-1px);
+}
+
+.choice-card input:disabled {
+  cursor: not-allowed;
 }
 
 .transport-choice-button:focus-visible {

@@ -82,7 +82,12 @@ from ..services.event_archives import (
     list_event_archives_page,
 )
 from ..services.event_logger import log_event
-from ..services.managed_locations import dump_location_coordinates, extract_location_coordinates
+from ..services.managed_locations import (
+    dump_location_coordinates,
+    dump_location_projects,
+    extract_location_coordinates,
+    extract_location_projects,
+)
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
     upsert_location_settings,
@@ -473,6 +478,7 @@ def build_location_row(location: ManagedLocation) -> LocationRow:
         latitude=primary_coordinate["latitude"],
         longitude=primary_coordinate["longitude"],
         coordinates=coordinates,
+        projects=extract_location_projects(location),
         tolerance_meters=location.tolerance_meters,
     )
 
@@ -1522,8 +1528,13 @@ def upsert_location(
         {"latitude": coordinate.latitude, "longitude": coordinate.longitude}
         for coordinate in (payload.coordinates or [])
     ]
+    location_projects = [
+        ensure_known_project(db, project_name, detail="Projeto nao encontrado para a localizacao.")
+        for project_name in payload.projects
+    ]
     primary_coordinate = coordinates[0]
     coordinates_json = dump_location_coordinates(coordinates)
+    projects_json = dump_location_projects(location_projects)
     created = False
     if location is None:
         location = ManagedLocation(
@@ -1531,6 +1542,7 @@ def upsert_location(
             latitude=primary_coordinate["latitude"],
             longitude=primary_coordinate["longitude"],
             coordinates_json=coordinates_json,
+            projects_json=projects_json,
             tolerance_meters=payload.tolerance_meters,
             created_at=timestamp,
             updated_at=timestamp,
@@ -1542,6 +1554,7 @@ def upsert_location(
         location.latitude = primary_coordinate["latitude"]
         location.longitude = primary_coordinate["longitude"]
         location.coordinates_json = coordinates_json
+        location.projects_json = projects_json
         location.tolerance_meters = payload.tolerance_meters
         location.updated_at = timestamp
 
@@ -1561,6 +1574,7 @@ def upsert_location(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; coordinates={coordinates_details}; "
+            f"projects={'|'.join(location_projects)}; "
             f"tolerance_meters={payload.tolerance_meters}"
         ),
     )

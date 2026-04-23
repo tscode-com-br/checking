@@ -41,6 +41,7 @@ from ..services.location_matching import (
     resolve_location_match,
     resolve_submission_local,
 )
+from ..services.managed_locations import filter_locations_for_project
 from ..services.location_settings import get_location_accuracy_threshold_meters
 from ..services.admin_auth import TRANSPORT_ACCESS_DIGIT
 from ..services.passwords import hash_password, verify_password
@@ -562,10 +563,11 @@ def get_web_check_state(
 
 @router.get("/check/locations", response_model=WebLocationOptionsResponse)
 def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> WebLocationOptionsResponse:
-    _require_authenticated_web_user(request, db)
-    items = db.execute(
-        select(ManagedLocation.local).order_by(ManagedLocation.local, ManagedLocation.id)
+    user = _require_authenticated_web_user(request, db)
+    rows = db.execute(
+        select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
+    items = [row.local for row in filter_locations_for_project(rows, user.projeto)]
     return WebLocationOptionsResponse(items=items)
 
 
@@ -575,11 +577,12 @@ def match_web_check_location(
     request: Request,
     db: Session = Depends(get_db),
 ) -> WebLocationMatchResponse:
-    _require_authenticated_web_user(request, db)
+    user = _require_authenticated_web_user(request, db)
     accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
-    locations = db.execute(
+    all_locations = db.execute(
         select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
+    locations = filter_locations_for_project(all_locations, user.projeto)
 
     if not locations:
         return WebLocationMatchResponse(
@@ -587,7 +590,7 @@ def match_web_check_location(
             resolved_local=None,
             label="Sem localização cadastrada",
             status="no_known_locations",
-            message="Nao ha localizacoes conhecidas cadastradas para validar a posicao.",
+            message="Nao ha localizacoes conhecidas cadastradas para validar a posicao no projeto atual.",
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
             nearest_workplace_distance_meters=None,

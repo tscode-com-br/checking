@@ -121,6 +121,21 @@ function getProjectOptions(selectedValue, options = {}) {
   return optionValues;
 }
 
+function normalizeProjectNames(values) {
+  return Array.from(new Set(
+    Array.from(values || [])
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+  ));
+}
+
+function getLocationProjectOptions(selectedValues = []) {
+  const selectedProjectNames = normalizeProjectNames(selectedValues);
+  const catalogProjectNames = getProjectCatalogNames();
+  const detachedProjectNames = selectedProjectNames.filter((projectName) => !catalogProjectNames.includes(projectName));
+  return [...detachedProjectNames, ...catalogProjectNames];
+}
+
 function syncSelectOptions(selectElement, optionValues, selectedValue) {
   if (!(selectElement instanceof HTMLSelectElement)) {
     return;
@@ -1963,11 +1978,14 @@ function createLocationRow(overrides = {}) {
     id: overrides.id ?? `draft-${nextLocationDraftId++}`,
     local: "",
     coordinates: [createLocationCoordinateEntry("")],
+    projects: [],
+    projectPickerOpen: false,
     tolerance: "",
     isEditing: false,
     ...overrides,
   };
   row.coordinates = normalizeLocationCoordinateEntries(overrides.coordinates);
+  row.projects = normalizeProjectNames(overrides.projects);
   return row;
 }
 
@@ -2000,6 +2018,12 @@ function captureLocationRowDraft(rowId) {
         })
       )
     : [createLocationCoordinateEntry("")];
+  const projectInputs = Array.from(rowElement.querySelectorAll("input[data-location-project-option]"));
+  if (projectInputs.length) {
+    row.projects = normalizeProjectNames(
+      projectInputs.filter((input) => input.checked).map((input) => input.value)
+    );
+  }
   return row;
 }
 
@@ -2130,6 +2154,40 @@ function makeLocationCoordinateLines(row) {
   `).join("");
 }
 
+function formatLocationProjectSummary(row) {
+  const projectNames = normalizeProjectNames(row?.projects);
+  if (!projectNames.length) {
+    return "Nenhum projeto selecionado";
+  }
+  return projectNames.join(", ");
+}
+
+function makeLocationProjectOptions(row) {
+  const selectedProjectNames = normalizeProjectNames(row.projects);
+  const selectedProjectSet = new Set(selectedProjectNames);
+  return getLocationProjectOptions(selectedProjectNames)
+    .map((projectName) => `
+      <label class="location-project-option">
+        <input
+          type="checkbox"
+          data-location-project-option="${row.id}"
+          value="${escapeHtml(projectName)}"
+          ${selectedProjectSet.has(projectName) ? "checked" : ""}
+        />
+        <span>${escapeHtml(projectName)}</span>
+      </label>
+    `)
+    .join("");
+}
+
+function focusLocationProjectPicker(rowId) {
+  const row = getLocationRowElement(rowId);
+  if (!row) {
+    return;
+  }
+  row.querySelector("input[data-location-project-option]")?.focus();
+}
+
 function makeLocationRow(row) {
   const tr = document.createElement("tr");
   tr.className = row.isEditing ? "location-row location-row-editing" : "location-row";
@@ -2138,6 +2196,23 @@ function makeLocationRow(row) {
   const toleranceValue = String(row.tolerance ?? "").trim();
   const coordinateValues = getLocationCoordinateValues(row);
   const coordinateCountLabel = formatLocationCoordinateCount(coordinateValues.length || 0);
+  const projectOptionsMarkup = makeLocationProjectOptions(row);
+  const projectsCell = `
+    <div class="location-cell-stack location-projects-cell">
+      <button
+        type="button"
+        class="secondary-button location-projects-button"
+        data-location-projects-toggle="${row.id}"
+        aria-expanded="${row.projectPickerOpen ? "true" : "false"}"
+      >Projetos</button>
+      <span class="location-projects-summary">${escapeHtml(formatLocationProjectSummary(row))}</span>
+      ${row.projectPickerOpen ? `
+        <div class="location-projects-panel">
+          ${projectOptionsMarkup || '<span class="location-empty-copy">Nenhum projeto cadastrado.</span>'}
+        </div>
+      ` : ""}
+    </div>
+  `;
   const locationCell = row.isEditing
     ? `
       <div class="location-cell-stack">
@@ -2180,6 +2255,9 @@ function makeLocationRow(row) {
 
   tr.innerHTML = `
     <td class="location-cell">
+        ${projectsCell}
+      </td>
+      <td class="location-cell">
       ${locationCell}
     </td>
     <td class="location-cell location-coordinates-cell">
@@ -2277,6 +2355,9 @@ function setLocationEditingState(rowId, editing) {
     captureLocationRowDraft(rowId);
   }
   row.isEditing = editing;
+  if (!editing) {
+    row.projectPickerOpen = false;
+  }
   renderLocations();
   if (editing) {
     focusLocationRow(rowId);
@@ -2341,10 +2422,14 @@ async function saveLocationRow(rowId) {
 
   const local = normalizeLocationName(row.local);
   const tolerance = normalizeTolerance(row.tolerance);
+  const projects = normalizeProjectNames(row.projects);
   const normalizedCoordinates = row.coordinates
     .map((coordinate) => String(coordinate.value || "").trim())
     .filter((value) => value)
     .map((value) => normalizeCoordinates(value));
+  if (!projects.length) {
+    throw new Error("Selecione ao menos um projeto para a localização.");
+  }
   if (!normalizedCoordinates.length) {
     throw new Error("Informe ao menos uma coordenada para o local.");
   }
@@ -2359,6 +2444,7 @@ async function saveLocationRow(rowId) {
     latitude: primaryCoordinate.latitude,
     longitude: primaryCoordinate.longitude,
     coordinates: coordinatesPayload,
+    projects,
     tolerance_meters: Number(tolerance),
   };
   if (isPersistedLocationRowId(rowId)) {
@@ -2443,6 +2529,7 @@ async function loadLocations() {
         ? row.coordinates
         : [{ latitude: row.latitude, longitude: row.longitude }]
       ).map((coordinate) => `${coordinate.latitude}, ${coordinate.longitude}`),
+      projects: Array.isArray(row.projects) ? row.projects : [],
       tolerance: String(row.tolerance_meters),
       isEditing: false,
     })
@@ -2702,6 +2789,9 @@ async function loadAdministrators() {
 async function loadProjects() {
   const rows = await fetchJson("/api/admin/projects");
   setProjectCatalog(rows);
+  if (locationRows.length > 0) {
+    renderLocations();
+  }
 
   const body = document.getElementById("projectsBody");
   if (!body) {
@@ -3121,6 +3211,39 @@ async function refreshManualTable(loader) {
   markDashboardRefreshed();
 }
 
+async function runManualRefresh(button, loader) {
+  if (!(button instanceof HTMLButtonElement) || button.disabled) {
+    return;
+  }
+
+  const idleLabel = String(button.dataset.idleLabel || button.textContent || "Atualizar").trim() || "Atualizar";
+  button.dataset.idleLabel = idleLabel;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Atualizando...";
+
+  try {
+    await refreshManualTable(loader);
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    button.setAttribute("aria-busy", "false");
+    button.textContent = idleLabel;
+  }
+}
+
+function bindManualRefreshButton(button, loader) {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  button.dataset.idleLabel = String(button.textContent || "Atualizar").trim() || "Atualizar";
+  button.addEventListener("click", () => {
+    runManualRefresh(button, loader).catch((error) => setStatus(error.message, false));
+  });
+}
+
 async function savePending(id, rfid) {
   const nome = document.getElementById(`nome-${id}`).value.trim();
   const chave = document.getElementById(`chave-${id}`).value.trim().toUpperCase();
@@ -3536,31 +3659,11 @@ function bindActions() {
   if (changePasswordButton) {
     changePasswordButton.addEventListener("click", openChangePasswordModal);
   }
-  if (refreshFormsButton) {
-    refreshFormsButton.addEventListener("click", () => {
-      refreshManualTable(loadForms).catch((error) => setStatus(error.message, false));
-    });
-  }
-  if (refreshInactiveButton) {
-    refreshInactiveButton.addEventListener("click", () => {
-      refreshManualTable(loadInactive).catch((error) => setStatus(error.message, false));
-    });
-  }
-  if (refreshAdministratorsButton) {
-    refreshAdministratorsButton.addEventListener("click", () => {
-      refreshManualTable(loadAdministrators).catch((error) => setStatus(error.message, false));
-    });
-  }
-  if (refreshUsersButton) {
-    refreshUsersButton.addEventListener("click", () => {
-      refreshManualTable(loadRegisteredUsers).catch((error) => setStatus(error.message, false));
-    });
-  }
-  if (refreshEventsButton) {
-    refreshEventsButton.addEventListener("click", () => {
-      refreshManualTable(loadEvents).catch((error) => setStatus(error.message, false));
-    });
-  }
+  bindManualRefreshButton(refreshFormsButton, loadForms);
+  bindManualRefreshButton(refreshInactiveButton, loadInactive);
+  bindManualRefreshButton(refreshAdministratorsButton, loadAdministrators);
+  bindManualRefreshButton(refreshUsersButton, loadRegisteredUsers);
+  bindManualRefreshButton(refreshEventsButton, loadEvents);
   if (changePasswordForm) {
     changePasswordForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -3728,6 +3831,24 @@ function bindActions() {
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const target = event.target;
     if (target.tagName !== "BUTTON") {
+      return;
+    }
+    if (target.dataset.locationProjectsToggle) {
+      const row = getLocationRowById(target.dataset.locationProjectsToggle);
+      if (!row) {
+        return;
+      }
+      captureLocationRowDraft(row.id);
+      if (!row.isEditing) {
+        row.isEditing = true;
+        row.projectPickerOpen = true;
+      } else {
+        row.projectPickerOpen = !row.projectPickerOpen;
+      }
+      renderLocations();
+      if (row.projectPickerOpen) {
+        focusLocationProjectPicker(row.id);
+      }
       return;
     }
     if (target.dataset.locationEdit) {
