@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     forms_max_retries: int = 3
     forms_queue_enabled: bool = True
     event_archives_dir: str = "/app/data/event_archives"
-    transport_exports_dir: str = "/app/data/transport_exports"
 
 
 settings = Settings()

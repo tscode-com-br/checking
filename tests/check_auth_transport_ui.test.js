@@ -45,52 +45,12 @@ test('password register action shows Aguarde, uses a pending style, and locks ot
   assert.match(checkCss, /\.auth-action-button\.is-pending \{[\s\S]*background:\s*#e2e8f0;[\s\S]*color:\s*#475569;/);
 });
 
-test('auth assistance states highlight chave and senha in orange and relabel the action button', () => {
-  assert.match(checkApp, /function isUnknownUserKeyState\(\)/);
-  assert.match(checkApp, /function isMissingPasswordState\(\)/);
-  assert.match(checkApp, /fieldElement\.classList\.toggle\('auth-field-warning', warning\);/);
-  assert.match(checkApp, /control\.classList\.toggle\('is-warning', canOpenRegistration \|\| canCreatePassword\);/);
-  assert.match(checkCss, /\.auth-field\.auth-field-warning input \{[\s\S]*box-shadow:/);
-  assert.match(checkCss, /\.auth-action-button\.is-warning \{[\s\S]*background:\s*#f97316;[\s\S]*color:\s*#0f172a;/);
-  assert.match(checkApp, /return 'Chave\?';/);
-  assert.match(checkApp, /return 'Senha\?';/);
-});
-
 test('auth fields restore cleared chave and senha when the user leaves without typing', () => {
   assert.match(checkApp, /function restorePendingAuthFieldValuesIfNeeded\(\)/);
   assert.match(checkApp, /rememberPendingAuthFieldRestoreState\('chave'\);/);
   assert.match(checkApp, /rememberPendingAuthFieldRestoreState\('password'\);/);
   assert.match(checkApp, /document\.addEventListener\('pointerdown', restorePendingAuthFieldValuesOnExternalFocus, true\);/);
   assert.match(checkApp, /document\.addEventListener\('focusin', restorePendingAuthFieldValuesOnExternalFocus, true\);/);
-});
-
-test('login area exposes black secondary buttons for password change and administration requests', () => {
-  assert.match(
-    checkHtml,
-    /id="passwordActionButton"[\s\S]*<\/div>\s*<\/div>\s*<div class="auth-secondary-actions"[\s\S]*id="changePasswordShortcutButton"[\s\S]*>Alterar Senha<\/[\s\S]*id="requestAdministrationButton"[\s\S]*>Solicitar Administração</
-  );
-  assert.match(
-    checkCss,
-    /\.auth-secondary-actions \{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/
-  );
-  assert.match(
-    checkCss,
-    /\.auth-secondary-button \{[\s\S]*background:\s*#000000;[\s\S]*color:\s*#ffffff;/
-  );
-});
-
-test('password change dialog verifies the current password in real time before enabling Salvar', () => {
-  assert.match(checkHtml, /data-auth-verify-endpoint="\/api\/web\/auth\/verify-password"/);
-  assert.match(checkHtml, /id="passwordDialogSubmitButton"[\s\S]*disabled[\s\S]*>Salvar</);
-  assert.match(checkHtml, /<span>Senha Atual<\/span>/);
-  assert.match(checkHtml, /<span>Confirma Senha<\/span>/);
-  assert.match(checkApp, /const authVerifyEndpoint = form\.dataset\.authVerifyEndpoint \|\| '\/api\/web\/auth\/verify-password';/);
-  assert.match(checkApp, /function schedulePasswordChangeCurrentPasswordVerification\(\)/);
-  assert.match(checkApp, /fetch\(authVerifyEndpoint, \{/);
-  assert.match(checkApp, /newPassword === oldPassword/);
-  assert.match(checkApp, /control === passwordDialogSubmitButton[\s\S]*!isActivePasswordDialogReadyToSubmit\(\)/);
-  assert.match(checkApp, /changePasswordShortcutButton\.addEventListener\('click', \(\) => \{[\s\S]*openPasswordDialog\('change'\);[\s\S]*\}\);/);
-  assert.doesNotMatch(checkApp, /requestAdministrationButton\.addEventListener\('click'/);
 });
 
 test('transport widget subscribes to realtime updates while the transport screen is open', () => {

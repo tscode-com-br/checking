@@ -677,71 +677,6 @@
     });
   }
 
-  function parseDownloadFileName(contentDisposition, fallbackName) {
-    const disposition = String(contentDisposition || "");
-    const encodedMatch = /filename\*=utf-8''([^;]+)/i.exec(disposition);
-    if (encodedMatch) {
-      try {
-        return decodeURIComponent(encodedMatch[1]);
-      } catch (error) {}
-    }
-
-    const match = /filename="?([^";]+)"?/i.exec(disposition);
-    return match ? match[1] : fallbackName;
-  }
-
-  function downloadBlob(blob, fileName) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    globalScope.setTimeout(function () {
-      URL.revokeObjectURL(objectUrl);
-    }, 1000);
-  }
-
-  function requestBlob(url, fallbackName, options) {
-    const requestOptions = Object.assign(
-      {
-        credentials: "same-origin",
-        headers: {
-          Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-      },
-      options || {}
-    );
-
-    return fetch(url, requestOptions).then(function (response) {
-      if (!response.ok) {
-        return response.text().then(function (text) {
-          let payload = null;
-          if (text) {
-            try {
-              payload = JSON.parse(text);
-            } catch (error) {
-              payload = null;
-            }
-          }
-
-          const error = new Error(formatApiErrorMessage(payload, response.status));
-          error.status = response.status;
-          error.payload = payload;
-          throw error;
-        });
-      }
-
-      return response.blob().then(function (blob) {
-        return {
-          blob,
-          fileName: parseDownloadFileName(response.headers.get("Content-Disposition"), fallbackName),
-        };
-      });
-    });
-  }
-
   function extractApiMessage(value) {
     if (typeof value === "string") {
       return value.trim();
@@ -1043,16 +978,6 @@
     return requestRow && requestRow.awareness_status === "aware" ? "aware" : "pending";
   }
 
-  function getPassengerAwarenessLabel(awarenessState) {
-    if (awarenessState === "aware") {
-      return t("misc.passengerConfirmedStatus");
-    }
-    if (awarenessState === "pending") {
-      return t("misc.passengerPendingStatus");
-    }
-    return "";
-  }
-
   function isRequestAssignedToVehicle(requestRow, vehicle) {
     return Boolean(
       requestRow
@@ -1175,8 +1100,6 @@
       pendingAssignmentPreview: null,
       dragRequestId: null,
       isLoading: false,
-      exportMenuOpen: false,
-      exportInProgress: false,
       selectedRouteKind: "home_to_work",
       projectVisibility: {},
       projectListOpen: false,
@@ -1256,10 +1179,6 @@
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
     const routeTimeLabel = document.querySelector("[data-route-time-label]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
-    const exportWidget = document.querySelector("[data-export-widget]");
-    const exportToggleButton = document.querySelector("[data-export-toggle]");
-    const exportMenu = document.querySelector("[data-export-menu]");
-    const exportRouteButtons = Array.from(document.querySelectorAll("[data-export-route]"));
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
@@ -1314,41 +1233,11 @@
       });
     });
 
-    if (exportToggleButton) {
-      exportToggleButton.addEventListener("click", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleExportMenu();
-      });
-    }
-
-    exportRouteButtons.forEach(function (buttonElement) {
-      buttonElement.addEventListener("click", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        void exportTransportList(buttonElement.dataset.exportRoute || "home_to_work");
-      });
-    });
-
-    document.addEventListener("click", function (event) {
-      if (!state.exportMenuOpen || !exportWidget) {
-        return;
-      }
-      if (exportWidget.contains(event.target)) {
-        return;
-      }
-      closeExportMenu();
-    });
-
     globalScope.addEventListener("scroll", function () {
       scheduleExpandedVehicleDetailsPositionSync();
     }, true);
     document.addEventListener("keydown", function (event) {
       if (event.key !== "Escape") {
-        return;
-      }
-      if (state.exportMenuOpen) {
-        closeExportMenu({ restoreFocus: true });
         return;
       }
       if (!state.expandedVehicleKey && !state.pendingAssignmentPreview) {
@@ -1410,21 +1299,9 @@
       if (supportKicker) {
         supportKicker.textContent = t("topbar.systemSupport");
       }
-      if (exportToggleButton) {
-        exportToggleButton.setAttribute("aria-label", t("topbar.exportTransportList"));
-        exportToggleButton.title = t("topbar.exportTransportList");
-      }
-      if (exportMenu) {
-        exportMenu.setAttribute("aria-label", t("topbar.exportOptionsAria"));
-      }
       if (routeTimeLabel) {
         routeTimeLabel.textContent = t("settings.workToHomeTime");
       }
-      exportRouteButtons.forEach(function (buttonElement) {
-        const routeKind = buttonElement.dataset.exportRoute || "home_to_work";
-        buttonElement.textContent = getRouteKindLabel(routeKind);
-        buttonElement.title = getRouteKindLabel(routeKind);
-      });
       if (authLabels[0]) {
         authLabels[0].textContent = t("auth.key");
       }
@@ -1855,12 +1732,9 @@
       if (routeTimePopover) {
         routeTimePopover.hidden = !shouldShowRouteTime;
       }
-
-      syncExportControls();
     }
 
     function closeRouteTimePopover() {
-      closeExportMenu();
       syncRouteTimeControls();
     }
 
@@ -2061,7 +1935,6 @@
       }
 
       syncSettingsControls();
-      syncRouteTimeControls();
     }
 
     function clearTransportSession(message) {
@@ -2538,7 +2411,6 @@
         return;
       }
       closeExpandedVehicleDetails({ render: false });
-      closeExportMenu();
       if (state.isAuthenticated && !state.settingsLoaded) {
         void loadTransportSettings({ silent: true });
       }
@@ -2589,89 +2461,6 @@
 
     function getCurrentServiceDateIso() {
       return formatIsoDate(dateStore.getValue());
-    }
-
-    function syncExportControls() {
-      const shouldShowExport = state.isAuthenticated;
-      const menuOpen = shouldShowExport && state.exportMenuOpen;
-
-      if (!shouldShowExport) {
-        state.exportMenuOpen = false;
-      }
-
-      if (exportWidget) {
-        exportWidget.hidden = !shouldShowExport;
-      }
-      if (exportToggleButton) {
-        exportToggleButton.disabled = !shouldShowExport || state.exportInProgress;
-        exportToggleButton.setAttribute("aria-expanded", String(menuOpen));
-      }
-      if (exportMenu) {
-        exportMenu.hidden = !menuOpen;
-      }
-      exportRouteButtons.forEach(function (buttonElement) {
-        buttonElement.disabled = !shouldShowExport || state.exportInProgress;
-      });
-    }
-
-    function closeExportMenu(options) {
-      const shouldRestoreFocus = Boolean(options && options.restoreFocus);
-      state.exportMenuOpen = false;
-      syncExportControls();
-      if (shouldRestoreFocus && exportToggleButton && typeof exportToggleButton.focus === "function") {
-        exportToggleButton.focus();
-      }
-    }
-
-    function toggleExportMenu() {
-      if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
-        syncExportControls();
-        return;
-      }
-      if (state.exportInProgress) {
-        return;
-      }
-      state.exportMenuOpen = !state.exportMenuOpen;
-      syncExportControls();
-    }
-
-    function exportTransportList(routeKind) {
-      const normalizedRouteKind = routeKind === "work_to_home" ? "work_to_home" : "home_to_work";
-      if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
-        syncExportControls();
-        return Promise.resolve(null);
-      }
-      if (state.exportInProgress) {
-        return Promise.resolve(null);
-      }
-
-      state.exportInProgress = true;
-      state.exportMenuOpen = false;
-      syncExportControls();
-      setStatus(t("status.exportingTransportList"), "info");
-
-      return requestBlob(
-        `${TRANSPORT_API_PREFIX}/exports/transport-list?service_date=${encodeURIComponent(getCurrentServiceDateIso())}&route_kind=${encodeURIComponent(normalizedRouteKind)}`,
-        `Transport List - ${getCurrentServiceDateIso().replace(/-/g, "")} - export.xlsx`
-      )
-        .then(function (result) {
-          if (!result) {
-            return null;
-          }
-          downloadBlob(result.blob, result.fileName);
-          setStatus(t("status.transportListDownloaded", { route: getRouteKindLabel(normalizedRouteKind) }), "success");
-          return result;
-        })
-        .catch(function (error) {
-          handleProtectedRequestError(error, t("status.couldNotExportTransportList"));
-          return null;
-        })
-        .finally(function () {
-          state.exportInProgress = false;
-          syncExportControls();
-        });
     }
 
     function canOpenVehicleModal(scope) {
@@ -3082,37 +2871,25 @@
       ).forEach(function (row, index) {
         const tableRow = createNode("tr", "transport-vehicle-passenger-row");
         const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
-        const awarenessCell = createNode("td", "transport-vehicle-passenger-awareness");
-        const actionCell = createNode("td", "transport-vehicle-passenger-action");
+        const statusCell = createNode("td", "transport-vehicle-passenger-status");
         const sourceRequestRow = passengerSourceRows[index] || null;
         const isPreviewRow = Boolean(
           previewRequestRow
           && sourceRequestRow
           && Number(sourceRequestRow.id) === Number(previewRequestRow.id)
         );
-        const awarenessLabel = getPassengerAwarenessLabel(row.awarenessState);
 
         if (!row.name) {
           nameCell.innerHTML = "&nbsp;";
         }
 
-        if (awarenessLabel) {
-          awarenessCell.textContent = awarenessLabel;
-          awarenessCell.classList.add(row.awarenessState === "aware" ? "is-confirmed" : "is-pending");
-          awarenessCell.setAttribute("aria-label", t(row.awarenessState === "aware" ? "misc.passengerAwareAria" : "misc.passengerPendingAria"));
-          awarenessCell.title = t(row.awarenessState === "aware" ? "misc.passengerAwareAria" : "misc.passengerPendingAria");
-        } else {
-          awarenessCell.innerHTML = "&nbsp;";
-        }
-
         if (sourceRequestRow && !isPreviewRow) {
-          actionCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
+          statusCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
         } else {
-          actionCell.innerHTML = "&nbsp;";
+          statusCell.innerHTML = "&nbsp;";
         }
         tableRow.appendChild(nameCell);
-        tableRow.appendChild(awarenessCell);
-        tableRow.appendChild(actionCell);
+        tableRow.appendChild(statusCell);
         tableBody.appendChild(tableRow);
       });
 
@@ -3830,7 +3607,6 @@
     applyTransportVehicleToleranceDefault,
     syncVehicleTypeDependentDefaults,
     buildVehiclePassengerAwarenessRows,
-    getPassengerAwarenessLabel,
     getPassengerAwarenessState,
     parseStoredTransportDate,
     resolveStoredTransportDate,

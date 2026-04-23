@@ -8,7 +8,6 @@
   const authRegisterEndpoint = form.dataset.authRegisterEndpoint || '/api/web/auth/register-password';
   const authUserRegisterEndpoint = form.dataset.authUserRegisterEndpoint || '/api/web/auth/register-user';
   const authLoginEndpoint = form.dataset.authLoginEndpoint || '/api/web/auth/login';
-  const authVerifyEndpoint = form.dataset.authVerifyEndpoint || '/api/web/auth/verify-password';
   const authChangeEndpoint = form.dataset.authChangeEndpoint || '/api/web/auth/change-password';
   const authLogoutEndpoint = form.dataset.authLogoutEndpoint || '/api/web/auth/logout';
   const transportStateEndpoint = form.dataset.transportStateEndpoint || '/api/web/transport/state';
@@ -28,8 +27,7 @@
   const chaveInput = document.getElementById('chaveInput');
   const passwordInput = document.getElementById('passwordInput');
   const passwordActionButton = document.getElementById('passwordActionButton');
-  const changePasswordShortcutButton = document.getElementById('changePasswordShortcutButton');
-  const requestAdministrationButton = document.getElementById('requestAdministrationButton');
+  const requestRegistrationButton = document.getElementById('requestRegistrationButton');
   const chaveAuthField = chaveInput ? chaveInput.closest('.auth-field') : null;
   const passwordAuthField = passwordInput ? passwordInput.closest('.auth-field') : null;
   const projectField = document.getElementById('projectField');
@@ -50,9 +48,7 @@
   const locationAccuracy = document.getElementById('locationAccuracy');
   const passwordDialog = document.getElementById('passwordDialog');
   const passwordDialogBackdrop = document.getElementById('passwordDialogBackdrop');
-  const passwordDialogTitle = document.getElementById('passwordDialogTitle');
   const passwordChangeForm = document.getElementById('passwordChangeForm');
-  const oldPasswordField = document.getElementById('oldPasswordField');
   const oldPasswordInput = document.getElementById('oldPasswordInput');
   const newPasswordInput = document.getElementById('newPasswordInput');
   const confirmPasswordInput = document.getElementById('confirmPasswordInput');
@@ -118,13 +114,7 @@
     submitButton,
     refreshLocationButton,
   ].filter(Boolean);
-  const authControls = [
-    chaveInput,
-    passwordInput,
-    passwordActionButton,
-    changePasswordShortcutButton,
-    requestAdministrationButton,
-  ].filter(Boolean);
+  const authControls = [chaveInput, passwordInput, passwordActionButton, requestRegistrationButton].filter(Boolean);
   const highlightedAuthFields = [chaveAuthField, passwordAuthField].filter(Boolean);
   const passwordDialogControls = [
     oldPasswordInput,
@@ -283,18 +273,8 @@
   let passwordAutofillSyncFrameId = null;
   let viewportMetricsSyncFrameId = null;
   let passwordVerificationRequestToken = 0;
-  let passwordChangeVerificationTimeoutId = null;
-  let passwordChangeVerificationRequestToken = 0;
-  let passwordChangeVerificationAbortController = null;
-  let passwordDialogMode = 'change';
   let lastVerifiedPassword = '';
   let lastObservedPasswordFieldValue = '';
-
-  const passwordChangeValidationState = {
-    currentPasswordVerified: false,
-    verificationInProgress: false,
-    verifiedPasswordValue: '',
-  };
 
   function resolveTransportEventTargetElement(event) {
     const target = event ? event.target : null;
@@ -847,228 +827,8 @@
     return authState.statusLoading || passwordRegisterInProgress || passwordChangeInProgress || userSelfRegistrationInProgress;
   }
 
-  function clearPasswordChangeVerificationTimer() {
-    if (passwordChangeVerificationTimeoutId !== null) {
-      window.clearTimeout(passwordChangeVerificationTimeoutId);
-      passwordChangeVerificationTimeoutId = null;
-    }
-  }
-
-  function abortPasswordChangeVerification() {
-    clearPasswordChangeVerificationTimer();
-    passwordChangeVerificationRequestToken += 1;
-    if (passwordChangeVerificationAbortController) {
-      passwordChangeVerificationAbortController.abort();
-      passwordChangeVerificationAbortController = null;
-    }
-    passwordChangeValidationState.verificationInProgress = false;
-  }
-
-  function clearPasswordChangeValidationState() {
-    abortPasswordChangeVerification();
-    passwordChangeValidationState.currentPasswordVerified = false;
-    passwordChangeValidationState.verifiedPasswordValue = '';
-  }
-
-  function isPasswordChangeCurrentPasswordValid() {
-    return passwordChangeValidationState.currentPasswordVerified
-      && oldPasswordInput
-      && oldPasswordInput.value === passwordChangeValidationState.verifiedPasswordValue;
-  }
-
-  function isPasswordChangeNewPasswordValid() {
-    const currentPassword = oldPasswordInput ? oldPasswordInput.value : '';
-    const nextPassword = newPasswordInput ? newPasswordInput.value : '';
-    return clientState.isPasswordLengthValid(nextPassword) && nextPassword !== currentPassword;
-  }
-
-  function isPasswordChangeConfirmationValid() {
-    const nextPassword = newPasswordInput ? newPasswordInput.value : '';
-    const confirmation = confirmPasswordInput ? confirmPasswordInput.value : '';
-    return confirmation.length > 0 && confirmation === nextPassword;
-  }
-
-  function isPasswordChangeReadyToSubmit() {
-    return Boolean(
-      passwordDialog
-      && !passwordDialog.hidden
-      && getActiveChave().length === 4
-      && authState.hasPassword
-      && !passwordChangeValidationState.verificationInProgress
-      && isPasswordChangeCurrentPasswordValid()
-      && isPasswordChangeNewPasswordValid()
-      && isPasswordChangeConfirmationValid()
-      && !passwordChangeInProgress
-    );
-  }
-
-  function isPasswordCreateReadyToSubmit() {
-    return Boolean(
-      passwordDialog
-      && !passwordDialog.hidden
-      && getActiveChave().length === 4
-      && isMissingPasswordState()
-      && isPasswordChangeNewPasswordValid()
-      && isPasswordChangeConfirmationValid()
-      && !passwordRegisterInProgress
-    );
-  }
-
-  function isActivePasswordDialogReadyToSubmit() {
-    return isPasswordDialogCreateMode()
-      ? isPasswordCreateReadyToSubmit()
-      : isPasswordChangeReadyToSubmit();
-  }
-
-  async function verifyCurrentPasswordForChange(options) {
-    const settings = options || {};
-    const requestToken = Number.isInteger(settings.requestToken) ? settings.requestToken : 0;
-    const normalizedChave = getActiveChave();
-    const currentPassword = oldPasswordInput ? oldPasswordInput.value : '';
-
-    if (
-      !oldPasswordInput
-      || normalizedChave.length !== 4
-      || !authState.hasPassword
-      || !clientState.isPasswordLengthValid(currentPassword)
-    ) {
-      passwordChangeValidationState.verificationInProgress = false;
-      syncFormControlStates();
-      return false;
-    }
-
-    if (
-      authState.passwordVerified
-      && authState.chave === normalizedChave
-      && currentPassword === lastVerifiedPassword
-    ) {
-      passwordChangeValidationState.currentPasswordVerified = true;
-      passwordChangeValidationState.verifiedPasswordValue = currentPassword;
-      passwordChangeValidationState.verificationInProgress = false;
-      syncFormControlStates();
-      return true;
-    }
-
-    const controller = new AbortController();
-    passwordChangeVerificationAbortController = controller;
-
-    try {
-      const response = await fetch(authVerifyEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          chave: normalizedChave,
-          senha: currentPassword,
-        }),
-        signal: controller.signal,
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw createRequestError(response, payload);
-      }
-
-      if (
-        requestToken !== passwordChangeVerificationRequestToken
-        || getActiveChave() !== normalizedChave
-        || oldPasswordInput.value !== currentPassword
-      ) {
-        return false;
-      }
-
-      passwordChangeValidationState.currentPasswordVerified = true;
-      passwordChangeValidationState.verifiedPasswordValue = currentPassword;
-      return true;
-    } catch (error) {
-      if (
-        controller.signal.aborted
-        || requestToken !== passwordChangeVerificationRequestToken
-        || getActiveChave() !== normalizedChave
-        || oldPasswordInput.value !== currentPassword
-      ) {
-        return false;
-      }
-
-      passwordChangeValidationState.currentPasswordVerified = false;
-      passwordChangeValidationState.verifiedPasswordValue = '';
-      return false;
-    } finally {
-      if (passwordChangeVerificationAbortController === controller) {
-        passwordChangeVerificationAbortController = null;
-      }
-      if (requestToken === passwordChangeVerificationRequestToken) {
-        passwordChangeValidationState.verificationInProgress = false;
-      }
-      syncFormControlStates();
-    }
-  }
-
-  function schedulePasswordChangeCurrentPasswordVerification() {
-    clearPasswordChangeValidationState();
-
-    const normalizedChave = getActiveChave();
-    const currentPassword = oldPasswordInput ? oldPasswordInput.value : '';
-
-    if (
-      !oldPasswordInput
-      || normalizedChave.length !== 4
-      || !authState.hasPassword
-      || !clientState.isPasswordLengthValid(currentPassword)
-    ) {
-      syncFormControlStates();
-      return;
-    }
-
-    if (
-      authState.passwordVerified
-      && authState.chave === normalizedChave
-      && currentPassword === lastVerifiedPassword
-    ) {
-      passwordChangeValidationState.currentPasswordVerified = true;
-      passwordChangeValidationState.verifiedPasswordValue = currentPassword;
-      syncFormControlStates();
-      return;
-    }
-
-    passwordChangeValidationState.verificationInProgress = true;
-    const requestToken = passwordChangeVerificationRequestToken;
-    syncFormControlStates();
-    passwordChangeVerificationTimeoutId = window.setTimeout(() => {
-      passwordChangeVerificationTimeoutId = null;
-      void verifyCurrentPasswordForChange({ requestToken });
-    }, passwordVerificationDebounceMs);
-  }
-
-  function syncPasswordChangeInputState() {
-    schedulePasswordChangeCurrentPasswordVerification();
-    syncFormControlStates();
-  }
-
   function getActiveChave() {
     return sanitizeChave(chaveInput.value);
-  }
-
-  function isUnknownUserKeyState() {
-    return authState.statusResolved && !authState.found;
-  }
-
-  function isMissingPasswordState() {
-    return authState.statusResolved && authState.found && !authState.hasPassword;
-  }
-
-  function isAuthAttentionState() {
-    return isUnknownUserKeyState() || isMissingPasswordState();
-  }
-
-  function isPasswordDialogCreateMode() {
-    return passwordDialogMode === 'create';
-  }
-
-  function isPasswordDialogSubmitting() {
-    return isPasswordDialogCreateMode() ? passwordRegisterInProgress : passwordChangeInProgress;
   }
 
   function isApplicationUnlocked(chave) {
@@ -1088,12 +848,6 @@
     }
     if (userSelfRegistrationInProgress) {
       return 'Cadastrando...';
-    }
-    if (isUnknownUserKeyState()) {
-      return 'Chave?';
-    }
-    if (isMissingPasswordState()) {
-      return 'Senha?';
     }
     return clientState.resolvePasswordActionLabel(authState.hasPassword);
   }
@@ -1129,29 +883,10 @@
 
   function syncAuthenticationFieldHighlights() {
     const authenticated = isApplicationUnlocked();
-    const warning = !authenticated && isAuthAttentionState();
     highlightedAuthFields.forEach((fieldElement) => {
-      fieldElement.classList.toggle('auth-field-pending', !authenticated && !warning);
-      fieldElement.classList.toggle('auth-field-warning', warning);
+      fieldElement.classList.toggle('auth-field-pending', !authenticated);
       fieldElement.classList.toggle('auth-field-authenticated', authenticated);
     });
-  }
-
-  function syncPasswordDialogPresentation() {
-    const createMode = isPasswordDialogCreateMode();
-
-    if (passwordDialogTitle) {
-      passwordDialogTitle.textContent = createMode ? 'Cadastrar Senha' : 'Alterar Senha';
-    }
-
-    if (oldPasswordField) {
-      oldPasswordField.hidden = createMode;
-      oldPasswordField.classList.toggle('is-hidden', createMode);
-    }
-
-    if (oldPasswordInput) {
-      oldPasswordInput.required = !createMode;
-    }
   }
 
   function hasPendingAuthFieldRestoreState() {
@@ -1229,7 +964,6 @@
       || transportAcknowledgeInProgress;
 
     syncAuthenticationFieldHighlights();
-    syncPasswordDialogPresentation();
 
     projectSelect.disabled = dialogOpen
       || lockActive
@@ -1279,33 +1013,21 @@
 
       if (control === passwordActionButton) {
         const activeChave = getActiveChave();
-        const canOpenRegistration = isUnknownUserKeyState();
-        const canCreatePassword = isMissingPasswordState();
-        const canUseAction = authState.hasPassword || canOpenRegistration || canCreatePassword;
+        const canRegisterPassword = clientState.isPasswordLengthValid(passwordInput.value);
+        const canOpenRegistration = authState.statusResolved && !authState.found;
         control.textContent = resolvePasswordActionButtonLabel();
         control.classList.toggle('is-pending', passwordRegisterInProgress);
-        control.classList.toggle('is-warning', canOpenRegistration || canCreatePassword);
         control.disabled = dialogOpen
           || lockActive
           || submitInProgress
           || authBusy
           || activeChave.length !== 4
-          || !canUseAction;
+          || (!authState.hasPassword && !canRegisterPassword && !canOpenRegistration);
         return;
       }
 
-      if (control === changePasswordShortcutButton) {
-        control.disabled = dialogOpen
-          || lockActive
-          || submitInProgress
-          || authBusy
-          || getActiveChave().length !== 4
-          || !authState.statusResolved
-          || !authState.hasPassword;
-        return;
-      }
-      if (control === requestAdministrationButton) {
-        control.disabled = dialogOpen || lockActive || submitInProgress || authBusy;
+      if (control === requestRegistrationButton) {
+        control.disabled = dialogOpen || lockActive || submitInProgress || authBusy || userSelfRegistrationInProgress;
       }
     });
 
@@ -1314,25 +1036,18 @@
         return;
       }
 
-      const passwordDialogSubmitting = isPasswordDialogSubmitting();
-
       if (control === passwordDialogBackButton) {
-        control.disabled = passwordDialogSubmitting;
+        control.disabled = passwordChangeInProgress;
         return;
       }
 
       if (control === passwordDialogSubmitButton) {
-        control.disabled = passwordDialogSubmitting || !isActivePasswordDialogReadyToSubmit();
-        control.textContent = passwordDialogSubmitting ? 'Salvando...' : 'Salvar';
+        control.disabled = passwordChangeInProgress;
+        control.textContent = passwordChangeInProgress ? 'Alterando...' : 'Alterar';
         return;
       }
 
-      if (control === oldPasswordInput) {
-        control.disabled = passwordDialogSubmitting || isPasswordDialogCreateMode();
-        return;
-      }
-
-      control.disabled = passwordDialogSubmitting;
+      control.disabled = passwordChangeInProgress;
     });
 
     registrationDialogControls.forEach((control) => {
@@ -1612,9 +1327,6 @@
     }
 
     dismissActiveKeyboard();
-    passwordDialogMode = 'change';
-    clearPasswordChangeValidationState();
-    syncPasswordDialogPresentation();
     passwordDialog.hidden = true;
     passwordDialogBackdrop.hidden = true;
     passwordDialog.classList.add('is-hidden');
@@ -1626,24 +1338,11 @@
     realignViewport();
   }
 
-  function openPasswordDialog(mode) {
-    const createMode = mode === 'create';
-
-    if (!passwordDialog || !passwordDialogBackdrop) {
+  function openPasswordDialog() {
+    if (!passwordDialog || !passwordDialogBackdrop || !authState.hasPassword) {
       return;
     }
 
-    if (createMode) {
-      if (!isMissingPasswordState()) {
-        return;
-      }
-    } else if (!authState.hasPassword) {
-      return;
-    }
-
-    passwordDialogMode = createMode ? 'create' : 'change';
-    clearPasswordChangeValidationState();
-    syncPasswordDialogPresentation();
     passwordDialog.hidden = false;
     passwordDialogBackdrop.hidden = false;
     passwordDialog.classList.remove('is-hidden');
@@ -1651,24 +1350,8 @@
     if (passwordChangeForm) {
       passwordChangeForm.reset();
     }
-    if (createMode) {
-      const initialPassword = clientState.isPasswordLengthValid(passwordInput.value) ? passwordInput.value : '';
-      if (newPasswordInput) {
-        newPasswordInput.value = initialPassword;
-      }
-      if (confirmPasswordInput) {
-        confirmPasswordInput.value = initialPassword;
-      }
-    }
     syncFormControlStates();
     realignViewport();
-    if (createMode && newPasswordInput) {
-      newPasswordInput.focus();
-      return;
-    }
-    if (oldPasswordInput) {
-      oldPasswordInput.focus();
-    }
   }
 
   function closeRegistrationDialog() {
@@ -3233,11 +2916,9 @@
     }
   }
 
-  async function registerPasswordForCurrentUser(options) {
-    const settings = options || {};
-    const normalizedChave = sanitizeChave(settings.chave || getActiveChave());
-    const password = typeof settings.password === 'string' ? settings.password : passwordInput.value;
-    const passwordFocusTarget = settings.passwordFocusTarget || passwordInput;
+  async function registerPasswordForCurrentUser() {
+    const normalizedChave = getActiveChave();
+    const password = passwordInput.value;
 
     if (normalizedChave.length !== 4) {
       setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
@@ -3247,14 +2928,9 @@
 
     if (!clientState.isPasswordLengthValid(password)) {
       setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
-      if (passwordFocusTarget && typeof passwordFocusTarget.focus === 'function') {
-        passwordFocusTarget.focus();
-      }
+      passwordInput.focus();
       return false;
     }
-
-    passwordInput.value = password;
-    lastObservedPasswordFieldValue = password;
 
     await loadProjectCatalog({ showError: true });
     if (!allowedProjectValues.length) {
@@ -3417,39 +3093,6 @@
   async function submitPasswordChange(event) {
     event.preventDefault();
 
-    if (isPasswordDialogCreateMode()) {
-      const normalizedChave = getActiveChave();
-      const newPassword = newPasswordInput.value;
-      const confirmPassword = confirmPasswordInput.value;
-
-      if (normalizedChave.length !== 4) {
-        setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
-        closePasswordDialog();
-        return;
-      }
-
-      if (!clientState.isPasswordLengthValid(newPassword)) {
-        setStatus('A nova senha deve ter entre 3 e 10 caracteres.', 'error');
-        newPasswordInput.focus();
-        return;
-      }
-
-      if (newPassword !== confirmPassword) {
-        setStatus('A confirmação da nova senha não confere.', 'error');
-        confirmPasswordInput.focus();
-        return;
-      }
-
-      const registered = await registerPasswordForCurrentUser({
-        password: newPassword,
-        passwordFocusTarget: newPasswordInput,
-      });
-      if (registered) {
-        closePasswordDialog();
-      }
-      return;
-    }
-
     const normalizedChave = getActiveChave();
     const oldPassword = oldPasswordInput.value;
     const newPassword = newPasswordInput.value;
@@ -3462,25 +3105,13 @@
     }
 
     if (!clientState.isPasswordLengthValid(oldPassword)) {
-      setStatus('A senha atual deve ter entre 3 e 10 caracteres.', 'error');
-      oldPasswordInput.focus();
-      return;
-    }
-
-    if (!isPasswordChangeCurrentPasswordValid()) {
-      setStatus('A senha atual informada não confere.', 'error');
+      setStatus('A senha antiga deve ter entre 3 e 10 caracteres.', 'error');
       oldPasswordInput.focus();
       return;
     }
 
     if (!clientState.isPasswordLengthValid(newPassword)) {
       setStatus('A nova senha deve ter entre 3 e 10 caracteres.', 'error');
-      newPasswordInput.focus();
-      return;
-    }
-
-    if (newPassword === oldPassword) {
-      setStatus('A nova senha deve ser diferente da senha atual.', 'error');
       newPasswordInput.focus();
       return;
     }
@@ -5046,35 +4677,31 @@
       return;
     }
 
-    if (isUnknownUserKeyState()) {
+    if (authState.statusResolved && !authState.found) {
       openRegistrationDialog();
       return;
     }
 
-    if (isMissingPasswordState()) {
-      openPasswordDialog('create');
-    }
+    void registerPasswordForCurrentUser();
   });
 
   passwordActionButton.addEventListener('click', () => {
     if (authState.hasPassword) {
-      openPasswordDialog('change');
+      openPasswordDialog();
       return;
     }
 
-    if (isUnknownUserKeyState()) {
+    if (authState.statusResolved && !authState.found) {
       openRegistrationDialog();
       return;
     }
 
-    if (isMissingPasswordState()) {
-      openPasswordDialog('create');
-    }
+    void registerPasswordForCurrentUser();
   });
 
-  if (changePasswordShortcutButton) {
-    changePasswordShortcutButton.addEventListener('click', () => {
-      openPasswordDialog('change');
+  if (requestRegistrationButton) {
+    requestRegistrationButton.addEventListener('click', () => {
+      openRegistrationDialog();
     });
   }
 
@@ -5419,18 +5046,6 @@
 
   if (passwordChangeForm) {
     passwordChangeForm.addEventListener('submit', submitPasswordChange);
-  }
-
-  if (oldPasswordInput) {
-    oldPasswordInput.addEventListener('input', syncPasswordChangeInputState);
-  }
-
-  if (newPasswordInput) {
-    newPasswordInput.addEventListener('input', syncFormControlStates);
-  }
-
-  if (confirmPasswordInput) {
-    confirmPasswordInput.addEventListener('input', syncFormControlStates);
   }
 
   if (registrationDialogBackButton) {
