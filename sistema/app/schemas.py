@@ -4,6 +4,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .models import ManagedLocation
+from .services.location_audit import audit_managed_location
+from .services.managed_locations import dump_location_coordinates
 from .services.project_catalog import normalize_project_name
 from .services.user_profiles import normalize_person_name
 
@@ -95,6 +98,60 @@ def _validate_longitude(value: float) -> float:
     if value < -180 or value > 180:
         raise ValueError("A longitude deve estar entre -180 e 180")
     return value
+
+
+def _build_transient_location_for_admin_validation(
+    *,
+    local: str,
+    coordinates: list["LocationCoordinate"],
+    tolerance_meters: int,
+) -> ManagedLocation:
+    primary_coordinate = coordinates[0]
+    timestamp = datetime.now()
+    return ManagedLocation(
+        id=0,
+        local=local,
+        latitude=primary_coordinate.latitude,
+        longitude=primary_coordinate.longitude,
+        coordinates_json=dump_location_coordinates(
+            {
+                "latitude": coordinate.latitude,
+                "longitude": coordinate.longitude,
+            }
+            for coordinate in coordinates
+        ),
+        projects_json='[]',
+        tolerance_meters=tolerance_meters,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+def _validate_admin_location_polygon_payload(
+    *,
+    local: str,
+    coordinates: list["LocationCoordinate"],
+    tolerance_meters: int,
+) -> None:
+    audited_location = audit_managed_location(
+        _build_transient_location_for_admin_validation(
+            local=local,
+            coordinates=coordinates,
+            tolerance_meters=tolerance_meters,
+        )
+    )
+
+    issue_codes = {issue.code for issue in audited_location.issues}
+    if "redundant_closing_vertex" in issue_codes:
+        raise ValueError("Nao repita a primeira coordenada no final; o poligono e fechado automaticamente")
+    if "too_few_coordinates" in issue_codes or "too_few_unique_coordinates" in issue_codes:
+        raise ValueError("Informe ao menos 3 coordenadas distintas para formar o poligono do local")
+    if "duplicate_coordinates" in issue_codes:
+        raise ValueError("Remova coordenadas duplicadas antes de salvar a localizacao")
+    if "self_intersection" in issue_codes or "potential_vertex_order_problem" in issue_codes:
+        raise ValueError("A localizacao precisa formar um poligono valido sem auto-interseccao")
+    if "zero_area_polygon" in issue_codes:
+        raise ValueError("A localizacao precisa formar uma area valida; os vertices atuais geram area zero")
 
 
 def _normalize_transport_time(value: str) -> str:
@@ -290,6 +347,44 @@ class AdminLocationsResponse(BaseModel):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
+class LocationAuditIssueRow(BaseModel):
+    code: str
+    severity: Literal["error", "warning", "info"]
+    message: str
+
+
+class LocationAuditRowResponse(BaseModel):
+    location_id: int
+    local: str
+    projects: list[str] = Field(default_factory=list)
+    is_checkout_zone: bool
+    tolerance_meters: int
+    coordinate_count: int
+    effective_vertex_count: int
+    unique_coordinate_count: int
+    polygon_area_square_meters: float | None
+    has_errors: bool
+    has_warnings: bool
+    needs_manual_review: bool
+    issues: list[LocationAuditIssueRow] = Field(default_factory=list)
+
+
+class LocationAuditSummaryResponse(BaseModel):
+    total_locations: int
+    checkout_zone_locations: int
+    valid_polygon_locations: int
+    locations_with_errors: int
+    locations_with_warnings_only: int
+    locations_without_issues: int
+    locations_requiring_manual_review: int
+    issue_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class AdminLocationAuditResponse(BaseModel):
+    summary: LocationAuditSummaryResponse
+    rows: list[LocationAuditRowResponse] = Field(default_factory=list)
+
+
 class AdminLocationUpsert(BaseModel):
     location_id: int | None = Field(default=None, ge=1)
     local: str
@@ -297,7 +392,7 @@ class AdminLocationUpsert(BaseModel):
     longitude: float | None = None
     coordinates: list[LocationCoordinate] | None = None
     projects: list[str] = Field(min_length=1)
-    tolerance_meters: int = Field(ge=0, le=9999)
+    tolerance_meters: int = Field(ge=1, le=9999)
 
     @model_validator(mode="before")
     @classmethod
@@ -363,7 +458,13 @@ class AdminLocationUpsert(BaseModel):
     @model_validator(mode="after")
     def validate_coordinates(self):
         if not self.coordinates:
-            raise ValueError("Informe ao menos uma coordenada para o local")
+            raise ValueError("Informe ao menos 3 coordenadas distintas para formar o poligono do local")
+
+        _validate_admin_location_polygon_payload(
+            local=self.local,
+            coordinates=self.coordinates,
+            tolerance_meters=self.tolerance_meters,
+        )
         return self
 
 

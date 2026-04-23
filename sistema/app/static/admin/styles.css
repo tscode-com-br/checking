@@ -288,6 +288,18 @@ main {
   align-items: center;
   gap: 8px;
 }
+
+.section-header-copy {
+  margin: 4px 0 12px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.location-section-copy {
+  max-width: 900px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1182,6 +1194,7 @@ input.inline, select.inline, textarea.inline {
 .location-coordinate-summary {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
   max-width: 100%;
@@ -1205,6 +1218,19 @@ input.inline, select.inline, textarea.inline {
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.location-coordinate-summary-closure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #155e75;
   font-size: 11px;
   font-weight: 700;
   flex: 0 0 auto;
@@ -1235,8 +1261,9 @@ input.inline, select.inline, textarea.inline {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
+  min-width: 26px;
   height: 18px;
+  padding: 0 6px;
   border-radius: 999px;
   background: rgba(15, 118, 110, 0.12);
   color: #0f766e;
@@ -1254,6 +1281,7 @@ input.inline, select.inline, textarea.inline {
 .location-coordinate-line {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1261,11 +1289,31 @@ input.inline, select.inline, textarea.inline {
   flex: 1 1 auto;
 }
 
+.location-coordinate-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.location-coordinate-actions button {
+  flex: 0 0 auto;
+}
+
+.location-coordinate-move-button,
 .location-coordinate-remove-button {
   flex: 0 0 auto;
   white-space: nowrap;
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.location-coordinate-note {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .location-tolerance-badge {
@@ -1568,6 +1616,12 @@ input.inline, select.inline, textarea.inline {
   .location-coordinate-line {
     flex-direction: column;
     align-items: stretch;
+  }
+  .location-coordinate-actions {
+    width: 100%;
+  }
+  .location-coordinate-actions button {
+    flex: 1 1 110px;
   }
   .location-coordinate-pills {
     gap: 4px;

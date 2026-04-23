@@ -1,0 +1,253 @@
+{
+  "summary": {
+    "total_locations": 14,
+    "checkout_zone_locations": 1,
+    "valid_polygon_locations": 14,
+    "locations_with_errors": 0,
+    "locations_with_warnings_only": 0,
+    "locations_without_issues": 14,
+    "locations_requiring_manual_review": 0,
+    "issue_counts": {}
+  },
+  "rows": [
+    {
+      "location_id": 9,
+      "local": "Area Mais Longe",
+      "projects": [
+        "P93"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 120,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 1112.5207137001491,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 8,
+      "local": "Area Mais Perto",
+      "projects": [
+        "P93"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 120,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 1112.5207137001491,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 7,
+      "local": "Area Poligonal P80",
+      "projects": [
+        "P92"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 45,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 1483.3609516001989,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 10,
+      "local": "Area Regular P93A",
+      "projects": [
+        "P93A"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 90,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45173462773874,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 12,
+      "local": "Legado P80",
+      "projects": [
+        "P94"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 150,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45363426110964,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 13,
+      "local": "Lista Contrato Q01",
+      "projects": [
+        "Q01"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 200,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.44201034247675,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 14,
+      "local": "Match Contrato Q02",
+      "projects": [
+        "Q02"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 210,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.4400203388225,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 2,
+      "local": "Projeto P80",
+      "projects": [
+        "P90"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 150,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45363426110964,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 3,
+      "local": "Projeto P82",
+      "projects": [
+        "P91"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 150,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.43395983179687,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 4,
+      "local": "Web Accuracy P80",
+      "projects": [
+        "P80"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 120,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.44515034188544,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 6,
+      "local": "Web Far P80",
+      "projects": [
+        "P80"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 120,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45363426110964,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 1,
+      "local": "Web Match P80",
+      "projects": [
+        "P80"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 150,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45363426110964,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 5,
+      "local": "Web Nearby P80",
+      "projects": [
+        "P80"
+      ],
+      "is_checkout_zone": false,
+      "tolerance_meters": 120,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.45363426110964,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    },
+    {
+      "location_id": 11,
+      "local": "Zona de CheckOut",
+      "projects": [
+        "P93A"
+      ],
+      "is_checkout_zone": true,
+      "tolerance_meters": 90,
+      "coordinate_count": 4,
+      "effective_vertex_count": 4,
+      "unique_coordinate_count": 4,
+      "polygon_area_square_meters": 494.4517307813721,
+      "has_errors": false,
+      "has_warnings": false,
+      "needs_manual_review": false,
+      "issues": []
+    }
+  ]
+}
+

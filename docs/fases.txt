@@ -1,0 +1,309 @@
+Prompt Enviado - Objetivo de tudo:
+
+Desejo alterar a forma como o webapp (https://www.tscode.com.br/checking/user que está na pasta 'sistema\app\static\check') realiza a tarefa de encontrar a localização do usuário.
+
+
+Ficaria assim:
+
+1. O cadastro da localização na tabela 'Localizações' da aba 'Cadastro do website do admin deve ser considerado como uma área fechada. Ou seja, as coordenadas formarão um polígono fechado com 'n' lados.
+
+2. A tolerância de cada localização significa que traçaremos um offset de cada aresta do polígono para fora, aumentando a área do polígono. Esta tolerância deverá ser referente a cada coordenada, e não mais para uma localização cadastrada. Em outras palavras, quando cadastrarmos uma coordenada, também cadastraremos a tolerância desta coordenada.
+
+3. O webapp busca as coordenadas GPS do usuário e a precisão da medida das coordenadas original do GPS (exemplo, 20 metros).
+
+4. O webapp considera a precisão das coordenadas do GPS e traça um círculo em volta da coordenada de GPS do usuário para obter a área referente ao local provável em que o usuário encontra-se.
+
+5. O webapp verifica se o círculo traçado em volta da coordenada do usuário intercepta algum polígono criado pelo offset dado nas arestas do polígono formado pelas coordenadas cadastradas na API para uma localização. Se interceptar, isto significa que o usuário encontra-se dentro da localização cadastrada na API. Considere apenas locais referentes ao projeto em que o usuário está cadastrado.
+
+6. Se o círculo interceptar mais de um polígono de offsets, então o webapp deve medir a distância entre a coordenada GPS do usuário sem considerar a tolerância, até a coordenada mais próxima cadastrada na API para o projeto em que o usuário está cadastrado, sem considerar as semirretas criadas por offset para as localizações. A localização cadastrada para o projeto que o usuário estiver alocado e que estiver mais próxima do usuário deve ser a localização considerada pelo webapp para considerar onde o usuário está.
+
+7. Caso o círculo traçado em volta do usuário não intercepte nenhum polígono e a localização do usuário não esteja a mais de 2 quilômetros de qualquer local cadastrado na API para o projeto em que o usuário encontra-se, então a localização deve ser identificada como 'Localização não Cadastrada'.
+
+8. Caso o círculo traçado em volta do usuário não intercepte nenhum polígono e a localização do usuário esteja a mais de 2 quilômetros de qualquer local cadastrado na API para o projeto em que o usuário encontra-se, desconsiderando a Zona de CheckOut, então a localização deve ser identificada como 'Fora do Local de Trabalho'.
+
+
+Analise minuciosamente a minha sugestão e, se for possível de ser implementada, monte um plano bem detalhado e com todas as etapas e fases necessárias para executarmos. Não altere absolutamente nada do código ainda.
+
+----------
+Ajustes realizados:
+
+Pontos que precisam ser fechados antes de codar:
+
+1. Regra da tolerância por coordenada nas arestas.
+Sugestão segura: cada aresta herda a maior tolerância entre os seus dois vértices, e cada vértice é conectado por um arco com o raio da sua própria tolerância. Isso privilegia segurança operacional e evita “estreitamentos” artificiais no polígono expandido.
+
+Resposta do usuário: vamos então considerar uma tolerância global para a localização exatamente como está hoje. Esta tolerância, em metros, define o valor que a aresta, formada por 2 vértices, será deslocada para fora do polígono. Como todas as arestas terão a mesma tolerância, então criamos um polígono maior, que será o polígono considerado pelo webapp para encontrar o usuário. O que você acha desta sugestão?
+
+2. Mínimo de coordenadas por localização.
+
+Resposta do usuário: Cada localização precisará ter, pelo menos, 3 coordenadas, para que possa ser cadastrada na API.
+
+3. Limite global de precisão do GPS.
+Mesmo com o círculo de precisão do usuário, eu recomendo fortemente manter o limite global do admin. Sem isso, uma leitura com 150 ou 300 metros de erro pode interceptar polígonos indevidamente e aumentar falso positivo. O mais seguro é:
+- primeiro validar se a precisão do GPS é aceitável pelo limite global;
+- só depois construir o círculo do usuário e fazer a interseção.
+
+Resposta do usuário: de acordo. Manteremos o limite global do admin como o máximo de tolerância aceitável para, primeiro, validar se a precisão do GPS é aceitável pelo limite global, e depois construir o círculo do usuário e fazer a interseção.
+
+4. Preview em mapa.
+É possível fazer, mas o caminho mais seguro não é a API “chamar qualquer API pública e devolver imagem”. Isso traz risco de quota, indisponibilidade e dependência externa. A opção mais robusta é:
+- a API calcula e devolve a geometria e os bounds;
+- o admin abre um modal com mapa e desenha o polígono usando tiles públicos no navegador.
+Se você insistir em imagem estática, também é possível, mas eu trataria isso como segunda etapa.
+
+Resposta: de acordo. Vamos deixar a coluna 'Visualização' para uma segunda etapa.
+
+
+Refaça o plano detalhado conforme as respostas do usuário. Se necessário, altere o plano.
+
+Observação: o aplicativo flutter, na pasta 'checking_android_new', será descontinuado. Em seu lugar, concluiremos o desenvolvimento do aplicativo em Kotlin, na pasta 'checking_kotlin'. Não se preocupe com o aplicativo agora. No futuro, faremos as alterações necessárias no código do aplicativo.
+
+
+--------------------
+
+Plano Consolidado:
+
+Fechamento da especificação funcional.
+Nesta fase, o comportamento precisa ser congelado por escrito para não haver reinterpretação no meio da implementação. A regra fechada fica assim: toda localização precisa ter pelo menos 3 coordenadas em ordem; a tolerância global da localização define o buffer externo uniforme do polígono; o limite global do admin continua sendo o filtro inicial de qualidade da leitura GPS; só se a precisão for aceita a API cria o círculo do usuário; o match ocorre quando o círculo do usuário intercepta o polígono expandido; se mais de um polígono expandido interceptar o círculo, vence a localização cuja coordenada original cadastrada esteja mais próxima do ponto GPS bruto do usuário; se não houver interseção e o usuário estiver a até 2 km de algum local do projeto, a resposta deve ser Localização não Cadastrada; se estiver a mais de 2 km de qualquer local do projeto, ignorando Zona de CheckOut, a resposta deve ser Fora do Local de Trabalho. A visualização em mapa sai do escopo desta fase.
+
+Auditoria dos dados atuais.
+Antes de tocar na engine de matching, é preciso levantar o estado real das localizações já cadastradas. Essa auditoria deve listar quais registros têm menos de 3 coordenadas, quais têm coordenadas repetidas, quais provavelmente formam polígonos degenerados, quais têm ordem de vértices ruim e quais pertencem a zonas especiais de checkout. Esse passo é crítico porque o maior risco da mudança não está na matemática, mas na qualidade do dado legado. O resultado dessa fase deve ser uma lista objetiva de localizações que precisam ser corrigidas antes da ativação da nova regra.
+
+Estratégia de persistência e migração.
+A boa notícia é que, com a sua nova decisão, talvez não seja necessária uma migração estrutural do banco. O sistema já tem lista de coordenadas por localização e já tem uma tolerância global por localização. Então o plano mais seguro é preservar o modelo atual de armazenamento e mudar a semântica de uso. O que entra como mudança obrigatória é a validação: novas localizações e edições passam a exigir no mínimo 3 coordenadas válidas e ordenadas. Se existirem registros antigos apoiados só em uma coordenada, a transição ideal é corrigir esses cadastros antes de ativar a engine nova. Se for necessário proteger a transição, pode-se criar uma fase temporária de auditoria assistida, mas o estado final deve rejeitar localizações com menos de 3 vértices.
+
+Nova engine geométrica no backend.
+Esta é a fase central da mudança. O backend deve ganhar um serviço geométrico próprio, separado da lógica atual baseada em distância até ponto. Esse serviço deve converter as coordenadas do polígono e do GPS do usuário para um sistema métrico local, construir o polígono original, validar se ele é simples e tem área real, gerar o polígono expandido pelo valor da tolerância global, construir o círculo do usuário com raio igual à precisão GPS e testar interseção entre os dois. Na mesma fase, o backend deve calcular a menor distância entre o ponto GPS bruto do usuário e as coordenadas originais cadastradas para desempate entre múltiplos matches. Também deve calcular a menor distância do usuário até a geometria original das localizações de trabalho, sem usar o buffer, para manter a regra dos 2 km com coerência geométrica.
+
+Adaptação da API administrativa.
+A API do admin deve manter a tolerância global por localização, mas precisa endurecer as validações do cadastro. A partir dessa fase, o backend deve recusar localização com menos de 3 coordenadas, coordenadas inválidas, polígono com área nula e polígono autointersectante. Também deve devolver mensagens de erro claras para o frontend, idealmente apontando o problema de forma útil ao usuário administrativo. Como a visualização saiu do escopo, a API não precisa ainda devolver geometria de preview nesta primeira entrega.
+
+Reestruturação da UI de localizações no admin.
+A interface do admin precisa passar a tratar as coordenadas como vértices ordenados de um polígono, e não mais como uma lista solta de pontos. Isso exige ajustes reais na experiência de edição: cada vértice deve ser numerado, a ordem precisa ficar explícita e o usuário deve conseguir reorganizar vértices com segurança. O campo de tolerância continua único por localização. A tela também deve impedir salvar uma localização com menos de 3 vértices e deve mostrar feedback de erro quando o polígono for inválido. Mesmo sem o botão Mapa agora, essa UI já precisa deixar claro que a ordem dos pontos importa, porque isso passa a definir a forma geométrica real da localização.
+
+Integração com o webapp do usuário.
+O lado do navegador praticamente não muda no mecanismo de captura: ele continua pedindo latitude, longitude e accuracy. A mudança principal acontece no backend que responde ao endpoint de localização. O ideal é preservar o contrato atual da resposta o máximo possível, para reduzir risco no restante do webapp e nas regras de atividades automáticas. Assim, os status de precisão insuficiente, local conhecido, localização não cadastrada e fora do local de trabalho continuam existindo, mas passam a ser decididos pela nova lógica geométrica. Isso reduz o impacto sobre o restante do fluxo de check-in e check-out.
+
+Reescrita e expansão dos testes.
+Os testes atuais protegem o modelo antigo de ponto com raio por localização. Eles terão de ser refeitos para o novo modelo poligonal. A suíte precisa cobrir pelo menos estes cenários: polígono válido com match claro; leitura GPS reprovada por precisão acima do limite global; círculo do usuário tangenciando o polígono expandido; múltiplos polígonos interceptando o círculo com desempate pela coordenada original mais próxima; ausência de match com distância dentro de 2 km; ausência de match com distância acima de 2 km; exclusão da Zona de CheckOut no cálculo de fora do local de trabalho; rejeição de localizações com menos de 3 coordenadas; rejeição de polígonos autointersectantes. A UI do admin também precisa de testes atualizados, porque a tabela de localizações deixará de ser semanticamente igual ao modelo atual.
+
+Homologação operacional antes do corte.
+A mudança não deve ir direto para produção como substituição cega. O caminho mais seguro é homologar com dados reais revisados, comparar decisões da engine atual e da engine nova em cenários controlados e validar manualmente locais de borda, onde o usuário fica perto do limite da área. Se possível, a nova engine deve passar por um período de observação com logs explicando por que houve ou não houve match. Essa fase é a que vai mostrar se a qualidade do cadastro das coordenadas está boa o suficiente para sustentar a nova lógica.
+
+Ativação em produção.
+Só depois da limpeza dos dados, da validação da UI, da aprovação dos testes e da homologação operacional a nova engine deve virar regra oficial. O rollout mais seguro é: primeiro validar e corrigir o catálogo de localizações, depois liberar a nova experiência de edição no admin, e por último trocar a decisão do endpoint de localização do webapp do usuário. Como o Kotlin ficou fora do escopo atual, essa ativação não precisa esperar o aplicativo móvel.
+
+Critérios de aceite
+
+Toda localização nova ou editada só pode ser salva com 3 ou mais coordenadas válidas em ordem.
+O backend rejeita polígonos inválidos antes de qualquer gravação.
+O limite global de precisão do GPS continua bloqueando leituras ruins antes da etapa geométrica.
+O match do usuário só acontece quando o círculo da precisão GPS intercepta o polígono expandido pela tolerância global.
+Em caso de múltiplos matches, o desempate usa a coordenada original cadastrada mais próxima do ponto GPS bruto.
+Sem match, a classificação entre Localização não Cadastrada e Fora do Local de Trabalho continua funcionando com a regra dos 2 km e ignorando Zona de CheckOut.
+O restante do fluxo do webapp continua recebendo os mesmos estados principais de localização, sem regressão no check-in e check-out.
+
+
+________________
+
+Implementação:
+
+Índice das fases de implementação:
+
+
+Fase 0. Fechamento da especificação funcional
+Fase 1. Auditoria e saneamento das localizações já cadastradas
+Fase 2. Desenho técnico da engine geométrica
+Fase 3. Ajustes de persistência, validação e contratos da API
+Fase 4. Reimplementação do matching do webapp do usuário
+Fase 5. Redesenho da experiência de cadastro no admin
+Fase 6. Testes automatizados e cobertura de regressão
+Fase 7. Homologação funcional e validação em campo
+Fase 8. Rollout, monitoramento e contingência
+Fase 9. Pendências pós-go-live e backlog futuro
+To-Do List
+
+Fase 0. Fechamento da especificação funcional (implementada)
+
+ 0.1 Documentar formalmente que cada localização passa a ser um polígono fechado definido por vértices ordenados.
+ 0.2 Documentar formalmente que toda localização nova ou editada deve ter no mínimo 3 coordenadas válidas.
+ 0.3 Documentar que a tolerância da localização continua global por localização e representa um buffer uniforme externo em metros ao redor do polígono.
+ 0.4 Documentar que o limite global de precisão do GPS continua existindo e será validado antes de qualquer cálculo geométrico.
+ 0.5 Documentar que o círculo do usuário é formado pelo ponto GPS bruto e pelo raio igual à precisão reportada pelo navegador.
+ 0.6 Documentar que tangência entre círculo do usuário e polígono expandido conta como interseção válida.
+ 0.7 Documentar que o filtro por projeto do usuário continua ocorrendo antes da etapa de matching geométrico.
+ 0.8 Documentar que, se houver interseção com múltiplos polígonos, o desempate será pela menor distância entre o ponto GPS bruto e a coordenada original cadastrada mais próxima de cada localização.
+ 0.9 Documentar critério determinístico para empate absoluto de distância, como menor id da localização.
+ 0.10 Documentar que, sem interseção, a resposta será Localização não Cadastrada se a menor distância até um local do projeto for menor ou igual a 2 km.
+ 0.11 Documentar que, sem interseção, a resposta será Fora do Local de Trabalho se a menor distância até um local do projeto for maior que 2 km, ignorando Zona de CheckOut.
+ 0.12 Documentar se o cálculo dos 2 km usará a coordenada original mais próxima ou a geometria original do polígono sem buffer.
+ 0.13 Documentar como o sistema tratará a ordem dos vértices no cadastro: ordem obrigatória e significativa para formar a geometria.
+ 0.14 Documentar se o backend fechará o polígono implicitamente entre o último vértice e o primeiro, sem exigir repetição manual do primeiro ponto.
+ 0.15 Documentar que a coluna Visualização fica fora da primeira entrega.
+ 0.16 Documentar que o aplicativo Kotlin não entra no escopo desta fase e não bloqueia a entrega web/admin/backend.
+ 0.17 Consolidar essa especificação em um documento único de referência para evitar mudança de regra durante a implementação.
+
+Fase 1. Auditoria e saneamento das localizações já cadastradas (implementada)
+
+ 1.1 Levantar todas as localizações existentes no ambiente de desenvolvimento e no ambiente produtivo.
+ 1.2 Identificar quais localizações têm menos de 3 coordenadas.
+ 1.3 Identificar quais localizações têm coordenadas duplicadas.
+ 1.4 Identificar quais localizações têm vértices colineares que possam gerar polígonos degenerados.
+ 1.5 Identificar quais localizações têm ordem de vértices potencialmente incorreta.
+ 1.6 Identificar quais localizações têm nomes especiais de checkout e separá-las para validação de regra operacional.
+ 1.7 Identificar localizações cujo polígono resultante provavelmente se autointersecta.
+ 1.8 Montar uma planilha ou relatório de saneamento com id, nome do local, projeto, quantidade de coordenadas e status de validade geométrica.
+ 1.9 Validar com a área de negócio quais localizações antigas precisam ser corrigidas antes do corte.
+ 1.10 Definir critério de aceite para ativação da nova engine, como 100% das localizações ativas válidas.
+ 1.11 Definir se localizações inválidas serão bloqueadas de imediato ou se haverá uma janela de correção antes do bloqueio total.
+ 1.12 Planejar a revisão manual das localizações que hoje usam apenas um ponto com raio e terão de virar área poligonal real.
+
+Fase 2. Desenho técnico da engine geométrica (implementada)
+
+ 2.1 Escolher a biblioteca geométrica do backend.
+ 2.2 Escolher a biblioteca de projeção cartográfica do backend.
+ 2.3 Definir a projeção métrica a ser usada para a região operacional do sistema.
+ 2.4 Definir um módulo de conversão entre latitude/longitude e coordenadas projetadas em metros.
+ 2.5 Definir um módulo de validação de polígono simples, sem autointerseção e com área não nula.
+ 2.6 Definir um módulo de construção do polígono original a partir da lista de coordenadas ordenadas.
+ 2.7 Definir um módulo de construção do buffer externo uniforme do polígono usando a tolerância global da localização.
+ 2.8 Definir um módulo de construção do círculo do usuário a partir do ponto GPS e da precisão informada.
+ 2.9 Definir um módulo de verificação de interseção entre círculo do usuário e polígono expandido.
+ 2.10 Definir um módulo de cálculo da menor distância entre o ponto GPS bruto e as coordenadas originais da localização para desempate.
+ 2.11 Definir um módulo de cálculo da menor distância do usuário até as localizações do projeto para a regra dos 2 km.
+ 2.12 Definir se a menor distância de 2 km será medida até a geometria base do polígono ou até os vértices originais.
+ 2.13 Definir tratamento geométrico seguro para erros numéricos de fronteira.
+ 2.14 Definir mensagens e exceções técnicas para polígono inválido, projeção inválida ou entrada inconsistente.
+ 2.15 Definir estrutura de logs técnicos para explicar por que houve match, empate, no-match ou rejeição por precisão.
+ 2.16 Definir critérios mínimos de desempenho para cenários com muitas localizações por projeto.
+ 2.17 Definir se haverá cache em memória da geometria expandida por localização durante a requisição.
+ 2.18 Definir claramente o que conta como local de trabalho no cálculo de fora do local, excluindo Zona de CheckOut.
+
+Fase 3. Ajustes de persistência, validação e contratos da API
+
+ 3.1 Confirmar que o formato atual de persistência de múltiplas coordenadas pode ser reaproveitado sem migração estrutural.
+ 3.2 Confirmar que a tolerância global atual da localização continuará no mesmo campo de banco.
+ 3.3 Revisar todos os schemas de entrada e saída relacionados a localizações no backend.
+ 3.4 Atualizar a validação de entrada para exigir no mínimo 3 coordenadas por localização.
+ 3.5 Atualizar a validação para rejeitar coordenadas fora da faixa válida de latitude/longitude.
+ 3.6 Atualizar a validação para rejeitar polígonos com vértices repetidos que invalidem a área.
+ 3.7 Atualizar a validação para rejeitar polígonos autointersectantes.
+ 3.8 Atualizar a validação para rejeitar polígonos de área zero.
+ 3.9 Decidir se o backend normalizará automaticamente a ordem do primeiro e último ponto ou apenas rejeitará entradas ruins.
+ 3.10 Revisar o contrato do endpoint de listagem de localizações do admin.
+ 3.11 Revisar o contrato do endpoint de salvar localizações do admin.
+ 3.12 Revisar o contrato do endpoint de matching do webapp para preservar o máximo possível da resposta atual.
+ 3.13 Confirmar se o endpoint de listagem simples de locais do usuário continuará retornando apenas nomes.
+ 3.14 Revisar o contrato de eventos de auditoria do admin para registrar criação, edição, erro de validação e mudança de geometria.
+ 3.15 Definir mensagens de erro legíveis para o admin quando um polígono não puder ser salvo.
+ 3.16 Definir se haverá endpoint interno ou utilitário para auditoria de validade geométrica dos registros existentes.
+ 3.17 Garantir que mudanças nesta fase não precisem considerar o app Kotlin agora.
+
+Fase 4. Reimplementação do matching do webapp do usuário
+
+ 4.1 Substituir a lógica atual de distância ponto-versus-raio por uma lógica de círculo-versus-polígono-expandido.
+ 4.2 Manter o filtro por projeto do usuário como primeira etapa do fluxo.
+ 4.3 Manter a rejeição por precisão GPS acima do limite global antes da etapa geométrica.
+ 4.4 Construir a geometria base de cada localização elegível do projeto.
+ 4.5 Construir a geometria expandida de cada localização elegível usando a tolerância global.
+ 4.6 Construir o círculo do usuário usando a precisão do navegador.
+ 4.7 Detectar todas as localizações cujo polígono expandido intercepta o círculo do usuário.
+ 4.8 Aplicar desempate quando houver múltiplas interseções.
+ 4.9 Manter a preferência funcional de zonas especiais de checkout apenas se ela continuar válida com a nova geometria.
+ 4.10 Revisar a lógica de label final exibida ao usuário para local conhecido, local não cadastrado e fora do local de trabalho.
+ 4.11 Revisar a lógica de resolved_local enviada para o submit do check-in/check-out.
+ 4.12 Revisar o cálculo de nearest_workplace_distance_meters para a nova semântica.
+ 4.13 Garantir que Zona de CheckOut continue sendo ignorada na regra dos 2 km para fora do local.
+ 4.14 Garantir que a classificação Localização não Cadastrada continue ocorrendo dentro da faixa operacional de 2 km.
+ 4.15 Garantir que o endpoint continue devolvendo status compatíveis com o frontend atual.
+ 4.16 Adicionar logs detalhados em nível técnico para diagnóstico de decisões geométricas.
+ 4.17 Revisar se as atividades automáticas do webapp permanecem coerentes com os novos resultados de matching.
+
+Fase 5. Redesenho da experiência de cadastro no admin
+
+ 5.1 Atualizar a semântica visual da tabela de localizações para deixar claro que as coordenadas formam um polígono.
+ 5.2 Tornar a ordem dos vértices explícita na interface.
+ 5.3 Adicionar controle para reordenar vértices com segurança.
+ 5.4 Impedir o salvamento de linhas com menos de 3 coordenadas preenchidas.
+ 5.5 Impedir o salvamento de coordenadas em branco no meio da sequência.
+ 5.6 Validar o formato de latitude/longitude no frontend antes do envio.
+ 5.7 Manter o campo de tolerância único por localização.
+ 5.8 Atualizar os rótulos da UI para substituir a ideia de conjunto de pontos pela ideia de área poligonal.
+ 5.9 Atualizar o resumo visual da localização para indicar quantidade de vértices em vez de apenas quantidade de coordenadas.
+ 5.10 Definir se a UI mostrará o polígono implicitamente fechado entre último e primeiro vértice.
+ 5.11 Melhorar a mensagem de erro quando a localização tiver menos de 3 pontos.
+ 5.12 Melhorar a mensagem de erro quando o backend reprovar a geometria por auto-interseção.
+ 5.13 Melhorar a mensagem de erro quando o backend reprovar a geometria por área nula.
+ 5.14 Garantir que o seletor de projetos continue funcionando sem regressão.
+ 5.15 Garantir que o estado de edição, dirty state e salvamento da tabela continuem consistentes.
+ 5.16 Garantir que a exclusão de vértices respeite o mínimo operacional sem quebrar a linha em edição.
+ 5.17 Garantir que a adição de vértices continue simples para o usuário administrativo.
+ 5.18 Revisar a UX da aba Cadastro para garantir que a nova complexidade não torne o cadastro impraticável.
+
+Fase 6. Testes automatizados e cobertura de regressão
+
+ 6.1 Criar testes unitários específicos da nova engine geométrica.
+ 6.2 Criar teste para polígono simples com match claro.
+ 6.3 Criar teste para rejeição por precisão GPS acima do limite global.
+ 6.4 Criar teste para interseção tangencial entre círculo do usuário e polígono expandido.
+ 6.5 Criar teste para ausência de interseção por margem mínima.
+ 6.6 Criar teste para múltiplos polígonos interceptando o círculo do usuário com desempate pela coordenada original mais próxima.
+ 6.7 Criar teste para empate absoluto de distância com resolução determinística.
+ 6.8 Criar teste para classificação como Localização não Cadastrada dentro dos 2 km.
+ 6.9 Criar teste para classificação como Fora do Local de Trabalho acima dos 2 km.
+ 6.10 Criar teste para exclusão de Zona de CheckOut no cálculo dos 2 km.
+ 6.11 Criar teste para polígono com menos de 3 coordenadas sendo rejeitado no admin.
+ 6.12 Criar teste para polígono autointersectante sendo rejeitado.
+ 6.13 Criar teste para polígono de área zero sendo rejeitado.
+ 6.14 Criar teste para cadastro válido com 3 vértices e tolerância global.
+ 6.15 Criar teste para edição válida de localização já existente com reordenação de vértices.
+ 6.16 Atualizar os testes de CRUD do admin para refletir a nova exigência geométrica.
+ 6.17 Atualizar os testes do endpoint web de localização para refletir o novo matching.
+ 6.18 Atualizar os testes das atividades automáticas do webapp se qualquer status ou comportamento derivado mudar.
+ 6.19 Criar testes de regressão de payload para garantir compatibilidade do frontend do usuário.
+ 6.20 Criar testes de regressão da UI do admin para quantidade mínima de vértices, ordem e mensagens de erro.
+ 6.21 Adicionar testes com coordenadas reais ou quase reais próximas do limite da área para evitar falso positivo de fronteira.
+ 6.22 Adicionar testes de desempenho básico para múltiplas localizações dentro do mesmo projeto.
+
+Fase 7. Homologação funcional e validação em campo
+
+ 7.1 Preparar um conjunto controlado de localizações reais já convertidas para polígonos válidos.
+ 7.2 Homologar cenários de usuário claramente dentro da área.
+ 7.3 Homologar cenários de usuário claramente fora da área.
+ 7.4 Homologar cenários de usuário na borda da área expandida.
+ 7.5 Homologar cenários com baixa precisão GPS rejeitados pelo limite global.
+ 7.6 Homologar cenários com múltiplos polígonos próximos.
+ 7.7 Homologar cenários de localização não cadastrada ainda dentro do ambiente de trabalho.
+ 7.8 Homologar cenários de fora do local de trabalho acima de 2 km.
+ 7.9 Validar com usuários de negócio se a nova interpretação de área corresponde à realidade física do local.
+ 7.10 Validar se a ordem dos vértices no admin é compreensível para quem cadastra.
+ 7.11 Corrigir localizações problemáticas detectadas na auditoria antes da ativação.
+ 7.12 Revisar logs de decisão geométrica durante a homologação para confirmar explicabilidade do resultado.
+
+Fase 8. Rollout, monitoramento e contingência
+
+ 8.1 Definir sequência de deploy de backend e frontend do admin.
+ 8.2 Definir janela operacional segura para ativação da nova regra.
+ 8.3 Garantir que o catálogo de localizações esteja saneado antes do deploy final.
+ 8.4 Publicar comunicação interna sobre a nova regra de cadastro com no mínimo 3 vértices.
+ 8.5 Publicar instruções objetivas para o time administrativo sobre ordem correta dos pontos.
+ 8.6 Ativar monitoramento de erros do endpoint de localização após o deploy.
+ 8.7 Ativar monitoramento de erros de validação do cadastro de localizações no admin.
+ 8.8 Acompanhar métricas de frequência de Precisão insuficiente, Localização não Cadastrada e Fora do Local de Trabalho após o corte.
+ 8.9 Comparar comportamento pós-go-live com a expectativa da operação para detectar falso positivo ou falso negativo.
+ 8.10 Preparar plano de rollback caso a nova engine gere regressão operacional relevante.
+ 8.11 Definir se o rollback reativa integralmente a engine antiga ou apenas bloqueia novas edições de polígono.
+ 8.12 Registrar incidentes, ajustes finos e decisões tomadas durante o rollout.
+
+Fase 9. Pendências pós-go-live e backlog futuro
+
+ 9.1 Registrar a Visualização em mapa como segunda etapa formal do backlog.
+ 9.2 Definir o escopo futuro do modal de mapa no admin com tiles públicos e desenho de polígono.
+ 9.3 Documentar o contrato final do backend para consumo futuro pelo app Kotlin.
+ 9.4 Revisar se o app Kotlin deverá usar a mesma engine no backend ou alguma prévia geométrica no cliente.
+ 9.5 Consolidar documentação técnica da nova engine de localização.
+ 9.6 Consolidar documentação funcional para o time administrativo.
+ 9.7 Registrar lições aprendidas sobre qualidade de cadastro de vértices e saneamento de dados.
+ 9.8 Revisar backlog de melhorias de UX para facilitar a montagem correta do polígono no admin.
+ 9.9 Revisar backlog de observabilidade para auditar decisões geométricas complexas.
+ 9.10 Planejar, em fase separada, a adaptação do aplicativo Kotlin à nova semântica de localização.

@@ -3,8 +3,10 @@ import json
 from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,7 @@ from ..schemas import (
     DatabaseEventFilterOptions,
     DatabaseEventListResponse,
     AdminIdentity,
+    AdminLocationAuditResponse,
     AdminLocationsResponse,
     AdminLocationSettingsResponse,
     AdminLocationSettingsUpdate,
@@ -88,6 +91,7 @@ from ..services.managed_locations import (
     extract_location_coordinates,
     extract_location_projects,
 )
+from ..services.location_audit import audit_locations_from_db
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
     upsert_location_settings,
@@ -480,6 +484,115 @@ def build_location_row(location: ManagedLocation) -> LocationRow:
         coordinates=coordinates,
         projects=extract_location_projects(location),
         tolerance_meters=location.tolerance_meters,
+    )
+
+
+def format_location_coordinates_details(coordinates: list[dict[str, float]]) -> str:
+    if not coordinates:
+        return "-"
+    return " | ".join(
+        f"{coordinate['latitude']:.6f},{coordinate['longitude']:.6f}"
+        for coordinate in coordinates
+    )
+
+
+def build_location_upsert_event_message(*, created: bool, geometry_changed: bool) -> str:
+    if created:
+        return "Location created via admin"
+    if geometry_changed:
+        return "Location geometry updated via admin"
+    return "Location metadata updated via admin"
+
+
+def build_location_upsert_event_details(
+    *,
+    current_admin: User,
+    location_id: int | None,
+    coordinates: list[dict[str, float]],
+    projects: list[str],
+    tolerance_meters: int,
+    geometry_changed: bool,
+    previous_coordinates: list[dict[str, float]] | None = None,
+    previous_projects: list[str] | None = None,
+    previous_tolerance_meters: int | None = None,
+) -> str:
+    details = [f"updated_by={current_admin.chave}"]
+    if location_id is not None:
+        details.append(f"location_id={location_id}")
+    if previous_coordinates is not None:
+        details.append(f"previous_coordinates={format_location_coordinates_details(previous_coordinates)}")
+        details.append(f"previous_vertex_count={len(previous_coordinates)}")
+    details.append(f"coordinates={format_location_coordinates_details(coordinates)}")
+    details.append(f"vertex_count={len(coordinates)}")
+    if previous_projects is not None:
+        details.append(f"previous_projects={'|'.join(previous_projects) or '-'}")
+    details.append(f"projects={'|'.join(projects) or '-'}")
+    if previous_tolerance_meters is not None:
+        details.append(f"previous_tolerance_meters={previous_tolerance_meters}")
+    details.append(f"tolerance_meters={tolerance_meters}")
+    details.append(f"geometry_changed={'yes' if geometry_changed else 'no'}")
+    return "; ".join(details)
+
+
+def normalize_location_validation_messages(errors: list[dict[str, object]]) -> str:
+    messages: list[str] = []
+    for error in errors:
+        raw_message = str(error.get("msg") or error.get("message") or "Erro de validacao")
+        normalized_message = raw_message.removeprefix("Value error, ").strip()
+        if normalized_message and normalized_message not in messages:
+            messages.append(normalized_message)
+    return " | ".join(messages) if messages else "Erro de validacao"
+
+
+def build_request_validation_errors(validation_error: ValidationError) -> list[dict[str, object]]:
+    normalized_errors: list[dict[str, object]] = []
+    for error in validation_error.errors():
+        normalized_error = dict(error)
+        location = normalized_error.get("loc")
+        if isinstance(location, tuple):
+            normalized_error["loc"] = ("body", *location)
+        elif isinstance(location, list):
+            normalized_error["loc"] = ["body", *location]
+        normalized_errors.append(normalized_error)
+    return normalized_errors
+
+
+def log_location_validation_failure(
+    db: Session,
+    *,
+    current_admin: User,
+    payload: object,
+    validation_message: str,
+) -> None:
+    payload_dict = payload if isinstance(payload, dict) else {}
+    raw_local = str(payload_dict.get("local") or "").strip() or None
+    raw_projects = payload_dict.get("projects")
+    project_values = (
+        [str(item).strip().upper() for item in raw_projects if str(item).strip()]
+        if isinstance(raw_projects, list)
+        else []
+    )
+    raw_coordinates = payload_dict.get("coordinates")
+    coordinate_count = len(raw_coordinates) if isinstance(raw_coordinates, list) else 0
+    tolerance_meters = payload_dict.get("tolerance_meters")
+    details = [
+        f"updated_by={current_admin.chave}",
+        f"projects={'|'.join(project_values) or '-'}",
+        f"coordinate_count={coordinate_count}",
+        f"tolerance_meters={tolerance_meters if tolerance_meters is not None else '-'}",
+        f"validation_errors={validation_message}",
+    ]
+    log_event(
+        db,
+        source="admin",
+        action="location",
+        status="failed",
+        message="Location validation failed via admin",
+        local=raw_local,
+        request_path="/api/admin/locations",
+        http_status=422,
+        details="; ".join(details),
+        commit=True,
     )
 
 
@@ -1551,55 +1664,104 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     )
 
 
+@router.get("/locations/audit", response_model=AdminLocationAuditResponse, dependencies=[Depends(require_admin_session)])
+def audit_locations(
+    include_valid: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> AdminLocationAuditResponse:
+    report = audit_locations_from_db(db)
+    rows_payload = [
+        row.to_dict()
+        for row in report.rows
+        if include_valid or row.issues
+    ]
+    return AdminLocationAuditResponse(
+        summary=report.summary.to_dict(),
+        rows=rows_payload,
+    )
+
+
 @router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
 def upsert_location(
-    payload: AdminLocationUpsert,
+    payload: object = Body(...),
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
-    location = db.get(ManagedLocation, payload.location_id) if payload.location_id is not None else None
-    if payload.location_id is not None and location is None:
+    try:
+        validated_payload = AdminLocationUpsert.model_validate(payload)
+    except ValidationError as error:
+        request_validation_errors = build_request_validation_errors(error)
+        log_location_validation_failure(
+            db,
+            current_admin=current_admin,
+            payload=payload,
+            validation_message=normalize_location_validation_messages(request_validation_errors),
+        )
+        raise RequestValidationError(request_validation_errors) from error
+
+    location = db.get(ManagedLocation, validated_payload.location_id) if validated_payload.location_id is not None else None
+    if validated_payload.location_id is not None and location is None:
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
     timestamp = now_sgt()
     coordinates = [
         {"latitude": coordinate.latitude, "longitude": coordinate.longitude}
-        for coordinate in (payload.coordinates or [])
+        for coordinate in (validated_payload.coordinates or [])
     ]
-    location_projects = resolve_location_projects_for_upsert(
-        db,
-        project_names=payload.projects,
-        existing_location=location,
-    )
+    previous_coordinates = extract_location_coordinates(location) if location is not None else None
+    previous_projects = extract_location_projects(location) if location is not None else None
+    previous_tolerance_meters = int(location.tolerance_meters) if location is not None else None
+
+    try:
+        location_projects = resolve_location_projects_for_upsert(
+            db,
+            project_names=validated_payload.projects,
+            existing_location=location,
+        )
+    except HTTPException as error:
+        if error.status_code == 422:
+            log_location_validation_failure(
+                db,
+                current_admin=current_admin,
+                payload={
+                    "local": validated_payload.local,
+                    "projects": validated_payload.projects,
+                    "coordinates": coordinates,
+                    "tolerance_meters": validated_payload.tolerance_meters,
+                },
+                validation_message=str(error.detail),
+            )
+        raise
+
     primary_coordinate = coordinates[0]
     coordinates_json = dump_location_coordinates(coordinates)
     projects_json = dump_location_projects(location_projects)
     created = False
     if location is None:
         location = ManagedLocation(
-            local=payload.local,
+            local=validated_payload.local,
             latitude=primary_coordinate["latitude"],
             longitude=primary_coordinate["longitude"],
             coordinates_json=coordinates_json,
             projects_json=projects_json,
-            tolerance_meters=payload.tolerance_meters,
+            tolerance_meters=validated_payload.tolerance_meters,
             created_at=timestamp,
             updated_at=timestamp,
         )
         db.add(location)
         created = True
     else:
-        location.local = payload.local
+        location.local = validated_payload.local
         location.latitude = primary_coordinate["latitude"]
         location.longitude = primary_coordinate["longitude"]
         location.coordinates_json = coordinates_json
         location.projects_json = projects_json
-        location.tolerance_meters = payload.tolerance_meters
+        location.tolerance_meters = validated_payload.tolerance_meters
         location.updated_at = timestamp
 
-    coordinates_details = " | ".join(
-        f"{coordinate['latitude']:.6f},{coordinate['longitude']:.6f}"
-        for coordinate in coordinates
+    geometry_changed = created or (
+        previous_coordinates != coordinates
+        or previous_tolerance_meters != validated_payload.tolerance_meters
     )
 
     log_event(
@@ -1607,14 +1769,20 @@ def upsert_location(
         source="admin",
         action="location",
         status="created" if created else "updated",
-        message="Location saved via admin",
-        local=payload.local,
+        message=build_location_upsert_event_message(created=created, geometry_changed=geometry_changed),
+        local=validated_payload.local,
         request_path="/api/admin/locations",
         http_status=200,
-        details=(
-            f"updated_by={current_admin.chave}; coordinates={coordinates_details}; "
-            f"projects={'|'.join(location_projects)}; "
-            f"tolerance_meters={payload.tolerance_meters}"
+        details=build_location_upsert_event_details(
+            current_admin=current_admin,
+            location_id=None if created else int(location.id or 0),
+            coordinates=coordinates,
+            projects=location_projects,
+            tolerance_meters=validated_payload.tolerance_meters,
+            geometry_changed=geometry_changed,
+            previous_coordinates=previous_coordinates,
+            previous_projects=previous_projects,
+            previous_tolerance_meters=previous_tolerance_meters,
         ),
     )
     db.commit()

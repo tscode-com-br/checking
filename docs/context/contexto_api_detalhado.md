@@ -449,6 +449,8 @@ Erros tratados explicitamente:
 
 Concentra a lógica de geolocalização da webpage pública.
 
+Importante: as regras abaixo descrevem o comportamento vigente do código. A especificação fechada da migração para localização poligonal no web foi registrada separadamente em `docs/context/especificacao_fase_0_localizacao_poligonal_web.md`.
+
 Regras importantes:
 
 - usa distância haversine;

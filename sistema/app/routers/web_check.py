@@ -618,6 +618,7 @@ def match_web_check_location(
         managed_locations=locations,
         latitude=payload.latitude,
         longitude=payload.longitude,
+        accuracy_meters=payload.accuracy_meters,
     )
     matched_location = match_result.matched_location
     captured_label = resolve_captured_location_label(

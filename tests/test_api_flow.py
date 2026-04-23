@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 import os
 import json
 import shutil
@@ -149,6 +150,23 @@ def ensure_project_exists(project_name: str) -> None:
 
         db.add(Project(name=normalized_name))
         db.commit()
+
+
+def build_rectangle_coordinates(
+    latitude: float,
+    longitude: float,
+    *,
+    latitude_delta: float = 0.0002,
+    longitude_delta: float = 0.0002,
+) -> list[dict[str, float]]:
+    base_latitude = float(latitude)
+    base_longitude = float(longitude)
+    return [
+        {"latitude": base_latitude, "longitude": base_longitude},
+        {"latitude": base_latitude + latitude_delta, "longitude": base_longitude},
+        {"latitude": base_latitude + latitude_delta, "longitude": base_longitude + longitude_delta},
+        {"latitude": base_latitude, "longitude": base_longitude + longitude_delta},
+    ]
 
 
 def register_web_password(
@@ -7148,8 +7166,7 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
             "/api/admin/locations",
             json={
                 "local": "Web Match P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 150,
             },
@@ -7183,16 +7200,17 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
 def test_web_location_endpoints_filter_locations_by_authenticated_user_project():
     with TestClient(app) as client:
         ensure_admin_session(client)
-        auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P80")
+        ensure_project_exists("P90")
+        ensure_project_exists("P91")
+        auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P90")
         assert auth_response.status_code == 200
 
         create_p80_location = client.post(
             "/api/admin/locations",
             json={
                 "local": "Projeto P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
-                "projects": ["P80"],
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
+                "projects": ["P90"],
                 "tolerance_meters": 150,
             },
         )
@@ -7202,9 +7220,8 @@ def test_web_location_endpoints_filter_locations_by_authenticated_user_project()
             "/api/admin/locations",
             json={
                 "local": "Projeto P82",
-                "latitude": 1.355936,
-                "longitude": 103.711066,
-                "projects": ["P82"],
+                "coordinates": build_rectangle_coordinates(1.355936, 103.711066),
+                "projects": ["P91"],
                 "tolerance_meters": 150,
             },
         )
@@ -7250,8 +7267,7 @@ def test_web_location_match_blocks_low_accuracy_before_matching():
             "/api/admin/locations",
             json={
                 "local": "Web Accuracy P80",
-                "latitude": 1.300001,
-                "longitude": 103.800001,
+                "coordinates": build_rectangle_coordinates(1.300001, 103.800001),
                 "projects": ["P80"],
                 "tolerance_meters": 120,
             },
@@ -7292,8 +7308,7 @@ def test_web_location_match_returns_unregistered_location_without_message_within
             "/api/admin/locations",
             json={
                 "local": "Web Nearby P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 120,
             },
@@ -7335,8 +7350,7 @@ def test_web_location_match_returns_outside_workplace_without_message():
             "/api/admin/locations",
             json={
                 "local": "Web Far P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 120,
             },
@@ -7366,6 +7380,275 @@ def test_web_location_match_returns_outside_workplace_without_message():
         assert payload["status"] == "outside_workplace"
         assert payload["message"] == ""
         assert payload["nearest_workplace_distance_meters"] > 2000
+
+
+def test_web_location_match_ignores_checkout_zone_for_outside_workplace_threshold():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P80Z")
+        auth_response = register_web_password(client, chave="WL8Z", senha="loc123", projeto="P80Z")
+        assert auth_response.status_code == 200
+
+        create_workplace = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Workplace Far P80Z",
+                "coordinates": build_rectangle_coordinates(1.285936, 103.611066),
+                "projects": ["P80Z"],
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_workplace.status_code == 200
+
+        create_checkout = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Zona de CheckOut",
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
+                "projects": ["P80Z"],
+                "tolerance_meters": 20,
+            },
+        )
+        assert create_checkout.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.257936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is False
+        assert payload["resolved_local"] is None
+        assert payload["label"] == "Fora do Ambiente de Trabalho"
+        assert payload["status"] == "outside_workplace"
+        assert payload["nearest_workplace_distance_meters"] > 2000
+
+
+def test_web_location_match_uses_polygon_matching_when_location_has_valid_polygon():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P92")
+        auth_response = register_web_password(client, chave="WP80", senha="poly123", projeto="P92")
+        assert auth_response.status_code == 200
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Area Poligonal P80",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611400},
+                    {"latitude": 1.255800, "longitude": 103.611400},
+                ],
+                "projects": ["P92"],
+                "tolerance_meters": 45,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255760,
+                "longitude": 103.610990,
+                "accuracy_meters": 12,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is True
+        assert payload["resolved_local"] == "Area Poligonal P80"
+        assert payload["label"] == "Area Poligonal P80"
+        assert payload["status"] == "matched"
+        assert payload["accuracy_threshold_meters"] == 25
+
+
+def test_web_location_match_polygon_tie_breaks_by_nearest_vertex():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P93")
+        auth_response = register_web_password(client, chave="WP81", senha="poly123", projeto="P93")
+        assert auth_response.status_code == 200
+
+        create_nearer = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Area Mais Perto",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611300},
+                    {"latitude": 1.255800, "longitude": 103.611300},
+                ],
+                "projects": ["P93"],
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_nearer.status_code == 200
+
+        create_farther = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Area Mais Longe",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611350},
+                    {"latitude": 1.256100, "longitude": 103.611350},
+                    {"latitude": 1.256100, "longitude": 103.611650},
+                    {"latitude": 1.255800, "longitude": 103.611650},
+                ],
+                "projects": ["P93"],
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_farther.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 80},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255790,
+                "longitude": 103.611010,
+                "accuracy_meters": 70,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is True
+        assert payload["resolved_local"] == "Area Mais Perto"
+        assert payload["label"] == "Area Mais Perto"
+
+
+def test_web_location_match_prefers_checkout_zone_and_logs_decision_details(caplog):
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P93A")
+        auth_response = register_web_password(client, chave="W93A", senha="poly123", projeto="P93A")
+        assert auth_response.status_code == 200
+
+        create_regular = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Area Regular P93A",
+                "coordinates": build_rectangle_coordinates(1.265936, 103.621066),
+                "projects": ["P93A"],
+                "tolerance_meters": 90,
+            },
+        )
+        assert create_regular.status_code == 200
+
+        create_checkout = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Zona de CheckOut",
+                "coordinates": build_rectangle_coordinates(1.265956, 103.621086),
+                "projects": ["P93A"],
+                "tolerance_meters": 90,
+            },
+        )
+        assert create_checkout.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        with caplog.at_level(logging.DEBUG, logger="sistema.app.services.location_matching"):
+            match_response = client.post(
+                "/api/web/check/location",
+                json={
+                    "latitude": 1.266010,
+                    "longitude": 103.621120,
+                    "accuracy_meters": 8,
+                },
+            )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is True
+        assert payload["resolved_local"] == "Zona de CheckOut"
+        assert payload["label"] == "Zona de Check-Out"
+        assert payload["status"] == "matched"
+        assert "location_match_decision" in caplog.text
+        assert "selection_source=polygon_checkout" in caplog.text
+        assert "matched_local=Zona de CheckOut" in caplog.text
+
+
+def test_web_location_match_ignores_legacy_single_coordinate_locations():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P94")
+        auth_response = register_web_password(client, chave="WP82", senha="poly123", projeto="P94")
+        assert auth_response.status_code == 200
+
+    with SessionLocal() as db:
+        timestamp = now_sgt()
+        db.add(
+            ManagedLocation(
+                local="Legado P80",
+                latitude=1.255936,
+                longitude=103.611066,
+                coordinates_json=None,
+                projects_json=dump_location_projects(["P94"]),
+                tolerance_meters=150,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        login_response = login_web_password(client, chave="WP82", senha="poly123")
+        assert login_response.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+    assert payload["matched"] is False
+    assert payload["resolved_local"] is None
+    assert payload["label"] == "Localização não Cadastrada"
+    assert payload["status"] == "not_in_known_location"
+    assert payload["nearest_workplace_distance_meters"] is None
 
 
 def test_web_check_updates_user_local_when_location_is_provided():
@@ -8463,8 +8746,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             "/api/admin/locations",
             json={
                 "local": "Base P80",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80", "P82"],
                 "tolerance_meters": 150,
             },
@@ -8476,7 +8758,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert locations.status_code == 200
         assert locations.json()["location_accuracy_threshold_meters"] == 30
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
-        assert base_p80["coordinates"] == [{"latitude": 1.255936, "longitude": 103.611066}]
+        assert base_p80["coordinates"] == build_rectangle_coordinates(1.255936, 103.611066)
         assert base_p80["projects"] == ["P80", "P82"]
         assert base_p80["tolerance_meters"] == 150
 
@@ -8505,10 +8787,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             json={
                 "location_id": base_p80["id"],
                 "local": "Base P80",
-                "coordinates": [
-                    {"latitude": 1.255936, "longitude": 103.611066},
-                    {"latitude": 1.260001, "longitude": 103.612002},
-                ],
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066, latitude_delta=0.004065, longitude_delta=0.000936),
                 "projects": ["P82"],
                 "tolerance_meters": 250,
             },
@@ -8519,10 +8798,12 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         updated_locations = client.get("/api/admin/locations")
         assert updated_locations.status_code == 200
         updated_base_p80 = next(row for row in updated_locations.json()["items"] if row["local"] == "Base P80")
-        assert updated_base_p80["coordinates"] == [
-            {"latitude": 1.255936, "longitude": 103.611066},
-            {"latitude": 1.260001, "longitude": 103.612002},
-        ]
+        assert updated_base_p80["coordinates"] == build_rectangle_coordinates(
+            1.255936,
+            103.611066,
+            latitude_delta=0.004065,
+            longitude_delta=0.000936,
+        )
         assert updated_base_p80["projects"] == ["P82"]
         assert updated_base_p80["latitude"] == 1.255936
         assert updated_base_p80["longitude"] == 103.611066
@@ -8534,16 +8815,294 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert "coordinate_update_frequency_rows" not in mobile_catalog.json()
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
         assert synced_row["tolerance_meters"] == 250
-        assert synced_row["coordinates"] == [
-            {"latitude": 1.255936, "longitude": 103.611066},
-            {"latitude": 1.260001, "longitude": 103.612002},
-        ]
+        assert synced_row["coordinates"] == build_rectangle_coordinates(
+            1.255936,
+            103.611066,
+            latitude_delta=0.004065,
+            longitude_delta=0.000936,
+        )
         assert synced_row["latitude"] == 1.255936
         assert synced_row["longitude"] == 103.611066
 
         remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
         assert remove_location.status_code == 200
         assert remove_location.json()["ok"] is True
+
+
+def test_admin_locations_audit_endpoint_lists_flagged_rows_and_can_include_valid_rows():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P95")
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Audit Base P95",
+                "coordinates": build_rectangle_coordinates(1.275936, 103.621066),
+                "projects": ["P95"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+    with SessionLocal() as db:
+        timestamp = now_sgt()
+        db.add(
+            ManagedLocation(
+                local="Audit Legacy P95",
+                latitude=1.275936,
+                longitude=103.621066,
+                coordinates_json=None,
+                projects_json=dump_location_projects(["P95"]),
+                tolerance_meters=150,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        audit_response = client.get("/api/admin/locations/audit")
+        assert audit_response.status_code == 200
+        payload = audit_response.json()
+        assert payload["summary"]["locations_with_errors"] >= 1
+        assert any(row["local"] == "Audit Legacy P95" for row in payload["rows"])
+        assert all(row["local"] != "Audit Base P95" for row in payload["rows"])
+
+        audit_with_valid = client.get("/api/admin/locations/audit", params={"include_valid": "true"})
+        assert audit_with_valid.status_code == 200
+        payload_with_valid = audit_with_valid.json()
+        assert any(row["local"] == "Audit Base P95" for row in payload_with_valid["rows"])
+        legacy_row = next(row for row in payload_with_valid["rows"] if row["local"] == "Audit Legacy P95")
+        issue_codes = {issue["code"] for issue in legacy_row["issues"]}
+        assert "too_few_coordinates" in issue_codes
+
+
+def test_admin_locations_list_contract_preserves_expected_shape():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P98")
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Contract Base P98",
+                "coordinates": build_rectangle_coordinates(1.295936, 103.641066),
+                "projects": ["P98"],
+                "tolerance_meters": 180,
+            },
+        )
+        assert create_location.status_code == 200
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+        payload = locations.json()
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+
+        location_row = next(row for row in payload["items"] if row["local"] == "Contract Base P98")
+        assert set(location_row.keys()) == {
+            "id",
+            "local",
+            "latitude",
+            "longitude",
+            "coordinates",
+            "projects",
+            "tolerance_meters",
+        }
+        assert location_row["coordinates"] == build_rectangle_coordinates(1.295936, 103.641066)
+        assert location_row["projects"] == ["P98"]
+        assert location_row["tolerance_meters"] == 180
+
+
+def test_admin_location_save_contract_returns_simple_action_response():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P99")
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Contract Save P99",
+                "coordinates": build_rectangle_coordinates(1.305936, 103.651066),
+                "projects": ["P99"],
+                "tolerance_meters": 190,
+            },
+        )
+        assert create_location.status_code == 200
+        assert create_location.json() == {
+            "ok": True,
+            "message": "Localizacao salva com sucesso.",
+        }
+
+
+def test_admin_location_validation_failure_is_logged_in_events():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Audit Fail P96",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611400},
+                    {"latitude": 1.255800, "longitude": 103.611400},
+                    {"latitude": 1.256100, "longitude": 103.611000},
+                ],
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 422
+
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        failed_event = next(
+            event
+            for event in events.json()
+            if event["action"] == "location"
+            and event["status"] == "failed"
+            and event["local"] == "Audit Fail P96"
+            and event["request_path"] == "/api/admin/locations"
+        )
+        assert failed_event["message"] == "Location validation failed via admin"
+        assert "updated_by=HR70" in failed_event["details"]
+        assert "coordinate_count=4" in failed_event["details"]
+        assert "validation_errors=A localizacao precisa formar um poligono valido sem auto-interseccao" in failed_event["details"]
+
+
+def test_admin_location_update_logs_geometry_change_details():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P97")
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Audit Geometry P97",
+                "coordinates": build_rectangle_coordinates(1.285936, 103.631066),
+                "projects": ["P97"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+        geometry_row = next(row for row in locations.json()["items"] if row["local"] == "Audit Geometry P97")
+
+        update_location = client.post(
+            "/api/admin/locations",
+            json={
+                "location_id": geometry_row["id"],
+                "local": "Audit Geometry P97",
+                "coordinates": build_rectangle_coordinates(
+                    1.285936,
+                    103.631066,
+                    latitude_delta=0.00035,
+                    longitude_delta=0.00025,
+                ),
+                "projects": ["P97"],
+                "tolerance_meters": 240,
+            },
+        )
+        assert update_location.status_code == 200
+
+        events = client.get("/api/admin/events")
+        assert events.status_code == 200
+        updated_event = next(
+            event
+            for event in events.json()
+            if event["action"] == "location"
+            and event["status"] == "updated"
+            and event["local"] == "Audit Geometry P97"
+        )
+        assert updated_event["message"] == "Location geometry updated via admin"
+        assert "geometry_changed=yes" in updated_event["details"]
+        assert "previous_tolerance_meters=150" in updated_event["details"]
+        assert "tolerance_meters=240" in updated_event["details"]
+        assert "previous_coordinates=" in updated_event["details"]
+        assert "coordinates=" in updated_event["details"]
+
+
+def test_web_location_options_contract_returns_only_name_list():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("Q01")
+        auth_response = register_web_password(client, chave="WQ01", senha="loc123", projeto="Q01")
+        assert auth_response.status_code == 200
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Lista Contrato Q01",
+                "coordinates": build_rectangle_coordinates(1.315936, 103.661066),
+                "projects": ["Q01"],
+                "tolerance_meters": 200,
+            },
+        )
+        assert create_location.status_code == 200
+
+        locations_response = client.get("/api/web/check/locations")
+        assert locations_response.status_code == 200
+        payload = locations_response.json()
+        assert set(payload.keys()) == {"items"}
+        assert payload["items"] == ["Lista Contrato Q01"]
+        assert all(isinstance(item, str) for item in payload["items"])
+
+
+def test_web_location_match_contract_preserves_expected_response_shape():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("Q02")
+        auth_response = register_web_password(client, chave="WQ02", senha="loc123", projeto="Q02")
+        assert auth_response.status_code == 200
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Match Contrato Q02",
+                "coordinates": build_rectangle_coordinates(1.325936, 103.671066),
+                "projects": ["Q02"],
+                "tolerance_meters": 210,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.325936,
+                "longitude": 103.671066,
+                "accuracy_meters": 8,
+            },
+        )
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert set(payload.keys()) == {
+            "matched",
+            "resolved_local",
+            "label",
+            "status",
+            "message",
+            "accuracy_meters",
+            "accuracy_threshold_meters",
+            "nearest_workplace_distance_meters",
+        }
+        assert payload["matched"] is True
+        assert payload["resolved_local"] == "Match Contrato Q02"
+        assert payload["label"] == "Match Contrato Q02"
+        assert payload["status"] == "matched"
+        assert payload["accuracy_meters"] == 8
+        assert payload["accuracy_threshold_meters"] == 25
 
 
 def test_admin_locations_allow_same_name_with_different_coordinates():
@@ -8554,8 +9113,7 @@ def test_admin_locations_allow_same_name_with_different_coordinates():
             "/api/admin/locations",
             json={
                 "local": "Base Compartilhada",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 150,
             },
@@ -8567,8 +9125,7 @@ def test_admin_locations_allow_same_name_with_different_coordinates():
             "/api/admin/locations",
             json={
                 "local": "Base Compartilhada",
-                "latitude": 1.266001,
-                "longitude": 103.622002,
+                "coordinates": build_rectangle_coordinates(1.266001, 103.622002),
                 "projects": ["P82"],
                 "tolerance_meters": 220,
             },
@@ -8591,7 +9148,7 @@ def test_admin_locations_allow_same_name_with_different_coordinates():
         }
 
 
-def test_admin_location_allows_zero_tolerance():
+def test_admin_location_rejects_zero_tolerance():
     with TestClient(app) as client:
         ensure_admin_session(client)
 
@@ -8599,20 +9156,148 @@ def test_admin_location_allows_zero_tolerance():
             "/api/admin/locations",
             json={
                 "local": "Base Tolerancia Zero",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 0,
             },
         )
+        assert create_location.status_code == 422
+        assert "greater than or equal to 1" in create_location.text
+
+
+def test_admin_location_rejects_payload_with_fewer_than_three_coordinates():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Invalida",
+                "coordinates": [
+                    {"latitude": 1.255936, "longitude": 103.611066},
+                    {"latitude": 1.256136, "longitude": 103.611266},
+                ],
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 422
+        assert "Informe ao menos 3 coordenadas distintas" in create_location.text
+
+
+def test_admin_location_rejects_self_intersecting_polygon():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Laco",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611400},
+                    {"latitude": 1.255800, "longitude": 103.611400},
+                    {"latitude": 1.256100, "longitude": 103.611000},
+                ],
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 422
+        assert "poligono valido sem auto-interseccao" in create_location.text
+
+
+def test_admin_location_rejects_zero_area_polygon():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Colinear",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.255800, "longitude": 103.611200},
+                    {"latitude": 1.255800, "longitude": 103.611400},
+                ],
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 422
+        assert "area valida" in create_location.text
+
+
+def test_admin_location_accepts_triangle_polygon_and_persists_vertices():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P96")
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Triangulo P96",
+                "coordinates": [
+                    {"latitude": 1.255800, "longitude": 103.611000},
+                    {"latitude": 1.256100, "longitude": 103.611100},
+                    {"latitude": 1.255900, "longitude": 103.611350},
+                ],
+                "projects": ["P96"],
+                "tolerance_meters": 120,
+            },
+        )
         assert create_location.status_code == 200
-        assert create_location.json()["ok"] is True
 
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
+        triangle_row = next(row for row in locations.json()["items"] if row["local"] == "Triangulo P96")
 
-        saved_row = next(row for row in locations.json()["items"] if row["local"] == "Base Tolerancia Zero")
-        assert saved_row["tolerance_meters"] == 0
+        assert triangle_row["tolerance_meters"] == 120
+        assert len(triangle_row["coordinates"]) == 3
+        assert triangle_row["coordinates"][0] == {"latitude": 1.2558, "longitude": 103.611}
+        assert triangle_row["coordinates"][1] == {"latitude": 1.2561, "longitude": 103.6111}
+        assert triangle_row["coordinates"][2] == {"latitude": 1.2559, "longitude": 103.61135}
+
+
+def test_admin_location_update_persists_reordered_vertices():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        ensure_project_exists("P97R")
+
+        original_coordinates = build_rectangle_coordinates(1.295936, 103.641066)
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Reorder Base P97R",
+                "coordinates": original_coordinates,
+                "projects": ["P97R"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+        reorder_row = next(row for row in locations.json()["items"] if row["local"] == "Reorder Base P97R")
+
+        reordered_coordinates = original_coordinates[1:] + original_coordinates[:1]
+        update_location = client.post(
+            "/api/admin/locations",
+            json={
+                "location_id": reorder_row["id"],
+                "local": "Reorder Base P97R",
+                "coordinates": reordered_coordinates,
+                "projects": ["P97R"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert update_location.status_code == 200
+
+        refreshed_locations = client.get("/api/admin/locations")
+        assert refreshed_locations.status_code == 200
+        updated_row = next(row for row in refreshed_locations.json()["items"] if row["local"] == "Reorder Base P97R")
+
+        assert updated_row["coordinates"] == reordered_coordinates
 
 
 def test_admin_location_update_allows_existing_detached_project_assignments():
@@ -8623,8 +9308,7 @@ def test_admin_location_update_allows_existing_detached_project_assignments():
             "/api/admin/locations",
             json={
                 "local": "Detached Project Base",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80"],
                 "tolerance_meters": 150,
             },
@@ -8649,9 +9333,7 @@ def test_admin_location_update_allows_existing_detached_project_assignments():
             json={
                 "location_id": detached_location["id"],
                 "local": "Detached Project Base Updated",
-                "coordinates": [
-                    {"latitude": 1.255936, "longitude": 103.611066},
-                ],
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["LEGACY"],
                 "tolerance_meters": 200,
             },
@@ -8675,8 +9357,7 @@ def test_removing_project_reassigns_linked_location_projects():
             "/api/admin/locations",
             json={
                 "local": "Project Reassign Base",
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
                 "projects": ["P80", "P82"],
                 "tolerance_meters": 150,
             },

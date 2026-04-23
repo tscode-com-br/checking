@@ -19,7 +19,7 @@ const adminCss = fs.readFileSync(
 );
 
 test('locations table shows the Projetos column before Local', () => {
-  assert.match(adminHtml, /<tr><th>Projetos<\/th><th>Local<\/th><th>Coordenadas<\/th><th>Tolerância<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>Projetos<\/th><th>Local<\/th><th>Vértices do Polígono<\/th><th>Tolerância<\/th><th>Ações<\/th><\/tr>/);
 });
 
 test('locations rows render a project picker button and persist selected projects on save', () => {

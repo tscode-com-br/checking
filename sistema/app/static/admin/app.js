@@ -2098,10 +2098,105 @@ function normalizeTolerance(value) {
   }
 
   const tolerance = Number(normalized);
-  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 9999) {
-    throw new Error("A tolerância deve ser um inteiro entre 0 e 9999 metros.");
+  if (!Number.isInteger(tolerance) || tolerance < 1 || tolerance > 9999) {
+    throw new Error("A tolerância deve ser um inteiro entre 1 e 9999 metros.");
   }
   return String(tolerance);
+}
+
+function isLocationCoordinateFilled(coordinate) {
+  return Boolean(String(coordinate?.value ?? "").trim());
+}
+
+function getLocationCoordinateFilledCount(row) {
+  if (!Array.isArray(row?.coordinates)) {
+    return 0;
+  }
+  return row.coordinates.filter((coordinate) => isLocationCoordinateFilled(coordinate)).length;
+}
+
+function canRemoveLocationCoordinate(row, coordinateId) {
+  if (!Array.isArray(row?.coordinates)) {
+    return false;
+  }
+
+  const coordinate = row.coordinates.find((entry) => String(entry.id) === String(coordinateId));
+  if (!coordinate) {
+    return false;
+  }
+
+  if (!isLocationCoordinateFilled(coordinate)) {
+    return row.coordinates.length > 1;
+  }
+
+  return getLocationCoordinateFilledCount(row) > 3;
+}
+
+function validateLocationCoordinates(row) {
+  const coordinates = Array.isArray(row?.coordinates) ? row.coordinates : [];
+  const firstFilledIndex = coordinates.findIndex((coordinate) => isLocationCoordinateFilled(coordinate));
+  let lastFilledIndex = -1;
+
+  coordinates.forEach((coordinate, index) => {
+    if (isLocationCoordinateFilled(coordinate)) {
+      lastFilledIndex = index;
+    }
+  });
+
+  if (firstFilledIndex !== -1) {
+    const hasBlankWithinSequence = coordinates
+      .slice(firstFilledIndex, lastFilledIndex + 1)
+      .some((coordinate) => !isLocationCoordinateFilled(coordinate));
+    if (hasBlankWithinSequence) {
+      throw new Error("Preencha os vértices em sequência, sem deixar linhas em branco entre V1 e o último vértice.");
+    }
+  }
+
+  const hasBlankDrafts = coordinates.some((coordinate) => !isLocationCoordinateFilled(coordinate));
+  if (hasBlankDrafts && lastFilledIndex !== -1) {
+    throw new Error("Preencha ou remova os vértices em branco antes de salvar o polígono.");
+  }
+
+  const normalizedCoordinates = coordinates
+    .filter((coordinate) => isLocationCoordinateFilled(coordinate))
+    .map((coordinate) => normalizeCoordinates(coordinate.value));
+
+  if (
+    normalizedCoordinates.length >= 2
+    && normalizedCoordinates[0] === normalizedCoordinates[normalizedCoordinates.length - 1]
+  ) {
+    throw new Error("Não repita o V1 no final; o polígono fecha automaticamente ligando o último vértice de volta ao primeiro.");
+  }
+
+  return normalizedCoordinates;
+}
+
+function getLocationCoordinateClosureCopy(row) {
+  const filledCount = getLocationCoordinateFilledCount(row);
+  if (filledCount < 2) {
+    return "O polígono será fechado automaticamente quando houver ao menos 3 vértices.";
+  }
+  return `Fechamento implícito: V${filledCount} conecta de volta ao V1.`;
+}
+
+function normalizeLocationSaveErrorMessage(message) {
+  const normalized = String(message ?? "").trim();
+  const comparable = normalized.toLowerCase();
+
+  if (comparable.includes("informe ao menos 3 coordenadas distintas")) {
+    return "Informe ao menos 3 vértices distintos e preenchidos em ordem para formar a área poligonal do local.";
+  }
+  if (comparable.includes("nao repita a primeira coordenada no final")) {
+    return "Não repita o V1 no final; o polígono fecha automaticamente ligando o último vértice de volta ao primeiro.";
+  }
+  if (comparable.includes("auto-interseccao")) {
+    return "Os vértices informados se cruzam. Reordene a sequência para contornar a área sem auto-interseção.";
+  }
+  if (comparable.includes("area zero")) {
+    return "Os vértices informados não formam uma área válida. Revise pontos repetidos, colineares ou muito próximos.";
+  }
+
+  return normalized;
 }
 
 function getLocationCoordinateValues(row) {
@@ -2115,7 +2210,7 @@ function getLocationCoordinateValues(row) {
 }
 
 function formatLocationCoordinateCount(count) {
-  return count === 1 ? "1 coordenada" : `${count} coordenadas`;
+  return count === 1 ? "1 vértice" : `${count} vértices`;
 }
 
 function makeLocationCoordinateSummary(row) {
@@ -2126,32 +2221,67 @@ function makeLocationCoordinateSummary(row) {
 
   const primaryCoordinate = coordinates[0];
   const extraCoordinates = Math.max(0, coordinates.length - 1);
-  const tooltip = coordinates.join(" | ");
+  const tooltip = coordinates
+    .map((coordinate, index) => `V${index + 1}: ${coordinate}`)
+    .join(" | ");
 
   return `
     <div class="location-coordinate-summary" title="${escapeHtml(tooltip)}">
-      <span class="location-coordinate-pill-index">1</span>
+      <span class="location-coordinate-pill-index">V1</span>
       <span class="location-coordinate-summary-primary">${escapeHtml(primaryCoordinate)}</span>
       ${extraCoordinates > 0 ? `<span class="location-coordinate-summary-count">+${extraCoordinates}</span>` : ""}
+      <span class="location-coordinate-summary-closure">fecha em V1</span>
     </div>
   `;
 }
 
 function makeLocationCoordinateLines(row) {
-  return row.coordinates.map((coordinate, index) => `
-    <div class="location-coordinate-line">
-      <span class="location-coordinate-index">${index + 1}</span>
-      <input
-        class="inline location-coordinate-input"
-        data-coordinate-id="${escapeHtml(String(coordinate.id))}"
-        maxlength="40"
-        placeholder="Latitude, longitude"
-        value="${escapeHtml(coordinate.value)}"
-        ${row.isEditing ? "" : "disabled"}
-      />
-      ${row.isEditing && index > 0 ? `<button type="button" class="secondary-button location-coordinate-remove-button" data-location-coordinate-remove="${row.id}" data-coordinate-id="${escapeHtml(String(coordinate.id))}">Remover</button>` : ""}
-    </div>
-  `).join("");
+  return row.coordinates.map((coordinate, index) => {
+    const canRemove = canRemoveLocationCoordinate(row, coordinate.id);
+    const isFirstVertex = index === 0;
+    const isLastVertex = index === row.coordinates.length - 1;
+
+    return `
+      <div class="location-coordinate-line">
+        <span class="location-coordinate-index">V${index + 1}</span>
+        <input
+          class="inline location-coordinate-input"
+          data-coordinate-id="${escapeHtml(String(coordinate.id))}"
+          maxlength="40"
+          placeholder="Latitude, longitude do vértice"
+          value="${escapeHtml(coordinate.value)}"
+          ${row.isEditing ? "" : "disabled"}
+        />
+        ${row.isEditing ? `
+          <div class="location-coordinate-actions">
+            <button
+              type="button"
+              class="secondary-button location-coordinate-move-button"
+              data-location-coordinate-move="${row.id}"
+              data-direction="up"
+              data-coordinate-id="${escapeHtml(String(coordinate.id))}"
+              ${isFirstVertex ? 'disabled title="Este já é o primeiro vértice."' : ""}
+            >Subir</button>
+            <button
+              type="button"
+              class="secondary-button location-coordinate-move-button"
+              data-location-coordinate-move="${row.id}"
+              data-direction="down"
+              data-coordinate-id="${escapeHtml(String(coordinate.id))}"
+              ${isLastVertex ? 'disabled title="Este já é o último vértice."' : ""}
+            >Descer</button>
+            <button
+              type="button"
+              class="secondary-button location-coordinate-remove-button"
+              data-location-coordinate-remove="${row.id}"
+              data-coordinate-id="${escapeHtml(String(coordinate.id))}"
+              ${canRemove ? "" : 'disabled title="Mantenha ao menos 3 vértices preenchidos no polígono."'}
+            >Remover</button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
 }
 
 function formatLocationProjectSummary(row) {
@@ -2228,13 +2358,18 @@ function makeLocationRow(row) {
     `;
 
   const coordinatesCell = row.isEditing
-    ? `<div class="location-coordinates-stack">${makeLocationCoordinateLines(row)}</div>`
+    ? `
+      <div class="location-coordinates-stack">
+        ${makeLocationCoordinateLines(row)}
+        <span class="location-coordinate-note">${escapeHtml(getLocationCoordinateClosureCopy(row))}</span>
+      </div>
+    `
     : `<div class="location-coordinates-stack">${makeLocationCoordinateSummary(row)}</div>`;
 
   const toleranceCell = row.isEditing
     ? `
       <div class="location-cell-stack">
-        <input class="inline location-tolerance" type="number" min="0" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" />
+        <input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" />
       </div>
     `
     : `
@@ -2246,7 +2381,7 @@ function makeLocationRow(row) {
   const actionsCell = row.isEditing
     ? `
       <button type="button" class="location-action-primary" data-location-edit="${row.id}">Salvar</button>
-      <button type="button" class="secondary-button location-action-secondary" data-location-add-coordinate="${row.id}">+ Coord.</button>
+      <button type="button" class="secondary-button location-action-secondary" data-location-add-coordinate="${row.id}">+ Vértice</button>
       <button type="button" class="location-action-danger" data-location-remove="${row.id}">Remover</button>
     `
     : `
@@ -2339,7 +2474,7 @@ function focusLocationRow(rowId, coordinateId = null) {
   }
 
   if (coordinateId !== null) {
-    row.querySelector(`[data-coordinate-id="${CSS.escape(String(coordinateId))}"]`)?.focus();
+    row.querySelector(`.location-coordinate-input[data-coordinate-id="${CSS.escape(String(coordinateId))}"]`)?.focus();
     return;
   }
 
@@ -2389,8 +2524,37 @@ function addLocationCoordinate(rowId) {
   if (!row.isEditing) {
     row.isEditing = true;
   }
+  const blankCoordinate = row.coordinates.find((coordinate) => !String(coordinate.value || "").trim());
+  if (blankCoordinate) {
+    focusLocationRow(rowId, blankCoordinate.id);
+    setStatus("Preencha ou remova o vértice em branco antes de adicionar outro.", false);
+    return;
+  }
   const coordinate = createLocationCoordinateEntry("");
   row.coordinates.push(coordinate);
+  renderLocations();
+  focusLocationRow(rowId, coordinate.id);
+}
+
+function moveLocationCoordinate(rowId, coordinateId, direction) {
+  const row = getLocationRowById(rowId);
+  if (!row) {
+    return;
+  }
+
+  captureLocationRowDraft(rowId);
+  const currentIndex = row.coordinates.findIndex((coordinate) => String(coordinate.id) === String(coordinateId));
+  if (currentIndex === -1) {
+    return;
+  }
+
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= row.coordinates.length) {
+    return;
+  }
+
+  const [coordinate] = row.coordinates.splice(currentIndex, 1);
+  row.coordinates.splice(targetIndex, 0, coordinate);
   renderLocations();
   focusLocationRow(rowId, coordinate.id);
 }
@@ -2402,7 +2566,9 @@ function removeLocationCoordinate(rowId, coordinateId) {
   }
 
   captureLocationRowDraft(rowId);
-  if (row.coordinates.length <= 1) {
+  if (!canRemoveLocationCoordinate(row, coordinateId)) {
+    setStatus("Mantenha ao menos 3 vértices preenchidos no polígono. Adicione outro vértice antes de remover este.", false);
+    focusLocationRow(rowId, coordinateId);
     return;
   }
 
@@ -2424,15 +2590,12 @@ async function saveLocationRow(rowId) {
   const local = normalizeLocationName(row.local);
   const tolerance = normalizeTolerance(row.tolerance);
   const projects = normalizeProjectNames(row.projects);
-  const normalizedCoordinates = row.coordinates
-    .map((coordinate) => String(coordinate.value || "").trim())
-    .filter((value) => value)
-    .map((value) => normalizeCoordinates(value));
+  const normalizedCoordinates = validateLocationCoordinates(row);
   if (!projects.length) {
     throw new Error("Selecione ao menos um projeto para a localização.");
   }
-  if (!normalizedCoordinates.length) {
-    throw new Error("Informe ao menos uma coordenada para o local.");
+  if (normalizedCoordinates.length < 3) {
+    throw new Error("Informe ao menos 3 vértices distintos e preenchidos em ordem para formar a área poligonal do local.");
   }
 
   const coordinatesPayload = normalizedCoordinates.map((value) => {
@@ -2452,9 +2615,13 @@ async function saveLocationRow(rowId) {
     payload.location_id = Number(rowId);
   }
 
-  const response = await postJson("/api/admin/locations", payload);
-  await loadLocations();
-  setStatus(response.message, true);
+  try {
+    const response = await postJson("/api/admin/locations", payload);
+    await loadLocations();
+    setStatus(response.message, true);
+  } catch (error) {
+    throw new Error(normalizeLocationSaveErrorMessage(error.message));
+  }
 }
 
 async function removeLocationRow(rowId) {
@@ -3874,6 +4041,14 @@ function bindActions() {
     }
     if (button.dataset.locationAddCoordinate) {
       addLocationCoordinate(button.dataset.locationAddCoordinate);
+      return;
+    }
+    if (button.dataset.locationCoordinateMove) {
+      moveLocationCoordinate(
+        button.dataset.locationCoordinateMove,
+        button.dataset.coordinateId,
+        button.dataset.direction,
+      );
       return;
     }
     if (button.dataset.locationCoordinateRemove) {

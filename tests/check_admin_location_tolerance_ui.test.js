@@ -8,7 +8,7 @@ const adminJs = fs.readFileSync(
   'utf8'
 );
 
-test('admin locations allow zero tolerance in the UI', () => {
-  assert.match(adminJs, /function normalizeTolerance\(value\) \{[\s\S]*tolerance < 0 \|\| tolerance > 9999[\s\S]*inteiro entre 0 e 9999 metros\./);
-  assert.match(adminJs, /class="inline location-tolerance" type="number" min="0" max="9999" inputmode="numeric"/);
+test('admin locations require positive tolerance in the UI', () => {
+  assert.match(adminJs, /function normalizeTolerance\(value\) \{[\s\S]*tolerance < 1 \|\| tolerance > 9999[\s\S]*inteiro entre 1 e 9999 metros\./);
+  assert.match(adminJs, /class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric"/);
 });
