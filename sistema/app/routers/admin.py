@@ -99,9 +99,8 @@ from ..services.location_settings import (
 from ..services.project_catalog import ensure_known_project, list_project_names, list_projects, resolve_default_project_name
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
-    calculate_singapore_calendar_day_diff,
     calculate_inactivity_days,
-    has_missing_checkout_since_midnight,
+    has_exceeded_continuous_inactivity_window,
     is_user_inactive,
     sync_user_inactivity,
 )
@@ -368,8 +367,6 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
             continue
-        if action == "checkin" and has_missing_checkout_since_midnight(latest_activity.event_time, reference_time=current_time):
-            continue
         if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
 
@@ -392,35 +389,7 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
 
 
 def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[UserRow]:
-    rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
-    payload: list[UserRow] = []
-    current_time = reference_time or now_sgt()
-
-    for user in rows:
-        latest_activity = resolve_latest_user_activity(db, user=user)
-        if latest_activity is None or latest_activity.action != "checkin":
-            continue
-        if is_user_inactive(latest_activity.event_time, reference_time=current_time):
-            continue
-        if not has_missing_checkout_since_midnight(latest_activity.event_time, reference_time=current_time):
-            continue
-
-        payload.append(
-            UserRow(
-                id=user.id,
-                rfid=user.rfid,
-                nome=user.nome,
-                chave=user.chave,
-                projeto=user.projeto,
-                local=latest_activity.local if latest_activity.local is not None else user.local,
-                checkin=True,
-                time=latest_activity.event_time,
-                assiduidade=format_assiduidade_label(latest_activity.ontime),
-            )
-        )
-
-    payload.sort(key=lambda row: row.time, reverse=True)
-    return payload
+    return []
 
 
 def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUserRow]:
@@ -432,16 +401,12 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
             continue
-        stale_checkin = latest_activity.action == "checkin" and has_missing_checkout_since_midnight(
-            latest_activity.event_time,
-            reference_time=current_time,
-        )
-        if not stale_checkin and not is_user_inactive(latest_activity.event_time, reference_time=current_time):
+        if not is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
 
         inactivity_days = calculate_inactivity_days(latest_activity.event_time, reference_time=current_time)
-        if stale_checkin and inactivity_days < 1:
-            inactivity_days = calculate_singapore_calendar_day_diff(latest_activity.event_time, reference_time=current_time)
+        if has_exceeded_continuous_inactivity_window(latest_activity.event_time, reference_time=current_time) and inactivity_days < 1:
+            inactivity_days = 1
 
         payload.append(
             InactiveUserRow(

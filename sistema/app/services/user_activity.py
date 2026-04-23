@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -13,14 +13,14 @@ from .time_utils import now_sgt
 
 SINGAPORE_TZ = ZoneInfo(settings.tz_name)
 SECONDS_PER_DAY = 24 * 60 * 60
-INACTIVE_AFTER_BUSINESS_DAYS = 3
+INACTIVE_AFTER_CONTINUOUS_HOURS = 24
 
 
 def _to_singapore_time(value: datetime) -> datetime:
     return value.astimezone(SINGAPORE_TZ)
 
 
-def calculate_business_inactivity_seconds(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> int:
+def calculate_inactivity_seconds(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> int:
     if last_active_at is None:
         return 0
 
@@ -29,44 +29,25 @@ def calculate_business_inactivity_seconds(last_active_at: datetime | None, *, re
     if end <= start:
         return 0
 
-    total_seconds = 0.0
-    cursor = start
-
-    while cursor.date() < end.date():
-        next_midnight = datetime.combine(cursor.date() + timedelta(days=1), time.min, tzinfo=SINGAPORE_TZ)
-        if cursor.weekday() < 5:
-            total_seconds += (next_midnight - cursor).total_seconds()
-        cursor = next_midnight
-
-    if cursor.weekday() < 5:
-        total_seconds += (end - cursor).total_seconds()
-
-    return max(int(total_seconds), 0)
+    return max(int((end - start).total_seconds()), 0)
 
 
 def calculate_inactivity_days(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> int:
-    inactivity_seconds = calculate_business_inactivity_seconds(last_active_at, reference_time=reference_time)
+    inactivity_seconds = calculate_inactivity_seconds(last_active_at, reference_time=reference_time)
     return inactivity_seconds // SECONDS_PER_DAY
 
 
-def calculate_singapore_calendar_day_diff(event_time: datetime | None, *, reference_time: datetime | None = None) -> int:
-    if event_time is None:
-        return 0
-
-    current_time = reference_time or now_sgt()
-    current_local = _to_singapore_time(current_time)
-    event_local = _to_singapore_time(event_time)
-    return max((current_local.date() - event_local.date()).days, 0)
-
-
-def has_missing_checkout_since_midnight(checkin_time: datetime | None, *, reference_time: datetime | None = None) -> bool:
-    return calculate_singapore_calendar_day_diff(checkin_time, reference_time=reference_time) > 0
+def has_exceeded_continuous_inactivity_window(
+    event_time: datetime | None,
+    *,
+    reference_time: datetime | None = None,
+) -> bool:
+    inactivity_seconds = calculate_inactivity_seconds(event_time, reference_time=reference_time)
+    return inactivity_seconds >= INACTIVE_AFTER_CONTINUOUS_HOURS * 60 * 60
 
 
 def is_user_inactive(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> bool:
-    current_time = reference_time or now_sgt()
-    inactivity_days = calculate_inactivity_days(last_active_at, reference_time=current_time)
-    return inactivity_days >= INACTIVE_AFTER_BUSINESS_DAYS
+    return has_exceeded_continuous_inactivity_window(last_active_at, reference_time=reference_time)
 
 
 def mark_user_active(user: User, *, activity_time=None) -> None:

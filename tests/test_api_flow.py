@@ -2098,7 +2098,7 @@ def test_list_and_remove_registered_user():
         assert any(event["rfid"] == "USERDEL1" for event in events_after.json())
 
 
-def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch):
+def test_presence_moves_users_between_checkin_checkout_and_inactive_after_24_hours(monkeypatch):
     fixed_now = datetime(2024, 4, 8, 12, 0, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(user_activity_module, "now_sgt", lambda: fixed_now)
@@ -2142,28 +2142,28 @@ def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch
             user_two = get_user_by_rfid(db, "INA002")
             user_two.checkin = True
             user_two.local = "co83"
-            user_two.time = datetime(2024, 4, 3, 11, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_two.time = fixed_now - timedelta(hours=25)
             user_two.last_active_at = user_two.time
             user_two.inactivity_days = 0
 
             user_three = get_user_by_rfid(db, "INA003")
             user_three.checkin = False
             user_three.local = "main"
-            user_three.time = datetime(2024, 4, 3, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_three.time = fixed_now - timedelta(hours=27)
             user_three.last_active_at = user_three.time
             user_three.inactivity_days = 0
 
             user_four = get_user_by_rfid(db, "INA004")
             user_four.checkin = False
             user_four.local = "co80"
-            user_four.time = datetime(2024, 4, 4, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_four.time = fixed_now - timedelta(hours=8)
             user_four.last_active_at = user_four.time
             user_four.inactivity_days = 0
 
             user_five = get_user_by_rfid(db, "INA005")
             user_five.checkin = True
             user_five.local = "un83"
-            user_five.time = datetime(2024, 4, 5, 11, 0, tzinfo=ZoneInfo(settings.tz_name))
+            user_five.time = fixed_now - timedelta(hours=23, minutes=30)
             user_five.last_active_at = user_five.time
             user_five.inactivity_days = 0
             db.commit()
@@ -2173,10 +2173,10 @@ def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch
         inactive_payload = inactive_rows.json()
         assert all(isinstance(row["id"], int) and row["id"] > 0 for row in inactive_payload)
         assert [row["nome"] for row in inactive_payload] == ["Ana Inativa", "Bruno Inativo"]
-        assert [row["inactivity_days"] for row in inactive_payload] == [3, 3]
+        assert [row["inactivity_days"] for row in inactive_payload] == [1, 1]
         assert [row["latest_action"] for row in inactive_payload] == ["checkin", "checkout"]
-        assert inactive_payload[0]["latest_time"].startswith("2024-04-03T11:00:00")
-        assert inactive_payload[1]["latest_time"].startswith("2024-04-03T09:00:00")
+        assert inactive_payload[0]["latest_time"].startswith("2024-04-07T11:00:00")
+        assert inactive_payload[1]["latest_time"].startswith("2024-04-07T09:00:00")
 
         checkin_rows = client.get("/api/admin/checkin")
         assert checkin_rows.status_code == 200
@@ -2187,9 +2187,7 @@ def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch
 
         missing_checkout_rows = client.get("/api/admin/missing-checkout")
         assert missing_checkout_rows.status_code == 200
-        missing_checkout_payload = missing_checkout_rows.json()
-        assert [row["rfid"] for row in missing_checkout_payload] == ["INA005"]
-        assert missing_checkout_payload[0]["time"].startswith("2024-04-05T11:00:00")
+        assert missing_checkout_rows.json() == []
 
         checkout_rows = client.get("/api/admin/checkout")
         assert checkout_rows.status_code == 200
@@ -2198,7 +2196,7 @@ def test_overdue_checkins_stay_visible_and_populate_missing_checkout(monkeypatch
         assert any(row["rfid"] == "INA004" and row["id"] > 0 for row in checkout_payload)
 
 
-def test_weekends_do_not_increase_inactivity_before_threshold(monkeypatch):
+def test_checkin_remains_visible_until_24_hours_even_across_singapore_midnight(monkeypatch):
     fixed_now = datetime(2024, 4, 7, 12, 0, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(user_activity_module, "now_sgt", lambda: fixed_now)
@@ -2215,7 +2213,7 @@ def test_weekends_do_not_increase_inactivity_before_threshold(monkeypatch):
             weekend_user = get_user_by_rfid(db, "INA010")
             weekend_user.checkin = True
             weekend_user.local = "main"
-            weekend_user.time = datetime(2024, 4, 4, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            weekend_user.time = fixed_now - timedelta(hours=23, minutes=45)
             weekend_user.last_active_at = weekend_user.time
             weekend_user.inactivity_days = 0
             db.commit()
@@ -2230,14 +2228,14 @@ def test_weekends_do_not_increase_inactivity_before_threshold(monkeypatch):
 
         missing_checkout_rows = client.get("/api/admin/missing-checkout")
         assert missing_checkout_rows.status_code == 200
-        assert any(row["rfid"] == "INA010" for row in missing_checkout_rows.json())
+        assert missing_checkout_rows.json() == []
 
         with SessionLocal() as db:
             weekend_user = get_user_by_rfid(db, "INA010")
-            assert weekend_user.inactivity_days == 1
+            assert weekend_user.inactivity_days == 0
 
 
-def test_users_past_business_inactivity_threshold_stay_inactive_on_weekends(monkeypatch):
+def test_users_move_to_inactive_after_24_hours_even_on_weekends(monkeypatch):
     fixed_now = datetime(2024, 4, 7, 12, 0, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(user_activity_module, "now_sgt", lambda: fixed_now)
@@ -2259,14 +2257,14 @@ def test_users_past_business_inactivity_threshold_stay_inactive_on_weekends(monk
             weekend_checkin_user = get_user_by_rfid(db, "INA011")
             weekend_checkin_user.checkin = True
             weekend_checkin_user.local = "main"
-            weekend_checkin_user.time = datetime(2024, 4, 2, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
+            weekend_checkin_user.time = fixed_now - timedelta(hours=25)
             weekend_checkin_user.last_active_at = weekend_checkin_user.time
             weekend_checkin_user.inactivity_days = 0
 
             weekend_checkout_user = get_user_by_rfid(db, "INA012")
             weekend_checkout_user.checkin = False
             weekend_checkout_user.local = "co80"
-            weekend_checkout_user.time = datetime(2024, 4, 2, 8, 0, tzinfo=ZoneInfo(settings.tz_name))
+            weekend_checkout_user.time = fixed_now - timedelta(hours=26)
             weekend_checkout_user.last_active_at = weekend_checkout_user.time
             weekend_checkout_user.inactivity_days = 0
             db.commit()
@@ -2275,7 +2273,7 @@ def test_users_past_business_inactivity_threshold_stay_inactive_on_weekends(monk
         assert inactive_rows.status_code == 200
         inactive_payload = inactive_rows.json()
         assert [row["nome"] for row in inactive_payload] == ["Gil Checkin Weekend", "Helena Checkout Weekend"]
-        assert [row["inactivity_days"] for row in inactive_payload] == [3, 3]
+        assert [row["inactivity_days"] for row in inactive_payload] == [1, 1]
         assert [row["latest_action"] for row in inactive_payload] == ["checkin", "checkout"]
 
         checkin_rows = client.get("/api/admin/checkin")
@@ -2288,13 +2286,13 @@ def test_users_past_business_inactivity_threshold_stay_inactive_on_weekends(monk
 
         missing_checkout_rows = client.get("/api/admin/missing-checkout")
         assert missing_checkout_rows.status_code == 200
-        assert all(row["rfid"] != "INA011" for row in missing_checkout_rows.json())
+        assert missing_checkout_rows.json() == []
 
         with SessionLocal() as db:
             weekend_checkin_user = get_user_by_rfid(db, "INA011")
             weekend_checkout_user = get_user_by_rfid(db, "INA012")
-            assert weekend_checkin_user.inactivity_days == 3
-            assert weekend_checkout_user.inactivity_days == 3
+            assert weekend_checkin_user.inactivity_days == 1
+            assert weekend_checkout_user.inactivity_days == 1
 
 
 def test_admin_presence_lists_follow_latest_activity_even_when_current_state_is_missing_or_stale():
