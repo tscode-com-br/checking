@@ -277,6 +277,12 @@ main {
   justify-content: space-between;
   align-items: center;
 }
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 table {
   width: 100%;
   border-collapse: collapse;

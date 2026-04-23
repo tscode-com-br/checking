@@ -162,7 +162,7 @@ const PRESENCE_TABLE_CONFIGS = {
     filterColumns: ["time", "nome", "chave", "projeto", "assiduidade", "local"],
     defaultSortKey: "time",
     defaultSortDirection: "desc",
-    renderOptions: { highlightMissingCheckout: true, includeElapsedDays: true },
+    renderOptions: { includeElapsedDays: true },
   },
   checkout: {
     bodyId: "checkoutBody",
@@ -2657,14 +2657,12 @@ async function loadCheckin() {
 }
 
 async function loadCheckout() {
-  const [rows, missingCheckoutRows] = await Promise.all([
-    fetchJson("/api/admin/checkout"),
-    fetchJson("/api/admin/missing-checkout"),
-  ]);
+  const rows = await fetchJson("/api/admin/checkout");
   presenceTableStates.checkout.rawRows = Array.isArray(rows) ? rows : [];
-  presenceTableStates.missingCheckout.rawRows = Array.isArray(missingCheckoutRows) ? missingCheckoutRows : [];
+  if (presenceTableStates.missingCheckout) {
+    presenceTableStates.missingCheckout.rawRows = [];
+  }
   applyPresenceTableState("checkout");
-  applyPresenceTableState("missingCheckout");
   updateDashboardSummary();
 }
 
@@ -2860,21 +2858,17 @@ async function refreshActiveTab() {
     return;
   }
   if (activeTab === "forms") {
-    await loadForms();
-    markDashboardRefreshed();
     return;
   }
   if (activeTab === "inactive") {
-    await loadInactive();
-    markDashboardRefreshed();
     return;
   }
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await loadProjects();
-      await Promise.all([loadPending(), loadAdministrators(), loadRegisteredUsers(), loadLocations()]);
+      await Promise.all([loadPending(), loadLocations()]);
+      markDashboardRefreshed();
     }
-    markDashboardRefreshed();
     return;
   }
   if (activeTab === "banco-dados") {
@@ -2882,8 +2876,6 @@ async function refreshActiveTab() {
     markDashboardRefreshed();
     return;
   }
-  await loadEvents();
-  markDashboardRefreshed();
 }
 
 async function refreshAllTables() {
@@ -2901,13 +2893,27 @@ async function refreshAllTables() {
   markDashboardRefreshed();
 }
 
+async function refreshAutomaticTables() {
+  const jobs = [loadCheckin(), loadCheckout()];
+  if (databaseEventsLoaded) {
+    jobs.push(loadDatabaseEvents());
+  }
+  if (!hasPendingEditInProgress()) {
+    await loadProjects();
+    jobs.push(loadPending());
+    jobs.push(loadLocations());
+  }
+  await Promise.all(jobs);
+  markDashboardRefreshed();
+}
+
 function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshHandle = window.setInterval(() => {
     if (document.hidden || realtimeConnected || !isAuthenticated) {
       return;
     }
-    refreshAllTables().catch((error) => setStatus(error.message, false));
+    refreshAutomaticTables().catch((error) => setStatus(error.message, false));
   }, AUTO_REFRESH_MS);
 }
 
@@ -2923,7 +2929,7 @@ function requestRefreshAllTables() {
     window.clearTimeout(refreshAllTimer);
   }
   refreshAllTimer = window.setTimeout(() => {
-    refreshAllTables().catch((error) => setStatus(error.message, false));
+    refreshAutomaticTables().catch((error) => setStatus(error.message, false));
     refreshAllTimer = null;
   }, REALTIME_DEBOUNCE_MS);
 }
@@ -3108,6 +3114,11 @@ async function archiveAndClearEvents() {
     return;
   }
   setStatus("Não havia eventos novos para salvar. Logs já salvos exibidos na janela.", true);
+}
+
+async function refreshManualTable(loader) {
+  await loader();
+  markDashboardRefreshed();
 }
 
 async function savePending(id, rfid) {
@@ -3517,8 +3528,38 @@ function bindActions() {
   }
 
   const changePasswordButton = document.getElementById("changePasswordButton");
+  const refreshFormsButton = document.getElementById("refreshFormsButton");
+  const refreshInactiveButton = document.getElementById("refreshInactiveButton");
+  const refreshAdministratorsButton = document.getElementById("refreshAdministratorsButton");
+  const refreshUsersButton = document.getElementById("refreshUsersButton");
+  const refreshEventsButton = document.getElementById("refreshEventsButton");
   if (changePasswordButton) {
     changePasswordButton.addEventListener("click", openChangePasswordModal);
+  }
+  if (refreshFormsButton) {
+    refreshFormsButton.addEventListener("click", () => {
+      refreshManualTable(loadForms).catch((error) => setStatus(error.message, false));
+    });
+  }
+  if (refreshInactiveButton) {
+    refreshInactiveButton.addEventListener("click", () => {
+      refreshManualTable(loadInactive).catch((error) => setStatus(error.message, false));
+    });
+  }
+  if (refreshAdministratorsButton) {
+    refreshAdministratorsButton.addEventListener("click", () => {
+      refreshManualTable(loadAdministrators).catch((error) => setStatus(error.message, false));
+    });
+  }
+  if (refreshUsersButton) {
+    refreshUsersButton.addEventListener("click", () => {
+      refreshManualTable(loadRegisteredUsers).catch((error) => setStatus(error.message, false));
+    });
+  }
+  if (refreshEventsButton) {
+    refreshEventsButton.addEventListener("click", () => {
+      refreshManualTable(loadEvents).catch((error) => setStatus(error.message, false));
+    });
   }
   if (changePasswordForm) {
     changePasswordForm.addEventListener("submit", (event) => {
@@ -3760,12 +3801,15 @@ function bindActions() {
     }
   });
 
-  document.getElementById("missingCheckoutBody").addEventListener("click", (event) => {
-    const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
-    }
-  });
+  const missingCheckoutBody = document.getElementById("missingCheckoutBody");
+  if (missingCheckoutBody) {
+    missingCheckoutBody.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target.tagName === "BUTTON" && target.dataset.userRemove) {
+        removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+      }
+    });
+  }
 
   document.getElementById("administratorsBody").addEventListener("click", (event) => {
     const target = event.target;

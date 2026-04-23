@@ -7901,8 +7901,13 @@ def test_admin_self_service_request_registers_unknown_user_and_allows_profile_ov
             assert pending is None
 
 
-def test_admin_self_service_request_uses_registered_user_and_allows_profile_updates():
+def test_admin_self_service_request_uses_registered_transport_user_and_keeps_revoke_available():
     ensure_web_user_exists(chave="RK12", nome="Requisitante Conhecido")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "RK12")
+        user.perfil = 2
+        db.commit()
 
     with TestClient(app) as client:
         registration = register_web_password(client, chave="RK12", senha="rk1234", ensure_user_exists=False)
@@ -7932,7 +7937,7 @@ def test_admin_self_service_request_uses_registered_user_and_allows_profile_upda
 
         approve_response = client.post(
             f"/api/admin/administrators/requests/{pending_row['id']}/approve",
-            json={"perfil": 1},
+            json={"perfil": 2},
         )
         assert approve_response.status_code == 200
 
@@ -7941,12 +7946,22 @@ def test_admin_self_service_request_uses_registered_user_and_allows_profile_upda
         approved_row = next(
             row for row in admins_response.json() if row["chave"] == "RK12" and row["row_type"] == "admin"
         )
+        assert approved_row["perfil"] == 12
+        assert approved_row["can_revoke"] is True
         profile_update_response = client.post(
             f"/api/admin/administrators/{approved_row['id']}/profile",
-            json={"perfil": 12},
+            json={"perfil": 2},
         )
         assert profile_update_response.status_code == 200
         assert profile_update_response.json()["ok"] is True
+
+        refreshed_admins_response = client.get("/api/admin/administrators")
+        assert refreshed_admins_response.status_code == 200
+        refreshed_row = next(
+            row for row in refreshed_admins_response.json() if row["chave"] == "RK12" and row["row_type"] == "admin"
+        )
+        assert refreshed_row["perfil"] == 12
+        assert refreshed_row["can_revoke"] is True
 
         with SessionLocal() as db:
             user = db.execute(select(User).where(User.chave == "RK12")).scalar_one_or_none()
@@ -8047,6 +8062,26 @@ def test_admin_request_access_frontend_e2e_handles_existing_and_unknown_keys():
         assert unknown_request.requested_profile == 1
 
 
+def test_stale_checkin_rows_leave_checkin_and_move_to_inactive():
+    ensure_web_user_exists(chave="CI11", nome="Checkin Antigo", projeto="P80")
+    stale_time = now_sgt() - timedelta(days=1, minutes=5)
+    set_user_checkin_state(chave="CI11", event_time=stale_time, local="Web")
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        checkin_response = client.get("/api/admin/checkin")
+        assert checkin_response.status_code == 200
+        checkin_rows = checkin_response.json()
+        assert all(row["chave"] != "CI11" for row in checkin_rows)
+
+        inactive_response = client.get("/api/admin/inactive")
+        assert inactive_response.status_code == 200
+        inactive_row = next(row for row in inactive_response.json() if row["chave"] == "CI11")
+        assert inactive_row["latest_action"] == "checkin"
+        assert inactive_row["inactivity_days"] >= 1
+
+
 def test_admin_login_rejects_transport_only_profile():
     ensure_web_user_exists(chave="TT20", nome="Transport Only")
     with TestClient(app) as client:
@@ -8063,7 +8098,7 @@ def test_admin_login_rejects_transport_only_profile():
         assert login_response.status_code == 403
 
 
-def test_administrators_endpoint_lists_nonzero_profiles_only():
+def test_administrators_endpoint_lists_admin_profiles_only():
     ensure_web_user_exists(chave="UTO9", nome="Admin Perfil")
     ensure_web_user_exists(chave="TP22", nome="Transport Perfil")
     ensure_web_user_exists(chave="ZZ00", nome="Sem Perfil")
@@ -8080,7 +8115,8 @@ def test_administrators_endpoint_lists_nonzero_profiles_only():
         assert rows.status_code == 200
         rows_by_key = {row["chave"]: row for row in rows.json() if row["row_type"] == "admin"}
         assert rows_by_key["UTO9"]["perfil"] == 1
-        assert rows_by_key["TP22"]["perfil"] == 2
+        assert rows_by_key["UTO9"]["can_revoke"] is True
+        assert "TP22" not in rows_by_key
         assert "ZZ00" not in rows_by_key
 
 

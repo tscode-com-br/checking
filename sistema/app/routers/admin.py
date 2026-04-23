@@ -90,6 +90,7 @@ from ..services.location_settings import (
 from ..services.project_catalog import ensure_known_project, list_projects, resolve_default_project_name
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
+    calculate_singapore_calendar_day_diff,
     calculate_inactivity_days,
     has_missing_checkout_since_midnight,
     is_user_inactive,
@@ -358,6 +359,8 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
             continue
+        if action == "checkin" and has_missing_checkout_since_midnight(latest_activity.event_time, reference_time=current_time):
+            continue
         if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
 
@@ -420,8 +423,16 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
             continue
-        if not is_user_inactive(latest_activity.event_time, reference_time=current_time):
+        stale_checkin = latest_activity.action == "checkin" and has_missing_checkout_since_midnight(
+            latest_activity.event_time,
+            reference_time=current_time,
+        )
+        if not stale_checkin and not is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
+
+        inactivity_days = calculate_inactivity_days(latest_activity.event_time, reference_time=current_time)
+        if stale_checkin and inactivity_days < 1:
+            inactivity_days = calculate_singapore_calendar_day_diff(latest_activity.event_time, reference_time=current_time)
 
         payload.append(
             InactiveUserRow(
@@ -432,7 +443,7 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
                 projeto=user.projeto,
                 latest_action=latest_activity.action,
                 latest_time=latest_activity.event_time,
-                inactivity_days=calculate_inactivity_days(latest_activity.event_time, reference_time=current_time),
+                inactivity_days=inactivity_days,
             )
         )
 
@@ -470,12 +481,37 @@ def build_project_row(project: Project) -> ProjectRow:
     return ProjectRow(id=project.id, name=project.name)
 
 
+def normalize_administrator_profile(value: int | str | None) -> int:
+    normalized = normalize_user_profile(value)
+    if normalized == 9:
+        return 9
+
+    digits = {character for character in str(normalized) if character.isdigit() and character != "0"}
+    digits.add(ADMIN_ACCESS_DIGIT)
+    return int("".join(sorted(digits))) if digits else int(ADMIN_ACCESS_DIGIT)
+
+
+def merge_user_profile_values(base_value: int | str | None, extra_value: int | str | None) -> int:
+    normalized_base = normalize_user_profile(base_value)
+    normalized_extra = normalize_user_profile(extra_value)
+    if normalized_base == 9 or normalized_extra == 9:
+        return 9
+
+    digits = {
+        character
+        for character in f"{normalized_base}{normalized_extra}"
+        if character.isdigit() and character != "0"
+    }
+    return int("".join(sorted(digits))) if digits else 0
+
+
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
-    admins = db.execute(
+    admin_candidates = db.execute(
         select(User)
         .where(User.perfil != 0)
         .order_by(User.nome, User.chave)
     ).scalars().all()
+    admins = [admin for admin in admin_candidates if user_has_admin_access(admin)]
     requests = db.execute(select(AdminAccessRequest).order_by(AdminAccessRequest.requested_at.desc())).scalars().all()
 
     rows: list[AdminManagementRow] = []
@@ -493,10 +529,10 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
                 perfil=admin.perfil,
                 status=status,
                 status_label=status_label,
-                can_revoke=user_has_admin_access(admin),
+                can_revoke=True,
                 can_approve=False,
                 can_reject=False,
-                can_set_password=admin.senha is None and user_has_admin_access(admin),
+                can_set_password=admin.senha is None,
             )
         )
 
@@ -1112,10 +1148,9 @@ def approve_administrator_request(
 
     existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
     default_project_name = resolve_default_project_name(db)
-    requested_profile = normalize_user_profile(
+    requested_profile = normalize_administrator_profile(
         payload.perfil if payload is not None else (access_request.requested_profile or 1)
     )
-    requested_digit = str(requested_profile)
     if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
             db,
@@ -1155,9 +1190,9 @@ def approve_administrator_request(
         )
     else:
         existing_admin.nome = access_request.nome_completo
-        if requested_digit != TRANSPORT_ACCESS_DIGIT or existing_admin.senha is None:
+        if requested_profile != TRANSPORT_ACCESS_DIGIT or existing_admin.senha is None:
             existing_admin.senha = access_request.password_hash
-        existing_admin.perfil = add_profile_access(existing_admin.perfil, requested_digit)
+        existing_admin.perfil = merge_user_profile_values(existing_admin.perfil, requested_profile)
 
     log_event(
         db,
@@ -1201,7 +1236,7 @@ def update_administrator_profile(
         raise HTTPException(status_code=404, detail="Administrador nao encontrado.")
 
     previous_profile = normalize_user_profile(administrator.perfil)
-    next_profile = normalize_user_profile(payload.perfil)
+    next_profile = normalize_administrator_profile(payload.perfil)
     administrator.perfil = next_profile
     log_event(
         db,

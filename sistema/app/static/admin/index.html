@@ -250,56 +250,15 @@
             <tbody id="checkoutBody"></tbody>
           </table>
         </div>
-
-        <div class="inactive-users-section">
-          <div class="section-header">
-            <h2 id="missingCheckoutTitle">Usuários com Check-in e sem Check-Out (0)</h2>
-          </div>
-          <div class="presence-controls" data-presence-table="missingCheckout">
-            <div class="presence-controls-grid">
-              <label class="presence-control-field">
-                <span>Filtrar Nome</span>
-                <select data-presence-filter="nome">
-                  <option value="">Todos</option>
-                </select>
-              </label>
-              <label class="presence-control-field">
-                <span>Filtrar Chave</span>
-                <select data-presence-filter="chave">
-                  <option value="">Todos</option>
-                </select>
-              </label>
-              <label class="presence-control-field">
-                <span>Filtrar Última Atividade</span>
-                <select data-presence-filter="time">
-                  <option value="">Todos</option>
-                </select>
-              </label>
-            </div>
-            <div class="presence-controls-actions">
-              <button type="button" class="secondary-button" data-presence-clear>Limpar Filtros</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table class="responsive-table">
-              <thead>
-                <tr>
-                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
-                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
-                  <th><button type="button" class="sortable-header" data-sort-table="missingCheckout" data-sort-key="time"><span>Última Atividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody id="missingCheckoutBody"></tbody>
-            </table>
-          </div>
-        </div>
       </section>
 
       <section id="tab-forms" class="tab">
         <div class="section-header">
           <h2 id="formsTitle">Forms (0)</h2>
-          <button id="clearFormsButton" type="button" class="secondary-button" disabled>Limpar</button>
+          <div class="section-header-actions">
+            <button id="refreshFormsButton" type="button" class="secondary-button">Atualizar</button>
+            <button id="clearFormsButton" type="button" class="secondary-button" disabled>Limpar</button>
+          </div>
         </div>
         <div class="table-wrap forms-wrap">
           <table class="responsive-table forms-table">
@@ -314,6 +273,7 @@
       <section id="tab-inactive" class="tab">
         <div class="section-header">
           <h2 id="inactiveTitle">Usuários Inativos (0)</h2>
+          <button id="refreshInactiveButton" type="button" class="secondary-button">Atualizar</button>
         </div>
         <div class="presence-controls" data-presence-table="inactive">
           <div class="presence-controls-grid">
@@ -412,7 +372,8 @@
         <div class="cadastro-split-grid">
           <div class="cadastro-side-panel">
             <div class="section-header">
-              <h2>Administradores (admin)</h2>
+              <h2>Administradores</h2>
+              <button id="refreshAdministratorsButton" type="button" class="secondary-button">Atualizar</button>
             </div>
             <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
               <table class="responsive-table cadastro-table cadastro-admin-table">
@@ -444,6 +405,7 @@
 
         <div class="section-header">
           <h2>Usuários Cadastrados</h2>
+          <button id="refreshUsersButton" type="button" class="secondary-button">Atualizar</button>
         </div>
         <div class="table-wrap cadastro-grid-wrap">
           <table class="responsive-table cadastro-table cadastro-users-table">
@@ -458,7 +420,10 @@
       <section id="tab-eventos" class="tab">
         <div class="section-header">
           <h2>Eventos</h2>
-          <button id="clearEvents" type="button">Limpar</button>
+          <div class="section-header-actions">
+            <button id="refreshEventsButton" type="button" class="secondary-button">Atualizar</button>
+            <button id="clearEvents" type="button">Limpar</button>
+          </div>
         </div>
         <div class="table-wrap events-wrap">
           <table class="responsive-table events-table">

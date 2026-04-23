@@ -21,6 +21,8 @@ const adminJs = fs.readFileSync(
 test('admin login page exposes the new utility buttons and change-password modal', () => {
   assert.match(adminHtml, /id="changePasswordButton"[\s\S]*>Alterar Senha</);
   assert.match(adminHtml, /id="requestAdminButton"[\s\S]*>Solicitar Administração</);
+  assert.match(adminHtml, />Administradores</);
+  assert.doesNotMatch(adminHtml, />Administradores \(admin\)</);
   assert.match(adminHtml, /id="changePasswordModal"/);
   assert.match(adminHtml, /id="requestAdminModal"/);
   assert.match(adminHtml, /id="requestAdminRegistrationModal"/);
@@ -56,6 +58,7 @@ test('administrators table renders editable profiles and request approval action
   assert.match(adminJs, /data-admin-profile-input="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-approve="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-reject="\$\{row\.id\}"/);
+  assert.match(adminJs, /data-admin-revoke="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-profile-save="\$\{row\.id\}"/);
   assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/requests\/\$\{id\}\/approve`, \{ perfil: profile \}\);/);
   assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/\$\{id\}\/profile`, \{ perfil: profile \}\);/);
