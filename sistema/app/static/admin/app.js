@@ -3829,12 +3829,14 @@ function bindActions() {
   bindLocationSettingsInput("locationAccuracyThresholdMeters");
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
+    const body = event.currentTarget;
     const target = event.target;
-    if (target.tagName !== "BUTTON") {
+    const button = target instanceof Element ? target.closest("button") : null;
+    if (!(body instanceof Element) || !button || !body.contains(button)) {
       return;
     }
-    if (target.dataset.locationProjectsToggle) {
-      const row = getLocationRowById(target.dataset.locationProjectsToggle);
+    if (button.dataset.locationProjectsToggle) {
+      const row = getLocationRowById(button.dataset.locationProjectsToggle);
       if (!row) {
         return;
       }
@@ -3855,31 +3857,31 @@ function bindActions() {
       }
       return;
     }
-    if (target.dataset.locationEdit) {
-      const row = getLocationRowById(target.dataset.locationEdit);
+    if (button.dataset.locationEdit) {
+      const row = getLocationRowById(button.dataset.locationEdit);
       if (!row) {
         return;
       }
       if (row.isEditing) {
-        saveLocationRow(target.dataset.locationEdit).catch((error) => setStatus(error.message, false));
+        saveLocationRow(button.dataset.locationEdit).catch((error) => setStatus(error.message, false));
         return;
       }
-      setLocationEditingState(target.dataset.locationEdit, true);
+      setLocationEditingState(button.dataset.locationEdit, true);
       return;
     }
-    if (target.dataset.locationAddCoordinate) {
-      addLocationCoordinate(target.dataset.locationAddCoordinate);
+    if (button.dataset.locationAddCoordinate) {
+      addLocationCoordinate(button.dataset.locationAddCoordinate);
       return;
     }
-    if (target.dataset.locationCoordinateRemove) {
+    if (button.dataset.locationCoordinateRemove) {
       removeLocationCoordinate(
-        target.dataset.locationCoordinateRemove,
-        target.dataset.coordinateId,
+        button.dataset.locationCoordinateRemove,
+        button.dataset.coordinateId,
       );
       return;
     }
-    if (target.dataset.locationRemove) {
-      removeLocationRow(target.dataset.locationRemove).catch((error) => setStatus(error.message, false));
+    if (button.dataset.locationRemove) {
+      removeLocationRow(button.dataset.locationRemove).catch((error) => setStatus(error.message, false));
     }
   });
 

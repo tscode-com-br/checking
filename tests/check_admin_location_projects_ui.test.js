@@ -13,6 +13,11 @@ const adminJs = fs.readFileSync(
   'utf8'
 );
 
+const adminCss = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/admin/styles.css'),
+  'utf8'
+);
+
 test('locations table shows the Projetos column before Local', () => {
   assert.match(adminHtml, /<tr><th>Projetos<\/th><th>Local<\/th><th>Coordenadas<\/th><th>Tolerância<\/th><th>Ações<\/th><\/tr>/);
 });
@@ -23,7 +28,10 @@ test('locations rows render a project picker button and persist selected project
   assert.match(adminJs, /data-location-project-option="\$\{row\.id\}"/);
   assert.match(adminJs, /const projects = normalizeProjectNames\(row\.projects\);/);
   assert.match(adminJs, /projects,/);
-  assert.match(adminJs, /if \(target\.dataset\.locationProjectsToggle\) \{/);
+  assert.match(adminJs, /const button = target instanceof Element \? target\.closest\("button"\) : null;/);
+  assert.match(adminJs, /if \(button\.dataset\.locationProjectsToggle\) \{/);
   assert.match(adminJs, /if \(row\.projectPickerOpen\) \{[\s\S]*saveLocationRow\(row\.id\)\.catch/);
+  assert.match(adminCss, /\.location-projects-panel \{[\s\S]*box-sizing: border-box;[\s\S]*max-width: 100%;/);
+  assert.match(adminCss, /\.location-actions \{[\s\S]*position: relative;[\s\S]*z-index: 1;/);
   assert.match(adminJs, /row\.projectPickerOpen = true;/);
 });
