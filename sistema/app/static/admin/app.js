@@ -2098,8 +2098,8 @@ function normalizeTolerance(value) {
   }
 
   const tolerance = Number(normalized);
-  if (!Number.isInteger(tolerance) || tolerance < 1 || tolerance > 9999) {
-    throw new Error("A tolerância deve ser um inteiro entre 1 e 9999 metros.");
+  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 9999) {
+    throw new Error("A tolerância deve ser um inteiro entre 0 e 9999 metros.");
   }
   return String(tolerance);
 }
@@ -2204,6 +2204,7 @@ function makeLocationRow(row) {
         class="secondary-button location-projects-button"
         data-location-projects-toggle="${row.id}"
         aria-expanded="${row.projectPickerOpen ? "true" : "false"}"
+        ${row.isEditing ? "" : 'disabled title="Clique em Editar antes de alterar os projetos desta localização."'}
       >Projetos</button>
       <span class="location-projects-summary">${escapeHtml(formatLocationProjectSummary(row))}</span>
       ${row.projectPickerOpen ? `
@@ -2233,7 +2234,7 @@ function makeLocationRow(row) {
   const toleranceCell = row.isEditing
     ? `
       <div class="location-cell-stack">
-        <input class="inline location-tolerance" type="number" min="1" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" />
+        <input class="inline location-tolerance" type="number" min="0" max="9999" inputmode="numeric" value="${escapeHtml(row.tolerance)}" />
       </div>
     `
     : `
@@ -3841,15 +3842,17 @@ function bindActions() {
         return;
       }
 
+      if (!row.isEditing) {
+        setStatus("Clique em Editar antes de alterar os projetos da localização.", false);
+        return;
+      }
+
       if (row.projectPickerOpen) {
         saveLocationRow(row.id).catch((error) => setStatus(error.message, false));
         return;
       }
 
       captureLocationRowDraft(row.id);
-      if (!row.isEditing) {
-        row.isEditing = true;
-      }
       row.projectPickerOpen = true;
       renderLocations();
       if (row.projectPickerOpen) {

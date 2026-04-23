@@ -8546,6 +8546,75 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         assert remove_location.json()["ok"] is True
 
 
+def test_admin_locations_allow_same_name_with_different_coordinates():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        first_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Compartilhada",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert first_location.status_code == 200
+        assert first_location.json()["ok"] is True
+
+        second_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Compartilhada",
+                "latitude": 1.266001,
+                "longitude": 103.622002,
+                "projects": ["P82"],
+                "tolerance_meters": 220,
+            },
+        )
+        assert second_location.status_code == 200
+        assert second_location.json()["ok"] is True
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+
+        duplicated_rows = [row for row in locations.json()["items"] if row["local"] == "Base Compartilhada"]
+        assert len(duplicated_rows) == 2
+        assert {row["projects"][0] for row in duplicated_rows} == {"P80", "P82"}
+        assert {
+            (row["latitude"], row["longitude"], row["tolerance_meters"])
+            for row in duplicated_rows
+        } == {
+            (1.255936, 103.611066, 150),
+            (1.266001, 103.622002, 220),
+        }
+
+
+def test_admin_location_allows_zero_tolerance():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Base Tolerancia Zero",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "projects": ["P80"],
+                "tolerance_meters": 0,
+            },
+        )
+        assert create_location.status_code == 200
+        assert create_location.json()["ok"] is True
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+
+        saved_row = next(row for row in locations.json()["items"] if row["local"] == "Base Tolerancia Zero")
+        assert saved_row["tolerance_meters"] == 0
+
+
 def test_admin_location_update_allows_existing_detached_project_assignments():
     with TestClient(app) as client:
         ensure_admin_session(client)

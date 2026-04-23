@@ -250,7 +250,6 @@ class FormsSubmission(Base):
 
 class ManagedLocation(Base):
     __tablename__ = "locations"
-    __table_args__ = (UniqueConstraint("local", name="uq_locations_local"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     local: Mapped[str] = mapped_column(String(40), nullable=False)

@@ -1561,12 +1561,6 @@ def upsert_location(
     if payload.location_id is not None and location is None:
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
-    conflicting_location = db.execute(
-        select(ManagedLocation).where(ManagedLocation.local == payload.local)
-    ).scalar_one_or_none()
-    if conflicting_location is not None and (location is None or conflicting_location.id != location.id):
-        raise HTTPException(status_code=409, detail="Ja existe uma localizacao cadastrada com esse nome.")
-
     timestamp = now_sgt()
     coordinates = [
         {"latitude": coordinate.latitude, "longitude": coordinate.longitude}

@@ -297,7 +297,7 @@ class AdminLocationUpsert(BaseModel):
     longitude: float | None = None
     coordinates: list[LocationCoordinate] | None = None
     projects: list[str] = Field(min_length=1)
-    tolerance_meters: int = Field(ge=1, le=9999)
+    tolerance_meters: int = Field(ge=0, le=9999)
 
     @model_validator(mode="before")
     @classmethod
