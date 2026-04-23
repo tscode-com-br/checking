@@ -92,7 +92,7 @@ from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
     upsert_location_settings,
 )
-from ..services.project_catalog import ensure_known_project, list_projects, resolve_default_project_name
+from ..services.project_catalog import ensure_known_project, list_project_names, list_projects, resolve_default_project_name
 from ..services.time_utils import now_sgt
 from ..services.user_activity import (
     calculate_singapore_calendar_day_diff,
@@ -485,6 +485,32 @@ def build_location_row(location: ManagedLocation) -> LocationRow:
 
 def build_project_row(project: Project) -> ProjectRow:
     return ProjectRow(id=project.id, name=project.name)
+
+
+def resolve_location_projects_for_upsert(
+    db: Session,
+    *,
+    project_names: list[str],
+    existing_location: ManagedLocation | None,
+) -> list[str]:
+    known_project_names = set(list_project_names(db))
+    existing_location_projects = set(extract_location_projects(existing_location)) if existing_location is not None else set()
+
+    resolved_projects: list[str] = []
+    seen_projects: set[str] = set()
+    for project_name in project_names:
+        normalized_name = str(project_name or "").strip().upper()
+        if not normalized_name or normalized_name in seen_projects:
+            continue
+        if normalized_name not in known_project_names and normalized_name not in existing_location_projects:
+            raise HTTPException(status_code=422, detail="Projeto nao encontrado para a localizacao.")
+        seen_projects.add(normalized_name)
+        resolved_projects.append(normalized_name)
+
+    if not resolved_projects:
+        raise HTTPException(status_code=422, detail="Selecione ao menos um projeto para a localizacao.")
+
+    return resolved_projects
 
 
 def normalize_administrator_profile(value: int | str | None) -> int:
@@ -1108,6 +1134,24 @@ def remove_admin_project(
     for linked_user in linked_users:
         linked_user.projeto = fallback_project or resolve_default_project_name(db)
 
+    linked_locations = db.execute(select(ManagedLocation).order_by(ManagedLocation.id)).scalars().all()
+    reassigned_location_count = 0
+    for linked_location in linked_locations:
+        existing_projects = extract_location_projects(linked_location)
+        if project.name not in existing_projects:
+            continue
+
+        next_projects = [
+            fallback_project if project_name == project.name else project_name
+            for project_name in existing_projects
+        ]
+        if not any(next_projects):
+            next_projects = [fallback_project or resolve_default_project_name(db)]
+
+        linked_location.projects_json = dump_location_projects(next_projects)
+        linked_location.updated_at = now_sgt()
+        reassigned_location_count += 1
+
     db.delete(project)
     log_event(
         db,
@@ -1119,7 +1163,7 @@ def remove_admin_project(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; project_name={project.name}; project_id={project_id}; "
-            f"reassigned_admin_users={len(linked_users)}"
+            f"reassigned_admin_users={len(linked_users)}; reassigned_locations={reassigned_location_count}"
         ),
     )
     db.commit()
@@ -1528,10 +1572,11 @@ def upsert_location(
         {"latitude": coordinate.latitude, "longitude": coordinate.longitude}
         for coordinate in (payload.coordinates or [])
     ]
-    location_projects = [
-        ensure_known_project(db, project_name, detail="Projeto nao encontrado para a localizacao.")
-        for project_name in payload.projects
-    ]
+    location_projects = resolve_location_projects_for_upsert(
+        db,
+        project_names=payload.projects,
+        existing_location=location,
+    )
     primary_coordinate = coordinates[0]
     coordinates_json = dump_location_coordinates(coordinates)
     projects_json = dump_location_projects(location_projects)

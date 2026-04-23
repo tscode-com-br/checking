@@ -50,6 +50,7 @@ from sistema.app.models import (
     CheckEvent,
     CheckingHistory,
     FormsSubmission,
+    ManagedLocation,
     Project,
     TransportAssignment,
     TransportRequest,
@@ -68,6 +69,7 @@ from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
+from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import seed_default_projects
 from sistema.app.services.time_utils import now_sgt
@@ -8542,6 +8544,88 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
         assert remove_location.status_code == 200
         assert remove_location.json()["ok"] is True
+
+
+def test_admin_location_update_allows_existing_detached_project_assignments():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Detached Project Base",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "projects": ["P80"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+        locations = client.get("/api/admin/locations")
+        assert locations.status_code == 200
+        detached_location = next(row for row in locations.json()["items"] if row["local"] == "Detached Project Base")
+
+    with SessionLocal() as db:
+        location = db.get(ManagedLocation, detached_location["id"])
+        assert location is not None
+        location.projects_json = dump_location_projects(["LEGACY"])
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        update_location = client.post(
+            "/api/admin/locations",
+            json={
+                "location_id": detached_location["id"],
+                "local": "Detached Project Base Updated",
+                "coordinates": [
+                    {"latitude": 1.255936, "longitude": 103.611066},
+                ],
+                "projects": ["LEGACY"],
+                "tolerance_meters": 200,
+            },
+        )
+        assert update_location.status_code == 200
+        assert update_location.json()["ok"] is True
+
+        updated_locations = client.get("/api/admin/locations")
+        assert updated_locations.status_code == 200
+        updated_row = next(row for row in updated_locations.json()["items"] if row["id"] == detached_location["id"])
+        assert updated_row["local"] == "Detached Project Base Updated"
+        assert updated_row["projects"] == ["LEGACY"]
+        assert updated_row["tolerance_meters"] == 200
+
+
+def test_removing_project_reassigns_linked_location_projects():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Project Reassign Base",
+                "latitude": 1.255936,
+                "longitude": 103.611066,
+                "projects": ["P80", "P82"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+        projects_response = client.get("/api/admin/projects")
+        assert projects_response.status_code == 200
+        project_p82 = next(project for project in projects_response.json() if project["name"] == "P82")
+
+        remove_project = client.delete(f"/api/admin/projects/{project_p82['id']}")
+        assert remove_project.status_code == 200
+        assert remove_project.json()["ok"] is True
+
+        updated_locations = client.get("/api/admin/locations")
+        assert updated_locations.status_code == 200
+        updated_row = next(row for row in updated_locations.json()["items"] if row["local"] == "Project Reassign Base")
+        assert updated_row["projects"] == ["P80"]
 
 
 def test_mobile_forms_submit_uses_default_and_custom_local():
