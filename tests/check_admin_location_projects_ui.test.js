@@ -24,5 +24,6 @@ test('locations rows render a project picker button and persist selected project
   assert.match(adminJs, /const projects = normalizeProjectNames\(row\.projects\);/);
   assert.match(adminJs, /projects,/);
   assert.match(adminJs, /if \(target\.dataset\.locationProjectsToggle\) \{/);
+  assert.match(adminJs, /if \(row\.projectPickerOpen\) \{[\s\S]*saveLocationRow\(row\.id\)\.catch/);
   assert.match(adminJs, /row\.projectPickerOpen = true;/);
 });

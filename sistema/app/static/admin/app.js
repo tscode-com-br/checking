@@ -3838,13 +3838,17 @@ function bindActions() {
       if (!row) {
         return;
       }
+
+      if (row.projectPickerOpen) {
+        saveLocationRow(row.id).catch((error) => setStatus(error.message, false));
+        return;
+      }
+
       captureLocationRowDraft(row.id);
       if (!row.isEditing) {
         row.isEditing = true;
-        row.projectPickerOpen = true;
-      } else {
-        row.projectPickerOpen = !row.projectPickerOpen;
       }
+      row.projectPickerOpen = true;
       renderLocations();
       if (row.projectPickerOpen) {
         focusLocationProjectPicker(row.id);
