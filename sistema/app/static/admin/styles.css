@@ -128,6 +128,15 @@ header {
   flex: 1 1 140px;
 }
 
+.auth-actions-secondary {
+  margin-top: 10px;
+}
+
+.auth-actions-secondary .auth-utility-button {
+  background: #111827;
+  color: #ffffff;
+}
+
 .auth-status {
   min-height: 22px;
   margin: 14px 0 0;
@@ -725,7 +734,7 @@ input.inline, select.inline, textarea.inline {
 }
 
 .cadastro-admin-table {
-  min-width: 560px;
+  min-width: 760px;
 }
 
 .cadastro-projects-table {
@@ -1008,11 +1017,47 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-admin-table th:nth-child(3),
 .cadastro-admin-table td:nth-child(3) {
-  min-width: 216px;
+  min-width: 110px;
+}
+
+.cadastro-admin-table th:nth-child(4),
+.cadastro-admin-table td:nth-child(4) {
+  min-width: 180px;
+}
+
+.cadastro-admin-table th:nth-child(5),
+.cadastro-admin-table td:nth-child(5) {
+  min-width: 230px;
 }
 
 .cadastro-admin-table .admin-password-editor {
   flex-wrap: nowrap;
+}
+
+.cadastro-admin-table .admin-profile-input.inline {
+  min-width: 92px;
+}
+
+.cadastro-admin-table .admin-row-pending td {
+  background: rgba(249, 115, 22, 0.08);
+}
+
+.admin-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.admin-status-badge.is-pending {
+  background: #ffedd5;
+  color: #c2410c;
 }
 
 .location-row td {

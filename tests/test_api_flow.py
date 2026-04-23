@@ -3,14 +3,20 @@ import io
 import os
 import json
 import shutil
+import socket
+import threading
+import time
 import uuid
+from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
+from playwright.sync_api import sync_playwright
 from sqlalchemy import select, text
+import uvicorn
 
 # Override settings before app import.
 os.environ["APP_ENV"] = "development"
@@ -61,7 +67,6 @@ from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
-from sistema.app.services import transport_exports as transport_exports_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import seed_default_projects
@@ -166,6 +171,49 @@ def login_web_password(client: TestClient, *, chave: str, senha: str):
         "/api/web/auth/login",
         json={"chave": chave, "senha": senha},
     )
+
+
+def make_test_key(prefix: str) -> str:
+    normalized_prefix = str(prefix or "T").strip().upper()[:1]
+    assert normalized_prefix and normalized_prefix.isalnum()
+    return f"{normalized_prefix}{uuid.uuid4().hex[:3].upper()}"
+
+
+def reserve_tcp_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return int(sock.getsockname()[1])
+
+
+@contextmanager
+def live_app_server():
+    port = reserve_tcp_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if getattr(server, "started", False):
+            break
+        try:
+            with closing(socket.create_connection(("127.0.0.1", port), timeout=0.2)):
+                break
+        except OSError:
+            time.sleep(0.05)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        raise RuntimeError("Nao foi possivel iniciar o servidor HTTP para o teste E2E do admin.")
+
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
 
 
 def get_user_by_rfid(db, rfid: str) -> User:
@@ -6025,7 +6073,6 @@ def test_transport_export_endpoint_builds_xlsx_download_and_saves_server_copy(mo
     fixed_now = datetime(2026, 4, 22, 15, 26, 45, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
-    monkeypatch.setattr(transport_exports_module, "now_sgt", lambda: fixed_now)
 
     export_dir = Path(settings.transport_exports_dir)
     if export_dir.exists():
@@ -7800,6 +7847,206 @@ def test_admin_request_access_and_approval_flow():
             assert pending is None
 
 
+def test_admin_self_service_request_registers_unknown_user_and_allows_profile_override_on_approval():
+    with TestClient(app) as client:
+        status_response = client.get("/api/admin/auth/request-access/status", params={"chave": "NR11"})
+        assert status_response.status_code == 200
+        assert status_response.json()["found"] is False
+
+        request_response = client.post(
+            "/api/admin/auth/request-access/self-service",
+            json={
+                "chave": "NR11",
+                "nome_completo": "Novo Requisitante",
+                "projeto": "P80",
+                "senha": "cad123",
+                "confirmar_senha": "cad123",
+            },
+        )
+        assert request_response.status_code == 200
+        assert request_response.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = db.execute(select(User).where(User.chave == "NR11")).scalar_one_or_none()
+            pending = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "NR11")).scalar_one_or_none()
+            assert user is not None
+            assert user.perfil == 0
+            assert user.projeto == "P80"
+            assert user.senha is not None
+            assert verify_password("cad123", user.senha) is True
+            assert pending is not None
+            assert pending.requested_profile == 1
+
+        login_response = login_admin(client)
+        assert login_response.status_code == 200
+
+        rows_response = client.get("/api/admin/administrators")
+        assert rows_response.status_code == 200
+        pending_row = next(row for row in rows_response.json() if row["chave"] == "NR11")
+        assert pending_row["row_type"] == "request"
+        assert pending_row["perfil"] == 1
+
+        approve_response = client.post(
+            f"/api/admin/administrators/requests/{pending_row['id']}/approve",
+            json={"perfil": 9},
+        )
+        assert approve_response.status_code == 200
+        assert approve_response.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = db.execute(select(User).where(User.chave == "NR11")).scalar_one_or_none()
+            pending = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "NR11")).scalar_one_or_none()
+            assert user is not None
+            assert user.perfil == 9
+            assert pending is None
+
+
+def test_admin_self_service_request_uses_registered_user_and_allows_profile_updates():
+    ensure_web_user_exists(chave="RK12", nome="Requisitante Conhecido")
+
+    with TestClient(app) as client:
+        registration = register_web_password(client, chave="RK12", senha="rk1234", ensure_user_exists=False)
+        assert registration.status_code == 200
+
+        status_response = client.get("/api/admin/auth/request-access/status", params={"chave": "RK12"})
+        assert status_response.status_code == 200
+        assert status_response.json()["found"] is True
+        assert status_response.json()["has_password"] is True
+        assert status_response.json()["is_admin"] is False
+        assert status_response.json()["has_pending_request"] is False
+
+        request_response = client.post(
+            "/api/admin/auth/request-access/self-service",
+            json={"chave": "RK12"},
+        )
+        assert request_response.status_code == 200
+        assert request_response.json()["ok"] is True
+
+        login_response = login_admin(client)
+        assert login_response.status_code == 200
+
+        rows_response = client.get("/api/admin/administrators")
+        assert rows_response.status_code == 200
+        pending_row = next(row for row in rows_response.json() if row["chave"] == "RK12")
+        assert pending_row["row_type"] == "request"
+
+        approve_response = client.post(
+            f"/api/admin/administrators/requests/{pending_row['id']}/approve",
+            json={"perfil": 1},
+        )
+        assert approve_response.status_code == 200
+
+        admins_response = client.get("/api/admin/administrators")
+        assert admins_response.status_code == 200
+        approved_row = next(
+            row for row in admins_response.json() if row["chave"] == "RK12" and row["row_type"] == "admin"
+        )
+        profile_update_response = client.post(
+            f"/api/admin/administrators/{approved_row['id']}/profile",
+            json={"perfil": 12},
+        )
+        assert profile_update_response.status_code == 200
+        assert profile_update_response.json()["ok"] is True
+
+        with SessionLocal() as db:
+            user = db.execute(select(User).where(User.chave == "RK12")).scalar_one_or_none()
+            assert user is not None
+            assert user.perfil == 12
+            assert user.senha is not None
+            assert verify_password("rk1234", user.senha) is True
+
+
+def test_admin_request_access_frontend_e2e_handles_existing_and_unknown_keys():
+    existing_key = make_test_key("E")
+    unknown_key = make_test_key("N")
+    existing_password = "ex1234"
+    unknown_password = "cad123"
+    existing_name = "Usuario Existente Front"
+    unknown_name = "Usuario Novo Front"
+
+    ensure_web_user_exists(chave=existing_key, projeto="P80", nome=existing_name)
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave=existing_key,
+            senha=existing_password,
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+    with live_app_server() as base_url:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.goto(f"{base_url}/admin", wait_until="domcontentloaded")
+                page.locator("#requestAdminButton").wait_for(state="visible")
+
+                page.get_by_role("button", name="Solicitar Administração").click()
+                page.locator("#requestAdminModal").wait_for(state="visible")
+                page.locator("#requestAdminChave").fill(unknown_key)
+                page.locator("#requestAdminRegistrationModal").wait_for(state="visible")
+                assert page.input_value("#requestAdminRegistrationChave") == unknown_key
+                assert "Chave nao cadastrada" in (page.text_content("#requestAdminRegistrationStatus") or "")
+
+                page.locator("#requestAdminRegistrationNome").fill(unknown_name)
+                page.locator("#requestAdminRegistrationProjeto").select_option("P80")
+                page.locator("#requestAdminRegistrationSenha").fill(unknown_password)
+                page.locator("#requestAdminRegistrationConfirm").fill(unknown_password)
+                page.locator("#requestAdminRegistrationSaveButton").click()
+                page.wait_for_function(
+                    "() => document.querySelector('#authStatus').textContent.includes('Solicitacao enviada')"
+                )
+                page.wait_for_function(
+                    "() => document.querySelector('#requestAdminRegistrationModal').classList.contains('hidden')"
+                )
+
+                page.get_by_role("button", name="Solicitar Administração").click()
+                page.locator("#requestAdminModal").wait_for(state="visible")
+                page.locator("#requestAdminChave").fill(existing_key)
+                page.wait_for_function(
+                    "() => document.querySelector('#requestAdminStatus').textContent.includes('Solicitacao enviada')"
+                )
+                assert page.locator("#requestAdminRegistrationModal").is_hidden()
+                page.wait_for_function(
+                    "() => document.querySelector('#requestAdminModal').classList.contains('hidden')"
+                )
+            finally:
+                browser.close()
+
+    with SessionLocal() as db:
+        existing_user = db.execute(select(User).where(User.chave == existing_key)).scalar_one_or_none()
+        unknown_user = db.execute(select(User).where(User.chave == unknown_key)).scalar_one_or_none()
+        existing_request = db.execute(
+            select(AdminAccessRequest).where(AdminAccessRequest.chave == existing_key)
+        ).scalar_one_or_none()
+        unknown_request = db.execute(
+            select(AdminAccessRequest).where(AdminAccessRequest.chave == unknown_key)
+        ).scalar_one_or_none()
+
+        assert existing_user is not None
+        assert existing_user.nome == existing_name
+        assert existing_user.perfil == 0
+        assert existing_user.senha is not None
+        assert verify_password(existing_password, existing_user.senha) is True
+
+        assert unknown_user is not None
+        assert unknown_user.nome == unknown_name
+        assert unknown_user.projeto == "P80"
+        assert unknown_user.perfil == 0
+        assert unknown_user.senha is not None
+        assert verify_password(unknown_password, unknown_user.senha) is True
+
+        assert existing_request is not None
+        assert existing_request.nome_completo == existing_name
+        assert existing_request.requested_profile == 1
+
+        assert unknown_request is not None
+        assert unknown_request.nome_completo == unknown_name
+        assert unknown_request.requested_profile == 1
+
+
 def test_admin_login_rejects_transport_only_profile():
     ensure_web_user_exists(chave="TT20", nome="Transport Only")
     with TestClient(app) as client:
@@ -7877,6 +8124,81 @@ def test_admin_password_reset_and_redefine_flow():
         client.post("/api/admin/auth/logout")
         relogin_new_password = login_admin(client, chave="AB12", senha="SenhaFinal2")
         assert relogin_new_password.status_code == 200
+
+
+def test_admin_self_service_password_change_flow():
+    with TestClient(app) as client:
+        assert login_admin(client).status_code == 200
+
+        request_new_admin = client.post(
+            "/api/admin/auth/request-access",
+            json={
+                "chave": "SC12",
+                "nome_completo": "Senha Própria",
+                "senha": "SenhaIni1",
+            },
+        )
+        assert request_new_admin.status_code == 200
+
+        admins_before = client.get("/api/admin/administrators")
+        pending_row = next(row for row in admins_before.json() if row["chave"] == "SC12")
+        approve_response = client.post(f"/api/admin/administrators/requests/{pending_row['id']}/approve")
+        assert approve_response.status_code == 200
+
+        verify_ok = client.post(
+            "/api/admin/auth/verify-current-password",
+            json={"chave": "SC12", "senha_atual": "SenhaIni1"},
+        )
+        assert verify_ok.status_code == 200
+        assert verify_ok.json()["valid"] is True
+
+        verify_invalid = client.post(
+            "/api/admin/auth/verify-current-password",
+            json={"chave": "SC12", "senha_atual": "SenhaErr1"},
+        )
+        assert verify_invalid.status_code == 200
+        assert verify_invalid.json()["valid"] is False
+
+        invalid_change = client.post(
+            "/api/admin/auth/change-password",
+            json={
+                "chave": "SC12",
+                "senha_atual": "SenhaErr1",
+                "nova_senha": "SenhaSC2",
+                "confirmar_senha": "SenhaSC2",
+            },
+        )
+        assert invalid_change.status_code == 401
+
+        change_response = client.post(
+            "/api/admin/auth/change-password",
+            json={
+                "chave": "SC12",
+                "senha_atual": "SenhaIni1",
+                "nova_senha": "SenhaSC2",
+                "confirmar_senha": "SenhaSC2",
+            },
+        )
+        assert change_response.status_code == 200
+        assert "Senha alterada com sucesso." in change_response.json()["message"]
+
+        client.post("/api/admin/auth/logout")
+        blocked_old_login = login_admin(client, chave="SC12", senha="SenhaIni1")
+        assert blocked_old_login.status_code == 401
+
+        relogin_new_password = login_admin(client, chave="SC12", senha="SenhaSC2")
+        assert relogin_new_password.status_code == 200
+
+        events_response = client.get("/api/admin/events")
+        assert events_response.status_code == 200
+        events = events_response.json()
+        assert any(
+            event["action"] == "password"
+            and event["status"] == "updated"
+            and event["request_path"] == "/api/admin/auth/change-password"
+            and "chave=SC12" in (event["details"] or "")
+            for event in events
+        )
 
 
 def test_admin_event_audit_covers_new_auth_lifecycle():

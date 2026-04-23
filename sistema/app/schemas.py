@@ -371,6 +371,71 @@ class AdminAccessRequestCreate(BaseModel):
         return normalized
 
 
+class AdminSelfAccessStatusResponse(BaseModel):
+    found: bool
+    chave: str
+    has_password: bool
+    is_admin: bool
+    has_pending_request: bool
+    message: str
+
+
+class AdminSelfAccessRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    nome_completo: str | None = Field(default=None, min_length=3, max_length=180)
+    projeto: str | None = Field(default=None, min_length=2, max_length=120)
+    senha: str | None = Field(default=None, min_length=3, max_length=10)
+    confirmar_senha: str | None = Field(default=None, min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_self_access_request_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("nome_completo", mode="before")
+    @classmethod
+    def validate_self_access_request_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_person_name(str(value))
+
+    @field_validator("projeto", mode="before")
+    @classmethod
+    def validate_self_access_request_project(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_project_value(value)
+
+    @field_validator("senha", "confirmar_senha", mode="before")
+    @classmethod
+    def validate_self_access_request_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_web_password(value, "A senha")
+
+    @model_validator(mode="after")
+    def validate_self_access_request_password_confirmation(self):
+        password_provided = self.senha is not None
+        confirmation_provided = self.confirmar_senha is not None
+        if password_provided != confirmation_provided:
+            raise ValueError("Informe e confirme a senha")
+        if self.senha is not None and self.confirmar_senha is not None and self.senha != self.confirmar_senha:
+            raise ValueError("A confirmacao de senha nao confere")
+        return self
+
+
+class AdminProfileUpdateRequest(BaseModel):
+    perfil: int = Field(ge=0, le=999)
+
+    @field_validator("perfil", mode="before")
+    @classmethod
+    def validate_admin_profile_value(cls, value: int | str | None) -> int:
+        return max(0, int(value or 0))
+
+
 class AdminPasswordResetRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
 
@@ -385,6 +450,72 @@ class AdminPasswordResetRequest(BaseModel):
 
 class AdminPasswordSetRequest(BaseModel):
     nova_senha: str = Field(min_length=3, max_length=20)
+
+
+class AdminSelfPasswordVerifyRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha_atual: str = Field(min_length=3, max_length=20)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha_atual")
+    @classmethod
+    def validate_current_password(cls, value: str) -> str:
+        password = str(value)
+        if len(password) < 3 or len(password) > 20:
+            raise ValueError("A senha atual deve ter entre 3 e 20 caracteres")
+        if not password.strip():
+            raise ValueError("A senha atual nao pode conter apenas espacos")
+        return password
+
+
+class AdminSelfPasswordChangeRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha_atual: str = Field(min_length=3, max_length=20)
+    nova_senha: str = Field(min_length=3, max_length=10)
+    confirmar_senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha_atual")
+    @classmethod
+    def validate_current_password(cls, value: str) -> str:
+        password = str(value)
+        if len(password) < 3 or len(password) > 20:
+            raise ValueError("A senha atual deve ter entre 3 e 20 caracteres")
+        if not password.strip():
+            raise ValueError("A senha atual nao pode conter apenas espacos")
+        return password
+
+    @field_validator("nova_senha")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return _validate_web_password(value, "A nova senha")
+
+    @field_validator("confirmar_senha")
+    @classmethod
+    def validate_confirmation_password(cls, value: str) -> str:
+        return _validate_web_password(value, "A confirmacao da senha")
+
+    @model_validator(mode="after")
+    def validate_password_change(self):
+        if self.nova_senha == self.senha_atual:
+            raise ValueError("A nova senha deve ser diferente da senha atual")
+        if self.confirmar_senha != self.nova_senha:
+            raise ValueError("A confirmacao da senha deve ser identica a nova senha")
+        return self
 
 
 class AdminIdentity(BaseModel):
@@ -442,6 +573,12 @@ class TransportSessionResponse(BaseModel):
 
 class AdminActionResponse(BaseModel):
     ok: bool
+    message: str
+
+
+class AdminPasswordVerifyResponse(BaseModel):
+    ok: bool
+    valid: bool
     message: str
 
 

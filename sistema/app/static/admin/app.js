@@ -4,6 +4,31 @@ const statusLine = document.getElementById("statusLine");
 const authStatus = document.getElementById("authStatus");
 const sessionBar = document.getElementById("sessionBar");
 const sessionUserLabel = document.getElementById("sessionUserLabel");
+const loginChaveInput = document.getElementById("loginChave");
+const loginSenhaInput = document.getElementById("loginSenha");
+const changePasswordModal = document.getElementById("changePasswordModal");
+const changePasswordForm = document.getElementById("changePasswordForm");
+const changePasswordCurrentInput = document.getElementById("changePasswordCurrent");
+const changePasswordNewInput = document.getElementById("changePasswordNew");
+const changePasswordConfirmInput = document.getElementById("changePasswordConfirm");
+const changePasswordBackButton = document.getElementById("changePasswordBackButton");
+const changePasswordSaveButton = document.getElementById("changePasswordSaveButton");
+const changePasswordStatus = document.getElementById("changePasswordStatus");
+const requestAdminButton = document.getElementById("requestAdminButton");
+const requestAdminModal = document.getElementById("requestAdminModal");
+const requestAdminChaveInput = document.getElementById("requestAdminChave");
+const requestAdminStatus = document.getElementById("requestAdminStatus");
+const requestAdminBackButton = document.getElementById("requestAdminBackButton");
+const requestAdminRegistrationModal = document.getElementById("requestAdminRegistrationModal");
+const requestAdminRegistrationForm = document.getElementById("requestAdminRegistrationForm");
+const requestAdminRegistrationChaveInput = document.getElementById("requestAdminRegistrationChave");
+const requestAdminRegistrationNomeInput = document.getElementById("requestAdminRegistrationNome");
+const requestAdminRegistrationProjetoSelect = document.getElementById("requestAdminRegistrationProjeto");
+const requestAdminRegistrationSenhaInput = document.getElementById("requestAdminRegistrationSenha");
+const requestAdminRegistrationConfirmInput = document.getElementById("requestAdminRegistrationConfirm");
+const requestAdminRegistrationBackButton = document.getElementById("requestAdminRegistrationBackButton");
+const requestAdminRegistrationSaveButton = document.getElementById("requestAdminRegistrationSaveButton");
+const requestAdminRegistrationStatus = document.getElementById("requestAdminRegistrationStatus");
 
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
@@ -11,6 +36,8 @@ const ARCHIVE_PAGE_SIZE = 8;
 const DATABASE_EVENTS_PAGE_SIZE = 50;
 const DATABASE_EVENT_DEFAULT_SORT_KEY = "event_time";
 const DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc";
+const ADMIN_SELF_PASSWORD_VERIFY_DEBOUNCE_MS = 260;
+const ADMIN_REQUEST_LOOKUP_DEBOUNCE_MS = 260;
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -39,6 +66,15 @@ let userTextareaRefreshFrame = null;
 let databaseEventsLoaded = false;
 let databaseEventsRefreshTimer = null;
 let projectCatalog = [];
+let changePasswordVerifyTimeout = null;
+let changePasswordVerifyRequestToken = 0;
+let changePasswordCurrentPasswordValid = false;
+let changePasswordCurrentPasswordChecking = false;
+let changePasswordSaveInProgress = false;
+let requestAdminLookupTimeout = null;
+let requestAdminLookupRequestToken = 0;
+let requestAdminSelfServiceInProgress = false;
+let requestAdminRegistrationSaveInProgress = false;
 
 function createDefaultDatabaseEventFilters() {
   return {
@@ -190,6 +226,260 @@ function setAuthStatus(message, kind = "info") {
   authStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
 }
 
+function setChangePasswordStatus(message, kind = "info") {
+  if (!changePasswordStatus) {
+    return;
+  }
+
+  changePasswordStatus.textContent = message || "";
+  changePasswordStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
+}
+
+function normalizeAdminChave(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 4);
+}
+
+function isAdminCurrentPasswordInputValid(value) {
+  const password = String(value || "");
+  return password.length >= 3 && password.length <= 20 && password.trim().length > 0;
+}
+
+function isAdminNewPasswordInputValid(value) {
+  const password = String(value || "");
+  return password.length >= 3 && password.length <= 10 && password.trim().length > 0;
+}
+
+function isChangePasswordModalOpen() {
+  return Boolean(changePasswordModal && !changePasswordModal.classList.contains("hidden"));
+}
+
+function clearChangePasswordVerificationTimer() {
+  if (changePasswordVerifyTimeout !== null) {
+    window.clearTimeout(changePasswordVerifyTimeout);
+    changePasswordVerifyTimeout = null;
+  }
+  changePasswordVerifyRequestToken += 1;
+}
+
+function syncChangePasswordFormState() {
+  if (!changePasswordSaveButton) {
+    return;
+  }
+
+  const chave = normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "");
+  const currentPassword = String(changePasswordCurrentInput ? changePasswordCurrentInput.value : "");
+  const newPassword = String(changePasswordNewInput ? changePasswordNewInput.value : "");
+  const confirmPassword = String(changePasswordConfirmInput ? changePasswordConfirmInput.value : "");
+  const canSave = chave.length === 4
+    && changePasswordCurrentPasswordValid
+    && isAdminNewPasswordInputValid(newPassword)
+    && newPassword !== currentPassword
+    && confirmPassword === newPassword
+    && !changePasswordCurrentPasswordChecking
+    && !changePasswordSaveInProgress;
+
+  changePasswordSaveButton.disabled = !canSave;
+  changePasswordSaveButton.textContent = changePasswordSaveInProgress ? "Salvando..." : "Salvar";
+
+  [changePasswordCurrentInput, changePasswordNewInput, changePasswordConfirmInput, changePasswordBackButton]
+    .filter(Boolean)
+    .forEach((element) => {
+      element.disabled = changePasswordSaveInProgress;
+    });
+}
+
+function resetChangePasswordVerificationState() {
+  clearChangePasswordVerificationTimer();
+  changePasswordCurrentPasswordValid = false;
+  changePasswordCurrentPasswordChecking = false;
+}
+
+function openChangePasswordModal() {
+  const normalizedChave = normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "");
+  if (loginChaveInput && normalizedChave !== loginChaveInput.value) {
+    loginChaveInput.value = normalizedChave;
+  }
+
+  if (normalizedChave.length !== 4) {
+    setAuthStatus("Informe sua chave antes de alterar a senha.", "error");
+    if (loginChaveInput) {
+      loginChaveInput.focus();
+    }
+    return;
+  }
+
+  if (!changePasswordModal || !changePasswordForm) {
+    return;
+  }
+
+  changePasswordForm.reset();
+  changePasswordSaveInProgress = false;
+  resetChangePasswordVerificationState();
+  setChangePasswordStatus("");
+  changePasswordModal.classList.remove("hidden");
+  changePasswordModal.setAttribute("aria-hidden", "false");
+  syncChangePasswordFormState();
+  if (changePasswordCurrentInput) {
+    changePasswordCurrentInput.focus();
+  }
+}
+
+function closeChangePasswordModal() {
+  if (!changePasswordModal) {
+    return;
+  }
+
+  if (changePasswordForm) {
+    changePasswordForm.reset();
+  }
+  changePasswordSaveInProgress = false;
+  resetChangePasswordVerificationState();
+  setChangePasswordStatus("");
+  changePasswordModal.classList.add("hidden");
+  changePasswordModal.setAttribute("aria-hidden", "true");
+  syncChangePasswordFormState();
+}
+
+function isStaleChangePasswordVerification(chave, currentPassword, requestToken) {
+  return requestToken !== changePasswordVerifyRequestToken
+    || !isChangePasswordModalOpen()
+    || normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "") !== chave
+    || String(changePasswordCurrentInput ? changePasswordCurrentInput.value : "") !== currentPassword;
+}
+
+async function verifyCurrentAdminPassword(chave, currentPassword, requestToken) {
+  try {
+    const payload = await postJson("/api/admin/auth/verify-current-password", {
+      chave,
+      senha_atual: currentPassword,
+    });
+
+    if (isStaleChangePasswordVerification(chave, currentPassword, requestToken)) {
+      return;
+    }
+
+    changePasswordCurrentPasswordValid = Boolean(payload.valid);
+    setChangePasswordStatus(payload.valid ? "Senha atual confirmada." : payload.message, payload.valid ? "success" : "error");
+  } catch (error) {
+    if (isStaleChangePasswordVerification(chave, currentPassword, requestToken)) {
+      return;
+    }
+
+    changePasswordCurrentPasswordValid = false;
+    setChangePasswordStatus(error.message, "error");
+  } finally {
+    if (isStaleChangePasswordVerification(chave, currentPassword, requestToken)) {
+      return;
+    }
+
+    changePasswordCurrentPasswordChecking = false;
+    syncChangePasswordFormState();
+  }
+}
+
+function scheduleChangePasswordVerification() {
+  if (!isChangePasswordModalOpen()) {
+    return;
+  }
+
+  const chave = normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "");
+  const currentPassword = String(changePasswordCurrentInput ? changePasswordCurrentInput.value : "");
+
+  resetChangePasswordVerificationState();
+  if (!chave || !isAdminCurrentPasswordInputValid(currentPassword)) {
+    if (!currentPassword) {
+      setChangePasswordStatus("");
+    }
+    syncChangePasswordFormState();
+    return;
+  }
+
+  const requestToken = changePasswordVerifyRequestToken;
+  changePasswordCurrentPasswordChecking = true;
+  setChangePasswordStatus("Verificando senha atual...", "info");
+  syncChangePasswordFormState();
+  changePasswordVerifyTimeout = window.setTimeout(() => {
+    void verifyCurrentAdminPassword(chave, currentPassword, requestToken);
+  }, ADMIN_SELF_PASSWORD_VERIFY_DEBOUNCE_MS);
+}
+
+async function submitChangePassword() {
+  const chave = normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "");
+  const currentPassword = String(changePasswordCurrentInput ? changePasswordCurrentInput.value : "");
+  const newPassword = String(changePasswordNewInput ? changePasswordNewInput.value : "");
+  const confirmPassword = String(changePasswordConfirmInput ? changePasswordConfirmInput.value : "");
+
+  if (chave.length !== 4) {
+    setChangePasswordStatus("Informe sua chave antes de alterar a senha.", "error");
+    if (loginChaveInput) {
+      loginChaveInput.focus();
+    }
+    return;
+  }
+  if (!isAdminCurrentPasswordInputValid(currentPassword)) {
+    setChangePasswordStatus("A senha atual deve ter entre 3 e 20 caracteres.", "error");
+    if (changePasswordCurrentInput) {
+      changePasswordCurrentInput.focus();
+    }
+    return;
+  }
+  if (!changePasswordCurrentPasswordValid) {
+    setChangePasswordStatus("A senha atual nao confere.", "error");
+    if (changePasswordCurrentInput) {
+      changePasswordCurrentInput.focus();
+    }
+    return;
+  }
+  if (!isAdminNewPasswordInputValid(newPassword)) {
+    setChangePasswordStatus("A nova senha deve ter entre 3 e 10 caracteres.", "error");
+    if (changePasswordNewInput) {
+      changePasswordNewInput.focus();
+    }
+    return;
+  }
+  if (newPassword === currentPassword) {
+    setChangePasswordStatus("A nova senha deve ser diferente da senha atual.", "error");
+    if (changePasswordNewInput) {
+      changePasswordNewInput.focus();
+    }
+    return;
+  }
+  if (confirmPassword !== newPassword) {
+    setChangePasswordStatus("A confirmação da senha deve ser idêntica à nova senha.", "error");
+    if (changePasswordConfirmInput) {
+      changePasswordConfirmInput.focus();
+    }
+    return;
+  }
+
+  changePasswordSaveInProgress = true;
+  syncChangePasswordFormState();
+  setChangePasswordStatus("Salvando nova senha...", "info");
+
+  try {
+    const payload = await postJson("/api/admin/auth/change-password", {
+      chave,
+      senha_atual: currentPassword,
+      nova_senha: newPassword,
+      confirmar_senha: confirmPassword,
+    });
+    if (loginSenhaInput) {
+      loginSenhaInput.value = newPassword;
+    }
+    closeChangePasswordModal();
+    setAuthStatus(payload.message, "success");
+  } catch (error) {
+    setChangePasswordStatus(error.message, "error");
+  } finally {
+    changePasswordSaveInProgress = false;
+    syncChangePasswordFormState();
+  }
+}
+
 function setStatus(message, ok = true) {
   statusLine.textContent = message;
   statusLine.className = ok ? "status-ok" : "status-err";
@@ -306,6 +596,7 @@ function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
+  closeChangePasswordModal();
   formsTotal = 0;
   databaseEventsLoaded = false;
   if (databaseEventsRefreshTimer !== null) {
@@ -983,17 +1274,251 @@ function closeEventArchivesModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+function setRequestAdminStatus(message, kind = "info") {
+  if (!requestAdminStatus) {
+    return;
+  }
+
+  requestAdminStatus.textContent = message || "";
+  requestAdminStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
+}
+
+function setRequestAdminRegistrationStatus(message, kind = "info") {
+  if (!requestAdminRegistrationStatus) {
+    return;
+  }
+
+  requestAdminRegistrationStatus.textContent = message || "";
+  requestAdminRegistrationStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
+}
+
+function cancelRequestAdminLookup() {
+  if (requestAdminLookupTimeout) {
+    window.clearTimeout(requestAdminLookupTimeout);
+    requestAdminLookupTimeout = null;
+  }
+  requestAdminLookupRequestToken += 1;
+}
+
+function isAdminRequestKeyValid(chave) {
+  return /^[A-Z0-9]{4}$/.test(String(chave || ""));
+}
+
+function isAdminRequestPasswordValid(value) {
+  return value.length >= 3 && value.length <= 10 && value.trim().length > 0;
+}
+
+function syncRequestAdminRegistrationFormState() {
+  if (!requestAdminRegistrationSaveButton) {
+    return;
+  }
+
+  const nome = requestAdminRegistrationNomeInput ? requestAdminRegistrationNomeInput.value.trim() : "";
+  const projeto = requestAdminRegistrationProjetoSelect ? requestAdminRegistrationProjetoSelect.value.trim() : "";
+  const senha = requestAdminRegistrationSenhaInput ? requestAdminRegistrationSenhaInput.value : "";
+  const confirmarSenha = requestAdminRegistrationConfirmInput ? requestAdminRegistrationConfirmInput.value : "";
+  const canSave = nome.length >= 3
+    && projeto.length >= 2
+    && isAdminRequestPasswordValid(senha)
+    && senha === confirmarSenha
+    && !requestAdminRegistrationSaveInProgress;
+  requestAdminRegistrationSaveButton.disabled = !canSave;
+}
+
+async function loadRequestAdminProjects(selectedValue = "") {
+  const rows = projectCatalog.length > 0 ? projectCatalog : await fetchJson("/api/web/projects");
+  setProjectCatalog(rows);
+  const optionValues = getProjectOptions(selectedValue, { includeDetachedValue: true });
+  syncSelectOptions(requestAdminRegistrationProjetoSelect, optionValues, selectedValue || optionValues[0] || "");
+}
+
+function resetRequestAdminRegistrationState(options = {}) {
+  const preserveKey = options.preserveKey === true;
+  if (requestAdminRegistrationChaveInput && !preserveKey) {
+    requestAdminRegistrationChaveInput.value = "";
+  }
+  if (requestAdminRegistrationNomeInput) {
+    requestAdminRegistrationNomeInput.value = "";
+  }
+  if (requestAdminRegistrationSenhaInput) {
+    requestAdminRegistrationSenhaInput.value = "";
+  }
+  if (requestAdminRegistrationConfirmInput) {
+    requestAdminRegistrationConfirmInput.value = "";
+  }
+  setRequestAdminRegistrationStatus("");
+  syncRequestAdminRegistrationFormState();
+}
+
 function openRequestAdminModal() {
-  const modal = document.getElementById("requestAdminModal");
-  document.getElementById("requestAdminStatus").textContent = "";
-  modal.classList.remove("hidden");
-  modal.setAttribute("aria-hidden", "false");
+  cancelRequestAdminLookup();
+  if (requestAdminRegistrationModal) {
+    requestAdminRegistrationModal.classList.add("hidden");
+    requestAdminRegistrationModal.setAttribute("aria-hidden", "true");
+  }
+  resetRequestAdminRegistrationState();
+  setRequestAdminStatus("");
+  if (requestAdminChaveInput) {
+    requestAdminChaveInput.value = "";
+  }
+  if (!requestAdminModal) {
+    return;
+  }
+  requestAdminModal.classList.remove("hidden");
+  requestAdminModal.setAttribute("aria-hidden", "false");
+  if (requestAdminChaveInput) {
+    requestAdminChaveInput.focus();
+  }
 }
 
 function closeRequestAdminModal() {
-  const modal = document.getElementById("requestAdminModal");
-  modal.classList.add("hidden");
-  modal.setAttribute("aria-hidden", "true");
+  cancelRequestAdminLookup();
+  if (requestAdminModal) {
+    requestAdminModal.classList.add("hidden");
+    requestAdminModal.setAttribute("aria-hidden", "true");
+  }
+  if (requestAdminChaveInput) {
+    requestAdminChaveInput.value = "";
+  }
+  setRequestAdminStatus("");
+}
+
+function closeRequestAdminRegistrationModal() {
+  if (!requestAdminRegistrationModal) {
+    return;
+  }
+  requestAdminRegistrationModal.classList.add("hidden");
+  requestAdminRegistrationModal.setAttribute("aria-hidden", "true");
+  resetRequestAdminRegistrationState();
+}
+
+async function openRequestAdminRegistrationModal(chave) {
+  if (!requestAdminRegistrationModal || !requestAdminRegistrationChaveInput) {
+    return;
+  }
+
+  requestAdminRegistrationChaveInput.value = chave;
+  await loadRequestAdminProjects();
+  resetRequestAdminRegistrationState({ preserveKey: true });
+  if (requestAdminModal) {
+    requestAdminModal.classList.add("hidden");
+    requestAdminModal.setAttribute("aria-hidden", "true");
+  }
+  requestAdminRegistrationModal.classList.remove("hidden");
+  requestAdminRegistrationModal.setAttribute("aria-hidden", "false");
+  syncRequestAdminRegistrationFormState();
+  if (requestAdminRegistrationNomeInput) {
+    requestAdminRegistrationNomeInput.focus();
+  }
+}
+
+function returnToRequestAdminLookupModal() {
+  const chave = requestAdminRegistrationChaveInput ? requestAdminRegistrationChaveInput.value : "";
+  closeRequestAdminRegistrationModal();
+  if (!requestAdminModal) {
+    return;
+  }
+  requestAdminModal.classList.remove("hidden");
+  requestAdminModal.setAttribute("aria-hidden", "false");
+  if (requestAdminChaveInput) {
+    requestAdminChaveInput.value = chave;
+    requestAdminChaveInput.focus();
+    if (typeof requestAdminChaveInput.select === "function") {
+      requestAdminChaveInput.select();
+    }
+  }
+  setRequestAdminStatus("Corrija a chave ou informe outra para continuar.");
+}
+
+async function submitRequestAdminKnownUser(chave, requestToken) {
+  if (requestAdminSelfServiceInProgress) {
+    return;
+  }
+
+  requestAdminSelfServiceInProgress = true;
+  try {
+    const payload = await postJson("/api/admin/auth/request-access/self-service", { chave });
+    if (requestToken !== requestAdminLookupRequestToken || !requestAdminModal || requestAdminModal.classList.contains("hidden")) {
+      return;
+    }
+
+    setRequestAdminStatus(payload.message, "success");
+    setAuthStatus(payload.message, "success");
+    window.setTimeout(() => {
+      if (requestToken !== requestAdminLookupRequestToken) {
+        return;
+      }
+      closeRequestAdminModal();
+    }, 700);
+  } finally {
+    requestAdminSelfServiceInProgress = false;
+  }
+}
+
+async function lookupRequestAdminChave(chave, requestToken) {
+  if (requestToken !== requestAdminLookupRequestToken || !requestAdminModal || requestAdminModal.classList.contains("hidden")) {
+    return;
+  }
+
+  setRequestAdminStatus("Verificando chave...");
+  const payload = await fetchJson(`/api/admin/auth/request-access/status?chave=${encodeURIComponent(chave)}`);
+  if (requestToken !== requestAdminLookupRequestToken || !requestAdminModal || requestAdminModal.classList.contains("hidden")) {
+    return;
+  }
+
+  if (!payload.found) {
+    await openRequestAdminRegistrationModal(chave);
+    setRequestAdminRegistrationStatus(payload.message);
+    return;
+  }
+
+  if (payload.is_admin || payload.has_pending_request || !payload.has_password) {
+    const kind = payload.has_pending_request ? "info" : "error";
+    setRequestAdminStatus(payload.message, kind);
+    return;
+  }
+
+  setRequestAdminStatus("Chave cadastrada. Enviando solicitacao...");
+  await submitRequestAdminKnownUser(chave, requestToken);
+}
+
+function scheduleRequestAdminLookup() {
+  if (!requestAdminChaveInput) {
+    return;
+  }
+
+  const chave = normalizeAdminChave(requestAdminChaveInput.value);
+  if (requestAdminChaveInput.value !== chave) {
+    requestAdminChaveInput.value = chave;
+  }
+
+  if (requestAdminLookupTimeout) {
+    window.clearTimeout(requestAdminLookupTimeout);
+    requestAdminLookupTimeout = null;
+  }
+
+  setRequestAdminStatus("");
+  if (!chave) {
+    return;
+  }
+  if (!/^[A-Z0-9]{0,4}$/.test(chave)) {
+    setRequestAdminStatus("A chave deve ter 4 caracteres alfanumericos.", "error");
+    return;
+  }
+  if (!isAdminRequestKeyValid(chave)) {
+    setRequestAdminStatus("Digite os 4 caracteres da chave para continuar.");
+    return;
+  }
+
+  const requestToken = ++requestAdminLookupRequestToken;
+  requestAdminLookupTimeout = window.setTimeout(() => {
+    lookupRequestAdminChave(chave, requestToken).catch((error) => {
+      if (requestToken !== requestAdminLookupRequestToken) {
+        return;
+      }
+      setRequestAdminStatus(error.message, "error");
+    });
+  }, ADMIN_REQUEST_LOOKUP_DEBOUNCE_MS);
 }
 
 function updateUserTitle(targetId, totalRows, totalRegistered) {
@@ -1990,11 +2515,35 @@ function makeProjectRow(project) {
 
 function makeAdministratorRow(row) {
   const tr = document.createElement("tr");
+  const isRequestRow = row.row_type === "request";
+  const profileValue = Number.parseInt(row.perfil, 10);
+  const normalizedProfileValue = Number.isFinite(profileValue) ? profileValue : 0;
+  const actionButtons = isRequestRow
+    ? `
+      ${row.can_approve ? `<button data-admin-approve="${row.id}">Aprovar</button>` : ""}
+      ${row.can_reject ? `<button type="button" class="secondary-button" data-admin-reject="${row.id}">Rejeitar</button>` : ""}
+    `
+    : `
+      <button data-admin-profile-save="${row.id}">Salvar Perfil</button>
+      ${row.can_revoke ? `<button type="button" class="secondary-button" data-admin-revoke="${row.id}">Revogar</button>` : ""}
+    `;
+  tr.classList.toggle("admin-row-pending", isRequestRow);
   tr.innerHTML = `
     <td>${escapeHtml(row.chave)}</td>
     <td>${escapeHtml(row.nome)}</td>
-    <td>${escapeHtml(row.perfil ?? 0)}</td>
-    <td>${escapeHtml(row.status_label)}</td>
+    <td>
+      <input
+        class="inline admin-profile-input"
+        data-admin-profile-input="${row.id}"
+        type="number"
+        min="0"
+        max="999"
+        inputmode="numeric"
+        value="${escapeHtml(normalizedProfileValue)}"
+      />
+    </td>
+    <td><span class="admin-status-badge${isRequestRow ? " is-pending" : ""}">${escapeHtml(row.status_label)}</span></td>
+    <td class="pending-actions user-actions">${actionButtons}</td>
   `;
   return tr;
 }
@@ -2087,6 +2636,19 @@ function toggleAdminPasswordEditor(id, active) {
   }
 }
 
+function readAdministratorProfileValue(id) {
+  const input = document.querySelector(`[data-admin-profile-input="${CSS.escape(String(id))}"]`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error("Perfil do administrador nao encontrado.");
+  }
+
+  const normalized = String(input.value || "").trim();
+  if (!/^\d{1,3}$/.test(normalized)) {
+    throw new Error("Informe um perfil numerico entre 0 e 999.");
+  }
+  return Number.parseInt(normalized, 10);
+}
+
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
   presenceTableStates.checkin.rawRows = Array.isArray(rows) ? rows : [];
@@ -2125,11 +2687,16 @@ async function loadPending() {
 
 async function loadAdministrators() {
   const rows = await fetchJson("/api/admin/administrators");
-  const adminRows = rows.filter((row) => row.row_type === "admin");
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const adminRows = normalizedRows.filter((row) => row.row_type === "admin");
   administratorsTotal = adminRows.length;
   const body = document.getElementById("administratorsBody");
   body.innerHTML = "";
-  adminRows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
+  if (normalizedRows.length === 0) {
+    renderEmptyStateRow("administratorsBody", 5, "Nenhum administrador ou solicitacao pendente encontrada.");
+  } else {
+    normalizedRows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
+  }
   applyResponsiveLabels("administratorsBody");
   updateDashboardSummary();
 }
@@ -2627,7 +3194,8 @@ async function resetRegisteredUserPassword(userId) {
 }
 
 async function approveAdministrator(id) {
-  const payload = await postJson(`/api/admin/administrators/requests/${id}/approve`);
+  const profile = readAdministratorProfileValue(id);
+  const payload = await postJson(`/api/admin/administrators/requests/${id}/approve`, { perfil: profile });
   setStatus(payload.message, true);
   await loadAdministrators();
 }
@@ -2648,6 +3216,13 @@ async function revokeAdministrator(id) {
   await loadAdministrators();
 }
 
+async function saveAdministratorProfile(id) {
+  const profile = readAdministratorProfileValue(id);
+  const payload = await postJson(`/api/admin/administrators/${id}/profile`, { perfil: profile });
+  setStatus(payload.message, true);
+  await loadAdministrators();
+}
+
 async function saveAdministratorPassword(id) {
   const input = document.getElementById(`admin-password-input-${id}`);
   const novaSenha = input.value;
@@ -2662,8 +3237,11 @@ async function saveAdministratorPassword(id) {
 }
 
 async function submitLogin() {
-  const chave = document.getElementById("loginChave").value.trim().toUpperCase();
-  const senha = document.getElementById("loginSenha").value;
+  const chave = normalizeAdminChave(loginChaveInput ? loginChaveInput.value : "");
+  const senha = loginSenhaInput ? loginSenhaInput.value : "";
+  if (loginChaveInput) {
+    loginChaveInput.value = chave;
+  }
   if (chave.length !== 4 || !/^[A-Z0-9]{4}$/i.test(chave)) {
     setAuthStatus("A chave deve ter 4 caracteres alfanuméricos.", "error");
     return;
@@ -2675,40 +3253,60 @@ async function submitLogin() {
 
   const payload = await postJson("/api/admin/auth/login", { chave, senha });
   setAuthStatus(payload.message, "success");
-  document.getElementById("loginSenha").value = "";
+  if (loginSenhaInput) {
+    loginSenhaInput.value = "";
+  }
   await bootstrapAdmin();
 }
 
-async function submitRequestAdmin() {
-  const chave = document.getElementById("requestAdminChave").value.trim().toUpperCase();
-  const nomeCompleto = document.getElementById("requestAdminNome").value.trim();
-  const senha = document.getElementById("requestAdminSenha").value;
-  if (chave.length !== 4 || !/^[A-Z0-9]{4}$/i.test(chave)) {
-    document.getElementById("requestAdminStatus").textContent = "A chave deve ter 4 caracteres alfanuméricos.";
+async function submitRequestAdminRegistration() {
+  const chave = normalizeAdminChave(requestAdminRegistrationChaveInput ? requestAdminRegistrationChaveInput.value : "");
+  const nomeCompleto = requestAdminRegistrationNomeInput ? requestAdminRegistrationNomeInput.value.trim() : "";
+  const projeto = requestAdminRegistrationProjetoSelect ? requestAdminRegistrationProjetoSelect.value.trim() : "";
+  const senha = requestAdminRegistrationSenhaInput ? requestAdminRegistrationSenhaInput.value : "";
+  const confirmarSenha = requestAdminRegistrationConfirmInput ? requestAdminRegistrationConfirmInput.value : "";
+
+  if (!isAdminRequestKeyValid(chave)) {
+    setRequestAdminRegistrationStatus("A chave deve ter 4 caracteres alfanumericos.", "error");
     return;
   }
   if (nomeCompleto.length < 3) {
-    document.getElementById("requestAdminStatus").textContent = "Informe o nome completo.";
+    setRequestAdminRegistrationStatus("Informe o nome completo.", "error");
     return;
   }
-  if (senha.length < 3 || senha.length > 20) {
-    document.getElementById("requestAdminStatus").textContent = "A senha deve ter entre 3 e 20 caracteres.";
+  if (projeto.length < 2) {
+    setRequestAdminRegistrationStatus("Selecione o projeto do usuario.", "error");
+    return;
+  }
+  if (!isAdminRequestPasswordValid(senha)) {
+    setRequestAdminRegistrationStatus("A senha deve ter entre 3 e 10 caracteres.", "error");
+    return;
+  }
+  if (senha !== confirmarSenha) {
+    setRequestAdminRegistrationStatus("A confirmacao de senha nao confere.", "error");
     return;
   }
 
-  const payload = await postJson("/api/admin/auth/request-access", {
-    chave,
-    nome_completo: nomeCompleto,
-    senha,
-  });
-  document.getElementById("requestAdminStatus").textContent = payload.message;
-  setAuthStatus(payload.message, "success");
-  window.setTimeout(() => {
-    closeRequestAdminModal();
-    document.getElementById("requestAdminChave").value = "";
-    document.getElementById("requestAdminNome").value = "";
-    document.getElementById("requestAdminSenha").value = "";
-  }, 700);
+  requestAdminRegistrationSaveInProgress = true;
+  syncRequestAdminRegistrationFormState();
+  try {
+    const payload = await postJson("/api/admin/auth/request-access/self-service", {
+      chave,
+      nome_completo: nomeCompleto,
+      projeto,
+      senha,
+      confirmar_senha: confirmarSenha,
+    });
+    setRequestAdminRegistrationStatus(payload.message, "success");
+    setAuthStatus(payload.message, "success");
+    window.setTimeout(() => {
+      closeRequestAdminRegistrationModal();
+      closeRequestAdminModal();
+    }, 700);
+  } finally {
+    requestAdminRegistrationSaveInProgress = false;
+    syncRequestAdminRegistrationFormState();
+  }
 }
 
 async function submitPasswordReset() {
@@ -2892,10 +3490,20 @@ function bindActions() {
   document.getElementById("loginButton").addEventListener("click", () => {
     submitLogin().catch((error) => setAuthStatus(error.message, "error"));
   });
+  if (loginChaveInput) {
+    loginChaveInput.addEventListener("input", () => {
+      const normalized = normalizeAdminChave(loginChaveInput.value);
+      if (normalized !== loginChaveInput.value) {
+        loginChaveInput.value = normalized;
+      }
+      if (isChangePasswordModalOpen()) {
+        scheduleChangePasswordVerification();
+        syncChangePasswordFormState();
+      }
+    });
+  }
   document.getElementById("loginSenha").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      submitLogin().catch((error) => setAuthStatus(error.message, "error"));
-    }
+        setChangePasswordStatus("");
   });
   document.getElementById("logoutButton").addEventListener("click", () => {
     logout().catch((error) => setAuthStatus(error.message, "error"));
@@ -2908,33 +3516,75 @@ function bindActions() {
     });
   }
 
-  const requestAdminButton = document.getElementById("requestAdminButton");
-  const resetPasswordButton = document.getElementById("resetPasswordButton");
-  const closeRequestAdminButton = document.getElementById("closeRequestAdmin");
-  const submitRequestAdminButton = document.getElementById("submitRequestAdmin");
-  const requestAdminModal = document.getElementById("requestAdminModal");
-  if (requestAdminButton) {
-    requestAdminButton.addEventListener("click", openRequestAdminModal);
+  const changePasswordButton = document.getElementById("changePasswordButton");
+  if (changePasswordButton) {
+    changePasswordButton.addEventListener("click", openChangePasswordModal);
   }
-  if (resetPasswordButton) {
-    resetPasswordButton.addEventListener("click", () => {
-      submitPasswordReset().catch((error) => setAuthStatus(error.message, "error"));
+  if (changePasswordForm) {
+    changePasswordForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitChangePassword().catch((error) => setChangePasswordStatus(error.message, "error"));
     });
   }
-  if (closeRequestAdminButton) {
-    closeRequestAdminButton.addEventListener("click", closeRequestAdminModal);
+  [changePasswordCurrentInput, changePasswordNewInput, changePasswordConfirmInput].filter(Boolean).forEach((input) => {
+    input.addEventListener("input", () => {
+      if (input === changePasswordCurrentInput) {
+        scheduleChangePasswordVerification();
+      } else {
+        syncChangePasswordFormState();
+      }
+    });
+  });
+  if (changePasswordBackButton) {
+    changePasswordBackButton.addEventListener("click", closeChangePasswordModal);
   }
-  if (submitRequestAdminButton) {
-    submitRequestAdminButton.addEventListener("click", () => {
-      submitRequestAdmin().catch((error) => {
-        document.getElementById("requestAdminStatus").textContent = error.message;
-      });
+  if (changePasswordModal) {
+    changePasswordModal.addEventListener("click", (event) => {
+      if (event.target.id === "changePasswordModal") {
+        closeChangePasswordModal();
+      }
     });
   }
   if (requestAdminModal) {
     requestAdminModal.addEventListener("click", (event) => {
       if (event.target.id === "requestAdminModal") {
         closeRequestAdminModal();
+      }
+    });
+  }
+  if (requestAdminButton) {
+    requestAdminButton.addEventListener("click", openRequestAdminModal);
+  }
+  if (requestAdminBackButton) {
+    requestAdminBackButton.addEventListener("click", closeRequestAdminModal);
+  }
+  if (requestAdminChaveInput) {
+    requestAdminChaveInput.addEventListener("input", scheduleRequestAdminLookup);
+  }
+  if (requestAdminRegistrationForm) {
+    requestAdminRegistrationForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitRequestAdminRegistration().catch((error) => {
+        setRequestAdminRegistrationStatus(error.message, "error");
+      });
+    });
+  }
+  [
+    requestAdminRegistrationNomeInput,
+    requestAdminRegistrationProjetoSelect,
+    requestAdminRegistrationSenhaInput,
+    requestAdminRegistrationConfirmInput,
+  ].filter(Boolean).forEach((input) => {
+    input.addEventListener("input", syncRequestAdminRegistrationFormState);
+    input.addEventListener("change", syncRequestAdminRegistrationFormState);
+  });
+  if (requestAdminRegistrationBackButton) {
+    requestAdminRegistrationBackButton.addEventListener("click", returnToRequestAdminLookupModal);
+  }
+  if (requestAdminRegistrationModal) {
+    requestAdminRegistrationModal.addEventListener("click", (event) => {
+      if (event.target.id === "requestAdminRegistrationModal") {
+        returnToRequestAdminLookupModal();
       }
     });
   }
@@ -2984,7 +3634,13 @@ function bindActions() {
     if (event.key === "Escape") {
       closeEventDetails();
       closeEventArchivesModal();
-      if (document.getElementById("requestAdminModal")) {
+      closeChangePasswordModal();
+      const requestAdminRegistrationOpen = requestAdminRegistrationModal && !requestAdminRegistrationModal.classList.contains("hidden");
+      if (requestAdminRegistrationOpen) {
+        returnToRequestAdminLookupModal();
+        return;
+      }
+      if (requestAdminModal && !requestAdminModal.classList.contains("hidden")) {
         closeRequestAdminModal();
       }
     }
@@ -3111,7 +3767,24 @@ function bindActions() {
     }
   });
 
-  document.getElementById("administratorsBody").addEventListener("click", () => {});
+  document.getElementById("administratorsBody").addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.tagName === "BUTTON" && target.dataset.adminApprove) {
+      approveAdministrator(target.dataset.adminApprove).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.tagName === "BUTTON" && target.dataset.adminReject) {
+      rejectAdministrator(target.dataset.adminReject).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.tagName === "BUTTON" && target.dataset.adminProfileSave) {
+      saveAdministratorProfile(target.dataset.adminProfileSave).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (target.tagName === "BUTTON" && target.dataset.adminRevoke) {
+      revokeAdministrator(target.dataset.adminRevoke).catch((error) => setStatus(error.message, false));
+    }
+  });
 
   Object.keys(presenceTableStates).forEach((tableKey) => {
     syncPresenceControls(tableKey);

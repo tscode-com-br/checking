@@ -41,8 +41,11 @@ test('transport weekday selector is compact enough for mobile viewport height co
 test('password register action shows Aguarde, uses a pending style, and locks other buttons', () => {
   assert.match(checkApp, /if \(passwordRegisterInProgress\) \{[\s\S]*return 'Aguarde';[\s\S]*\}/);
   assert.match(checkApp, /control\.classList\.toggle\('is-pending', passwordRegisterInProgress\);/);
+  assert.match(checkApp, /control\.classList\.toggle\('is-attention', isPasswordActionAssistanceModeActive\(\)\);/);
   assert.match(checkApp, /const transportButtonLocked = dialogOpen \|\| lockActive \|\| submitInProgress \|\| authBusy \|\| passwordLoginInProgress;/);
   assert.match(checkCss, /\.auth-action-button\.is-pending \{[\s\S]*background:\s*#e2e8f0;[\s\S]*color:\s*#475569;/);
+  assert.match(checkCss, /\.auth-action-button\.is-attention \{[\s\S]*#f97316[\s\S]*color:\s*#111827;/);
+  assert.match(checkCss, /\.auth-field\.auth-field-pending input \{[\s\S]*border-color:\s*#f97316;/);
 });
 
 test('auth fields restore cleared chave and senha when the user leaves without typing', () => {

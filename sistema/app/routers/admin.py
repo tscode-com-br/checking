@@ -24,6 +24,10 @@ from ..models import (
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
+    AdminPasswordVerifyResponse,
+    AdminProfileUpdateRequest,
+    AdminSelfAccessRequest,
+    AdminSelfAccessStatusResponse,
     DatabaseEventFilterOptions,
     DatabaseEventListResponse,
     AdminIdentity,
@@ -34,6 +38,8 @@ from ..schemas import (
     AdminLoginRequest,
     AdminManagementRow,
     AdminPasswordResetRequest,
+    AdminSelfPasswordChangeRequest,
+    AdminSelfPasswordVerifyRequest,
     AdminPasswordSetRequest,
     ProjectCreate,
     ProjectRow,
@@ -622,6 +628,147 @@ def admin_session(request: Request, db: Session = Depends(get_db)) -> AdminSessi
     return AdminSessionResponse(authenticated=True, admin=build_admin_identity(admin))
 
 
+@router.get("/auth/request-access/status", response_model=AdminSelfAccessStatusResponse)
+def get_admin_request_access_status(
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> AdminSelfAccessStatusResponse:
+    key = normalize_admin_key(chave)
+    existing_user = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+    pending_request = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == key)).scalar_one_or_none()
+    is_admin = user_has_admin_access(existing_user)
+    has_password = existing_user is not None and bool(existing_user.senha)
+
+    if pending_request is not None:
+        message = "Ja existe uma solicitacao pendente para essa chave."
+    elif is_admin:
+        message = "Esta chave ja possui acesso administrativo."
+    elif existing_user is None:
+        message = "Chave nao cadastrada. Continue para registrar o usuario."
+    elif not has_password:
+        message = "Esta chave ja existe, mas ainda nao possui senha cadastrada."
+    else:
+        message = "Chave cadastrada. A solicitacao pode ser enviada."
+
+    return AdminSelfAccessStatusResponse(
+        found=existing_user is not None,
+        chave=key,
+        has_password=has_password,
+        is_admin=is_admin,
+        has_pending_request=pending_request is not None,
+        message=message,
+    )
+
+
+@router.post("/auth/request-access/self-service", response_model=AdminActionResponse)
+def request_admin_access_self_service(
+    payload: AdminSelfAccessRequest,
+    db: Session = Depends(get_db),
+) -> AdminActionResponse:
+    key = normalize_admin_key(payload.chave)
+    existing_user = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+    if existing_user is not None and user_has_admin_access(existing_user):
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative self-service request rejected because key already belongs to an admin",
+            request_path="/api/admin/auth/request-access/self-service",
+            http_status=409,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe um administrador com essa chave.")
+
+    pending_request = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == key)).scalar_one_or_none()
+    if pending_request is not None:
+        log_event(
+            db,
+            source="admin",
+            action="admin_request",
+            status="failed",
+            message="Administrative self-service request rejected because another request is already pending",
+            request_path="/api/admin/auth/request-access/self-service",
+            http_status=409,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave.")
+
+    if existing_user is not None:
+        if existing_user.senha is None:
+            log_event(
+                db,
+                source="admin",
+                action="admin_request",
+                status="failed",
+                message="Administrative self-service request rejected because the registered user has no password",
+                request_path="/api/admin/auth/request-access/self-service",
+                http_status=409,
+                details=f"chave={key}",
+                commit=True,
+            )
+            raise HTTPException(status_code=409, detail="Esta chave ainda nao possui senha cadastrada.")
+        request_name = existing_user.nome
+        request_password_hash = existing_user.senha
+    else:
+        if not payload.nome_completo:
+            raise HTTPException(status_code=422, detail="Informe o nome completo para cadastrar o usuario.")
+        if not payload.projeto:
+            raise HTTPException(status_code=422, detail="Selecione um projeto para cadastrar o usuario.")
+        if not payload.senha:
+            raise HTTPException(status_code=422, detail="Informe uma senha para cadastrar o usuario.")
+
+        timestamp = now_sgt()
+        request_password_hash = hash_password(payload.senha)
+        request_name = payload.nome_completo
+        db.add(
+            User(
+                rfid=None,
+                chave=key,
+                senha=request_password_hash,
+                perfil=0,
+                nome=request_name,
+                projeto=ensure_known_project(db, payload.projeto),
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=timestamp,
+                inactivity_days=0,
+            )
+        )
+
+    db.add(
+        AdminAccessRequest(
+            chave=key,
+            nome_completo=request_name,
+            password_hash=request_password_hash,
+            requested_profile=1,
+            requested_at=now_sgt(),
+        )
+    )
+    log_event(
+        db,
+        source="admin",
+        action="admin_request",
+        status="pending",
+        message="Administrative self-service access request created",
+        request_path="/api/admin/auth/request-access/self-service",
+        http_status=200,
+        details=f"chave={key}; nome={request_name}; registered_user={existing_user is not None}",
+    )
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Solicitacao enviada para aprovacao de um administrador.")
+
+
 @router.post("/auth/request-access", response_model=AdminActionResponse)
 def request_admin_access(payload: AdminAccessRequestCreate, db: Session = Depends(get_db)) -> AdminActionResponse:
     key = normalize_admin_key(payload.chave)
@@ -727,6 +874,105 @@ def request_password_reset(payload: AdminPasswordResetRequest, db: Session = Dep
         ok=True,
         message="Sua senha foi removida. Outro administrador devera cadastrar uma nova senha.",
     )
+
+
+@router.post("/auth/verify-current-password", response_model=AdminPasswordVerifyResponse)
+def verify_current_admin_password(
+    payload: AdminSelfPasswordVerifyRequest,
+    db: Session = Depends(get_db),
+) -> AdminPasswordVerifyResponse:
+    key = normalize_admin_key(payload.chave)
+    admin = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+    if admin is None:
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado para a chave informada.")
+    if not user_has_admin_access(admin):
+        raise HTTPException(status_code=403, detail="Este usuario nao possui acesso ao Admin.")
+    if admin.senha is None:
+        raise HTTPException(status_code=403, detail="Este usuario ainda nao possui senha cadastrada.")
+    if not verify_password(payload.senha_atual, admin.senha):
+        return AdminPasswordVerifyResponse(ok=True, valid=False, message="A senha atual nao confere.")
+
+    return AdminPasswordVerifyResponse(ok=True, valid=True, message="Senha atual confirmada.")
+
+
+@router.post("/auth/change-password", response_model=AdminActionResponse)
+def change_own_admin_password(
+    payload: AdminSelfPasswordChangeRequest,
+    db: Session = Depends(get_db),
+) -> AdminActionResponse:
+    key = normalize_admin_key(payload.chave)
+    admin = db.execute(select(User).where(User.chave == key)).scalar_one_or_none()
+
+    if admin is None:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative self-service password change failed because admin was not found",
+            request_path="/api/admin/auth/change-password",
+            http_status=404,
+            details=f"chave={key}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado para a chave informada.")
+
+    if not user_has_admin_access(admin):
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="blocked",
+            message="Administrative self-service password change blocked due to missing admin profile",
+            request_path="/api/admin/auth/change-password",
+            http_status=403,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=403, detail="Este usuario nao possui acesso ao Admin.")
+
+    if admin.senha is None:
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="blocked",
+            message="Administrative self-service password change blocked due to missing current password",
+            request_path="/api/admin/auth/change-password",
+            http_status=403,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=403, detail="Este usuario ainda nao possui senha cadastrada.")
+
+    if not verify_password(payload.senha_atual, admin.senha):
+        log_event(
+            db,
+            source="admin",
+            action="password",
+            status="failed",
+            message="Administrative self-service password change failed due to invalid current password",
+            request_path="/api/admin/auth/change-password",
+            http_status=401,
+            details=f"chave={admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=401, detail="A senha atual nao confere.")
+
+    admin.senha = hash_password(payload.nova_senha)
+    log_event(
+        db,
+        source="admin",
+        action="password",
+        status="updated",
+        message="Administrative self-service password changed",
+        request_path="/api/admin/auth/change-password",
+        http_status=200,
+        details=f"chave={admin.chave}",
+    )
+    db.commit()
+    notify_admin_views("event")
+    return AdminActionResponse(ok=True, message="Senha alterada com sucesso.")
 
 
 @router.get("/stream", dependencies=[Depends(require_admin_stream_session)])
@@ -845,6 +1091,7 @@ def remove_admin_project(
 )
 def approve_administrator_request(
     request_id: int,
+    payload: AdminProfileUpdateRequest | None = None,
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_admin_session),
 ) -> AdminActionResponse:
@@ -865,7 +1112,9 @@ def approve_administrator_request(
 
     existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
     default_project_name = resolve_default_project_name(db)
-    requested_profile = access_request.requested_profile or 1
+    requested_profile = normalize_user_profile(
+        payload.perfil if payload is not None else (access_request.requested_profile or 1)
+    )
     requested_digit = str(requested_profile)
     if existing_admin is not None and user_has_admin_access(existing_admin):
         log_event(
@@ -924,6 +1173,52 @@ def approve_administrator_request(
     db.commit()
     notify_admin_views("admin", "event")
     return AdminActionResponse(ok=True, message="Administrador aprovado com sucesso.")
+
+
+@router.post(
+    "/administrators/{admin_id}/profile",
+    response_model=AdminActionResponse,
+)
+def update_administrator_profile(
+    admin_id: int,
+    payload: AdminProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> AdminActionResponse:
+    administrator = db.get(User, admin_id)
+    if administrator is None or not user_has_admin_access(administrator):
+        log_event(
+            db,
+            source="admin",
+            action="admin_access",
+            status="failed",
+            message="Administrator profile update failed because target admin was not found",
+            request_path=f"/api/admin/administrators/{admin_id}/profile",
+            http_status=404,
+            details=f"admin_id={admin_id}; updated_by={current_admin.chave}",
+            commit=True,
+        )
+        raise HTTPException(status_code=404, detail="Administrador nao encontrado.")
+
+    previous_profile = normalize_user_profile(administrator.perfil)
+    next_profile = normalize_user_profile(payload.perfil)
+    administrator.perfil = next_profile
+    log_event(
+        db,
+        source="admin",
+        action="admin_access",
+        status="updated",
+        message="Administrator profile updated",
+        request_path=f"/api/admin/administrators/{admin_id}/profile",
+        http_status=200,
+        details=(
+            f"chave={administrator.chave}; old_profile={previous_profile}; "
+            f"new_profile={next_profile}; updated_by={current_admin.chave}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("admin", "event")
+    return AdminActionResponse(ok=True, message="Perfil do administrador atualizado com sucesso.")
 
 
 @router.post(

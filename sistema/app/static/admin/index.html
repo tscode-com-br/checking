@@ -45,26 +45,71 @@
         <div class="auth-actions">
           <button id="loginButton" type="button">Entrar</button>
         </div>
+        <div class="auth-actions auth-actions-secondary">
+          <button id="changePasswordButton" type="button" class="secondary-button auth-utility-button">Alterar Senha</button>
+          <button id="requestAdminButton" type="button" class="secondary-button auth-utility-button">Solicitar Administração</button>
+        </div>
         <p id="authStatus" class="auth-status"></p>
       </div>
     </section>
 
+    <div id="changePasswordModal" class="modal-backdrop hidden" aria-hidden="true">
+      <div class="modal-card auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="changePasswordTitle">
+        <div class="section-header modal-header">
+          <h2 id="changePasswordTitle">Alterar Senha</h2>
+        </div>
+        <form id="changePasswordForm" novalidate>
+          <label class="auth-field-label" for="changePasswordCurrent">Senha Atual</label>
+          <input id="changePasswordCurrent" class="auth-input" type="password" minlength="3" maxlength="20" autocomplete="current-password" />
+          <label class="auth-field-label" for="changePasswordNew">Nova Senha</label>
+          <input id="changePasswordNew" class="auth-input" type="password" minlength="3" maxlength="10" autocomplete="new-password" />
+          <label class="auth-field-label" for="changePasswordConfirm">Confirma Senha</label>
+          <input id="changePasswordConfirm" class="auth-input" type="password" minlength="3" maxlength="10" autocomplete="new-password" />
+          <div class="modal-footer">
+            <button id="changePasswordBackButton" type="button" class="secondary-button">Voltar</button>
+            <button id="changePasswordSaveButton" type="submit" disabled>Salvar</button>
+          </div>
+        </form>
+        <p id="changePasswordStatus" class="auth-status"></p>
+      </div>
+    </div>
+
     <div id="requestAdminModal" class="modal-backdrop hidden" aria-hidden="true">
       <div class="modal-card auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="requestAdminTitle">
         <div class="section-header modal-header">
-          <h2 id="requestAdminTitle">Solicitar Admin</h2>
-          <button id="closeRequestAdmin" type="button">Fechar</button>
+          <h2 id="requestAdminTitle">Solicitar Administração</h2>
         </div>
         <label class="auth-field-label" for="requestAdminChave">Chave</label>
-        <input id="requestAdminChave" class="auth-input" type="text" maxlength="4" />
-        <label class="auth-field-label" for="requestAdminNome">Nome Completo</label>
-        <input id="requestAdminNome" class="auth-input" type="text" maxlength="180" />
-        <label class="auth-field-label" for="requestAdminSenha">Senha</label>
-        <input id="requestAdminSenha" class="auth-input" type="password" minlength="3" maxlength="20" />
-        <div class="modal-footer">
-          <button id="submitRequestAdmin" type="button">Enviar Solicitação</button>
-        </div>
+        <input id="requestAdminChave" class="auth-input" type="text" maxlength="4" autocomplete="username" />
         <p id="requestAdminStatus" class="auth-status"></p>
+        <div class="modal-footer">
+          <button id="requestAdminBackButton" type="button" class="secondary-button">Voltar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="requestAdminRegistrationModal" class="modal-backdrop hidden" aria-hidden="true">
+      <div class="modal-card auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="requestAdminRegistrationTitle">
+        <div class="section-header modal-header">
+          <h2 id="requestAdminRegistrationTitle">Cadastrar Usuário</h2>
+        </div>
+        <form id="requestAdminRegistrationForm" novalidate>
+          <label class="auth-field-label" for="requestAdminRegistrationChave">Chave</label>
+          <input id="requestAdminRegistrationChave" class="auth-input" type="text" maxlength="4" readonly />
+          <label class="auth-field-label" for="requestAdminRegistrationNome">Nome Completo</label>
+          <input id="requestAdminRegistrationNome" class="auth-input" type="text" maxlength="180" autocomplete="name" />
+          <label class="auth-field-label" for="requestAdminRegistrationProjeto">Projeto</label>
+          <select id="requestAdminRegistrationProjeto" class="auth-input"></select>
+          <label class="auth-field-label" for="requestAdminRegistrationSenha">Senha</label>
+          <input id="requestAdminRegistrationSenha" class="auth-input" type="password" minlength="3" maxlength="10" autocomplete="new-password" />
+          <label class="auth-field-label" for="requestAdminRegistrationConfirm">Confirma Senha</label>
+          <input id="requestAdminRegistrationConfirm" class="auth-input" type="password" minlength="3" maxlength="10" autocomplete="new-password" />
+          <div class="modal-footer">
+            <button id="requestAdminRegistrationBackButton" type="button" class="secondary-button">Voltar</button>
+            <button id="requestAdminRegistrationSaveButton" type="submit" disabled>Salvar</button>
+          </div>
+        </form>
+        <p id="requestAdminRegistrationStatus" class="auth-status"></p>
       </div>
     </div>
 
@@ -372,7 +417,7 @@
             <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
               <table class="responsive-table cadastro-table cadastro-admin-table">
                 <thead>
-                  <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th></tr>
+                  <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Acessos</th><th>Ações</th></tr>
                 </thead>
                 <tbody id="administratorsBody"></tbody>
               </table>

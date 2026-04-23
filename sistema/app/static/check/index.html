@@ -124,7 +124,7 @@
                 placeholder="Ex.: HR70"
                 required
               />
-              <button id="requestRegistrationButton" type="button" class="auth-link-button">Solicitar cadastro</button>
+              <button id="requestRegistrationButton" type="button" class="auth-link-button" hidden aria-hidden="true">Solicitar cadastro</button>
             </label>
 
             <label class="check-field auth-field" for="passwordInput">
@@ -142,7 +142,7 @@
 
             <div class="check-field auth-field auth-field-button">
               <span class="auth-field-spacer" aria-hidden="true">Ação</span>
-              <button id="passwordActionButton" type="button" class="auth-action-button">Registrar</button>
+              <button id="passwordActionButton" type="button" class="auth-action-button">Alterar</button>
             </div>
           </div>
 
@@ -217,7 +217,7 @@
             </div>
 
             <form id="passwordChangeForm" class="password-dialog-form" novalidate>
-              <label class="check-field" for="oldPasswordInput">
+              <label id="passwordDialogOldPasswordField" class="check-field" for="oldPasswordInput">
                 <span>Senha Antiga</span>
                 <input
                   id="oldPasswordInput"
