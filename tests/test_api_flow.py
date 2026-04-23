@@ -3009,6 +3009,7 @@ def test_mobile_check_page_is_served_on_user_path():
         assert "/api/web/auth/register-password" in response.text
         assert "/api/web/auth/register-user" in response.text
         assert "/api/web/auth/login" in response.text
+        assert "/api/web/auth/verify-password" in response.text
         assert "/api/web/auth/change-password" in response.text
         assert "/api/web/auth/logout" in response.text
         assert "/api/web/check/state" in response.text
@@ -5227,6 +5228,36 @@ def test_web_password_change_replaces_previous_password():
         assert new_login.status_code == 200
         assert new_login.json()["authenticated"] is True
         assert new_login.json()["has_password"] is True
+
+
+def test_web_password_verify_endpoint_checks_current_password_without_clearing_session():
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="WB16", senha="abc123", projeto="P80")
+        assert registered.status_code == 200
+
+        wrong_verify = client.post(
+            "/api/web/auth/verify-password",
+            json={
+                "chave": "WB16",
+                "senha": "000000",
+            },
+        )
+        assert wrong_verify.status_code == 401
+
+        status_after_wrong_verify = client.get("/api/web/auth/status", params={"chave": "WB16"})
+        assert status_after_wrong_verify.status_code == 200
+        assert status_after_wrong_verify.json()["authenticated"] is True
+
+        correct_verify = client.post(
+            "/api/web/auth/verify-password",
+            json={
+                "chave": "WB16",
+                "senha": "abc123",
+            },
+        )
+        assert correct_verify.status_code == 200
+        assert correct_verify.json()["ok"] is True
+        assert correct_verify.json()["valid"] is True
 
 
 def test_web_transport_vehicle_request_returns_pending_state_without_same_day_checkin_requirement(monkeypatch):

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+require('../sistema/app/static/transport/i18n.js');
 const transportPage = require('../sistema/app/static/transport/app.js');
 
 test('formatTransportDate matches the requested English long-date pattern', () => {
@@ -289,6 +290,37 @@ test('transport topbar uses an inline red dashboard settings link below the allo
   assert.doesNotMatch(transportScript, /settingsRouteAnchor|scheduleSettingsTriggerPositionSync|syncSettingsTriggerPosition/);
 });
 
+test('transport topbar adds a round export button widget between the title block and the route time field', () => {
+  const transportHtml = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(
+    transportHtml,
+    /transport-topbar-brand[\s\S]*transport-topbar-export[\s\S]*data-export-toggle[\s\S]*transportExportMenu[\s\S]*data-export-route="home_to_work"[\s\S]*data-export-route="work_to_home"[\s\S]*data-route-slot/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-export-button\s*\{[\s\S]*border-radius:\s*999px;[\s\S]*\.transport-export-menu\s*\{[\s\S]*position:\s*absolute;/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-topbar-route-slot\s*\{[\s\S]*justify-content:\s*flex-start;/
+  );
+  assert.match(transportScript, /const exportToggleButton = document\.querySelector\("\[data-export-toggle\]"\);/);
+  assert.match(transportScript, /function exportTransportList\(routeKind\) \{/);
+  assert.match(transportScript, /\/exports\/transport-list\?service_date=/);
+});
+
 test('transport auth inputs do not clear the session on click anymore', () => {
   const transportScript = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/app.js'),
@@ -369,6 +401,12 @@ test('syncVehicleTypeDependentDefaults updates the vehicle type, places, and tol
 test('getPassengerAwarenessState defaults to pending until the webapp acknowledgement signal exists', () => {
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Alice Rider' }), 'pending');
   assert.equal(transportPage.getPassengerAwarenessState({ nome: 'Bob Rider', awareness_status: 'aware' }), 'aware');
+});
+
+test('getPassengerAwarenessLabel maps dashboard awareness states to localized passenger texts', () => {
+  assert.equal(transportPage.getPassengerAwarenessLabel('pending'), 'pending');
+  assert.equal(transportPage.getPassengerAwarenessLabel('aware'), 'confirmed');
+  assert.equal(transportPage.getPassengerAwarenessLabel(null), '');
 });
 
 test('shouldHighlightRequestName marks unassigned and cancelled rows for red-name attention', () => {

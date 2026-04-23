@@ -15,6 +15,8 @@ from ..schemas import (
     WebPasswordActionResponse,
     WebPasswordChangeRequest,
     WebPasswordLoginRequest,
+    WebPasswordVerifyRequest,
+    WebPasswordVerifyResponse,
     WebPasswordRegisterRequest,
     WebPasswordStatusResponse,
     WebUserSelfRegistrationRequest,
@@ -379,6 +381,29 @@ def login_web_user(
         authenticated=True,
         has_password=True,
         message="Autenticacao concluida.",
+    )
+
+
+@router.post("/auth/verify-password", response_model=WebPasswordVerifyResponse)
+def verify_web_password(
+    payload: WebPasswordVerifyRequest,
+    db: Session = Depends(get_db),
+) -> WebPasswordVerifyResponse:
+    normalized = _validate_public_chave(payload.chave)
+    user = find_user_by_chave(db, normalized)
+    if user is None:
+        _raise_unknown_web_user()
+
+    if not user.senha:
+        raise HTTPException(status_code=404, detail="Nao existe senha cadastrada para esta chave")
+
+    if not verify_password(payload.senha, user.senha):
+        raise HTTPException(status_code=401, detail="Senha atual invalida")
+
+    return WebPasswordVerifyResponse(
+        ok=True,
+        valid=True,
+        message="Senha atual confirmada.",
     )
 
 

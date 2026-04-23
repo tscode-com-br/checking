@@ -28,7 +28,7 @@ test('check signup controller opens the widget from the key area and submits the
   assert.match(checkScript, /const requestRegistrationButton = document\.getElementById\('requestRegistrationButton'\);/);
   assert.match(checkScript, /requestRegistrationButton\.addEventListener\('click', \(\) => \{[\s\S]*openRegistrationDialog\(\);[\s\S]*\}\);/);
   assert.match(checkScript, /body: JSON\.stringify\(\{[\s\S]*chave: normalizedChave,[\s\S]*nome,[\s\S]*projeto,[\s\S]*email: email \|\| null,[\s\S]*senha: password,[\s\S]*confirmar_senha: confirmPassword,[\s\S]*\}\)/);
-  assert.doesNotMatch(checkScript, /body: JSON\.stringify\(\{[\s\S]*end_rua:/);
-  assert.doesNotMatch(checkScript, /body: JSON\.stringify\(\{[\s\S]*zip:/);
+  assert.doesNotMatch(checkScript, /fetch\(authUserRegisterEndpoint,[\s\S]*body: JSON\.stringify\(\{[\s\S]*end_rua:/);
+  assert.doesNotMatch(checkScript, /fetch\(authUserRegisterEndpoint,[\s\S]*body: JSON\.stringify\(\{[\s\S]*zip:/);
   assert.match(checkScript, /Cadastro enviado\. Aguarde aprovação para acessar o Transport\./);
 });

@@ -41,6 +41,7 @@
           data-auth-register-endpoint="/api/web/auth/register-password"
           data-auth-user-register-endpoint="/api/web/auth/register-user"
           data-auth-login-endpoint="/api/web/auth/login"
+          data-auth-verify-endpoint="/api/web/auth/verify-password"
           data-auth-change-endpoint="/api/web/auth/change-password"
           data-auth-logout-endpoint="/api/web/auth/logout"
           data-transport-state-endpoint="/api/web/transport/state"
@@ -124,7 +125,6 @@
                 placeholder="Ex.: HR70"
                 required
               />
-              <button id="requestRegistrationButton" type="button" class="auth-link-button">Solicitar cadastro</button>
             </label>
 
             <label class="check-field auth-field" for="passwordInput">
@@ -144,6 +144,11 @@
               <span class="auth-field-spacer" aria-hidden="true">Ação</span>
               <button id="passwordActionButton" type="button" class="auth-action-button">Registrar</button>
             </div>
+          </div>
+
+          <div class="auth-secondary-actions" aria-label="Ações adicionais de autenticação">
+            <button id="changePasswordShortcutButton" type="button" class="auth-secondary-button">Alterar Senha</button>
+            <button id="requestAdministrationButton" type="button" class="auth-secondary-button">Solicitar Administração</button>
           </div>
 
           <fieldset class="check-group">
@@ -217,8 +222,8 @@
             </div>
 
             <form id="passwordChangeForm" class="password-dialog-form" novalidate>
-              <label class="check-field" for="oldPasswordInput">
-                <span>Senha Antiga</span>
+              <label id="oldPasswordField" class="check-field" for="oldPasswordInput">
+                <span>Senha Atual</span>
                 <input
                   id="oldPasswordInput"
                   name="senha_antiga"
@@ -244,7 +249,7 @@
               </label>
 
               <label class="check-field" for="confirmPasswordInput">
-                <span>Confirme Senha</span>
+                <span>Confirma Senha</span>
                 <input
                   id="confirmPasswordInput"
                   name="confirmacao_senha"
@@ -258,7 +263,7 @@
 
               <div class="password-dialog-actions">
                 <button id="passwordDialogBackButton" type="button" class="secondary-button">Voltar</button>
-                <button id="passwordDialogSubmitButton" type="submit" class="submit-button">Alterar</button>
+                <button id="passwordDialogSubmitButton" type="submit" class="submit-button" disabled>Salvar</button>
               </div>
             </form>
           </div>

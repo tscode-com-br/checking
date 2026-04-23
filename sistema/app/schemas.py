@@ -1130,6 +1130,24 @@ class WebPasswordLoginRequest(BaseModel):
         return password
 
 
+class WebPasswordVerifyRequest(BaseModel):
+    chave: str = Field(min_length=4, max_length=4)
+    senha: str = Field(min_length=3, max_length=10)
+
+    @field_validator("chave")
+    @classmethod
+    def validate_web_password_verify_chave(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 4 or not normalized.isalnum():
+            raise ValueError("A chave deve ter 4 caracteres alfanumericos")
+        return normalized
+
+    @field_validator("senha", mode="before")
+    @classmethod
+    def validate_web_password_verify_value(cls, value: str) -> str:
+        return _validate_web_password(value, "A senha atual")
+
+
 class WebPasswordChangeRequest(BaseModel):
     chave: str = Field(min_length=4, max_length=4)
     senha_antiga: str = Field(min_length=3, max_length=10)
@@ -1158,6 +1176,12 @@ class WebPasswordActionResponse(BaseModel):
     ok: bool
     authenticated: bool
     has_password: bool
+    message: str
+
+
+class WebPasswordVerifyResponse(BaseModel):
+    ok: bool
+    valid: bool
     message: str
 
 

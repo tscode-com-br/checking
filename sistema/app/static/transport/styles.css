@@ -86,7 +86,7 @@ button {
 .tela01menu {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(140px, 1fr) auto minmax(220px, 1fr) auto;
+  grid-template-columns: auto auto minmax(140px, 1fr) auto minmax(220px, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 18px 28px;
@@ -132,10 +132,111 @@ button {
 .transport-topbar-route-slot {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.transport-topbar-export {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.transport-export-button {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid rgba(72, 212, 206, 0.28);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(14, 28, 33, 0.96), rgba(9, 12, 16, 0.96));
+  color: var(--transport-text);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.transport-export-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(72, 212, 206, 0.54);
+  color: #9df9f3;
+}
+
+.transport-export-button:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.62);
+  outline-offset: 4px;
+}
+
+.transport-export-button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.transport-export-button-icon {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transport-export-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  z-index: 36;
+  min-width: 152px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(15, 18, 22, 0.98);
+  box-shadow: 0 22px 44px rgba(0, 0, 0, 0.34);
+  transform: translateX(-50%);
+}
+
+.transport-export-route-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(72, 212, 206, 0.18);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--transport-text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.transport-export-route-button:hover:not(:disabled) {
+  border-color: rgba(72, 212, 206, 0.52);
+  background: rgba(72, 212, 206, 0.14);
+  color: #b8fffb;
+}
+
+.transport-export-route-button:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.56);
+  outline-offset: 2px;
+}
+
+.transport-export-route-button:disabled {
+  cursor: progress;
+  opacity: 0.58;
 }
 
 .transport-topbar-support {
@@ -1402,13 +1503,29 @@ button {
 }
 
 .transport-vehicle-passenger-name {
-  width: calc(100% - 34px);
+  width: calc(100% - 110px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.transport-vehicle-passenger-status {
+.transport-vehicle-passenger-awareness {
+  width: 76px;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.transport-vehicle-passenger-awareness.is-pending {
+  color: #f6d365;
+}
+
+.transport-vehicle-passenger-awareness.is-confirmed {
+  color: var(--transport-success);
+}
+
+.transport-vehicle-passenger-action {
   width: 34px;
   text-align: center;
 }
@@ -1801,9 +1918,22 @@ button {
   }
 
   .transport-topbar-route-slot,
+  .transport-topbar-export,
   .transport-topbar-auth,
   .transport-topbar-support {
     width: 100%;
+  }
+
+  .transport-topbar-route-slot {
+    justify-content: center;
+  }
+
+  .transport-topbar-export {
+    justify-content: center;
+  }
+
+  .transport-export-menu {
+    left: 50%;
   }
 
   .transport-topbar-support {
