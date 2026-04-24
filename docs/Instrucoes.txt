@@ -87,6 +87,9 @@ Rodar o app Android manualmente por terminal:
 	flutter run -d emulator-5554
 
 
+
+
+
 Rodar o Kotlin no emulador.
 
 - Abra o Android Studio e inicie o emulador.

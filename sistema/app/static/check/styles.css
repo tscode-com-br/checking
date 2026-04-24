@@ -407,6 +407,17 @@ body.portrait-lock-active > .orientation-lock-screen {
   gap: 6px;
   align-items: center;
   text-align: center;
+  min-width: 0;
+  padding: clamp(6px, 1.1vw, 8px);
+  border: 1px solid transparent;
+  border-radius: calc(var(--control-radius) + 1px);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.history-item.is-latest-activity {
+  border-color: rgba(22, 163, 74, 0.42);
+  background: rgba(220, 252, 231, 0.76);
+  box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.12);
 }
 
 .history-label {
@@ -535,6 +546,12 @@ body.portrait-lock-active > .orientation-lock-screen {
   font-size: var(--label-size);
   font-weight: 800;
   color: #0f172a;
+}
+
+#passwordDialogOldPasswordField.is-registration-placeholder span {
+  color: #94a3b8;
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
 }
 
 .check-field input,

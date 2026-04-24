@@ -3,6 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const checkCss = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/check/styles.css'),
+  'utf8'
+);
+
 test('check page keeps the request-registration trigger hidden and exposes the simplified signup widget', () => {
   const checkHtml = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/check/index.html'),
@@ -33,7 +38,9 @@ test('check signup controller routes Chave? to self-registration and Senha? to t
   assert.match(checkScript, /return 'Senha\?';/);
   assert.match(checkScript, /if \(userSelfRegistrationInProgress\) \{[\s\S]*return 'Aguarde';[\s\S]*\}/);
   assert.match(checkScript, /passwordDialogTitle\.textContent = isRegisterMode \? 'Cadastrar Senha' : 'Alterar Senha';/);
-  assert.match(checkScript, /passwordDialogOldPasswordField\.hidden = isRegisterMode;/);
+  assert.match(checkScript, /passwordDialogOldPasswordField\.classList\.toggle\('is-registration-placeholder', isRegisterMode\);/);
+  assert.match(checkScript, /oldPasswordInput\.hidden = isRegisterMode;/);
+  assert.match(checkCss, /#passwordDialogOldPasswordField\.is-registration-placeholder span\s*\{[\s\S]*text-decoration:\s*line-through;/);
   assert.match(checkScript, /if \(authState\.statusResolved && authState\.found && !authState\.hasPassword\) \{[\s\S]*openPasswordDialog\(\);[\s\S]*\}/);
   assert.match(checkScript, /registerPasswordMode[\s\S]*\?[\s\S]*projeto: projectSelect\.value,[\s\S]*senha: newPassword,[\s\S]*:[\s\S]*senha_antiga: oldPassword,[\s\S]*nova_senha: newPassword,/);
   assert.match(checkScript, /body: JSON\.stringify\(\{[\s\S]*chave: normalizedChave,[\s\S]*nome,[\s\S]*projeto,[\s\S]*email: email \|\| null,[\s\S]*senha: password,[\s\S]*confirmar_senha: confirmPassword,[\s\S]*\}\)/);

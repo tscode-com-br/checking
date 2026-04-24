@@ -45,6 +45,8 @@
   const notificationLineSecondary = document.getElementById('notificationLineSecondary');
   const lastCheckinValue = document.getElementById('lastCheckinValue');
   const lastCheckoutValue = document.getElementById('lastCheckoutValue');
+  const lastCheckinItem = lastCheckinValue ? lastCheckinValue.closest('.history-item') : null;
+  const lastCheckoutItem = lastCheckoutValue ? lastCheckoutValue.closest('.history-item') : null;
   const locationValue = document.getElementById('locationValue');
   const locationAccuracy = document.getElementById('locationAccuracy');
   const passwordDialog = document.getElementById('passwordDialog');
@@ -934,8 +936,11 @@
       passwordDialogTitle.textContent = isRegisterMode ? 'Cadastrar Senha' : 'Alterar Senha';
     }
     if (passwordDialogOldPasswordField) {
-      passwordDialogOldPasswordField.hidden = isRegisterMode;
-      passwordDialogOldPasswordField.setAttribute('aria-hidden', String(isRegisterMode));
+      passwordDialogOldPasswordField.classList.toggle('is-registration-placeholder', isRegisterMode);
+    }
+    if (oldPasswordInput) {
+      oldPasswordInput.hidden = isRegisterMode;
+      oldPasswordInput.setAttribute('aria-hidden', String(isRegisterMode));
     }
   }
 
@@ -4382,6 +4387,25 @@
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
+  function resolveLatestHistoryAction(state) {
+    const lastCheckinAt = parseHistoryTimestamp(state && state.last_checkin_at);
+    const lastCheckoutAt = parseHistoryTimestamp(state && state.last_checkout_at);
+
+    if (lastCheckinAt && lastCheckoutAt) {
+      return lastCheckinAt >= lastCheckoutAt ? 'checkin' : 'checkout';
+    }
+
+    if (lastCheckinAt) {
+      return 'checkin';
+    }
+
+    if (lastCheckoutAt) {
+      return 'checkout';
+    }
+
+    return null;
+  }
+
   function setSelectedAction(action) {
     const selectedInput = actionInputs.find((input) => input.value === action);
     if (!selectedInput) {
@@ -4393,25 +4417,30 @@
   }
 
   function applySuggestedActionFromHistory(state) {
-    const lastCheckinAt = parseHistoryTimestamp(state && state.last_checkin_at);
-    const lastCheckoutAt = parseHistoryTimestamp(state && state.last_checkout_at);
+    const latestAction = resolveLatestHistoryAction(state);
 
-    if (lastCheckinAt && lastCheckoutAt) {
-      setSelectedAction(lastCheckinAt >= lastCheckoutAt ? 'checkout' : 'checkin');
-      return;
-    }
-
-    if (lastCheckinAt) {
+    if (latestAction === 'checkin') {
       setSelectedAction('checkout');
       return;
     }
 
-    if (lastCheckoutAt) {
+    if (latestAction === 'checkout') {
       setSelectedAction('checkin');
       return;
     }
 
     setSelectedAction('checkin');
+  }
+
+  function syncLatestHistoryHighlight(state) {
+    const latestAction = resolveLatestHistoryAction(state);
+
+    if (lastCheckinItem) {
+      lastCheckinItem.classList.toggle('is-latest-activity', latestAction === 'checkin');
+    }
+    if (lastCheckoutItem) {
+      lastCheckoutItem.classList.toggle('is-latest-activity', latestAction === 'checkout');
+    }
   }
 
   function renderHistoryValue(element, value) {
@@ -4445,6 +4474,7 @@
     }
     renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
     renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
+    syncLatestHistoryHighlight(state);
     applySuggestedActionFromHistory(state);
     renderTransportScreen();
     syncFormControlStates();
