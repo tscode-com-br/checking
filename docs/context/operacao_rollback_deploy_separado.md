@@ -17,12 +17,12 @@ O foco aqui e:
 
 No estado atual do projeto:
 
-- o workflow oficial `.github/workflows/deploy-oceandrive.yml` foi mantido apenas como fallback manual via `workflow_dispatch`;
+- o workflow oficial `.github/workflows/deploy-oceandrive.yml` voltou a disparar em `push` para `main` e continua disponível via `workflow_dispatch`;
 - os workflows `.github/workflows/deploy-oceandrive-api-only.yml`, `.github/workflows/deploy-oceandrive-admin-only.yml`, `.github/workflows/deploy-oceandrive-user-only.yml` e `.github/workflows/deploy-oceandrive-transport-only.yml` existem apenas para operacao manual e isolada;
 - o template de proxy `deploy/nginx/checking-edge-routes.conf` ainda nao foi ativado automaticamente;
 - os smoke tests minimos por alvo foram centralizados em `deploy/smoke/validate_target.sh`.
 
-Conclusao operacional: a producao continua podendo voltar ao modelo atual porque o caminho global validado ainda existe e nao foi substituido.
+Conclusao operacional: a producao usa novamente o caminho global automatico no `push` do root, e o disparo manual continua servindo como fallback de redeploy sem novo commit.
 
 ## 3. Alvos, portas e marcadores
 

@@ -51,7 +51,7 @@ Implementacao inicial do sistema de check-in/check-out com:
 - Nao usar `git subtree` nem push do repositorio Flutter como parte da operacao normal do projeto.
 - Procedimento oficial consolidado: `docs/context/procedimento_oficial_repositorios.md`.
 - Todo push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`.
-- O workflow sincroniza o codigo com a OceanDrive, cria o diretorio remoto se necessario, sobe o banco antes da aplicacao, executa `docker compose up -d --build --remove-orphans`, valida `GET /api/health` no servidor e poda cache Docker nao utilizado apos deploy bem-sucedido.
+- O workflow sincroniza o codigo com a OceanDrive, cria o diretorio remoto se necessario, sobe o banco antes da aplicacao, executa `docker compose up -d --build --remove-orphans`, valida `GET /api/health` no servidor, reinstala a automacao periodica de limpeza de SSD e remove cache Docker e temporarios antigos apos deploy bem-sucedido.
 - O arquivo `.env` de producao permanece somente no servidor e nao e enviado pelo GitHub Actions.
 - O remoto `origin` pode apontar para SSH ou HTTPS. Se a maquina local nao tiver chave SSH autorizada no GitHub, use HTTPS para o push.
 

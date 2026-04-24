@@ -1,6 +1,9 @@
-name: Deploy OceanDrive Fallback
+name: Deploy OceanDrive
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       deploy_dir:
@@ -9,7 +12,7 @@ on:
         type: string
 
 concurrency:
-  group: deploy-oceandrive-fallback
+  group: deploy-oceandrive-main
   cancel-in-progress: false
 
 permissions:
@@ -175,7 +178,28 @@ jobs:
             docker compose logs --tail=120 app
             exit 1
 
-      - name: Prune unused Docker artifacts
+      - name: Install SSD cleanup automation
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 3m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ steps.deploy_dir.outputs.path }}
+            install -d /usr/local/sbin
+            install -m 755 deploy/maintenance/checkcheck_ssd_cleanup.sh /usr/local/sbin/checkcheck-ssd-cleanup
+            install -d /etc/systemd/system
+            install -m 644 deploy/systemd/checkcheck-ssd-cleanup.service /etc/systemd/system/checkcheck-ssd-cleanup.service
+            install -m 644 deploy/systemd/checkcheck-ssd-cleanup.timer /etc/systemd/system/checkcheck-ssd-cleanup.timer
+            systemctl daemon-reload
+            systemctl enable --now checkcheck-ssd-cleanup.timer
+
+      - name: Run SSD cleanup now
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -187,7 +211,4 @@ jobs:
           fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
-            docker image prune -af || true
-            docker builder prune -af || true
-            docker system prune -f || true
-            docker system df
+            /usr/local/sbin/checkcheck-ssd-cleanup

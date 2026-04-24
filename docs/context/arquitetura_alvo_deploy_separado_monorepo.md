@@ -38,10 +38,10 @@ Hoje o deploy de produção é uma unidade única.
 
 ### 2.3 Deploy
 
-- `.github/workflows/deploy-oceandrive.yml` continua existindo como fallback manual via `workflow_dispatch`;
-- quando executado manualmente, ele sincroniza o projeto por `rsync` e depois executa `docker compose up -d --build --remove-orphans`;
-- o health check do fallback global valida `http://127.0.0.1:8000/api/health`;
-- push em `main` do root deixou de ser deploy automático de produção.
+- `.github/workflows/deploy-oceandrive.yml` continua sendo o workflow global do root, disparado em `push` para `main` e também disponível via `workflow_dispatch`;
+- ele sincroniza o projeto por `rsync` e depois executa `docker compose up -d --build --remove-orphans`;
+- o health check global valida `http://127.0.0.1:8000/api/health`;
+- ao final do rollout, ele reinstala a automação periódica de limpeza de SSD e executa uma limpeza imediata de cache Docker e temporários antigos.
 
 Conclusão: o gargalo atual não é o monorepo em si. O gargalo é a unidade única de build e deploy.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Checkcheck SSD cleanup periodically
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=12h
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
