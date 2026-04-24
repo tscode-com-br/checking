@@ -323,6 +323,38 @@ th, td {
   margin-top: 12px;
 }
 
+.project-editor-panel {
+  margin-top: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+}
+
+.project-editor-panel .section-header {
+  margin-bottom: 12px;
+}
+
+.project-editor-panel h3 {
+  margin: 0;
+}
+
+.project-editor-copy {
+  margin: 6px 0 0;
+}
+
+.project-editor-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.project-editor-actions {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .inactive-user-row td {
   color: #b91c1c;
 }
@@ -761,7 +793,7 @@ input.inline, select.inline, textarea.inline {
 }
 
 .cadastro-projects-table {
-  min-width: 340px;
+  min-width: 520px;
 }
 
 .cadastro-projects-actions {

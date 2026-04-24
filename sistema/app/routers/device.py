@@ -10,7 +10,7 @@ from ..schemas import HeartbeatRequest, ScanRequest, ScanResponse
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
-from ..services.time_utils import now_sgt
+from ..services.time_utils import now_sgt, resolve_project_timezone_name
 from ..services.user_sync import (
     apply_user_state,
     create_user_sync_event,
@@ -154,10 +154,12 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
     activity_time = now_sgt()
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
+    project_timezone_name = resolve_project_timezone_name(db, user.projeto)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,
         event_time=activity_time,
+        timezone_name=project_timezone_name,
     )
 
     if action == "checkout" and latest_activity is None:

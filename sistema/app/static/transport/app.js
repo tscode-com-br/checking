@@ -287,9 +287,11 @@
       });
     }
 
-    function setValue(value) {
+    function setValue(value, options) {
       selectedDate = startOfLocalDay(value);
-      notify();
+      if (!options || options.notify !== false) {
+        notify();
+      }
       return getValue();
     }
 
@@ -889,6 +891,7 @@
     };
 
     if (serviceScope === "extra") {
+      payload.service_date = String(formData.get("service_date") || "").trim();
       payload.route_kind = String(formData.get("route_kind") || selectedRouteKind || "home_to_work");
       payload.departure_time = String(formData.get("departure_time") || "").trim();
       return payload;
@@ -907,6 +910,72 @@
     payload.every_friday = Boolean(formData.get("every_friday"));
 
     return payload;
+  }
+
+  function resolveVehicleModalOpenState(scope, currentServiceDate) {
+    const normalizedScope = normalizeVehicleScope(scope);
+    return {
+      serviceDateValue: normalizedScope === "extra" ? String(currentServiceDate || "").trim() : "",
+      departureTimeValue: "",
+      initialFocusField: normalizedScope === "extra" ? "service_date" : null,
+      fallbackFocusField: normalizedScope === "extra" ? "departure_time" : null,
+    };
+  }
+
+  function resolveVehicleCreateValidationError(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+
+    if (payload.service_scope === "extra" && !String(payload.service_date || "").trim()) {
+      return {
+        messageKey: "warnings.extraServiceDateRequired",
+        focusField: "service_date",
+      };
+    }
+
+    if (payload.service_scope === "extra" && !String(payload.departure_time || "").trim()) {
+      return {
+        messageKey: "warnings.extraDepartureRequired",
+        focusField: "departure_time",
+      };
+    }
+
+    if (payload.service_scope === "weekend" && !payload.every_saturday && !payload.every_sunday) {
+      return {
+        messageKey: "warnings.weekendPersistence",
+        focusField: null,
+      };
+    }
+
+    if (
+      payload.service_scope === "regular"
+      && !payload.every_monday
+      && !payload.every_tuesday
+      && !payload.every_wednesday
+      && !payload.every_thursday
+      && !payload.every_friday
+    ) {
+      return {
+        messageKey: "warnings.regularPersistence",
+        focusField: null,
+      };
+    }
+
+    return null;
+  }
+
+  function resolveVehicleSaveReloadDate(payload, fallbackDate) {
+    const normalizedFallbackDate = fallbackDate instanceof Date
+      ? startOfLocalDay(fallbackDate)
+      : parseStoredTransportDate(fallbackDate);
+    const resolvedFallbackDate = normalizedFallbackDate || startOfLocalDay(new Date());
+
+    if (!payload || payload.service_scope !== "extra") {
+      return resolvedFallbackDate;
+    }
+
+    return parseStoredTransportDate(payload.service_date) || resolvedFallbackDate;
   }
 
   function mapVehicleTypeLabel(value) {
@@ -1172,6 +1241,7 @@
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
     const modalScopeNote = document.querySelector("[data-modal-scope-note]");
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
+    const extraServiceDateField = document.querySelector("[data-extra-service-date-field]");
     const extraDepartureField = document.querySelector("[data-extra-departure-field]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
@@ -1262,6 +1332,28 @@
         labelElement.textContent = formatTransportDate(selectedDate);
         labelElement.dataset.dateState = getTransportDateState(selectedDate);
       });
+    }
+
+    function setDashboardDateForSilentReload(nextDate) {
+      const selectedDate = dateStore.setValue(nextDate, { notify: false });
+      setStoredTransportDate(selectedDate);
+      refreshDatePanelLabels();
+      closeRouteTimePopover();
+      return selectedDate;
+    }
+
+    function focusVehicleFormField(fieldName) {
+      if (!vehicleForm || !fieldName || !vehicleForm.elements || !vehicleForm.elements[fieldName]) {
+        return false;
+      }
+
+      const fieldElement = vehicleForm.elements[fieldName];
+      if (typeof fieldElement.focus !== "function") {
+        return false;
+      }
+
+      fieldElement.focus();
+      return true;
     }
 
     function applyStaticTranslations() {
@@ -1377,10 +1469,13 @@
         modalFieldLabels[4].textContent = t("modal.fields.tolerance");
       }
       if (modalFieldLabels[5]) {
-        modalFieldLabels[5].textContent = t("modal.fields.departureTime");
+        modalFieldLabels[5].textContent = t("modal.fields.departureDate");
       }
       if (modalFieldLabels[6]) {
-        modalFieldLabels[6].textContent = t("modal.fields.route");
+        modalFieldLabels[6].textContent = t("modal.fields.departureTime");
+      }
+      if (modalFieldLabels[7]) {
+        modalFieldLabels[7].textContent = t("modal.fields.route");
       }
       if (typeOptions[0]) {
         typeOptions[0].text = t("modal.options.car");
@@ -2323,31 +2418,12 @@
         const formData = new FormData(vehicleForm);
         const payload = buildVehicleCreatePayload(formData, getCurrentServiceDateIso(), getSelectedRouteKind());
         const submitButton = vehicleForm.querySelector('button[type="submit"]');
+        const validationError = resolveVehicleCreateValidationError(payload);
 
         clearVehicleModalFeedback();
-        if (payload.service_scope === "extra" && !String(payload.departure_time || "").trim()) {
-          setVehicleModalFeedback(t("warnings.extraDepartureRequired"), "error");
-          if (vehicleForm.elements.departure_time && typeof vehicleForm.elements.departure_time.focus === "function") {
-            vehicleForm.elements.departure_time.focus();
-          }
-          return;
-        }
-        if (payload.service_scope === "weekend" && !payload.every_saturday && !payload.every_sunday) {
-          setVehicleModalFeedback(
-            t("warnings.weekendPersistence"),
-            "error"
-          );
-          return;
-        }
-        if (
-          payload.service_scope === "regular"
-          && !payload.every_monday
-          && !payload.every_tuesday
-          && !payload.every_wednesday
-          && !payload.every_thursday
-          && !payload.every_friday
-        ) {
-          setVehicleModalFeedback(t("warnings.regularPersistence"), "error");
+        if (validationError) {
+          setVehicleModalFeedback(t(validationError.messageKey), "error");
+          focusVehicleFormField(validationError.focusField);
           return;
         }
         if (submitButton) {
@@ -2359,9 +2435,15 @@
           body: JSON.stringify(payload),
         })
           .then(function () {
+            const currentDashboardDate = dateStore.getValue();
+            let reloadDate = resolveVehicleSaveReloadDate(payload, currentDashboardDate);
+
             closeVehicleModal();
             setStatus(t("status.vehicleSaved"), "success");
-            return loadDashboard(dateStore.getValue(), { announce: false });
+            if (formatIsoDate(reloadDate) !== formatIsoDate(currentDashboardDate)) {
+              reloadDate = setDashboardDateForSilentReload(reloadDate);
+            }
+            return loadDashboard(reloadDate, { announce: false });
           })
           .catch(function (error) {
             setVehicleModalFeedback(localizeTransportApiMessage(error && error.message) || t("status.couldNotSaveVehicle"), "error");
@@ -2484,6 +2566,9 @@
       if (modalScopeNote) {
         modalScopeNote.textContent = getModalScopeNote(normalizedScope);
       }
+      if (extraServiceDateField) {
+        extraServiceDateField.hidden = normalizedScope !== "extra";
+      }
       if (extraDepartureField) {
         extraDepartureField.hidden = normalizedScope !== "extra";
       }
@@ -2499,6 +2584,13 @@
       if (vehicleForm.elements.route_kind) {
         vehicleForm.elements.route_kind.value = getSelectedRouteKind();
         vehicleForm.elements.route_kind.disabled = normalizedScope !== "extra";
+      }
+      if (vehicleForm.elements.service_date) {
+        vehicleForm.elements.service_date.required = normalizedScope === "extra";
+        vehicleForm.elements.service_date.disabled = normalizedScope !== "extra";
+      }
+      if (vehicleForm.elements.service_date && normalizedScope !== "extra") {
+        vehicleForm.elements.service_date.value = "";
       }
       if (vehicleForm.elements.departure_time) {
         vehicleForm.elements.departure_time.required = normalizedScope === "extra";
@@ -2530,16 +2622,16 @@
       clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = normalizedScope;
       applyVehicleFormDefaults("carro", vehicleForm);
+      const modalOpenState = resolveVehicleModalOpenState(normalizedScope, getCurrentServiceDateIso());
+      if (vehicleForm.elements.service_date) {
+        vehicleForm.elements.service_date.value = modalOpenState.serviceDateValue;
+      }
       if (vehicleForm.elements.departure_time) {
-        vehicleForm.elements.departure_time.value = "";
+        vehicleForm.elements.departure_time.value = modalOpenState.departureTimeValue;
       }
       syncVehicleModalFields(normalizedScope);
-      if (
-        normalizedScope === "extra"
-        && vehicleForm.elements.departure_time
-        && typeof vehicleForm.elements.departure_time.focus === "function"
-      ) {
-        vehicleForm.elements.departure_time.focus();
+      if (!focusVehicleFormField(modalOpenState.initialFocusField)) {
+        focusVehicleFormField(modalOpenState.fallbackFocusField);
       }
     }
 
@@ -3616,6 +3708,9 @@
     buildVehiclePassengerPreviewRows,
     groupAssignedRequestsByVehicleForDate,
     canRequestBeDroppedOnVehicle,
+    resolveVehicleModalOpenState,
+    resolveVehicleCreateValidationError,
+    resolveVehicleSaveReloadDate,
     parsePositiveNumber,
     resolvePanelSizes,
     resolveResizeConfig,

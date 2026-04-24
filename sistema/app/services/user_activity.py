@@ -1,31 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
 from ..models import User
-from .time_utils import now_sgt
+from .time_utils import now_sgt, resolve_timezone
 
 
-SINGAPORE_TZ = ZoneInfo(settings.tz_name)
+SYSTEM_REFERENCE_TIMEZONE = resolve_timezone()
 SECONDS_PER_DAY = 24 * 60 * 60
 INACTIVE_AFTER_CONTINUOUS_HOURS = 24
 
 
-def _to_singapore_time(value: datetime) -> datetime:
-    return value.astimezone(SINGAPORE_TZ)
+def _to_reference_timezone(value: datetime) -> datetime:
+    return value.astimezone(SYSTEM_REFERENCE_TIMEZONE)
 
 
 def calculate_inactivity_seconds(last_active_at: datetime | None, *, reference_time: datetime | None = None) -> int:
     if last_active_at is None:
         return 0
 
-    start = _to_singapore_time(last_active_at)
-    end = _to_singapore_time(reference_time or now_sgt())
+    start = _to_reference_timezone(last_active_at)
+    end = _to_reference_timezone(reference_time or now_sgt())
     if end <= start:
         return 0
 

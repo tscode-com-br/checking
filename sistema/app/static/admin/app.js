@@ -29,6 +29,13 @@ const requestAdminRegistrationConfirmInput = document.getElementById("requestAdm
 const requestAdminRegistrationBackButton = document.getElementById("requestAdminRegistrationBackButton");
 const requestAdminRegistrationSaveButton = document.getElementById("requestAdminRegistrationSaveButton");
 const requestAdminRegistrationStatus = document.getElementById("requestAdminRegistrationStatus");
+const projectEditorTitle = document.getElementById("projectEditorTitle");
+const projectEditorHelp = document.getElementById("projectEditorHelp");
+const projectNameInput = document.getElementById("projectNameInput");
+const projectCountrySelect = document.getElementById("projectCountrySelect");
+const saveProjectButton = document.getElementById("saveProjectButton");
+const cancelProjectEditButton = document.getElementById("cancelProjectEditButton");
+const addProjectButton = document.getElementById("addProjectButton");
 
 const AUTO_REFRESH_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 250;
@@ -38,6 +45,7 @@ const DATABASE_EVENT_DEFAULT_SORT_KEY = "event_time";
 const DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc";
 const ADMIN_SELF_PASSWORD_VERIFY_DEBOUNCE_MS = 260;
 const ADMIN_REQUEST_LOOKUP_DEBOUNCE_MS = 260;
+const DEFAULT_PROJECT_COUNTRY_CODE = "SG";
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -45,6 +53,8 @@ let realtimeConnected = false;
 let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
+let adminAccessScope = "full";
+let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"];
 let registeredUsersTotal = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
@@ -67,6 +77,7 @@ let userTextareaRefreshFrame = null;
 let databaseEventsLoaded = false;
 let databaseEventsRefreshTimer = null;
 let projectCatalog = [];
+let projectEditorProjectId = null;
 let changePasswordVerifyTimeout = null;
 let changePasswordVerifyRequestToken = 0;
 let changePasswordCurrentPasswordValid = false;
@@ -76,6 +87,21 @@ let requestAdminLookupTimeout = null;
 let requestAdminLookupRequestToken = 0;
 let requestAdminSelfServiceInProgress = false;
 let requestAdminRegistrationSaveInProgress = false;
+const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
+const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
+const SUPPORTED_PROJECT_COUNTRIES = Object.freeze([
+  { code: "AE", name: "Emirados Árabes Unidos" },
+  { code: "IN", name: "Índia" },
+  { code: "JP", name: "Japão" },
+  { code: "KR", name: "Coreia do Sul" },
+  { code: "MY", name: "Malásia" },
+  { code: "PH", name: "Filipinas" },
+  { code: "QA", name: "Catar" },
+  { code: "SA", name: "Arábia Saudita" },
+  { code: "SG", name: "Singapura" },
+  { code: "TH", name: "Tailândia" },
+  { code: "VN", name: "Vietnã" },
+]);
 
 function createDefaultDatabaseEventFilters() {
   return {
@@ -168,8 +194,109 @@ function setProjectCatalog(rows) {
   projectCatalog = Array.isArray(rows)
     ? rows
       .filter((row) => row && typeof row.name === "string" && row.name.trim())
-      .map((row) => ({ id: row.id, name: row.name.trim() }))
+      .map((row) => ({
+        id: row.id,
+        name: row.name.trim(),
+        country_code: String(row.country_code ?? "").trim(),
+        country_name: String(row.country_name ?? "").trim(),
+        timezone_name: String(row.timezone_name ?? "").trim(),
+        timezone_label: String(row.timezone_label ?? "").trim(),
+      }))
     : [];
+}
+
+function getProjectById(projectId) {
+  const normalizedProjectId = String(projectId ?? "").trim();
+  return projectCatalog.find((row) => String(row.id) === normalizedProjectId) || null;
+}
+
+function getProjectCountryOptions(selectedValue = DEFAULT_PROJECT_COUNTRY_CODE) {
+  const normalizedSelectedValue = String(selectedValue ?? "").trim().toUpperCase();
+  const options = SUPPORTED_PROJECT_COUNTRIES.map((row) => ({ ...row }));
+  if (normalizedSelectedValue && !options.some((row) => row.code === normalizedSelectedValue)) {
+    options.unshift({ code: normalizedSelectedValue, name: normalizedSelectedValue });
+  }
+  return options;
+}
+
+function syncProjectCountrySelect(selectedValue = DEFAULT_PROJECT_COUNTRY_CODE) {
+  if (!projectCountrySelect) {
+    return;
+  }
+  const options = getProjectCountryOptions(selectedValue);
+  projectCountrySelect.innerHTML = options
+    .map((country) => `<option value="${escapeHtml(country.code)}">${escapeHtml(country.name)}</option>`)
+    .join("");
+  projectCountrySelect.value = String(selectedValue ?? DEFAULT_PROJECT_COUNTRY_CODE).trim().toUpperCase() || DEFAULT_PROJECT_COUNTRY_CODE;
+}
+
+function syncProjectEditorState(options = {}) {
+  const { focus = false } = options;
+  const editingProject = projectEditorProjectId === null ? null : getProjectById(projectEditorProjectId);
+  if (projectEditorProjectId !== null && !editingProject) {
+    projectEditorProjectId = null;
+  }
+
+  const isEditing = Boolean(editingProject);
+  const selectedCountryCode = isEditing
+    ? editingProject.country_code
+    : String(projectCountrySelect ? projectCountrySelect.value : "").trim().toUpperCase() || DEFAULT_PROJECT_COUNTRY_CODE;
+
+  syncProjectCountrySelect(selectedCountryCode);
+
+  if (projectNameInput) {
+    if (isEditing) {
+      projectNameInput.value = editingProject.name;
+      projectNameInput.disabled = true;
+      projectNameInput.readOnly = true;
+    } else {
+      projectNameInput.disabled = false;
+      projectNameInput.readOnly = false;
+    }
+  }
+
+  if (projectEditorTitle) {
+    projectEditorTitle.textContent = isEditing ? `Editar Projeto ${editingProject.name}` : "Novo Projeto";
+  }
+  if (projectEditorHelp) {
+    projectEditorHelp.textContent = isEditing
+      ? "Nesta etapa, a edição altera país e fuso horário. O nome do projeto permanece bloqueado."
+      : "Informe o nome e o país do projeto. O fuso horário será definido automaticamente.";
+  }
+  if (saveProjectButton) {
+    saveProjectButton.textContent = isEditing ? "Salvar Alteração" : "Salvar Projeto";
+  }
+  if (addProjectButton) {
+    addProjectButton.textContent = isEditing ? "Novo Projeto" : "Limpar Formulário";
+  }
+
+  if (focus) {
+    const field = isEditing ? projectCountrySelect : projectNameInput;
+    if (field) {
+      field.focus();
+    }
+  }
+}
+
+function resetProjectEditor(options = {}) {
+  const { focus = false } = options;
+  projectEditorProjectId = null;
+  if (projectNameInput) {
+    projectNameInput.value = "";
+  }
+  syncProjectCountrySelect(DEFAULT_PROJECT_COUNTRY_CODE);
+  syncProjectEditorState({ focus });
+}
+
+function startProjectEdit(projectId) {
+  const normalizedProjectId = requireIntegerId(projectId, "Projeto");
+  const project = getProjectById(normalizedProjectId);
+  if (!project) {
+    setStatus("Projeto não encontrado para edição.", false);
+    return;
+  }
+  projectEditorProjectId = normalizedProjectId;
+  syncProjectEditorState({ focus: true });
 }
 
 const PRESENCE_TABLE_CONFIGS = {
@@ -217,6 +344,96 @@ const TAB_LABELS = {
   eventos: "Eventos",
   "banco-dados": "Banco de Dados",
 };
+const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"]);
+const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
+
+function getDefaultAllowedTabsForScope(scope) {
+  return [...(scope === "limited" ? LIMITED_ADMIN_ALLOWED_TABS : DEFAULT_ADMIN_ALLOWED_TABS)];
+}
+
+function normalizeAllowedAdminTabs(tabs, scope = "full") {
+  const allowedValues = new Set(DEFAULT_ADMIN_ALLOWED_TABS);
+  const scopeDefaults = getDefaultAllowedTabsForScope(scope);
+  const normalizedTabs = Array.isArray(tabs)
+    ? Array.from(new Set(
+      tabs
+        .map((tab) => String(tab || "").trim())
+        .filter((tab) => allowedValues.has(tab))
+    ))
+    : [];
+
+  if (!normalizedTabs.length) {
+    return scopeDefaults;
+  }
+
+  if (scope === "limited") {
+    return normalizedTabs.filter((tab) => LIMITED_ADMIN_ALLOWED_TABS.includes(tab));
+  }
+
+  return normalizedTabs;
+}
+
+function isAdminTabAllowed(tab) {
+  return allowedAdminTabs.includes(String(tab || "").trim());
+}
+
+function getFirstAllowedAdminTab() {
+  return allowedAdminTabs[0] || "checkin";
+}
+
+function applyAdminTabVisibility() {
+  document.querySelectorAll(".tabs button[data-tab]").forEach((button) => {
+    const tab = String(button.dataset.tab || "").trim();
+    const isAllowed = isAdminTabAllowed(tab);
+    button.hidden = !isAllowed;
+    button.classList.toggle("hidden", !isAllowed);
+    if (!isAllowed) {
+      button.classList.remove("active");
+    }
+  });
+
+  document.querySelectorAll(".tab[id^=\"tab-\"]").forEach((section) => {
+    const tab = section.id.startsWith("tab-") ? section.id.slice(4) : "";
+    if (!Object.prototype.hasOwnProperty.call(TAB_LABELS, tab)) {
+      return;
+    }
+    const isAllowed = isAdminTabAllowed(tab);
+    section.hidden = !isAllowed;
+    if (!isAllowed) {
+      section.classList.remove("active");
+    }
+  });
+
+  if (!isAdminTabAllowed(activeTab)) {
+    activeTab = getFirstAllowedAdminTab();
+  }
+
+  const activeButton = document.querySelector(`.tabs button[data-tab="${activeTab}"]`);
+  const activeSection = document.getElementById(`tab-${activeTab}`);
+  if (activeButton) {
+    activeButton.hidden = false;
+    activeButton.classList.add("active");
+  }
+  if (activeSection) {
+    activeSection.hidden = false;
+    activeSection.classList.add("active");
+  }
+}
+
+function setAdminAccessState(admin) {
+  adminAccessScope = admin?.access_scope === "limited" ? "limited" : "full";
+  allowedAdminTabs = normalizeAllowedAdminTabs(admin?.allowed_tabs, adminAccessScope);
+  if (!allowedAdminTabs.length) {
+    allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
+  }
+  applyAdminTabVisibility();
+}
+
+function resetAdminAccessState() {
+  adminAccessScope = "full";
+  allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
+  applyAdminTabVisibility();
+}
 
 function createPresenceFilterState(filterColumns) {
   return Object.fromEntries(filterColumns.map((key) => [key, ""]));
@@ -610,6 +827,7 @@ function markDashboardRefreshed() {
 
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
+  resetAdminAccessState();
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
   closeChangePasswordModal();
@@ -649,6 +867,7 @@ function showAuthShell(message = "", kind = "info") {
 
 function showAdminShell(admin) {
   isAuthenticated = true;
+  setAdminAccessState(admin);
   authShell.classList.add("hidden");
   adminShell.classList.remove("hidden");
   sessionBar.classList.remove("hidden");
@@ -744,7 +963,17 @@ function scheduleUserFieldTextareaRefresh() {
   });
 }
 
-function formatDateTime(value) {
+function resolveDisplayTimeZoneName(timezoneName) {
+  const normalizedValue = String(timezoneName ?? "").trim();
+  return normalizedValue || DEFAULT_DISPLAY_TIMEZONE;
+}
+
+function resolveDisplayTimeZoneLabel(timezoneLabel) {
+  const normalizedValue = String(timezoneLabel ?? "").trim();
+  return normalizedValue || DEFAULT_TIMEZONE_LABEL;
+}
+
+function formatDateTime(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
   if (!value) {
     return "-";
   }
@@ -755,7 +984,7 @@ function formatDateTime(value) {
   }
 
   return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Singapore",
+    timeZone: resolveDisplayTimeZoneName(timezoneName),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -766,8 +995,8 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function formatDateTimeLines(value) {
-  const formatted = formatDateTime(value);
+function formatDateTimeLines(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+  const formatted = formatDateTime(value, timezoneName);
   if (formatted === "-") {
     return { date: "-", time: "" };
   }
@@ -779,14 +1008,14 @@ function formatDateTimeLines(value) {
   };
 }
 
-function getSingaporeDayKey(value) {
+function getDayKey(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) {
     return null;
   }
 
   const parts = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Singapore",
+    timeZone: resolveDisplayTimeZoneName(timezoneName),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -870,8 +1099,8 @@ function makeEventCell(value, extraClass = "") {
   return `<span class="${className}">${escapeHtml(value ?? "-")}</span>`;
 }
 
-function makeEventDateTimeCell(value) {
-  const { date, time } = formatDateTimeLines(value);
+function makeEventDateTimeCell(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+  const { date, time } = formatDateTimeLines(value, timezoneName);
   return `
     <span class="event-cell event-datetime-cell">
       <span class="event-datetime-line">${escapeHtml(date)}</span>
@@ -1086,7 +1315,7 @@ function renderDatabaseEvents(rows) {
 
   body.innerHTML = "";
   if (!rows.length) {
-    renderEmptyStateRow("databaseEventsBody", 13, "Nenhum evento encontrado para os filtros informados.");
+    renderEmptyStateRow("databaseEventsBody", 14, "Nenhum evento encontrado para os filtros informados.");
     updateDatabaseEventsInsights([]);
     return;
   }
@@ -1097,7 +1326,7 @@ function renderDatabaseEvents(rows) {
       message: row.message ?? "-",
       details: formatEventDetails(row.details),
     };
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatLocal(row.local), "event-cell-left")}</td><td>${makeEventCell(row.source ?? "-")}</td><td>${makeEventCell(row.status ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.device_id ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.message ?? "-", "event-cell-left")}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time, row.timezone_name)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatLocal(row.local), "event-cell-left")}</td><td>${makeEventCell(row.source ?? "-")}</td><td>${makeEventCell(row.status ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.device_id ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.message ?? "-", "event-cell-left")}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
     body.appendChild(tr);
   });
@@ -1242,6 +1471,18 @@ async function postJson(url, body) {
   return fetchJson(url, options);
 }
 
+async function putJson(url, body) {
+  const options = {
+    method: "PUT",
+    headers: {},
+  };
+  if (body !== null && body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  return fetchJson(url, options);
+}
+
 async function deleteJson(url) {
   return fetchJson(url, { method: "DELETE" });
 }
@@ -1255,11 +1496,20 @@ function requireIntegerId(value, label) {
 }
 
 function switchTab(tab) {
+  if (!isAdminTabAllowed(tab)) {
+    return;
+  }
+
   activeTab = tab;
   document.querySelectorAll(".tabs button").forEach((button) => button.classList.remove("active"));
-  document.querySelector(`.tabs button[data-tab="${tab}"]`).classList.add("active");
+  const targetButton = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+  const targetTab = document.getElementById(`tab-${tab}`);
+  if (!targetButton || !targetTab) {
+    return;
+  }
+  targetButton.classList.add("active");
   document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
-  document.getElementById(`tab-${tab}`).classList.add("active");
+  targetTab.classList.add("active");
   updateOperationalChrome();
   refreshActiveTab().catch((error) => setStatus(error.message, false));
 }
@@ -1565,9 +1815,9 @@ function syncUserTitles() {
   updateDashboardSummary();
 }
 
-function getSingaporeCalendarDayDiff(value) {
-  const eventDayKey = getSingaporeDayKey(value);
-  const todayKey = getSingaporeDayKey();
+function getCalendarDayDiff(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+  const eventDayKey = getDayKey(value, timezoneName);
+  const todayKey = getDayKey(undefined, timezoneName);
   if (!eventDayKey || !todayKey) {
     return 0;
   }
@@ -1586,9 +1836,9 @@ function formatElapsedDays(days) {
   return days === 1 ? "há 1 dia" : `há ${days} dias`;
 }
 
-function formatUserTableTime(value) {
-  const formatted = formatDateTime(value);
-  const calendarDayDiff = getSingaporeCalendarDayDiff(value);
+function formatUserTableTime(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+  const formatted = formatDateTime(value, timezoneName);
+  const calendarDayDiff = getCalendarDayDiff(value, timezoneName);
   if (!calendarDayDiff) {
     return { formatted, elapsedDays: 0, isStale: false };
   }
@@ -1600,17 +1850,23 @@ function formatUserTableTime(value) {
   };
 }
 
+function formatTimeZoneLabel(timezoneLabel) {
+  return resolveDisplayTimeZoneLabel(timezoneLabel);
+}
+
 function buildPresenceRow(row, options = {}) {
   const { highlightMissingCheckout = false, includeElapsedDays = false } = options;
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
-  const timeDisplay = includeElapsedDays ? formatUserTableTime(row.time) : { formatted: formatDateTime(row.time), isStale: false };
-  const staleCheckin = getSingaporeCalendarDayDiff(row.time) > 0;
+  const timeDisplay = includeElapsedDays
+    ? formatUserTableTime(row.time, row.timezone_name)
+    : { formatted: formatDateTime(row.time, row.timezone_name), isStale: false };
+  const staleCheckin = getCalendarDayDiff(row.time, row.timezone_name) > 0;
   if (highlightMissingCheckout && staleCheckin) {
     tr.classList.add("attention-user-row");
   }
 
-  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time, row.timezone_name))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -1647,7 +1903,7 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
       return row.projeto || "";
     }
     if (key === "latest_time") {
-      return `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time)}`;
+      return `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`;
     }
     if (key === "inactivity_days") {
       return formatInactivityDays(row.inactivity_days);
@@ -1657,7 +1913,7 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
 
   if (tableKey === "missingCheckout") {
     if (key === "time") {
-      return formatUserTableTime(row.time).formatted;
+      return formatUserTableTime(row.time, row.timezone_name).formatted;
     }
     if (key === "nome") {
       return row.nome || "";
@@ -1669,7 +1925,7 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
   }
 
   if (key === "time") {
-    return formatDateTime(row.time);
+    return formatDateTime(row.time, row.timezone_name);
   }
   if (key === "nome") {
     return row.nome || "";
@@ -1882,7 +2138,7 @@ function applyPresenceTableState(tableKey) {
 
 function renderPresenceTable(bodyId, rows, options = {}) {
   if (!rows.length) {
-    renderEmptyStateRow(bodyId, 6, options.emptyMessage || "Nenhum registro encontrado.");
+    renderEmptyStateRow(bodyId, 7, options.emptyMessage || "Nenhum registro encontrado.");
     updateUserTitle(bodyId, 0, registeredUsersTotal);
     return;
   }
@@ -1905,7 +2161,8 @@ function buildInactiveRow(row) {
     <td>${escapeHtml(row.nome)}</td>
     <td>${escapeHtml(row.chave)}</td>
     <td>${escapeHtml(row.projeto)}</td>
-    <td>${escapeHtml(`${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time)}`)}</td>
+    <td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td>
+    <td>${escapeHtml(`${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`)}</td>
     <td>${escapeHtml(formatInactivityDays(row.inactivity_days))}</td>
     <td class="user-table-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></td>
   `;
@@ -1914,7 +2171,7 @@ function buildInactiveRow(row) {
 
 function renderInactiveTable(rows, options = {}) {
   if (!rows.length) {
-    renderEmptyStateRow("inactiveBody", 6, options.emptyMessage || "Nenhum registro encontrado.");
+    renderEmptyStateRow("inactiveBody", 7, options.emptyMessage || "Nenhum registro encontrado.");
     updateInactiveTitle(0);
     return;
   }
@@ -2806,7 +3063,10 @@ function makeProjectRow(project) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
+    <td>${escapeHtml(project.country_name || "-")}</td>
+    <td>${escapeHtml(formatTimeZoneLabel(project.timezone_label))}</td>
     <td class="pending-actions user-actions">
+      <button type="button" class="secondary-button" data-project-edit="${project.id}">Editar</button>
       <button type="button" class="secondary-button" data-project-remove="${project.id}">Remover</button>
     </td>
   `;
@@ -3002,6 +3262,7 @@ async function loadAdministrators() {
 async function loadProjects() {
   const rows = await fetchJson("/api/admin/projects");
   setProjectCatalog(rows);
+  syncProjectEditorState();
   if (locationRows.length > 0) {
     renderLocations();
   }
@@ -3013,7 +3274,7 @@ async function loadProjects() {
 
   body.innerHTML = "";
   if (!rows.length) {
-    renderEmptyStateRow("projectsBody", 2, "Nenhum projeto cadastrado.");
+    renderEmptyStateRow("projectsBody", 4, "Nenhum projeto cadastrado.");
     return rows;
   }
 
@@ -3034,24 +3295,44 @@ async function loadRegisteredUsers() {
   scheduleUserFieldTextareaRefresh();
 }
 
-async function createProject() {
+async function saveProject() {
   if (hasPendingEditInProgress()) {
     setStatus("Salve ou cancele as edições pendentes antes de alterar os projetos.", false);
     return;
   }
 
-  const projectName = window.prompt("Informe o nome do projeto.");
-  if (projectName === null) {
-    return;
-  }
+  const projectName = String(projectNameInput ? projectNameInput.value : "").trim();
+  const countryCode = String(projectCountrySelect ? projectCountrySelect.value : "").trim().toUpperCase();
 
-  if (!projectName.trim()) {
+  if (!projectName) {
     setStatus("Informe o nome do projeto.", false);
+    if (projectNameInput) {
+      projectNameInput.focus();
+    }
     return;
   }
 
-  await postJson("/api/admin/projects", { name: projectName });
-  setStatus("Projeto adicionado com sucesso", true);
+  if (!countryCode) {
+    setStatus("Selecione o país do projeto.", false);
+    if (projectCountrySelect) {
+      projectCountrySelect.focus();
+    }
+    return;
+  }
+
+  if (projectEditorProjectId === null) {
+    await postJson("/api/admin/projects", { name: projectName, country_code: countryCode });
+    setStatus("Projeto adicionado com sucesso", true);
+  } else {
+    const normalizedProjectId = requireIntegerId(projectEditorProjectId, "Projeto");
+    await putJson(`/api/admin/projects/${normalizedProjectId}`, {
+      name: projectName,
+      country_code: countryCode,
+    });
+    setStatus("Projeto atualizado com sucesso", true);
+  }
+
+  resetProjectEditor();
   await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
 }
 
@@ -3068,6 +3349,9 @@ async function removeProject(projectId) {
   }
 
   await deleteJson(`/api/admin/projects/${normalizedProjectId}`);
+  if (String(projectEditorProjectId ?? "") === normalizedProjectId) {
+    resetProjectEditor();
+  }
   setStatus("Projeto removido com sucesso", true);
   await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
 }
@@ -3083,7 +3367,7 @@ async function loadEvents() {
       message: row.message ?? "-",
       details: formatEventDetails(row.details),
     };
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time, row.timezone_name)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
     body.appendChild(tr);
   });
@@ -3106,14 +3390,14 @@ async function loadForms() {
   updateFormsClearButtonState();
   body.innerHTML = "";
   if (formsTotal === 0) {
-    renderEmptyStateRow("formsBody", 8, "Nenhum registro recebido do endpoint updaterecords.");
+    renderEmptyStateRow("formsBody", 9, "Nenhum registro recebido do endpoint updaterecords.");
     updateDashboardSummary();
     return;
   }
 
   rows.forEach((row) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${makeEventDateTimeCell(row.recebimento)}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.projeto ?? "-")}</td><td>${makeEventCell(row.atividade ?? "-")}</td><td>${makeEventCell(row.informe ?? "-")}</td><td>${makeEventCell(row.data ?? "-")}</td><td>${makeEventCell(row.hora ?? "-")}</td>`;
+    tr.innerHTML = `<td>${makeEventDateTimeCell(row.recebimento, row.timezone_name)}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.projeto ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(row.atividade ?? "-")}</td><td>${makeEventCell(row.informe ?? "-")}</td><td>${makeEventCell(row.data ?? "-")}</td><td>${makeEventCell(row.hora ?? "-")}</td>`;
     body.appendChild(tr);
   });
   applyResponsiveLabels("formsBody");
@@ -3182,11 +3466,29 @@ async function refreshActiveTab() {
 }
 
 async function refreshAllTables() {
-  const jobs = [loadCheckin(), loadCheckout(), loadForms(), loadInactive(), loadEvents(), loadAdministrators()];
-  if (databaseEventsLoaded) {
+  const jobs = [];
+  if (isAdminTabAllowed("checkin")) {
+    jobs.push(loadCheckin());
+  }
+  if (isAdminTabAllowed("checkout")) {
+    jobs.push(loadCheckout());
+  }
+  if (isAdminTabAllowed("forms")) {
+    jobs.push(loadForms());
+  }
+  if (isAdminTabAllowed("inactive")) {
+    jobs.push(loadInactive());
+  }
+  if (isAdminTabAllowed("eventos")) {
+    jobs.push(loadEvents());
+  }
+  if (isAdminTabAllowed("cadastro")) {
+    jobs.push(loadAdministrators());
+  }
+  if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
     jobs.push(loadDatabaseEvents());
   }
-  if (!hasPendingEditInProgress()) {
+  if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
     await loadProjects();
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
@@ -3197,11 +3499,17 @@ async function refreshAllTables() {
 }
 
 async function refreshAutomaticTables() {
-  const jobs = [loadCheckin(), loadCheckout()];
-  if (databaseEventsLoaded) {
+  const jobs = [];
+  if (isAdminTabAllowed("checkin")) {
+    jobs.push(loadCheckin());
+  }
+  if (isAdminTabAllowed("checkout")) {
+    jobs.push(loadCheckout());
+  }
+  if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
     jobs.push(loadDatabaseEvents());
   }
-  if (!hasPendingEditInProgress()) {
+  if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
     await loadProjects();
     jobs.push(loadPending());
     jobs.push(loadLocations());
@@ -4127,10 +4435,21 @@ function bindActions() {
     }
   });
 
-  const addProjectButton = document.getElementById("addProjectButton");
   if (addProjectButton) {
     addProjectButton.addEventListener("click", () => {
-      createProject().catch((error) => setStatus(error.message, false));
+      resetProjectEditor({ focus: true });
+    });
+  }
+
+  if (saveProjectButton) {
+    saveProjectButton.addEventListener("click", () => {
+      saveProject().catch((error) => setStatus(error.message, false));
+    });
+  }
+
+  if (cancelProjectEditButton) {
+    cancelProjectEditButton.addEventListener("click", () => {
+      resetProjectEditor({ focus: true });
     });
   }
 
@@ -4138,11 +4457,17 @@ function bindActions() {
   if (projectsBody) {
     projectsBody.addEventListener("click", (event) => {
       const target = event.target;
+      if (target.tagName === "BUTTON" && target.dataset.projectEdit) {
+        startProjectEdit(target.dataset.projectEdit);
+        return;
+      }
       if (target.tagName === "BUTTON" && target.dataset.projectRemove) {
         removeProject(target.dataset.projectRemove).catch((error) => setStatus(error.message, false));
       }
     });
   }
+
+  syncProjectEditorState();
 
   document.getElementById("inactiveBody").addEventListener("click", (event) => {
     const target = event.target;

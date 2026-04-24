@@ -5,7 +5,7 @@ import json
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,6 +48,7 @@ from ..services.location_settings import (
 )
 from ..services.time_utils import now_sgt
 from ..services.transport import (
+    build_transport_list_export,
     build_transport_dashboard,
     create_transport_vehicle_registration,
     delete_transport_vehicle_registration,
@@ -150,6 +151,24 @@ def get_transport_dashboard(
 ) -> TransportDashboardResponse:
     resolved_date = service_date or now_sgt().date()
     return build_transport_dashboard(db, service_date=resolved_date, route_kind=route_kind)
+
+
+@router.get("/exports/transport-list", dependencies=[Depends(require_transport_session)])
+def export_transport_list(
+    service_date: date = Query(...),
+    route_kind: Literal["home_to_work", "work_to_home"] = Query(default="home_to_work"),
+    db: Session = Depends(get_db),
+) -> Response:
+    file_name, content = build_transport_list_export(
+        db,
+        service_date=service_date,
+        selected_route_kind=route_kind,
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @router.get("/settings", response_model=TransportSettingsResponse, dependencies=[Depends(require_transport_session)])

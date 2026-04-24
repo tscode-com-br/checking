@@ -24,10 +24,11 @@ test('manual refresh buttons exist for the heavy admin tables and the missing-ch
 });
 
 test('automatic refresh excludes the heavy tables and manual buttons reload them explicitly', () => {
-  assert.match(adminJs, /async function refreshAutomaticTables\(\) \{[\s\S]*loadCheckin\(\), loadCheckout\(\)[\s\S]*\}/);
+  assert.match(adminJs, /async function refreshAutomaticTables\(\) \{[\s\S]*if \(isAdminTabAllowed\("checkin"\)\) \{[\s\S]*jobs\.push\(loadCheckin\(\)\);[\s\S]*if \(isAdminTabAllowed\("checkout"\)\) \{[\s\S]*jobs\.push\(loadCheckout\(\)\);[\s\S]*\}/);
   assert.match(adminJs, /startAutoRefresh\(\) \{[\s\S]*refreshAutomaticTables\(\)\.catch/);
   assert.match(adminJs, /requestRefreshAllTables\(\) \{[\s\S]*refreshAutomaticTables\(\)\.catch/);
   assert.doesNotMatch(adminJs, /fetchJson\("\/api\/admin\/missing-checkout"\)/);
+  assert.match(adminJs, /if \(isAdminTabAllowed\("cadastro"\) && !hasPendingEditInProgress\(\)\) \{/);
   assert.match(adminJs, /async function runManualRefresh\(button, loader\) \{[\s\S]*button\.textContent = "Atualizando\.\.\.";[\s\S]*button\.textContent = idleLabel;/);
   assert.match(adminJs, /button\.classList\.add\("is-loading"\);/);
   assert.match(adminJs, /button\.setAttribute\("aria-busy", "true"\);/);

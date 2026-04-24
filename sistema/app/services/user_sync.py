@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
-from ..models import CheckEvent, User, UserSyncEvent
+from ..models import CheckEvent, Project, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .checking_history import record_checking_history
-from .time_utils import now_sgt
+from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone, resolve_project_timezone_name
 from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
@@ -37,15 +35,50 @@ def normalize_user_key(value: str) -> str:
     return value.strip().upper()
 
 
-def normalize_event_time(value: datetime) -> datetime:
-    target_tz = ZoneInfo(settings.tz_name)
+def normalize_event_time(value: datetime, *, timezone_name: str | None = None) -> datetime:
+    target_tz = resolve_timezone(timezone_name or resolve_system_timezone_name())
     if value.tzinfo is None:
         return value.replace(tzinfo=target_tz)
     return value.astimezone(target_tz)
 
 
+def _load_project_timezone_names(db: Session, project_names: set[str]) -> dict[str, str]:
+    normalized_project_names = sorted({str(name or "").strip().upper() for name in project_names if name})
+    if not normalized_project_names:
+        return {}
+
+    return {
+        project_name: timezone_name
+        for project_name, timezone_name in db.execute(
+            select(Project.name, Project.timezone_name).where(Project.name.in_(normalized_project_names))
+        ).all()
+        if project_name and timezone_name
+    }
+
+
+def _resolve_cached_project_timezone_name(project_name: str | None, *, project_timezone_names: dict[str, str]) -> str:
+    normalized_project_name = str(project_name or "").strip().upper()
+    if normalized_project_name:
+        return project_timezone_names.get(normalized_project_name) or resolve_system_timezone_name()
+    return resolve_system_timezone_name()
+
+
+def _normalize_sync_event_time(event: UserSyncEvent, *, project_timezone_names: dict[str, str]) -> datetime:
+    return normalize_event_time(
+        event.event_time,
+        timezone_name=_resolve_cached_project_timezone_name(event.projeto, project_timezone_names=project_timezone_names),
+    )
+
+
+def is_same_project_day(first: datetime, second: datetime, *, timezone_name: str | None = None) -> bool:
+    return normalize_event_time(first, timezone_name=timezone_name).date() == normalize_event_time(
+        second,
+        timezone_name=timezone_name,
+    ).date()
+
+
 def is_same_singapore_day(first: datetime, second: datetime) -> bool:
-    return normalize_event_time(first).date() == normalize_event_time(second).date()
+    return is_same_project_day(first, second, timezone_name=resolve_system_timezone_name())
 
 
 def normalize_sync_source(value: str | None) -> str:
@@ -63,11 +96,16 @@ def should_enqueue_forms_for_action(
     latest_activity: ResolvedUserActivity | None,
     action: str,
     event_time: datetime,
+    timezone_name: str | None = None,
 ) -> bool:
     if latest_activity is None:
         return True
 
-    return latest_activity.action != action or not is_same_singapore_day(latest_activity.event_time, event_time)
+    return latest_activity.action != action or not is_same_project_day(
+        latest_activity.event_time,
+        event_time,
+        timezone_name=timezone_name,
+    )
 
 
 def find_user_by_rfid(db: Session, rfid: str) -> User | None:
@@ -187,20 +225,38 @@ def list_user_sync_events(
     ).scalars().all()
 
 
-def select_preferred_sync_event(events: list[UserSyncEvent]) -> UserSyncEvent | None:
+def select_preferred_sync_event(db: Session, events: list[UserSyncEvent]) -> UserSyncEvent | None:
     if not events:
         return None
 
-    latest_day = normalize_event_time(events[0].event_time).date()
+    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in events if event.projeto})
+    normalized_events = {
+        event.id: _normalize_sync_event_time(event, project_timezone_names=project_timezone_names)
+        for event in events
+    }
+    sorted_events = sorted(
+        events,
+        key=lambda event: (
+            normalized_events[event.id],
+            get_sync_source_priority(event.source),
+            event.id,
+        ),
+        reverse=True,
+    )
+    latest_event = sorted_events[0]
+    latest_target_timezone = resolve_timezone(
+        _resolve_cached_project_timezone_name(latest_event.projeto, project_timezone_names=project_timezone_names)
+    )
+    latest_day = normalized_events[latest_event.id].astimezone(latest_target_timezone).date()
     same_day_events = [
         event
         for event in events
-        if normalize_event_time(event.event_time).date() == latest_day
+        if normalized_events[event.id].astimezone(latest_target_timezone).date() == latest_day
     ]
     same_day_events.sort(
         key=lambda event: (
             get_sync_source_priority(event.source),
-            normalize_event_time(event.event_time),
+            normalized_events[event.id].astimezone(latest_target_timezone),
             event.id,
         ),
         reverse=True,
@@ -255,6 +311,7 @@ def get_latest_sync_event(
     ignored_sources: frozenset[str] = frozenset(),
 ) -> UserSyncEvent | None:
     return select_preferred_sync_event(
+        db,
         filter_sync_events_by_sources(
             list_user_sync_events(db, user_id=user_id, action=action),
             ignored_sources=ignored_sources,
@@ -279,9 +336,10 @@ def get_latest_user_sync_event(
     if not candidates:
         return None
 
+    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in candidates if event.projeto})
     candidates.sort(
         key=lambda event: (
-            normalize_event_time(event.event_time),
+            _normalize_sync_event_time(event, project_timezone_names=project_timezone_names),
             get_sync_source_priority(event.source),
             event.id,
         ),
@@ -307,9 +365,10 @@ def get_latest_user_sync_event_from_sources(
     if not candidates:
         return None
 
+    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in candidates if event.projeto})
     candidates.sort(
         key=lambda event: (
-            normalize_event_time(event.event_time),
+            _normalize_sync_event_time(event, project_timezone_names=project_timezone_names),
             get_sync_source_priority(event.source),
             event.id,
         ),
@@ -374,8 +433,17 @@ def is_current_user_state_backed_by_sources(
     if latest_source_event is None:
         return False
 
+    project_timezone_names = _load_project_timezone_names(
+        db,
+        {name for name in (latest_source_event.projeto, user.projeto) if name},
+    )
+
     return (
-        normalize_event_time(latest_source_event.event_time) == normalize_event_time(user.time)
+        _normalize_sync_event_time(latest_source_event, project_timezone_names=project_timezone_names)
+        == normalize_event_time(
+            user.time,
+            timezone_name=_resolve_cached_project_timezone_name(user.projeto, project_timezone_names=project_timezone_names),
+        )
         and latest_source_event.action == ("checkin" if user.checkin else "checkout")
         and resolve_activity_local(local=latest_source_event.local, source=latest_source_event.source) == user.local
     )
@@ -547,6 +615,7 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
 
 def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistoryResponse:
     state = build_mobile_sync_state(db, chave=normalize_user_key(chave))
+    project_timezone_name = resolve_project_timezone_name(db, state.projeto)
     return WebCheckHistoryResponse(
         found=state.found,
         chave=state.chave,
@@ -554,7 +623,12 @@ def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistory
         current_action=state.current_action,
         current_local=state.current_local,
         has_current_day_checkin=(
-            state.last_checkin_at is not None and is_same_singapore_day(state.last_checkin_at, now_sgt())
+            state.last_checkin_at is not None
+            and is_same_project_day(
+                state.last_checkin_at,
+                now_sgt(),
+                timezone_name=project_timezone_name,
+            )
         ),
         last_checkin_at=state.last_checkin_at,
         last_checkout_at=state.last_checkout_at,

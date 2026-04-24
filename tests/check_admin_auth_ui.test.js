@@ -19,6 +19,7 @@ const adminJs = fs.readFileSync(
 );
 
 test('admin login page exposes the new utility buttons and change-password modal', () => {
+  assert.match(adminHtml, /Perfil 0 acessa apenas Check-In e Check-Out;/);
   assert.match(adminHtml, /id="changePasswordButton"[\s\S]*>Alterar Senha</);
   assert.match(adminHtml, /id="requestAdminButton"[\s\S]*>Solicitar Administração</);
   assert.match(adminHtml, />Administradores</);
@@ -44,6 +45,10 @@ test('admin login utility buttons keep the requested black and white styling', (
 
 test('admin change-password controller verifies the current password in real time and wires the new request-admin flow', () => {
   assert.match(adminJs, /changePasswordButton\.addEventListener\("click", openChangePasswordModal\);/);
+  assert.match(adminJs, /function setAdminAccessState\(admin\) \{/);
+  assert.match(adminJs, /allowedAdminTabs = normalizeAllowedAdminTabs\(admin\?\.allowed_tabs, adminAccessScope\);/);
+  assert.match(adminJs, /function applyAdminTabVisibility\(\) \{/);
+  assert.match(adminJs, /if \(!isAdminTabAllowed\(tab\)\) \{\s*return;\s*\}/);
   assert.match(adminJs, /postJson\("\/api\/admin\/auth\/verify-current-password", \{[\s\S]*senha_atual: currentPassword,[\s\S]*\}\);/);
   assert.match(adminJs, /postJson\("\/api\/admin\/auth\/change-password", \{[\s\S]*confirmar_senha: confirmPassword,[\s\S]*\}\);/);
   assert.match(adminJs, /changePasswordSaveButton\.disabled = !canSave;/);

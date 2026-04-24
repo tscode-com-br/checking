@@ -43,7 +43,7 @@ if test_transport_exports_dir.exists():
 
 from fastapi.testclient import TestClient
 
-from sistema.app.main import app
+from sistema.app.main import app, should_serve_static_site
 from sistema.app.core.config import settings
 from sistema.app.database import Base, SessionLocal, engine
 from sistema.app.models import (
@@ -72,8 +72,8 @@ from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
-from sistema.app.services.project_catalog import seed_default_projects
-from sistema.app.services.time_utils import now_sgt
+from sistema.app.services.project_catalog import build_project_fields_for_country, seed_default_projects
+from sistema.app.services.time_utils import build_timezone_label, now_sgt
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 from sistema.app.routers import web_check as web_check_router
 
@@ -148,7 +148,7 @@ def ensure_project_exists(project_name: str) -> None:
         if existing is not None:
             return
 
-        db.add(Project(name=normalized_name))
+        db.add(Project(name=normalized_name, **build_project_fields_for_country()))
         db.commit()
 
 
@@ -468,13 +468,23 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
 
         listed = client.get("/api/admin/projects")
         assert listed.status_code == 200
-        listed_names = {row["name"] for row in listed.json()}
+        listed_payload = listed.json()
+        listed_names = {row["name"] for row in listed_payload}
         assert {"P80", "P82", "P83"}.issubset(listed_names)
+        listed_p80 = next(row for row in listed_payload if row["name"] == "P80")
+        assert listed_p80["country_code"] == "SG"
+        assert listed_p80["country_name"] == "Singapura"
+        assert listed_p80["timezone_name"] == "Asia/Singapore"
+        assert listed_p80["timezone_label"] == "Singapura (+8)"
 
-        created = client.post("/api/admin/projects", json={"name": "P90"})
+        created = client.post("/api/admin/projects", json={"name": "P90", "country_code": "JP"})
         assert created.status_code == 200, created.text
         project_payload = created.json()
         assert project_payload["name"] == "P90"
+        assert project_payload["country_code"] == "JP"
+        assert project_payload["country_name"] == "Japão"
+        assert project_payload["timezone_name"] == "Asia/Tokyo"
+        assert project_payload["timezone_label"] == "Japão (+9)"
 
         with SessionLocal() as db:
             db.add(
@@ -510,6 +520,34 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
         assert listed_after.status_code == 200
         listed_after_names = {row["name"] for row in listed_after.json()}
         assert "P90" not in listed_after_names
+
+
+def test_admin_project_update_changes_country_metadata_without_renaming():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post("/api/admin/projects", json={"name": "P96", "country_code": "SG"})
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+
+        updated = client.put(
+            f"/api/admin/projects/{project_payload['id']}",
+            json={"name": "P96", "country_code": "VN"},
+        )
+        assert updated.status_code == 200, updated.text
+        updated_payload = updated.json()
+        assert updated_payload["id"] == project_payload["id"]
+        assert updated_payload["name"] == "P96"
+        assert updated_payload["country_code"] == "VN"
+        assert updated_payload["country_name"] == "Vietnã"
+        assert updated_payload["timezone_name"] == "Asia/Ho_Chi_Minh"
+        assert updated_payload["timezone_label"] == "Vietnã (+7)"
+
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P96")).scalar_one()
+
+    assert project.country_code == "VN"
+    assert project.country_name == "Vietnã"
+    assert project.timezone_name == "Asia/Ho_Chi_Minh"
 
 
 def test_admin_project_delete_reassigns_admin_only_users_to_fallback_project():
@@ -556,8 +594,14 @@ def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_pe
     with TestClient(app) as client:
         listed = client.get("/api/web/projects")
         assert listed.status_code == 200
-        listed_names = {row["name"] for row in listed.json()}
+        listed_payload = listed.json()
+        listed_names = {row["name"] for row in listed_payload}
         assert {"P80", "P82", "P83", "P95"}.issubset(listed_names)
+        listed_p95 = next(row for row in listed_payload if row["name"] == "P95")
+        assert listed_p95["country_code"] == "SG"
+        assert listed_p95["country_name"] == "Singapura"
+        assert listed_p95["timezone_name"] == "Asia/Singapore"
+        assert listed_p95["timezone_label"] == "Singapura (+8)"
 
         register_response = register_web_password(
             client,
@@ -751,6 +795,45 @@ def test_provider_endpoint_updates_project_but_keeps_existing_name():
     assert history_row.informe == "retroativo"
 
 
+def test_admin_provider_forms_rows_include_timezone_metadata_for_non_singapore_project():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P98")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P98", **build_project_fields_for_country("JP")))
+            db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV98",
+                "nome": "USUARIO JAPAO",
+                "projeto": "P98",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "17/04/2026",
+                "hora": "07:26:00",
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        ensure_admin_session(client)
+        forms_response = client.get("/api/admin/forms")
+        assert forms_response.status_code == 200, forms_response.text
+        form_row = next(row for row in forms_response.json() if row["chave"] == "PV98")
+        assert form_row["projeto"] == "P98"
+        assert form_row["timezone_name"] == "Asia/Tokyo"
+        assert form_row["timezone_label"] == "Japão (+9)"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV98")
+
+    assert user is not None
+    assert user.time is not None
+    assert normalize_event_time(user.time, timezone_name="Asia/Tokyo").strftime("%d/%m/%Y %H:%M:%S") == "17/04/2026 07:26:00"
+
+
 def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_history():
     newer_time = datetime(2026, 4, 18, 9, 0, tzinfo=ZoneInfo(settings.tz_name))
     with SessionLocal() as db:
@@ -825,9 +908,10 @@ def test_provider_endpoint_keeps_newer_current_user_state_while_recording_older_
     assert len(provider_events) == 1
 
 
-def test_provider_same_day_events_do_not_override_web_state_and_are_reported_in_forms():
+def test_provider_same_day_events_do_not_override_web_state_and_are_reported_in_forms(monkeypatch):
     web_checkin_time = datetime(2026, 4, 20, 7, 10, 0, tzinfo=ZoneInfo(settings.tz_name))
     web_checkout_time = datetime(2026, 4, 20, 21, 7, 14, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: web_checkout_time)
 
     with TestClient(app) as client:
         registered = register_web_password(client, chave="PV31", senha="web123", projeto="P80")
@@ -918,8 +1002,9 @@ def test_provider_same_day_events_do_not_override_web_state_and_are_reported_in_
         assert any(row["atividade"] == "check-out" and row["hora"] == "21:09:37" for row in provider_rows)
 
 
-def test_provider_current_state_uses_forms_as_local_when_provider_event_wins():
+def test_provider_current_state_uses_forms_as_local_when_provider_event_wins(monkeypatch):
     provider_time = datetime(2026, 4, 21, 18, 5, 0, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: provider_time)
 
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -2709,6 +2794,184 @@ def test_mobile_forms_submit_requeues_same_action_after_singapore_midnight():
             assert user.local == "Area C"
 
 
+def test_mobile_forms_submit_requeues_same_action_after_project_local_midnight():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P99")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P99", **build_project_fields_for_country("JP")))
+            db.commit()
+
+    first_event_time = datetime(2026, 4, 17, 23, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    second_event_time = datetime(2026, 4, 18, 0, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF99",
+                "projeto": "P99",
+                "action": "checkin",
+                "local": "Area Tokyo A",
+                "informe": "normal",
+                "event_time": first_event_time.isoformat(),
+                "client_event_id": f"android-forms-project-midnight-1-{uuid.uuid4().hex}",
+            },
+        )
+        second = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "AF99",
+                "projeto": "P99",
+                "action": "checkin",
+                "local": "Area Tokyo B",
+                "informe": "normal",
+                "event_time": second_event_time.isoformat(),
+                "client_event_id": f"android-forms-project-midnight-2-{uuid.uuid4().hex}",
+            },
+        )
+
+        assert first.status_code == 200
+        assert first.json()["queued_forms"] is True
+        assert second.status_code == 200
+        assert second.json()["ok"] is True
+        assert second.json()["duplicate"] is False
+        assert second.json()["queued_forms"] is True
+
+        with SessionLocal() as db:
+            queued = db.execute(select(FormsSubmission).where(FormsSubmission.chave == "AF99")).scalars().all()
+            user = get_user_by_chave(db, "AF99")
+
+            assert len(queued) == 2
+            assert user.checkin is True
+            assert user.local == "Area Tokyo B"
+
+
+def test_web_and_mobile_accept_naive_event_time_in_project_timezone_outside_singapore():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P99")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P99", **build_project_fields_for_country("JP")))
+            db.commit()
+
+    expected_web_time = datetime(2026, 4, 18, 8, 15, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    expected_mobile_time = datetime(2026, 4, 18, 8, 45, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="TZ99", senha="web123", projeto="P99")
+        assert registered.status_code == 200, registered.text
+
+        web_response = client.post(
+            "/api/web/check",
+            json={
+                "chave": "TZ99",
+                "projeto": "P99",
+                "action": "checkin",
+                "informe": "normal",
+                "local": "Tokyo Web",
+                "event_time": "2026-04-18T08:15:00",
+                "client_event_id": f"web-naive-project-timezone-{uuid.uuid4().hex}",
+            },
+        )
+        assert web_response.status_code == 200, web_response.text
+
+        mobile_response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "TZ98",
+                "projeto": "P99",
+                "action": "checkin",
+                "event_time": "2026-04-18T08:45:00",
+                "client_event_id": f"mobile-naive-project-timezone-{uuid.uuid4().hex}",
+            },
+        )
+        assert mobile_response.status_code == 200, mobile_response.text
+
+        web_history = client.get("/api/web/check/state", params={"chave": "TZ99"})
+        assert web_history.status_code == 200, web_history.text
+        web_state = web_history.json()
+        assert web_state["found"] is True
+        assert web_state["projeto"] == "P99"
+        assert web_state["current_action"] == "checkin"
+        assert normalize_event_time(datetime.fromisoformat(web_state["last_checkin_at"]), timezone_name="Asia/Tokyo") == expected_web_time
+
+        mobile_state_response = client.get("/api/mobile/state?chave=TZ98", headers=MOBILE_HEADERS)
+        assert mobile_state_response.status_code == 200, mobile_state_response.text
+        mobile_state = mobile_state_response.json()
+        assert mobile_state["found"] is True
+        assert mobile_state["current_action"] == "checkin"
+        assert normalize_event_time(datetime.fromisoformat(mobile_state["last_checkin_at"]), timezone_name="Asia/Tokyo") == expected_mobile_time
+
+    with SessionLocal() as db:
+        web_user = get_user_by_chave(db, "TZ99")
+        mobile_user = get_user_by_chave(db, "TZ98")
+
+    assert normalize_event_time(web_user.time, timezone_name="Asia/Tokyo") == expected_web_time
+    assert normalize_event_time(mobile_user.time, timezone_name="Asia/Tokyo") == expected_mobile_time
+
+
+def test_mobile_forms_submit_surfaces_non_singapore_timezone_in_checkin_and_checkout_rows():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P99")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P99", **build_project_fields_for_country("JP")))
+            db.commit()
+
+    reference_time = now_sgt().astimezone(ZoneInfo("Asia/Tokyo")).replace(microsecond=0)
+    checkin_time = reference_time - timedelta(hours=2)
+    checkout_time = reference_time - timedelta(minutes=30)
+
+    with TestClient(app) as client:
+        checkin_response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "TZ97",
+                "projeto": "P99",
+                "action": "checkin",
+                "local": "Tokyo Area A",
+                "informe": "normal",
+                "event_time": checkin_time.isoformat(),
+                "client_event_id": f"mobile-tokyo-checkin-{uuid.uuid4().hex}",
+            },
+        )
+        assert checkin_response.status_code == 200, checkin_response.text
+
+        ensure_admin_session(client)
+        checkin_rows = client.get("/api/admin/checkin")
+        assert checkin_rows.status_code == 200, checkin_rows.text
+        checkin_row = next(row for row in checkin_rows.json() if row["chave"] == "TZ97")
+        assert checkin_row["projeto"] == "P99"
+        assert checkin_row["timezone_name"] == "Asia/Tokyo"
+        assert checkin_row["timezone_label"] == "Japão (+9)"
+        assert normalize_event_time(datetime.fromisoformat(checkin_row["time"]), timezone_name="Asia/Tokyo") == checkin_time
+
+        checkout_response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "TZ97",
+                "projeto": "P99",
+                "action": "checkout",
+                "local": "Tokyo Area B",
+                "informe": "normal",
+                "event_time": checkout_time.isoformat(),
+                "client_event_id": f"mobile-tokyo-checkout-{uuid.uuid4().hex}",
+            },
+        )
+        assert checkout_response.status_code == 200, checkout_response.text
+
+        checkout_rows = client.get("/api/admin/checkout")
+        assert checkout_rows.status_code == 200, checkout_rows.text
+        checkout_row = next(row for row in checkout_rows.json() if row["chave"] == "TZ97")
+        assert checkout_row["projeto"] == "P99"
+        assert checkout_row["timezone_name"] == "Asia/Tokyo"
+        assert checkout_row["timezone_label"] == "Japão (+9)"
+        assert normalize_event_time(datetime.fromisoformat(checkout_row["time"]), timezone_name="Asia/Tokyo") == checkout_time
+
+
 def test_mobile_state_returns_current_location_for_checked_in_user():
     with TestClient(app) as client:
         submit_response = client.post(
@@ -3019,8 +3282,14 @@ def test_mobile_forms_submit_accepts_retroativo_and_persists_ontime_false(monkey
             assert queued.ontime is False
             assert sync_event.ontime is False
 
-        processed = process_forms_submission_queue_once()
+        processed = process_forms_submission_queue_once(max_items=1000)
         assert processed >= 1
+
+        with SessionLocal() as db:
+            processed_submission = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == client_event_id)
+            ).scalar_one()
+            assert processed_submission.status == "success"
 
         ensure_admin_session(client)
         events = client.get("/api/admin/events")
@@ -3079,7 +3348,25 @@ def test_mobile_check_page_is_served_on_user_path():
         assert "/api/web/auth/logout" in response.text
         assert "/api/web/check/state" in response.text
         assert "/api/web/check/location" in response.text
-        assert "Cadastro de Usuário" in response.text
+        assert "Solicitar Cadastro" in response.text
+
+
+def test_static_site_mount_flags_default_to_enabled():
+    assert should_serve_static_site("admin", settings_obj=settings) is True
+    assert should_serve_static_site("user", settings_obj=settings) is True
+    assert should_serve_static_site("transport", settings_obj=settings) is True
+
+
+def test_static_site_mount_flags_can_disable_api_serving_per_site():
+    custom_settings = SimpleNamespace(
+        serve_admin_site_in_api=False,
+        serve_user_site_in_api=True,
+        serve_transport_site_in_api=False,
+    )
+
+    assert should_serve_static_site("admin", settings_obj=custom_settings) is False
+    assert should_serve_static_site("user", settings_obj=custom_settings) is True
+    assert should_serve_static_site("transport", settings_obj=custom_settings) is False
 
 
 def test_transport_page_is_served_on_transport_path():
@@ -3315,6 +3602,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
 
 def test_transport_vehicle_registration_creates_route_aware_schedules():
     friday = date(2026, 4, 17)
+    saturday = date(2026, 4, 18)
     sunday = date(2026, 4, 19)
 
     with TestClient(app) as client:
@@ -3369,6 +3657,15 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
         extra_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "EXT7001")).scalar_one()
         weekend_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "WKD7001")).scalar_one()
         regular_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == "REG7001")).scalar_one()
+        active_schedule_rows = transport_service_module._list_active_transport_schedule_rows(db)
+        friday_work_to_home_departure_time = transport_service_module.get_transport_work_to_home_time_for_date(
+            db,
+            service_date=friday,
+        )
+        saturday_work_to_home_departure_time = transport_service_module.get_transport_work_to_home_time_for_date(
+            db,
+            service_date=saturday,
+        )
 
         extra_schedules = db.execute(
             select(TransportVehicleSchedule)
@@ -3385,11 +3682,40 @@ def test_transport_vehicle_registration_creates_route_aware_schedules():
             .where(TransportVehicleSchedule.vehicle_id == regular_vehicle.id)
             .order_by(TransportVehicleSchedule.route_kind)
         ).scalars().all()
+        friday_vehicle_rows, _, _ = transport_service_module._build_vehicle_rows_for_dashboard(
+            db,
+            service_date=friday,
+            route_kind="work_to_home",
+            work_to_home_departure_time=friday_work_to_home_departure_time,
+        )
+        saturday_vehicle_rows, _, _ = transport_service_module._build_vehicle_rows_for_dashboard(
+            db,
+            service_date=saturday,
+            route_kind="work_to_home",
+            work_to_home_departure_time=saturday_work_to_home_departure_time,
+        )
+        friday_registry_rows = transport_service_module._build_transport_vehicle_registry_rows(
+            active_schedule_rows=active_schedule_rows,
+            request_kind_by_id={},
+            recurring_assignment_templates={},
+            explicit_assignments=[],
+            service_date=friday,
+            route_kind="work_to_home",
+            work_to_home_departure_time=friday_work_to_home_departure_time,
+        )
 
     assert len(extra_schedules) == 1
     assert extra_schedules[0].route_kind == "work_to_home"
     assert extra_schedules[0].recurrence_kind == "single_date"
     assert extra_schedules[0].service_date == friday
+    friday_extra_rows = [row for row in friday_vehicle_rows["extra"] if row.placa == "EXT7001"]
+    assert len(friday_extra_rows) == 1
+    assert friday_extra_rows[0].route_kind == "work_to_home"
+    assert all(row.placa != "EXT7001" for row in saturday_vehicle_rows["extra"])
+    friday_registry_extra_rows = [row for row in friday_registry_rows["extra"] if row.placa == "EXT7001"]
+    assert len(friday_registry_extra_rows) == 1
+    assert friday_registry_extra_rows[0].service_date == friday
+    assert friday_registry_extra_rows[0].route_kind == "work_to_home"
 
     assert len(weekend_schedules) == 4
     assert {row.route_kind for row in weekend_schedules} == {"home_to_work", "work_to_home"}
@@ -7426,7 +7752,7 @@ def test_web_location_match_ignores_checkout_zone_for_outside_workplace_threshol
 def test_web_location_match_uses_project_specific_outside_workplace_threshold():
     with TestClient(app) as client:
         ensure_admin_session(client)
-        auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P82")
+        auth_response = register_web_password(client, chave="WL85", senha="loc123", projeto="P82")
         assert auth_response.status_code == 200
 
         create_location = client.post(
@@ -8172,6 +8498,16 @@ def test_admin_login_session_and_logout_flow():
         assert session_after.status_code == 200
         assert session_after.json()["authenticated"] is True
         assert session_after.json()["admin"]["chave"] == "HR70"
+        assert session_after.json()["admin"]["access_scope"] == "full"
+        assert session_after.json()["admin"]["allowed_tabs"] == [
+            "checkin",
+            "checkout",
+            "forms",
+            "inactive",
+            "cadastro",
+            "eventos",
+            "banco-dados",
+        ]
 
         admins = client.get("/api/admin/administrators")
         assert admins.status_code == 200
@@ -8187,6 +8523,71 @@ def test_admin_login_session_and_logout_flow():
         session_final = client.get("/api/admin/auth/session")
         assert session_final.status_code == 200
         assert session_final.json()["authenticated"] is False
+
+
+def test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout():
+    with SessionLocal() as db:
+        user = find_user_by_chave(db, "PZ00")
+        if user is None:
+            user = User(
+                rfid=None,
+                nome="Perfil Zero",
+                chave="PZ00",
+                projeto="P80",
+                senha=hash_password("lim123"),
+                perfil=0,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(user)
+        else:
+            user.nome = "Perfil Zero"
+            user.projeto = "P80"
+            user.senha = hash_password("lim123")
+            user.perfil = 0
+            user.last_active_at = now_sgt()
+            user.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="PZ00", senha="lim123")
+        assert login_response.status_code == 200
+        assert login_response.json()["ok"] is True
+
+        session_after = client.get("/api/admin/auth/session")
+        assert session_after.status_code == 200
+        payload = session_after.json()
+        assert payload["authenticated"] is True
+        assert payload["admin"]["chave"] == "PZ00"
+        assert payload["admin"]["perfil"] == 0
+        assert payload["admin"]["access_scope"] == "limited"
+        assert payload["admin"]["allowed_tabs"] == ["checkin", "checkout"]
+
+        assert client.get("/api/admin/checkin").status_code == 200
+        assert client.get("/api/admin/checkout").status_code == 200
+
+        for path in [
+            "/api/admin/administrators",
+            "/api/admin/projects",
+            "/api/admin/forms",
+            "/api/admin/inactive",
+            "/api/admin/pending",
+            "/api/admin/locations",
+            "/api/admin/users",
+            "/api/admin/events",
+        ]:
+            denied = client.get(path)
+            assert denied.status_code == 403, path
+            assert denied.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
 
 
 def test_admin_request_access_and_approval_flow():
@@ -8472,6 +8873,93 @@ def test_stale_checkin_rows_leave_checkin_and_move_to_inactive():
         inactive_row = next(row for row in inactive_response.json() if row["chave"] == "CI11")
         assert inactive_row["latest_action"] == "checkin"
         assert inactive_row["inactivity_days"] >= 1
+
+
+def test_admin_time_based_rows_include_timezone_metadata_and_system_event_fallback():
+    reference_now = now_sgt()
+    active_time = reference_now - timedelta(hours=1)
+    inactive_time = reference_now - timedelta(hours=26)
+    active_key = f"T{uuid.uuid4().hex[:3].upper()}"
+    inactive_key = f"T{uuid.uuid4().hex[:3].upper()}"
+
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P97")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P97", **build_project_fields_for_country("JP")))
+
+        db.add(
+            User(
+                rfid=None,
+                chave=active_key,
+                nome="Usuario Horario Ativo",
+                projeto="P97",
+                local="Porta A",
+                checkin=True,
+                time=active_time,
+                last_active_at=active_time,
+                inactivity_days=0,
+            )
+        )
+        db.add(
+            User(
+                rfid=None,
+                chave=inactive_key,
+                nome="Usuario Horario Inativo",
+                projeto="P97",
+                local="Porta B",
+                checkin=False,
+                time=inactive_time,
+                last_active_at=inactive_time,
+                inactivity_days=1,
+            )
+        )
+        db.add(
+            CheckEvent(
+                idempotency_key=uuid.uuid4().hex,
+                source="admin",
+                action="info",
+                status="done",
+                message="Evento tecnico sem projeto",
+                details=None,
+                project=None,
+                device_id=None,
+                local=None,
+                request_path="/api/admin/test-timezone",
+                http_status=200,
+                ontime=None,
+                event_time=reference_now,
+                submitted_at=None,
+                retry_count=0,
+                rfid=None,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        checkin_response = client.get("/api/admin/checkin")
+        assert checkin_response.status_code == 200
+        active_row = next(row for row in checkin_response.json() if row["chave"] == active_key)
+        assert active_row["timezone_name"] == "Asia/Tokyo"
+        assert active_row["timezone_label"] == "Japão (+9)"
+
+        inactive_response = client.get("/api/admin/inactive")
+        assert inactive_response.status_code == 200
+        inactive_row = next(row for row in inactive_response.json() if row["chave"] == inactive_key)
+        assert inactive_row["timezone_name"] == "Asia/Tokyo"
+        assert inactive_row["timezone_label"] == "Japão (+9)"
+
+        events_response = client.get("/api/admin/events")
+        assert events_response.status_code == 200
+        technical_event = next(row for row in events_response.json() if row["message"] == "Evento tecnico sem projeto")
+        assert technical_event["project"] is None
+        assert technical_event["timezone_name"] == str(settings.tz_name)
+        assert technical_event["timezone_label"] == build_timezone_label(
+            country_name="Sistema",
+            timezone_name=str(settings.tz_name),
+            reference_time=reference_now,
+        )
 
 
 def test_admin_login_rejects_transport_only_profile():
@@ -9170,6 +9658,7 @@ def test_web_location_match_contract_preserves_expected_response_shape():
             "message",
             "accuracy_meters",
             "accuracy_threshold_meters",
+            "minimum_checkout_distance_meters",
             "nearest_workplace_distance_meters",
         }
         assert payload["matched"] is True
@@ -9178,6 +9667,7 @@ def test_web_location_match_contract_preserves_expected_response_shape():
         assert payload["status"] == "matched"
         assert payload["accuracy_meters"] == 8
         assert payload["accuracy_threshold_meters"] == 25
+        assert payload["minimum_checkout_distance_meters"] == 2000
 
 
 def test_admin_locations_allow_same_name_with_different_coordinates():
@@ -9427,13 +9917,14 @@ def test_admin_location_update_allows_existing_detached_project_assignments():
 def test_removing_project_reassigns_linked_location_projects():
     with TestClient(app) as client:
         ensure_admin_session(client)
+        ensure_project_exists("Q03")
 
         create_location = client.post(
             "/api/admin/locations",
             json={
                 "local": "Project Reassign Base",
                 "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
-                "projects": ["P80", "P82"],
+                "projects": ["P80", "Q03"],
                 "tolerance_meters": 150,
             },
         )
@@ -9441,9 +9932,9 @@ def test_removing_project_reassigns_linked_location_projects():
 
         projects_response = client.get("/api/admin/projects")
         assert projects_response.status_code == 200
-        project_p82 = next(project for project in projects_response.json() if project["name"] == "P82")
+        project_q03 = next(project for project in projects_response.json() if project["name"] == "Q03")
 
-        remove_project = client.delete(f"/api/admin/projects/{project_p82['id']}")
+        remove_project = client.delete(f"/api/admin/projects/{project_q03['id']}")
         assert remove_project.status_code == 200
         assert remove_project.json()["ok"] is True
 

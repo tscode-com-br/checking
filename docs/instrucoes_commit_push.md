@@ -7,9 +7,9 @@ Este arquivo registra o procedimento recomendado para commits e pushes no worksp
 Este documento deve ser lido como a referência principal quando houver dúvida sobre:
 
 - em qual repositório uma alteração deve ser commitada;
-- qual push dispara deploy de produção;
+- qual ação manual dispara deploy de produção;
 - como montar stage sem misturar escopos;
-- como validar o resultado depois do push;
+- como validar o resultado depois do push e do deploy manual;
 - quais erros recorrentes devem ser evitados.
 
 Alguns documentos antigos em `docs/context/` ainda refletem uma topologia anterior do workspace. Quando houver conflito, este arquivo deve ser considerado a fonte mais atual para o procedimento de commit e push.
@@ -18,15 +18,17 @@ Alguns documentos antigos em `docs/context/` ainda refletem uma topologia anteri
 
 Em 2026-04-24, o workspace possui três repositórios Git distintos:
 
-| Repositório | Pasta local | Remote principal | Escopo | Push em `main` faz deploy na DigitalOcean? |
+| Repositório | Pasta local | Remote principal | Escopo | Push em `main` faz deploy automático na DigitalOcean? |
 | --- | --- | --- | --- | --- |
-| Sistema principal | `c:\dev\projetos\checkcheck` | `https://github.com/tscode-com-br/checking.git` | API FastAPI, websites, firmware, docs do sistema, migrações, testes do backend/web | Sim |
+| Sistema principal | `c:\dev\projetos\checkcheck` | `https://github.com/tscode-com-br/checking.git` | API FastAPI, websites, firmware, docs do sistema, migrações, testes do backend/web | Não |
 | App Flutter | `c:\dev\projetos\checkcheck\checking_android_new` | `https://github.com/tscode-com-br/checking_app_flutter.git` | Aplicativo Flutter | Não |
 | App Kotlin | `c:\dev\projetos\checkcheck\checking_kotlin` | `https://github.com/tscode-com-br/checking_app_kotlin.git` | Aplicativo Kotlin nativo | Não |
 
 Consequências práticas:
 
-- o repositório principal é o único que atualiza a produção na DigitalOcean;
+- o repositório principal continua sendo o dono do deploy da API e dos websites;
+- push em `main` do repositório principal publica código no GitHub, mas não reinicia produção sozinho;
+- o deploy de produção passou a depender de execução manual do workflow global de fallback ou dos workflows manuais por alvo;
 - os apps Flutter e Kotlin têm histórico, commit e push próprios;
 - os apps móveis não devem entrar em commits do repositório principal;
 - o repositório principal ignora `checking_android_new/` e `checking_kotlin/`.
@@ -50,11 +52,13 @@ Regra operacional:
 - não tentar publicar Flutter ou Kotlin a partir do root;
 - não misturar arquivos de repositórios aninhados no commit do root.
 
-## 3. O que cada push faz
+## 3. O que cada push faz e como o deploy é acionado
 
 ### 3.1 Repositório principal `checkcheck`
 
-Push em `main` no repo principal dispara o workflow:
+Push em `main` no repo principal publica o código no GitHub, mas não dispara deploy automaticamente.
+
+O deploy global de fallback acontece por execução manual do workflow:
 
 - `.github/workflows/deploy-oceandrive.yml`
 
@@ -69,7 +73,7 @@ Esse workflow:
 7. valida `http://127.0.0.1:8000/api/health` no servidor;
 8. faz prune de artefatos Docker não utilizados.
 
-Resumo: push em `main` do root é deploy de produção.
+Resumo: push em `main` do root não faz deploy sozinho; deploy global de produção agora é manual.
 
 ### 3.2 Repositório Flutter `checking_android_new`
 
@@ -216,11 +220,27 @@ git push origin main
 
 Impacto:
 
-- esse comando dispara deploy de produção;
-- mesmo um commit apenas de documentação gera novo build e restart do ambiente;
+- esse comando publica o código no GitHub, mas não reinicia produção automaticamente;
+- mesmo assim, trate `main` como branch sensível, porque ela continua sendo a base dos workflows manuais de deploy;
 - se a orientação for risco zero, não faça push em `main` sem aprovação explícita.
 
-### 6.8 Validação obrigatória depois do push
+### 6.8 Como disparar o deploy manual de fallback
+
+Pelo GitHub CLI:
+
+```powershell
+gh workflow run deploy-oceandrive.yml -R tscode-com-br/checking
+```
+
+Com diretório remoto explícito, se necessário:
+
+```powershell
+gh workflow run deploy-oceandrive.yml -R tscode-com-br/checking -f deploy_dir=/root/checkcheck
+```
+
+Esse é o caminho recomendado quando for necessário redeployar o pacote completo como fallback manual.
+
+### 6.9 Validação obrigatória depois do deploy manual
 
 Validação mínima pública:
 
@@ -385,7 +405,8 @@ Ordem recomendada:
 2. validar localmente em cada repo;
 3. comitar cada repo separadamente;
 4. publicar primeiro os apps móveis, se quiser apenas registrar o código no GitHub;
-5. publicar o root apenas quando estiver pronto para disparar o deploy de produção.
+5. publicar o root quando o código estiver pronto no GitHub;
+6. disparar manualmente o deploy global ou o deploy isolado do alvo correto.
 
 Se a mudança do app depender de contrato novo da API:
 
@@ -394,9 +415,9 @@ Se a mudança do app depender de contrato novo da API:
 
 ## 11. Gotchas operacionais importantes
 
-### 11.1 Push em `main` do root sempre tem risco de produção
+### 11.1 O deploy manual do root é que tem risco direto de produção
 
-Mesmo commit pequeno, mesmo docs-only, mesmo ajuste cosmético: tudo isso gera deploy.
+Push em `main` do root deixou de gerar deploy automático, mas qualquer execução manual do workflow global continua tendo impacto direto em produção.
 
 ### 11.2 Alembic: `revision` deve ter no máximo 32 caracteres
 
@@ -450,21 +471,21 @@ gh run view <RUN_ID> -R tscode-com-br/checking --log-failed
 
 Quando usar:
 
-- depois de push no root;
+- depois de um deploy manual do root ou de um deploy isolado por alvo;
 - quando a API não sobe;
 - quando o health check falha;
 - quando as URLs públicas retornam 502.
 
-## 13. Fluxo de resposta rápida para incidente após push no root
+## 13. Fluxo de resposta rápida para incidente após deploy manual do root
 
-Se depois de um push no root a produção responder `502 Bad Gateway`, siga esta sequência:
+Se depois da execução manual do workflow global a produção responder `502 Bad Gateway`, siga esta sequência:
 
 1. confirmar se é 502 real com `Invoke-WebRequest` ou `curl.exe -k -I`;
 2. validar `gh run list` para ver se o deploy está em andamento, falhou ou concluiu;
 3. se houve migração nova, revisar imediatamente o `revision` do Alembic;
 4. validar `https://tscode.com.br/api/health`;
 5. validar também `https://tscode.com.br/checking/admin` e `https://www.tscode.com.br/api/health`;
-6. se identificar causa no código, corrigir e reenviar hotfix para `main`.
+6. se identificar causa no código, corrigir, reenviar hotfix para `main` e rerodar manualmente o workflow necessário.
 
 Observação importante:
 
@@ -500,7 +521,7 @@ Estado validado em 2026-04-24:
 - `checkcheck` ignora `checking_android_new/` e `checking_kotlin/`;
 - `checking_android_new` tem repo próprio e remoto próprio;
 - `checking_kotlin` tem repo próprio e remoto próprio;
-- apenas `checkcheck` dispara deploy na DigitalOcean;
+- apenas os workflows manuais do repo `checkcheck` disparam deploy na DigitalOcean;
 - o hotfix `8d15db4` restaurou a produção após incidente de 502 por migration;
 - as URLs públicas críticas responderam `200 OK` após o hotfix.
 
@@ -517,6 +538,7 @@ git add <arquivos-do-sistema-principal>
 git diff --cached --stat
 git commit -m "<mensagem-clara>"
 git push origin main
+gh workflow run deploy-oceandrive.yml -R tscode-com-br/checking
 ```
 
 Depois validar:
@@ -572,7 +594,8 @@ Resumo final:
 
 O ponto mais sensível e simples de lembrar é este:
 
-- push em `main` do root = deploy de produção;
+- push em `main` do root = publica o código, mas não faz deploy automático;
+- deploy global de produção = execução manual do workflow `.github/workflows/deploy-oceandrive.yml`;
 - push em `main` dos apps móveis = apenas publicação do código do app;
 - migração Alembic nova exige `revision` com no máximo 32 caracteres.
 

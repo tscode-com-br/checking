@@ -1,0 +1,24 @@
+services:
+  admin-web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.admin-web
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_WEB_PORT:-18081}:8080"
+
+  user-web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.user-web
+    restart: unless-stopped
+    ports:
+      - "${USER_WEB_PORT:-18082}:8080"
+
+  transport-web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.transport-web
+    restart: unless-stopped
+    ports:
+      - "${TRANSPORT_WEB_PORT:-18083}:8080"

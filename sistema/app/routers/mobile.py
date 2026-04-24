@@ -26,6 +26,7 @@ from ..services.location_settings import (
     list_project_minimum_checkout_distance_rows,
 )
 from ..services.project_catalog import ensure_known_project
+from ..services.time_utils import now_sgt, resolve_project_timezone_name
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -37,7 +38,6 @@ from ..services.user_sync import (
     resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
 )
-from ..services.time_utils import now_sgt
 
 router = APIRouter(prefix="/api/mobile", tags=["mobile"])
 DEFAULT_MOBILE_LOCAL = "Aplicativo"
@@ -124,13 +124,15 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         )
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
-    event_time = normalize_event_time(payload.event_time)
+    project_timezone_name = resolve_project_timezone_name(db, payload.projeto)
+    event_time = normalize_event_time(payload.event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=payload.action,
         event_time=event_time,
+        timezone_name=project_timezone_name,
     )
     apply_user_state(
         user,
@@ -271,7 +273,8 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         return MobileSyncResponse(ok=True, duplicate=True, message="Mobile event already synchronized", state=state)
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
-    event_time = normalize_event_time(payload.event_time)
+    project_timezone_name = resolve_project_timezone_name(db, payload.projeto)
+    event_time = normalize_event_time(payload.event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user)
     apply_user_state(
         user,

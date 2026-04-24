@@ -13,7 +13,7 @@ from ..schemas import ProviderCheckSubmitRequest, ProviderCheckSubmitResponse
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.event_logger import log_event
 from ..services.project_catalog import ensure_known_project
-from ..services.time_utils import now_sgt
+from ..services.time_utils import now_sgt, resolve_project_timezone_name
 from ..services.user_profiles import merge_provider_date_and_time, normalize_person_name
 from ..services.user_sync import (
     apply_user_state,
@@ -87,7 +87,12 @@ def submit_provider_checking(
     # anything back to FORMS, otherwise production could enter a feedback loop.
     action = _ACTION_BY_ACTIVITY[payload.atividade]
     ontime = payload.informe == "normal"
-    event_time = merge_provider_date_and_time(payload.data, payload.hora)
+    project_timezone_name = resolve_project_timezone_name(db, payload.projeto)
+    event_time = merge_provider_date_and_time(
+        payload.data,
+        payload.hora,
+        timezone_name=project_timezone_name,
+    )
     provider_request_id = _build_provider_request_id(
         chave=payload.chave,
         projeto=payload.projeto,
@@ -187,8 +192,15 @@ def submit_provider_checking(
     preferred_activity = resolve_latest_user_activity(db, user=user)
     updated_current_state = False
     if preferred_activity is not None:
-        preferred_event_time = normalize_event_time(preferred_activity.event_time)
-        current_user_time = normalize_event_time(user.time) if user.time is not None else None
+        preferred_event_time = normalize_event_time(
+            preferred_activity.event_time,
+            timezone_name=project_timezone_name,
+        )
+        current_user_time = (
+            normalize_event_time(user.time, timezone_name=project_timezone_name)
+            if user.time is not None
+            else None
+        )
         next_checkin = preferred_activity.action == "checkin"
         next_local = preferred_activity.local
         should_update_current_state = (

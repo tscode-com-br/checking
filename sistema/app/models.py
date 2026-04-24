@@ -12,6 +12,9 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    country_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    timezone_name: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class ProjectAutoCheckoutDistance(Base):

@@ -50,6 +50,7 @@ from ..schemas import (
     AdminPasswordSetRequest,
     ProjectCreate,
     ProjectRow,
+    ProjectUpdate,
     AdminSessionResponse,
     AdminUserListRow,
     AdminUserUpsert,
@@ -64,19 +65,25 @@ from ..schemas import (
     UserRow,
 )
 from ..services.admin_auth import (
+    ADMIN_ACCESS_SCOPE_FULL,
+    ADMIN_ACCESS_SCOPE_LIMITED,
     ADMIN_ACCESS_DIGIT,
     TRANSPORT_ACCESS_DIGIT,
     add_profile_access,
     clear_admin_session,
     describe_user_profile,
+    get_admin_access_scope,
+    get_admin_allowed_tabs,
     get_authenticated_admin_from_session,
     hash_password,
     normalize_admin_key,
     normalize_user_profile,
     remove_profile_access,
+    require_full_admin_session,
     require_admin_session,
     require_admin_stream_session,
     user_has_admin_access,
+    user_can_access_admin_panel,
     user_profile_has_access,
     verify_password,
 )
@@ -102,8 +109,14 @@ from ..services.location_settings import (
     upsert_project_minimum_checkout_distance_rows,
     upsert_location_settings,
 )
-from ..services.project_catalog import ensure_known_project, list_project_names, list_projects, resolve_default_project_name
-from ..services.time_utils import now_sgt
+from ..services.project_catalog import (
+    build_project_fields_for_country,
+    ensure_known_project,
+    list_project_names,
+    list_projects,
+    resolve_default_project_name,
+)
+from ..services.time_utils import build_timezone_context, build_timezone_label, now_sgt
 from ..services.user_activity import (
     calculate_inactivity_days,
     has_exceeded_continuous_inactivity_window,
@@ -173,15 +186,37 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
         .order_by(desc(CheckEvent.id))
     ).scalars().all()
 
+    project_names = sorted(
+        {
+            (parse_event_details(row.details).get("projeto") or row.project or "").strip().upper()
+            for row in rows
+            if (parse_event_details(row.details).get("projeto") or row.project)
+        }
+    )
+    projects_by_name = {
+        project.name: project
+        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
+    } if project_names else {}
+
     payload: list[ProviderFormRow] = []
     for row in rows:
         details_map = parse_event_details(row.details)
+        project_name = (details_map.get("projeto") or row.project or "-").upper()
+        project = projects_by_name.get(project_name) if project_name != "-" else None
+        timezone_context = build_timezone_context(
+            project_name=project.name if project is not None else (None if project_name == "-" else project_name),
+            country_name=project.country_name if project is not None else None,
+            timezone_name=project.timezone_name if project is not None else None,
+            reference_time=row.event_time,
+        )
         payload.append(
             ProviderFormRow(
                 recebimento=row.event_time,
                 chave=(details_map.get("chave") or "-").upper(),
                 nome=details_map.get("nome") or "-",
-                projeto=(details_map.get("projeto") or row.project or "-").upper(),
+                projeto=project_name,
+                timezone_name=timezone_context.timezone_name,
+                timezone_label=timezone_context.timezone_label,
                 atividade=details_map.get("atividade") or ("check-in" if row.action == "checkin" else "check-out"),
                 informe=details_map.get("informe") or ("retroativo" if row.ontime is False else "normal"),
                 data=details_map.get("data") or "-",
@@ -216,35 +251,53 @@ def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -
 
 def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRow]:
     rfids = sorted({row.rfid for row in rows if row.rfid})
+    project_names = sorted({row.project for row in rows if row.project})
     user_keys_by_rfid: dict[str, str] = {}
+    projects_by_name: dict[str, Project] = {}
     if rfids:
         user_keys_by_rfid = {
             rfid: chave
             for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
             if rfid is not None
         }
+    if project_names:
+        projects_by_name = {
+            project.name: project
+            for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
+        }
 
-    return [
-        EventRow(
-            id=row.id,
-            source=row.source,
-            rfid=row.rfid,
-            chave=resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid),
-            device_id=row.device_id,
-            local=row.local,
-            action=row.action,
-            status=row.status,
-            message=row.message,
-            details=row.details,
-            project=row.project,
-            ontime=row.ontime,
-            request_path=row.request_path,
-            http_status=row.http_status,
-            retry_count=row.retry_count,
-            event_time=row.event_time,
+    payload: list[EventRow] = []
+    for row in rows:
+        project = projects_by_name.get(row.project) if row.project else None
+        timezone_context = build_timezone_context(
+            project_name=project.name if project is not None else row.project,
+            country_name=project.country_name if project is not None else None,
+            timezone_name=project.timezone_name if project is not None else None,
+            reference_time=row.event_time,
         )
-        for row in rows
-    ]
+        payload.append(
+            EventRow(
+                id=row.id,
+                source=row.source,
+                rfid=row.rfid,
+                chave=resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid),
+                device_id=row.device_id,
+                local=row.local,
+                action=row.action,
+                status=row.status,
+                message=row.message,
+                details=row.details,
+                project=row.project,
+                ontime=row.ontime,
+                request_path=row.request_path,
+                http_status=row.http_status,
+                retry_count=row.retry_count,
+                event_time=row.event_time,
+                timezone_name=timezone_context.timezone_name,
+                timezone_label=timezone_context.timezone_label,
+            )
+        )
+    return payload
 
 
 def get_database_event_sort_value(row: EventRow, sort_by: str) -> object:
@@ -368,6 +421,11 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[UserRow] = []
     current_time = reference_time or now_sgt()
+    project_names = sorted({user.projeto for user in rows if user.projeto})
+    projects_by_name = {
+        project.name: project
+        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
+    } if project_names else {}
 
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
@@ -375,6 +433,13 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
             continue
         if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
+        project = projects_by_name.get(user.projeto)
+        timezone_context = build_timezone_context(
+            project_name=project.name if project is not None else user.projeto,
+            country_name=project.country_name if project is not None else None,
+            timezone_name=project.timezone_name if project is not None else None,
+            reference_time=latest_activity.event_time,
+        )
 
         payload.append(
             UserRow(
@@ -383,6 +448,8 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
                 nome=user.nome,
                 chave=user.chave,
                 projeto=user.projeto,
+                timezone_name=timezone_context.timezone_name,
+                timezone_label=timezone_context.timezone_label,
                 local=latest_activity.local if latest_activity.local is not None else user.local,
                 checkin=action == "checkin",
                 time=latest_activity.event_time,
@@ -402,6 +469,11 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[InactiveUserRow] = []
     current_time = reference_time or now_sgt()
+    project_names = sorted({user.projeto for user in rows if user.projeto})
+    projects_by_name = {
+        project.name: project
+        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
+    } if project_names else {}
 
     for user in rows:
         latest_activity = resolve_latest_user_activity(db, user=user)
@@ -413,6 +485,13 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
         inactivity_days = calculate_inactivity_days(latest_activity.event_time, reference_time=current_time)
         if has_exceeded_continuous_inactivity_window(latest_activity.event_time, reference_time=current_time) and inactivity_days < 1:
             inactivity_days = 1
+        project = projects_by_name.get(user.projeto)
+        timezone_context = build_timezone_context(
+            project_name=project.name if project is not None else user.projeto,
+            country_name=project.country_name if project is not None else None,
+            timezone_name=project.timezone_name if project is not None else None,
+            reference_time=latest_activity.event_time,
+        )
 
         payload.append(
             InactiveUserRow(
@@ -421,6 +500,8 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
                 nome=user.nome,
                 chave=user.chave,
                 projeto=user.projeto,
+                timezone_name=timezone_context.timezone_name,
+                timezone_label=timezone_context.timezone_label,
                 latest_action=latest_activity.action,
                 latest_time=latest_activity.event_time,
                 inactivity_days=inactivity_days,
@@ -441,7 +522,17 @@ def encode_sse(payload: dict[str, str]) -> str:
 
 
 def build_admin_identity(admin: User) -> AdminIdentity:
-    return AdminIdentity(id=admin.id, chave=admin.chave, nome_completo=admin.nome, perfil=admin.perfil)
+    access_scope = get_admin_access_scope(admin)
+    if access_scope not in {ADMIN_ACCESS_SCOPE_LIMITED, ADMIN_ACCESS_SCOPE_FULL}:
+        access_scope = ADMIN_ACCESS_SCOPE_FULL
+    return AdminIdentity(
+        id=admin.id,
+        chave=admin.chave,
+        nome_completo=admin.nome,
+        perfil=admin.perfil,
+        access_scope=access_scope,
+        allowed_tabs=list(get_admin_allowed_tabs(admin)),
+    )
 
 
 def build_location_row(location: ManagedLocation) -> LocationRow:
@@ -568,7 +659,17 @@ def log_location_validation_failure(
 
 
 def build_project_row(project: Project) -> ProjectRow:
-    return ProjectRow(id=project.id, name=project.name)
+    return ProjectRow(
+        id=project.id,
+        name=project.name,
+        country_code=project.country_code,
+        country_name=project.country_name,
+        timezone_name=project.timezone_name,
+        timezone_label=build_timezone_label(
+            country_name=project.country_name,
+            timezone_name=project.timezone_name,
+        ),
+    )
 
 
 def resolve_location_projects_for_upsert(
@@ -692,13 +793,13 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
         )
         raise HTTPException(status_code=401, detail="Chave ou senha invalida")
 
-    if not user_has_admin_access(admin):
+    if not user_can_access_admin_panel(admin):
         log_event(
             db,
             source="admin",
             action="login",
             status="blocked",
-            message="Administrative login blocked due to missing admin profile",
+            message="Administrative login blocked due to missing admin panel access",
             request_path="/api/admin/auth/login",
             http_status=403,
             details=f"chave={admin.chave}",
@@ -706,7 +807,7 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
         )
         raise HTTPException(
             status_code=403,
-            detail="Este usuario nao possui acesso ao Admin.",
+            detail="Este usuario nao possui acesso ao painel Admin.",
         )
 
     if admin.senha is None:
@@ -1157,27 +1258,27 @@ async def stream_updates(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_admin_session)])
+@router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])
 def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRow]:
     return list_admin_rows(db)
 
 
-@router.get("/projects", response_model=list[ProjectRow], dependencies=[Depends(require_admin_session)])
+@router.get("/projects", response_model=list[ProjectRow], dependencies=[Depends(require_full_admin_session)])
 def list_admin_projects(db: Session = Depends(get_db)) -> list[ProjectRow]:
     return [build_project_row(project) for project in list_projects(db)]
 
 
-@router.post("/projects", response_model=ProjectRow, dependencies=[Depends(require_admin_session)])
+@router.post("/projects", response_model=ProjectRow, dependencies=[Depends(require_full_admin_session)])
 def create_admin_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> ProjectRow:
     existing_project = db.execute(select(Project).where(Project.name == payload.name)).scalar_one_or_none()
     if existing_project is not None:
         raise HTTPException(status_code=409, detail="Ja existe um projeto com esse nome.")
 
-    project = Project(name=payload.name)
+    project = Project(name=payload.name, **build_project_fields_for_country(payload.country_code))
     db.add(project)
     log_event(
         db,
@@ -1187,7 +1288,7 @@ def create_admin_project(
         message="Project created via admin",
         request_path="/api/admin/projects",
         http_status=200,
-        details=f"updated_by={current_admin.chave}; project_name={payload.name}",
+        details=f"updated_by={current_admin.chave}; project_name={payload.name}; country_code={payload.country_code}",
     )
     db.commit()
     db.refresh(project)
@@ -1195,11 +1296,52 @@ def create_admin_project(
     return build_project_row(project)
 
 
-@router.delete("/projects/{project_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.put("/projects/{project_id}", response_model=ProjectRow, dependencies=[Depends(require_full_admin_session)])
+def update_admin_project(
+    project_id: int,
+    payload: ProjectUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> ProjectRow:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+
+    if payload.name != project.name:
+        raise HTTPException(status_code=422, detail="Renomear projeto existente ainda nao e suportado.")
+
+    previous_country_code = project.country_code
+    previous_timezone_name = project.timezone_name
+    updated_fields = build_project_fields_for_country(payload.country_code)
+    project.country_code = updated_fields["country_code"]
+    project.country_name = updated_fields["country_name"]
+    project.timezone_name = updated_fields["timezone_name"]
+
+    log_event(
+        db,
+        source="admin",
+        action="update",
+        status="done",
+        message="Project updated via admin",
+        request_path=f"/api/admin/projects/{project_id}",
+        http_status=200,
+        details=(
+            f"updated_by={current_admin.chave}; project_id={project_id}; project_name={project.name}; "
+            f"country_code={previous_country_code}->{project.country_code}; "
+            f"timezone_name={previous_timezone_name}->{project.timezone_name}"
+        ),
+    )
+    db.commit()
+    db.refresh(project)
+    notify_admin_views("register", "event")
+    return build_project_row(project)
+
+
+@router.delete("/projects/{project_id}", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
 def remove_admin_project(
     project_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     project = db.get(Project, project_id)
     if project is None:
@@ -1263,7 +1405,7 @@ def approve_administrator_request(
     request_id: int,
     payload: AdminProfileUpdateRequest | None = None,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     access_request = db.get(AdminAccessRequest, request_id)
     if access_request is None:
@@ -1352,7 +1494,7 @@ def update_administrator_profile(
     admin_id: int,
     payload: AdminProfileUpdateRequest,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     administrator = db.get(User, admin_id)
     if administrator is None or not user_has_admin_access(administrator):
@@ -1397,7 +1539,7 @@ def update_administrator_profile(
 def reject_administrator_request(
     request_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     access_request = db.get(AdminAccessRequest, request_id)
     if access_request is None:
@@ -1434,7 +1576,7 @@ def reject_administrator_request(
 def revoke_administrator(
     admin_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     admin = db.get(User, admin_id)
     if admin is None or not user_has_admin_access(admin):
@@ -1504,7 +1646,7 @@ def set_administrator_password(
     admin_id: int,
     payload: AdminPasswordSetRequest,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     admin = db.get(User, admin_id)
     if admin is None or not user_has_admin_access(admin):
@@ -1566,15 +1708,15 @@ def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     return build_presence_rows(db, action="checkout", reference_time=reference_time)
 
 
-@router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_admin_session)])
+@router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_full_admin_session)])
 def list_provider_forms(db: Session = Depends(get_db)) -> list[ProviderFormRow]:
     return build_provider_forms_rows(db)
 
 
-@router.delete("/forms", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.delete("/forms", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
 def clear_provider_forms(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     removed_count = delete_provider_forms_rows(db)
     log_event(
@@ -1595,7 +1737,7 @@ def clear_provider_forms(
     )
 
 
-@router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
+@router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_full_admin_session)])
 def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     reference_time = now_sgt()
     if sync_user_inactivity(db, reference_time=reference_time):
@@ -1603,7 +1745,7 @@ def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     return build_missing_checkout_rows(db, reference_time=reference_time)
 
 
-@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_admin_session)])
+@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_full_admin_session)])
 def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
     reference_time = now_sgt()
     if sync_user_inactivity(db, reference_time=reference_time):
@@ -1611,7 +1753,7 @@ def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
     return build_inactive_rows(db, reference_time=reference_time)
 
 
-@router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_admin_session)])
+@router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_full_admin_session)])
 def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     rows = db.execute(select(PendingRegistration).order_by(desc(PendingRegistration.last_seen_at))).scalars().all()
     return [
@@ -1626,7 +1768,7 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
     ]
 
 
-@router.get("/locations", response_model=AdminLocationsResponse, dependencies=[Depends(require_admin_session)])
+@router.get("/locations", response_model=AdminLocationsResponse, dependencies=[Depends(require_full_admin_session)])
 def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
     return AdminLocationsResponse(
@@ -1638,7 +1780,7 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
 @router.get(
     "/locations/auto-checkout-distances",
     response_model=AdminProjectMinimumCheckoutDistanceListResponse,
-    dependencies=[Depends(require_admin_session)],
+    dependencies=[Depends(require_full_admin_session)],
 )
 def list_project_minimum_checkout_distances(
     db: Session = Depends(get_db),
@@ -1658,12 +1800,12 @@ def list_project_minimum_checkout_distances(
 @router.post(
     "/locations/auto-checkout-distances",
     response_model=AdminProjectMinimumCheckoutDistanceSaveResponse,
-    dependencies=[Depends(require_admin_session)],
+    dependencies=[Depends(require_full_admin_session)],
 )
 def update_project_minimum_checkout_distances(
     payload: AdminProjectMinimumCheckoutDistanceUpdate,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminProjectMinimumCheckoutDistanceSaveResponse:
     current_rows = list_project_minimum_checkout_distance_rows(db)
     previous_values = {
@@ -1714,7 +1856,7 @@ def update_project_minimum_checkout_distances(
     )
 
 
-@router.get("/locations/audit", response_model=AdminLocationAuditResponse, dependencies=[Depends(require_admin_session)])
+@router.get("/locations/audit", response_model=AdminLocationAuditResponse, dependencies=[Depends(require_full_admin_session)])
 def audit_locations(
     include_valid: bool = Query(default=False),
     db: Session = Depends(get_db),
@@ -1731,11 +1873,11 @@ def audit_locations(
     )
 
 
-@router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.post("/locations", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
 def upsert_location(
     payload: object = Body(...),
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     try:
         validated_payload = AdminLocationUpsert.model_validate(payload)
@@ -1840,11 +1982,11 @@ def upsert_location(
     return AdminActionResponse(ok=True, message="Localizacao salva com sucesso.")
 
 
-@router.post("/locations/settings", response_model=AdminLocationSettingsResponse, dependencies=[Depends(require_admin_session)])
+@router.post("/locations/settings", response_model=AdminLocationSettingsResponse, dependencies=[Depends(require_full_admin_session)])
 def update_location_settings(
     payload: AdminLocationSettingsUpdate,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminLocationSettingsResponse:
     previous_accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
     settings = upsert_location_settings(
@@ -1878,11 +2020,11 @@ def update_location_settings(
     )
 
 
-@router.delete("/locations/{location_id}", response_model=AdminActionResponse, dependencies=[Depends(require_admin_session)])
+@router.delete("/locations/{location_id}", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
 def remove_location(
     location_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     location = db.get(ManagedLocation, location_id)
     if location is None:
@@ -1917,7 +2059,7 @@ def remove_location(
     return AdminActionResponse(ok=True, message="Localizacao removida com sucesso.")
 
 
-@router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_admin_session)])
+@router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_full_admin_session)])
 def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
     rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
     return [
@@ -1939,11 +2081,11 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
     ]
 
 
-@router.post("/users", dependencies=[Depends(require_admin_session)])
+@router.post("/users", dependencies=[Depends(require_full_admin_session)])
 def upsert_user(
     payload: AdminUserUpsert,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> dict:
     payload.projeto = ensure_known_project(db, payload.projeto)
     payload_fields = set(getattr(payload, "model_fields_set", set()))
@@ -2076,11 +2218,11 @@ def upsert_user(
     }
 
 
-@router.delete("/pending/{pending_id}", dependencies=[Depends(require_admin_session)])
+@router.delete("/pending/{pending_id}", dependencies=[Depends(require_full_admin_session)])
 def remove_pending(
     pending_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> dict:
     pending = db.get(PendingRegistration, pending_id)
     if pending is None:
@@ -2115,11 +2257,11 @@ def remove_pending(
     return {"ok": True, "id": pending_id}
 
 
-@router.delete("/users/{user_id}", dependencies=[Depends(require_admin_session)])
+@router.delete("/users/{user_id}", dependencies=[Depends(require_full_admin_session)])
 def remove_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> dict:
     user = db.get(User, user_id)
     if user is None:
@@ -2178,7 +2320,7 @@ def remove_user(
 def reset_user_password(
     user_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
     user = db.get(User, user_id)
     if user is None:
@@ -2225,7 +2367,7 @@ def reset_user_password(
     )
 
 
-@router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_admin_session)])
+@router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_full_admin_session)])
 def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
     rows = db.execute(
         select(CheckEvent)
@@ -2239,7 +2381,7 @@ def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
 @router.get(
     "/database-events",
     response_model=DatabaseEventListResponse,
-    dependencies=[Depends(require_admin_session)],
+    dependencies=[Depends(require_full_admin_session)],
 )
 def list_database_events(
     db: Session = Depends(get_db),
@@ -2364,10 +2506,10 @@ def list_database_events(
     )
 
 
-@router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_admin_session)])
+@router.post("/events/archive", response_model=EventArchiveCreateResponse, dependencies=[Depends(require_full_admin_session)])
 def archive_events(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> EventArchiveCreateResponse:
     current_rows = db.execute(
         select(CheckEvent)
@@ -2428,7 +2570,7 @@ def archive_events(
     )
 
 
-@router.get("/events/archives", response_model=EventArchiveListResponse, dependencies=[Depends(require_admin_session)])
+@router.get("/events/archives", response_model=EventArchiveListResponse, dependencies=[Depends(require_full_admin_session)])
 def get_event_archives(
     q: str = Query(default=""),
     page: int = Query(default=1, ge=1),
@@ -2446,10 +2588,10 @@ def get_event_archives(
     )
 
 
-@router.get("/events/archives/download-all", dependencies=[Depends(require_admin_session)])
+@router.get("/events/archives/download-all", dependencies=[Depends(require_full_admin_session)])
 def download_all_event_archives(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> Response:
     try:
         file_name, payload = build_event_archives_zip()
@@ -2486,11 +2628,11 @@ def download_all_event_archives(
     )
 
 
-@router.get("/events/archives/{file_name}", dependencies=[Depends(require_admin_session)])
+@router.get("/events/archives/{file_name}", dependencies=[Depends(require_full_admin_session)])
 def download_event_archive(
     file_name: str,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> FileResponse:
     try:
         archive_path = get_event_archive_path(file_name)
@@ -2523,11 +2665,11 @@ def download_event_archive(
     return FileResponse(path=archive_path, media_type="text/csv", filename=archive_path.name)
 
 
-@router.delete("/events/archives/{file_name}", dependencies=[Depends(require_admin_session)])
+@router.delete("/events/archives/{file_name}", dependencies=[Depends(require_full_admin_session)])
 def remove_event_archive(
     file_name: str,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> dict:
     try:
         delete_event_archive(file_name)

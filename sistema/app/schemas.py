@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .models import ManagedLocation
 from .services.location_audit import audit_managed_location
 from .services.managed_locations import dump_location_coordinates
-from .services.project_catalog import normalize_project_name
+from .services.project_catalog import DEFAULT_PROJECT_COUNTRY_CODE, normalize_project_country_code, normalize_project_name
 from .services.user_profiles import normalize_person_name
 
 
@@ -681,6 +681,8 @@ class AdminIdentity(BaseModel):
     chave: str
     nome_completo: str
     perfil: int
+    access_scope: Literal["limited", "full"]
+    allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"]] = Field(default_factory=list)
 
 
 class AdminSessionResponse(BaseModel):
@@ -747,15 +749,40 @@ class AdminPasswordVerifyResponse(BaseModel):
 class ProjectRow(BaseModel):
     id: int
     name: str
+    country_code: str
+    country_name: str
+    timezone_name: str
+    timezone_label: str
 
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    country_code: str = Field(default=DEFAULT_PROJECT_COUNTRY_CODE, min_length=2, max_length=2)
 
     @field_validator("name", mode="before")
     @classmethod
     def validate_name(cls, value: str) -> str:
         return _normalize_project_value(value)
+
+    @field_validator("country_code", mode="before")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return normalize_project_country_code(value)
+
+
+class ProjectUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    country_code: str = Field(min_length=2, max_length=2)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
+    @field_validator("country_code", mode="before")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return normalize_project_country_code(value)
 
 
 class AdminLocationSettingsResponse(AdminActionResponse):
@@ -768,6 +795,8 @@ class UserRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    timezone_name: str
+    timezone_label: str
     local: Optional[str]
     checkin: bool
     time: datetime
@@ -779,6 +808,8 @@ class ProviderFormRow(BaseModel):
     chave: str
     nome: str
     projeto: str
+    timezone_name: str
+    timezone_label: str
     atividade: Literal["check-in", "check-out"]
     informe: Literal["normal", "retroativo"]
     data: str
@@ -1169,6 +1200,8 @@ class EventRow(BaseModel):
     http_status: Optional[int]
     retry_count: int
     event_time: datetime
+    timezone_name: str
+    timezone_label: str
 
 
 class DatabaseEventFilterOptions(BaseModel):
@@ -1195,6 +1228,8 @@ class InactiveUserRow(BaseModel):
     nome: str
     chave: str
     projeto: str
+    timezone_name: str
+    timezone_label: str
     latest_action: Literal["checkin", "checkout"]
     latest_time: datetime
     inactivity_days: int

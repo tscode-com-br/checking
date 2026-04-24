@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import HTTPException
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
@@ -10,6 +12,73 @@ from ..models import Project
 
 DEFAULT_PROJECT_NAMES = ("P80", "P82", "P83")
 PROJECT_NAME_MAX_LENGTH = 120
+DEFAULT_PROJECT_COUNTRY_CODE = "SG"
+
+
+@dataclass(frozen=True)
+class ProjectCountryConfig:
+    country_code: str
+    country_name: str
+    timezone_name: str
+
+
+SUPPORTED_PROJECT_COUNTRIES: dict[str, ProjectCountryConfig] = {
+    "AE": ProjectCountryConfig(
+        country_code="AE",
+        country_name="Emirados Árabes Unidos",
+        timezone_name="Asia/Dubai",
+    ),
+    "IN": ProjectCountryConfig(
+        country_code="IN",
+        country_name="Índia",
+        timezone_name="Asia/Kolkata",
+    ),
+    "JP": ProjectCountryConfig(
+        country_code="JP",
+        country_name="Japão",
+        timezone_name="Asia/Tokyo",
+    ),
+    "KR": ProjectCountryConfig(
+        country_code="KR",
+        country_name="Coreia do Sul",
+        timezone_name="Asia/Seoul",
+    ),
+    "MY": ProjectCountryConfig(
+        country_code="MY",
+        country_name="Malásia",
+        timezone_name="Asia/Kuala_Lumpur",
+    ),
+    "PH": ProjectCountryConfig(
+        country_code="PH",
+        country_name="Filipinas",
+        timezone_name="Asia/Manila",
+    ),
+    "QA": ProjectCountryConfig(
+        country_code="QA",
+        country_name="Catar",
+        timezone_name="Asia/Qatar",
+    ),
+    "SA": ProjectCountryConfig(
+        country_code="SA",
+        country_name="Arábia Saudita",
+        timezone_name="Asia/Riyadh",
+    ),
+    "SG": ProjectCountryConfig(
+        country_code="SG",
+        country_name="Singapura",
+        timezone_name="Asia/Singapore",
+    ),
+    "TH": ProjectCountryConfig(
+        country_code="TH",
+        country_name="Tailândia",
+        timezone_name="Asia/Bangkok",
+    ),
+    "VN": ProjectCountryConfig(
+        country_code="VN",
+        country_name="Vietnã",
+        timezone_name="Asia/Ho_Chi_Minh",
+    ),
+}
 
 
 def normalize_project_name(value: str, *, field_name: str = "O projeto") -> str:
@@ -19,6 +88,34 @@ def normalize_project_name(value: str, *, field_name: str = "O projeto") -> str:
     if len(normalized) > PROJECT_NAME_MAX_LENGTH:
         raise ValueError(f"{field_name} deve ter no maximo {PROJECT_NAME_MAX_LENGTH} caracteres")
     return normalized
+
+
+def normalize_project_country_code(value: str, *, field_name: str = "O país do projeto") -> str:
+    normalized = str(value or "").strip().upper()
+    if len(normalized) != 2 or not normalized.isalpha():
+        raise ValueError(f"{field_name} deve ser informado como sigla com 2 letras")
+    if normalized not in SUPPORTED_PROJECT_COUNTRIES:
+        raise ValueError(f"{field_name} não é suportado nesta etapa")
+    return normalized
+
+
+def list_supported_project_countries() -> list[ProjectCountryConfig]:
+    return [SUPPORTED_PROJECT_COUNTRIES[key] for key in sorted(SUPPORTED_PROJECT_COUNTRIES)]
+
+
+def resolve_project_country_config(country_code: str | None = None) -> ProjectCountryConfig:
+    if country_code is None:
+        return SUPPORTED_PROJECT_COUNTRIES[DEFAULT_PROJECT_COUNTRY_CODE]
+    return SUPPORTED_PROJECT_COUNTRIES[normalize_project_country_code(country_code)]
+
+
+def build_project_fields_for_country(country_code: str | None = None) -> dict[str, str]:
+    config = resolve_project_country_config(country_code)
+    return {
+        "country_code": config.country_code,
+        "country_name": config.country_name,
+        "timezone_name": config.timezone_name,
+    }
 
 
 def list_projects(db: Session) -> list[Project]:
@@ -65,6 +162,7 @@ def seed_default_projects() -> None:
         if existing_names:
             return
 
+        default_fields = build_project_fields_for_country(DEFAULT_PROJECT_COUNTRY_CODE)
         for project_name in DEFAULT_PROJECT_NAMES:
-            db.add(Project(name=project_name))
+            db.add(Project(name=project_name, **default_fields))
         db.commit()

@@ -37,7 +37,7 @@
     <section id="authShell" class="auth-shell">
       <div class="auth-card">
         <h1>Acesso Administrativo</h1>
-        <p class="auth-copy">Entre com sua chave de usuário e senha. Apenas perfis com 1 ou 9 acessam o painel.</p>
+        <p class="auth-copy">Entre com sua chave de usuário e senha. Perfil 0 acessa apenas Check-In e Check-Out; perfis com 1 ou 9 mantêm acesso completo ao painel.</p>
         <label class="auth-field-label" for="loginChave">Chave</label>
         <input id="loginChave" class="auth-input" type="text" maxlength="4" autocomplete="username" />
         <label class="auth-field-label" for="loginSenha">Senha</label>
@@ -179,6 +179,7 @@
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th>Fuso horário</th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="assiduidade"><span>Assiduidade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="local"><span>Local</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
               </tr>
@@ -243,6 +244,7 @@
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th>Fuso horário</th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="assiduidade"><span>Assiduidade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="local"><span>Local</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
               </tr>
@@ -263,7 +265,7 @@
         <div class="table-wrap forms-wrap">
           <table class="responsive-table forms-table">
             <thead>
-              <tr><th>Recebimento</th><th>Chave</th><th>Nome</th><th>Projeto</th><th>Atividade</th><th>Informe</th><th>Data</th><th>Hora</th></tr>
+              <tr><th>Recebimento</th><th>Chave</th><th>Nome</th><th>Projeto</th><th>Fuso horário</th><th>Atividade</th><th>Informe</th><th>Data</th><th>Hora</th></tr>
             </thead>
             <tbody id="formsBody"></tbody>
           </table>
@@ -319,6 +321,7 @@
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th>Fuso horário</th>
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="latest_time"><span>Última Atividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="inactivity_days"><span>Inatividade</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>Ações</th>
@@ -405,16 +408,36 @@
             <div class="section-header">
               <h2>Projetos</h2>
             </div>
+            <div class="project-editor-panel">
+              <div class="section-header">
+                <div>
+                  <h3 id="projectEditorTitle">Novo Projeto</h3>
+                  <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome e o país do projeto. O fuso horário será definido automaticamente.</p>
+                </div>
+              </div>
+              <div class="project-editor-grid">
+                <label class="presence-control-field" for="projectNameInput">
+                  <span>Nome do projeto</span>
+                  <input id="projectNameInput" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: P84" />
+                </label>
+                <label class="presence-control-field" for="projectCountrySelect">
+                  <span>País</span>
+                  <select id="projectCountrySelect"></select>
+                </label>
+              </div>
+              <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
+                <button id="saveProjectButton" type="button">Salvar Projeto</button>
+                <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
+                <button id="addProjectButton" type="button" class="secondary-button">Limpar Formulário</button>
+              </div>
+            </div>
             <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
               <table class="responsive-table cadastro-table cadastro-projects-table">
                 <thead>
-                  <tr><th>Nome do Projeto</th><th>Ações</th></tr>
+                  <tr><th>Nome do Projeto</th><th>País</th><th>Fuso horário</th><th>Ações</th></tr>
                 </thead>
                 <tbody id="projectsBody"></tbody>
               </table>
-            </div>
-            <div class="locations-actions-bar cadastro-projects-actions">
-              <button id="addProjectButton" type="button">Adicionar Projeto</button>
             </div>
           </div>
         </div>
@@ -444,7 +467,7 @@
         <div class="table-wrap events-wrap">
           <table class="responsive-table events-table">
             <thead>
-              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
+              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Fuso horário</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>

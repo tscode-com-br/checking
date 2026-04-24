@@ -1,22 +1,22 @@
-name: Deploy OceanDrive Fallback
+name: Deploy OceanDrive API Only
 
 on:
   workflow_dispatch:
     inputs:
       deploy_dir:
-        description: Optional remote directory for the fallback deploy. Leave blank to reuse OCEAN_APP_DIR.
+        description: Optional remote directory for the API-only deploy. Leave blank to reuse OCEAN_APP_DIR.
         required: false
         type: string
 
 concurrency:
-  group: deploy-oceandrive-fallback
+  group: deploy-oceandrive-api-manual
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  deploy:
+  deploy-api:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -128,7 +128,7 @@ jobs:
           strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
           rsh: ${{ steps.ssh_verification.outputs.rsh }}
 
-      - name: Rebuild and restart services
+      - name: Rebuild and restart API services
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -145,11 +145,11 @@ jobs:
               echo "Arquivo .env nao encontrado em ${{ steps.deploy_dir.outputs.path }}"
               exit 1
             fi
-            printf '%s\n' '${{ github.sha }}' > .deploy-release
-            docker compose up -d db
-            docker compose up -d --build --remove-orphans
+            printf '%s\n' '${{ github.sha }}' > .deploy-release-api
+            docker compose -f docker-compose.api.yml up -d db
+            docker compose -f docker-compose.api.yml up -d --build api
 
-      - name: Validate application health
+      - name: Validate API health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -162,32 +162,8 @@ jobs:
           script: |
             set -e
             cd ${{ steps.deploy_dir.outputs.path }}
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              if curl -fsS http://127.0.0.1:8000/api/health; then
-                echo
-                docker compose ps
-                exit 0
-              fi
-              sleep 6
-            done
-            echo "Health check falhou apos o deploy"
-            docker compose ps
-            docker compose logs --tail=120 app
-            exit 1
-
-      - name: Prune unused Docker artifacts
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        with:
-          host: ${{ secrets.OCEAN_HOST }}
-          username: ${{ secrets.OCEAN_USER }}
-          key: ${{ secrets.OCEAN_SSH_KEY }}
-          port: ${{ env.OCEAN_PORT }}
-          timeout: 60s
-          command_timeout: 5m
-          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
-          script: |
-            set -e
-            docker image prune -af || true
-            docker builder prune -af || true
-            docker system prune -f || true
-            docker system df
+            bash deploy/smoke/validate_target.sh \
+              --label "API" \
+              --compose-file docker-compose.api.yml \
+              --service api \
+              --url http://127.0.0.1:18080/api/health

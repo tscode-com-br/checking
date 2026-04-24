@@ -54,6 +54,20 @@ test('createTransportDateStore shares one selected date across subscribers', () 
   assert.deepEqual(secondSubscriberDates, firstSubscriberDates);
 });
 
+test('createTransportDateStore can update the selected date silently without notifying subscribers', () => {
+  const dateStore = transportPage.createTransportDateStore(new Date(2026, 3, 17));
+  const notifiedDates = [];
+
+  dateStore.subscribe((dateValue) => {
+    notifiedDates.push(transportPage.formatIsoDate(dateValue));
+  });
+
+  dateStore.setValue(new Date(2026, 3, 20), { notify: false });
+
+  assert.deepEqual(notifiedDates, ['2026-04-17']);
+  assert.equal(transportPage.formatIsoDate(dateStore.getValue()), '2026-04-20');
+});
+
 test('resolveStoredTransportDate always falls back to the current reference date on reload', () => {
   const originalLocalStorage = global.localStorage;
   global.localStorage = {
@@ -496,6 +510,22 @@ test('transport vehicle list headers keep the add button visible when titles nee
   );
 });
 
+test('transport vehicle modal stays viewport-safe after adding the extra departure date field', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-modal\s*\{[\s\S]*max-height:\s*calc\(100dvh - 48px\);[\s\S]*overflow:\s*auto;[\s\S]*overscroll-behavior:\s*contain;/
+  );
+  assert.match(
+    transportCss,
+    /@media \(max-width: 640px\) \{[\s\S]*\.transport-modal\s*\{[\s\S]*max-height:\s*calc\(100dvh - 24px\);/
+  );
+});
+
 test('transport frontend uses base-relative asset and API paths so the /checking prefix keeps working', () => {
   const transportScript = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/app.js'),
@@ -772,7 +802,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
   );
 });
 
-test('buildVehicleCreatePayload sends recurrence selections for regular and weekend vehicles and extra departure time only for extra vehicles', () => {
+test('buildVehicleCreatePayload keeps dashboard dates for regular and weekend vehicles and reads the form service date for extra vehicles', () => {
   const regularFormData = new FormData();
   regularFormData.set('service_scope', 'regular');
   regularFormData.set('tipo', 'carro');
@@ -833,6 +863,7 @@ test('buildVehicleCreatePayload sends recurrence selections for regular and week
   extraFormData.set('color', 'White');
   extraFormData.set('lugares', '10');
   extraFormData.set('tolerance', '18');
+  extraFormData.set('service_date', '2026-05-02');
   extraFormData.set('departure_time', '17:45');
   extraFormData.set('route_kind', 'work_to_home');
 
@@ -840,7 +871,7 @@ test('buildVehicleCreatePayload sends recurrence selections for regular and week
     transportPage.buildVehicleCreatePayload(extraFormData, '2026-04-18', 'home_to_work'),
     {
       service_scope: 'extra',
-      service_date: '2026-04-18',
+      service_date: '2026-05-02',
       tipo: 'van',
       placa: 'XYZ9000',
       color: 'White',
@@ -849,6 +880,82 @@ test('buildVehicleCreatePayload sends recurrence selections for regular and week
       departure_time: '17:45',
       route_kind: 'work_to_home',
     }
+  );
+});
+
+test('resolveVehicleModalOpenState prefills the extra modal service date and targets the date field for focus', () => {
+  assert.deepEqual(
+    transportPage.resolveVehicleModalOpenState('extra', '2026-05-02'),
+    {
+      serviceDateValue: '2026-05-02',
+      departureTimeValue: '',
+      initialFocusField: 'service_date',
+      fallbackFocusField: 'departure_time',
+    }
+  );
+
+  assert.deepEqual(
+    transportPage.resolveVehicleModalOpenState('regular', '2026-05-02'),
+    {
+      serviceDateValue: '',
+      departureTimeValue: '',
+      initialFocusField: null,
+      fallbackFocusField: null,
+    }
+  );
+});
+
+test('resolveVehicleCreateValidationError blocks extra submits without a departure date and focuses the date field', () => {
+  assert.deepEqual(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'extra',
+      service_date: '',
+      departure_time: '17:45',
+      route_kind: 'home_to_work',
+    }),
+    {
+      messageKey: 'warnings.extraServiceDateRequired',
+      focusField: 'service_date',
+    }
+  );
+
+  assert.equal(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'extra',
+      service_date: '2026-05-02',
+      departure_time: '17:45',
+      route_kind: 'home_to_work',
+    }),
+    null
+  );
+});
+
+test('resolveVehicleSaveReloadDate keeps the current dashboard date for regular and weekend saves and uses the form date for extra saves', () => {
+  const fallbackDate = new Date(2026, 3, 18);
+
+  assert.equal(
+    transportPage.formatIsoDate(
+      transportPage.resolveVehicleSaveReloadDate({ service_scope: 'regular', service_date: '2026-05-03' }, fallbackDate)
+    ),
+    '2026-04-18'
+  );
+  assert.equal(
+    transportPage.formatIsoDate(
+      transportPage.resolveVehicleSaveReloadDate({ service_scope: 'weekend', service_date: '2026-05-03' }, fallbackDate)
+    ),
+    '2026-04-18'
+  );
+  assert.equal(
+    transportPage.formatIsoDate(
+      transportPage.resolveVehicleSaveReloadDate({ service_scope: 'extra', service_date: '2026-05-03' }, fallbackDate)
+    ),
+    '2026-05-03'
+  );
+  assert.equal(
+    transportPage.formatIsoDate(
+      transportPage.resolveVehicleSaveReloadDate({ service_scope: 'extra', service_date: '' }, fallbackDate)
+    ),
+    '2026-04-18'
   );
 });
 

@@ -16,6 +16,53 @@ from .services.forms_queue import forms_submission_worker
 from .services.project_catalog import seed_default_projects
 
 
+STATIC_SITE_FLAG_BY_NAME = {
+    "admin": "serve_admin_site_in_api",
+    "user": "serve_user_site_in_api",
+    "transport": "serve_transport_site_in_api",
+}
+
+
+def should_serve_static_site(site_name: str, *, settings_obj=settings) -> bool:
+    flag_name = STATIC_SITE_FLAG_BY_NAME.get(site_name)
+    if flag_name is None:
+        raise ValueError(f"Unknown static site: {site_name}")
+    return bool(getattr(settings_obj, flag_name, True))
+
+
+def build_static_index_handler(directory: Path):
+    def handler() -> FileResponse:
+        return FileResponse(directory / "index.html")
+
+    return handler
+
+
+def build_static_trailing_slash_handler(route_path: str):
+    def handler() -> RedirectResponse:
+        return RedirectResponse(url=f"..{route_path}", status_code=307)
+
+    return handler
+
+
+def mount_static_site(app: FastAPI, *, site_name: str, route_path: str, directory: Path) -> None:
+    if not directory.exists() or not should_serve_static_site(site_name):
+        return
+
+    app.add_api_route(
+        route_path,
+        build_static_index_handler(directory),
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        f"{route_path}/",
+        build_static_trailing_slash_handler(route_path),
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    app.mount(route_path, StaticFiles(directory=directory), name=site_name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
@@ -67,35 +114,6 @@ if static_dir.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    if admin_dir.exists():
-        @app.get("/admin", include_in_schema=False)
-        def admin_page() -> FileResponse:
-            return FileResponse(admin_dir / "index.html")
-
-        @app.get("/admin/", include_in_schema=False)
-        def admin_page_trailing_slash() -> RedirectResponse:
-            return RedirectResponse(url="../admin", status_code=307)
-
-        app.mount("/admin", StaticFiles(directory=admin_dir), name="admin")
-
-    if check_dir.exists():
-        @app.get("/user", include_in_schema=False)
-        def user_page() -> FileResponse:
-            return FileResponse(check_dir / "index.html")
-
-        @app.get("/user/", include_in_schema=False)
-        def user_page_trailing_slash() -> RedirectResponse:
-            return RedirectResponse(url="../user", status_code=307)
-
-        app.mount("/user", StaticFiles(directory=check_dir), name="user")
-
-    if transport_dir.exists():
-        @app.get("/transport", include_in_schema=False)
-        def transport_page() -> FileResponse:
-            return FileResponse(transport_dir / "index.html")
-
-        @app.get("/transport/", include_in_schema=False)
-        def transport_page_trailing_slash() -> RedirectResponse:
-            return RedirectResponse(url="../transport", status_code=307)
-
-        app.mount("/transport", StaticFiles(directory=transport_dir), name="transport")
+    mount_static_site(app, site_name="admin", route_path="/admin", directory=admin_dir)
+    mount_static_site(app, site_name="user", route_path="/user", directory=check_dir)
+    mount_static_site(app, site_name="transport", route_path="/transport", directory=transport_dir)

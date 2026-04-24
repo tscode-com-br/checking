@@ -13,6 +13,7 @@ from ..schemas import MobileSubmitResponse
 from .admin_updates import notify_admin_data_changed
 from .event_logger import log_event
 from .forms_queue import enqueue_forms_submission
+from .time_utils import resolve_project_timezone_name
 from .user_sync import (
     apply_user_state,
     build_mobile_sync_state,
@@ -70,13 +71,15 @@ def submit_forms_event(
         )
 
     user, _created = ensure_user(db, chave=chave, projeto=projeto)
-    normalized_event_time = normalize_event_time(event_time)
+    project_timezone_name = resolve_project_timezone_name(db, projeto)
+    normalized_event_time = normalize_event_time(event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,
         event_time=normalized_event_time,
+        timezone_name=project_timezone_name,
     )
     apply_user_state(
         user,

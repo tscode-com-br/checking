@@ -14,6 +14,10 @@ from .time_utils import now_sgt
 ADMIN_ACCESS_DIGIT = "1"
 TRANSPORT_ACCESS_DIGIT = "2"
 FULL_ACCESS_DIGIT = "9"
+ADMIN_ACCESS_SCOPE_LIMITED = "limited"
+ADMIN_ACCESS_SCOPE_FULL = "full"
+LIMITED_ADMIN_TABS = ("checkin", "checkout")
+FULL_ADMIN_TABS = ("checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados")
 BOOTSTRAP_PROFILE_BY_KEY = {
     "UTO9": 1,
     "CYMQ": 1,
@@ -85,6 +89,33 @@ def remove_profile_access(value: int | str | None, removed_digit: str) -> int:
 
 def user_has_admin_access(user: User | None) -> bool:
     return user is not None and user_profile_has_access(user.perfil, ADMIN_ACCESS_DIGIT)
+
+
+def user_can_access_admin_panel(user: User | None) -> bool:
+    if user is None:
+        return False
+    if user_has_admin_access(user):
+        return True
+    return normalize_user_profile(user.perfil) == 0
+
+
+def get_admin_access_scope(user: User | None) -> str | None:
+    if user is None:
+        return None
+    if user_has_admin_access(user):
+        return ADMIN_ACCESS_SCOPE_FULL
+    if normalize_user_profile(user.perfil) == 0:
+        return ADMIN_ACCESS_SCOPE_LIMITED
+    return None
+
+
+def get_admin_allowed_tabs(user: User | None) -> tuple[str, ...]:
+    scope = get_admin_access_scope(user)
+    if scope == ADMIN_ACCESS_SCOPE_FULL:
+        return FULL_ADMIN_TABS
+    if scope == ADMIN_ACCESS_SCOPE_LIMITED:
+        return LIMITED_ADMIN_TABS
+    return ()
 
 
 def user_has_transport_access(user: User | None) -> bool:
@@ -173,7 +204,7 @@ def get_authenticated_admin_from_session(request: Request, db: Session) -> User 
     if admin is None:
         clear_admin_session(request)
         return None
-    if admin.senha is None or not user_has_admin_access(admin):
+    if admin.senha is None or not user_can_access_admin_panel(admin):
         clear_admin_session(request)
         return None
     return admin
@@ -203,6 +234,19 @@ def require_admin_session(
         return admin
 
     raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
+
+
+def require_full_admin_session(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User:
+    admin = get_authenticated_admin_from_session(request, db)
+    if admin is None:
+        raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
+    if user_has_admin_access(admin):
+        return admin
+
+    raise HTTPException(status_code=403, detail="Este usuario nao possui permissao para esta area do Admin.")
 
 
 def require_admin_stream_session(

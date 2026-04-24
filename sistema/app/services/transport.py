@@ -3,10 +3,13 @@ from __future__ import annotations
 import calendar
 import json
 from datetime import date, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 
 from sqlalchemy import MetaData, Table, delete, inspect, select, update
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..models import (
     TransportAssignment,
     TransportRequest,
@@ -33,7 +36,7 @@ from .location_settings import (
     get_transport_work_to_home_time_for_date,
 )
 from .project_catalog import list_projects
-from .time_utils import now_sgt
+from .time_utils import build_timezone_label, now_sgt
 
 
 _REQUEST_KIND_TO_RECURRENCE = {
@@ -70,6 +73,125 @@ _PAIRED_ROUTE_KIND = {
     "home_to_work": "work_to_home",
     "work_to_home": "home_to_work",
 }
+
+
+def _build_project_row(row) -> ProjectRow:
+    return ProjectRow(
+        id=row.id,
+        name=row.name,
+        country_code=row.country_code,
+        country_name=row.country_name,
+        timezone_name=row.timezone_name,
+        timezone_label=build_timezone_label(
+            country_name=row.country_name,
+            timezone_name=row.timezone_name,
+        ),
+    )
+
+
+def _build_transport_export_file_name(timestamp: datetime) -> str:
+    return f"Transport List - {timestamp:%Y%m%d - %H%M%S}.xlsx"
+
+
+def _resolve_transport_export_path(file_name: str) -> Path:
+    export_dir = Path(settings.transport_exports_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    candidate = export_dir / file_name
+    if not candidate.exists():
+        return candidate
+
+    counter = 2
+    while True:
+        deduplicated = export_dir / f"{candidate.stem} ({counter}){candidate.suffix}"
+        if not deduplicated.exists():
+            return deduplicated
+        counter += 1
+
+
+def build_transport_list_export(
+    db: Session,
+    *,
+    service_date: date,
+    selected_route_kind: str,
+) -> tuple[str, bytes]:
+    from openpyxl import Workbook
+
+    route_priority = {
+        selected_route_kind: 0,
+        _PAIRED_ROUTE_KIND.get(selected_route_kind, "work_to_home"): 1,
+    }
+    timestamp = now_sgt()
+    file_name = _build_transport_export_file_name(timestamp)
+
+    exported_rows: list[tuple[tuple[str, str, int], list[str | None]]] = []
+    assignments = db.execute(
+        select(TransportAssignment, TransportRequest, User, Vehicle)
+        .join(TransportRequest, TransportRequest.id == TransportAssignment.request_id)
+        .join(User, User.id == TransportRequest.user_id)
+        .join(Vehicle, Vehicle.id == TransportAssignment.vehicle_id)
+        .where(
+            TransportAssignment.service_date == service_date,
+            TransportAssignment.status == "confirmed",
+            TransportAssignment.vehicle_id.is_not(None),
+        )
+    ).all()
+
+    assignments_by_request: dict[int, tuple[int, TransportAssignment, User, Vehicle]] = {}
+    for assignment, transport_request, user, vehicle in assignments:
+        candidate_priority = route_priority.get(assignment.route_kind, 2)
+        current = assignments_by_request.get(transport_request.id)
+        if current is None or candidate_priority < current[0]:
+            assignments_by_request[transport_request.id] = (candidate_priority, assignment, user, vehicle)
+
+    for _priority, assignment, user, vehicle in assignments_by_request.values():
+        schedule = find_transport_vehicle_schedule(
+            db,
+            vehicle=vehicle,
+            service_date=service_date,
+            route_kind=assignment.route_kind,
+        )
+        exported_rows.append(
+            (
+                (
+                    user.nome.lower(),
+                    user.chave,
+                    assignment.id,
+                ),
+                [
+                    user.nome,
+                    user.chave,
+                    user.projeto,
+                    user.end_rua,
+                    service_date.isoformat(),
+                    schedule.departure_time if schedule is not None else None,
+                ],
+            )
+        )
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Transport List"
+    worksheet.append([
+        "Nome/Name",
+        "Chave/Key",
+        "Projeto/Project",
+        "Endereço/Address",
+        "Data/Date",
+        "Partida/Departure",
+    ])
+    for _, row in sorted(exported_rows, key=lambda item: item[0]):
+        worksheet.append(row)
+
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    content = output.getvalue()
+    output.close()
+
+    export_path = _resolve_transport_export_path(file_name)
+    export_path.write_bytes(content)
+    return export_path.name, content
 
 
 def _resolve_web_transport_route_order(preferred_route_kind: str | None) -> list[str]:
@@ -292,7 +414,7 @@ def build_transport_dashboard(
     service_date: date,
     route_kind: str,
 ) -> TransportDashboardResponse:
-    projects = [ProjectRow(id=row.id, name=row.name) for row in list_projects(db)]
+    projects = [_build_project_row(row) for row in list_projects(db)]
     workplaces = list_workplaces(db)
     work_to_home_departure_time = get_transport_work_to_home_time_for_date(db, service_date=service_date)
     vehicles_by_scope, vehicle_rows_by_id, vehicle_rows_by_assignment_key = _build_vehicle_rows_for_dashboard(

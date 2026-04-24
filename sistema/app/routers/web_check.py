@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, ManagedLocation, TransportRequest, User
+from ..models import AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
 from ..schemas import (
     ProjectRow,
     WebCheckHistoryResponse,
@@ -48,7 +48,7 @@ from ..services.location_settings import (
 )
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
-from ..services.time_utils import now_sgt
+from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
     acknowledge_transport_assignments,
     build_web_transport_state,
@@ -59,7 +59,6 @@ from ..services.user_sync import (
     build_web_check_history_state,
     ensure_web_user,
     find_user_by_chave,
-    is_same_singapore_day,
     normalize_user_key,
 )
 
@@ -81,6 +80,20 @@ WEB_CHECK_CHANNEL = FormsSubmitChannel(
     device_id="web-check",
     default_local="Web",
 )
+
+
+def _build_project_row(project: Project) -> ProjectRow:
+    return ProjectRow(
+        id=project.id,
+        name=project.name,
+        country_code=project.country_code,
+        country_name=project.country_name,
+        timezone_name=project.timezone_name,
+        timezone_label=build_timezone_label(
+            country_name=project.country_name,
+            timezone_name=project.timezone_name,
+        ),
+    )
 
 
 def _validate_public_chave(value: str) -> str:
@@ -150,7 +163,7 @@ def _build_web_password_status(*, request: Request, user: User | None, chave: st
 
 
 def _list_web_projects(db: Session) -> list[ProjectRow]:
-    return [ProjectRow(id=project.id, name=project.name) for project in list_projects(db)]
+    return [_build_project_row(project) for project in list_projects(db)]
 
 
 def _require_authenticated_web_user(request: Request, db: Session) -> User:

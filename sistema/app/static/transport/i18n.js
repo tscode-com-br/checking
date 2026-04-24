@@ -70,6 +70,7 @@
           color: "Color",
           places: "Places",
           tolerance: "Tolerance (minutes)",
+          departureDate: "Departure Date",
           departureTime: "Departure Time",
           route: "Route",
           everySaturday: "Every Saturday",
@@ -87,7 +88,7 @@
           bus: "Bus",
         },
         notes: {
-          extra: "Extra vehicles are created only for the selected route and selected date.",
+          extra: "Extra vehicles are created only for the route selected in this form and the departure date chosen here.",
           weekend:
             "Weekend vehicles must be persistent. Select Every Saturday, Every Sunday, or both. They become visible from the next matching weekend day on or after the selected dashboard date.",
           regular: "Regular vehicles are created for both routes. Select the weekdays that should stay active from the selected dashboard date onward.",
@@ -144,6 +145,7 @@
         switchingLanguage: "Loading dashboard language.",
       },
       warnings: {
+        extraServiceDateRequired: "Departure Date is required for extra vehicles.",
         extraDepartureRequired: "Departure Time is required for extra vehicles.",
         regularWeekdayOnly: "Regular vehicles can only be created from Monday to Friday.",
         weekendWeekendOnly: "Weekend vehicles can only be created on Saturdays or Sundays.",
@@ -261,6 +263,7 @@
           color: "Cor",
           places: "Lugares",
           tolerance: "Tolerância (minutos)",
+          departureDate: "Data de saída",
           departureTime: "Horário de saída",
           route: "Trajeto",
           everySaturday: "Todo sábado",
@@ -278,7 +281,7 @@
           bus: "Ônibus",
         },
         notes: {
-          extra: "Veículos extras são criados apenas para o trajeto e a data selecionados.",
+          extra: "Veículos extras são criados apenas para o trajeto selecionado neste formulário e para a data de saída escolhida aqui.",
           weekend:
             "Veículos de fim de semana devem ser persistentes. Selecione Todo sábado, Todo domingo ou ambos. Eles aparecem a partir do próximo dia de fim de semana compatível na data selecionada ou depois dela.",
           regular: "Veículos rotineiros são criados para ambos os trajetos. Selecione os dias da semana em que devem permanecer ativos a partir da data escolhida no dashboard.",
@@ -335,7 +338,8 @@
         switchingLanguage: "Carregando o idioma do painel.",
       },
       warnings: {
-        extraDepartureRequired: "O campo Departure Time é obrigatório para veículos extra.",
+        extraServiceDateRequired: "O campo Data de saída é obrigatório para veículos extra.",
+        extraDepartureRequired: "O campo Horário de saída é obrigatório para veículos extra.",
         regularWeekdayOnly: "Veículos rotineiros só podem ser criados de segunda a sexta-feira.",
         weekendWeekendOnly: "Veículos de fim de semana só podem ser criados aos sábados ou domingos.",
         regularPersistence: "Veículos rotineiros devem ser persistentes. Selecione ao menos um dia da semana.",
@@ -452,6 +456,7 @@
           color: "颜色",
           places: "座位",
           tolerance: "容差（分钟）",
+          departureDate: "出发日期",
           departureTime: "出发时间",
           route: "路线",
           everySaturday: "每周六",
@@ -469,7 +474,7 @@
           bus: "巴士",
         },
         notes: {
-          extra: "额外车辆仅针对所选路线和所选日期创建。",
+          extra: "额外车辆仅针对在此表单中选择的路线和在此选择的出发日期创建。",
           weekend: "周末车辆必须是持续的。请选择每周六、每周日或两者。它们会从所选看板日期当天或之后的下一个匹配周末日开始显示。",
           regular: "常规车辆会为两个路线创建。请选择从当前看板日期开始需要保持激活的工作日。",
         },
@@ -524,6 +529,7 @@
         switchingLanguage: "正在加载面板语言。",
       },
       warnings: {
+        extraServiceDateRequired: "额外车辆必须填写出发日期。",
         extraDepartureRequired: "额外车辆必须填写发车时间。",
         regularWeekdayOnly: "常规车辆只能在周一到周五创建。",
         weekendWeekendOnly: "周末车辆只能在周六或周日创建。",
@@ -640,6 +646,7 @@
           color: "Warna",
           places: "Tempat duduk",
           tolerance: "Toleransi (minit)",
+          departureDate: "Tarikh berlepas",
           departureTime: "Waktu berlepas",
           route: "Laluan",
           everySaturday: "Setiap Sabtu",
@@ -657,7 +664,7 @@
           bus: "Bas",
         },
         notes: {
-          extra: "Kenderaan tambahan dicipta hanya untuk laluan dan tarikh yang dipilih.",
+          extra: "Kenderaan tambahan dicipta hanya untuk laluan yang dipilih dalam borang ini dan tarikh berlepas yang dipilih di sini.",
           weekend: "Kenderaan hujung minggu mesti berterusan. Pilih Setiap Sabtu, Setiap Ahad, atau kedua-duanya. Ia akan muncul mulai hari hujung minggu yang seterusnya yang sepadan pada atau selepas tarikh papan pemuka yang dipilih.",
           regular: "Kenderaan biasa dicipta untuk kedua-dua laluan. Pilih hari bekerja yang perlu kekal aktif bermula daripada tarikh papan pemuka yang dipilih.",
         },
@@ -713,6 +720,7 @@
         switchingLanguage: "Memuatkan bahasa papan pemuka.",
       },
       warnings: {
+        extraServiceDateRequired: "Tarikh berlepas wajib diisi untuk kenderaan tambahan.",
         extraDepartureRequired: "Masa berlepas wajib diisi untuk kenderaan tambahan.",
         regularWeekdayOnly: "Kenderaan biasa hanya boleh dicipta dari Isnin hingga Jumaat.",
         weekendWeekendOnly: "Kenderaan hujung minggu hanya boleh dicipta pada Sabtu atau Ahad.",
@@ -829,6 +837,7 @@
           color: "Kulay",
           places: "Upuan",
           tolerance: "Toleransiya (minuto)",
+          departureDate: "Petsa ng alis",
           departureTime: "Oras ng alis",
           route: "Ruta",
           everySaturday: "Tuwing Sabado",
@@ -846,7 +855,7 @@
           bus: "Bus",
         },
         notes: {
-          extra: "Ang mga extra na sasakyan ay ginagawa lamang para sa napiling ruta at napiling petsa.",
+          extra: "Ang mga extra na sasakyan ay ginagawa lamang para sa rutang pinili sa form na ito at sa petsa ng alis na pinili rito.",
           weekend: "Dapat persistent ang mga weekend na sasakyan. Piliin ang Tuwing Sabado, Tuwing Linggo, o pareho. Lalabas sila simula sa susunod na tumutugmang araw ng weekend sa o pagkatapos ng napiling petsa sa dashboard.",
           regular: "Ang mga regular na sasakyan ay ginagawa para sa parehong ruta. Piliin ang mga weekday na dapat manatiling aktibo simula sa napiling petsa sa dashboard.",
         },
@@ -902,7 +911,8 @@
         switchingLanguage: "Nilo-load ang wika ng dashboard.",
       },
       warnings: {
-        extraDepartureRequired: "Kailangan ang Departure Time para sa extra na sasakyan.",
+        extraServiceDateRequired: "Kailangan ang Petsa ng alis para sa extra na sasakyan.",
+        extraDepartureRequired: "Kailangan ang Oras ng alis para sa extra na sasakyan.",
         regularWeekdayOnly: "Ang mga regular na sasakyan ay maaari lamang gawin mula Lunes hanggang Biyernes.",
         weekendWeekendOnly: "Ang mga weekend na sasakyan ay maaari lamang gawin tuwing Sabado o Linggo.",
         regularPersistence: "Dapat persistent ang mga regular na sasakyan. Pumili ng kahit isang weekday.",
