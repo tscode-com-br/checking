@@ -135,10 +135,10 @@ test('automatic checkout in checkout zone requires last action check-in', () => 
   );
 });
 
-test('automatic out-of-range checkout only runs above 2 km after check-in', () => {
+test('automatic out-of-range checkout follows backend outside_workplace status after check-in', () => {
   assert.equal(
     automation.shouldAttemptAutomaticOutOfRangeCheckout(
-      { nearest_workplace_distance_meters: 2001 },
+      { status: 'outside_workplace', minimum_checkout_distance_meters: 1500 },
       {
         current_action: 'checkin',
         current_local: 'P80',
@@ -150,7 +150,7 @@ test('automatic out-of-range checkout only runs above 2 km after check-in', () =
   );
   assert.equal(
     automation.shouldAttemptAutomaticOutOfRangeCheckout(
-      { nearest_workplace_distance_meters: 2000 },
+      { status: 'not_in_known_location', nearest_workplace_distance_meters: 2500 },
       {
         current_action: 'checkin',
         current_local: 'P80',
@@ -162,7 +162,7 @@ test('automatic out-of-range checkout only runs above 2 km after check-in', () =
   );
   assert.equal(
     automation.shouldAttemptAutomaticOutOfRangeCheckout(
-      { nearest_workplace_distance_meters: 2500 },
+      { status: 'outside_workplace' },
       {
         current_action: 'checkout',
         current_local: 'P80',

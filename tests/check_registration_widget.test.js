@@ -31,6 +31,7 @@ test('check signup controller routes Chave? to self-registration and Senha? to t
   assert.match(checkScript, /requestRegistrationButton\.addEventListener\('click', \(\) => \{[\s\S]*openRegistrationDialog\(\);[\s\S]*\}\);/);
   assert.match(checkScript, /return 'Chave\?';/);
   assert.match(checkScript, /return 'Senha\?';/);
+  assert.match(checkScript, /if \(userSelfRegistrationInProgress\) \{[\s\S]*return 'Aguarde';[\s\S]*\}/);
   assert.match(checkScript, /passwordDialogTitle\.textContent = isRegisterMode \? 'Cadastrar Senha' : 'Alterar Senha';/);
   assert.match(checkScript, /passwordDialogOldPasswordField\.hidden = isRegisterMode;/);
   assert.match(checkScript, /if \(authState\.statusResolved && authState\.found && !authState\.hasPassword\) \{[\s\S]*openPasswordDialog\(\);[\s\S]*\}/);
@@ -38,5 +39,5 @@ test('check signup controller routes Chave? to self-registration and Senha? to t
   assert.match(checkScript, /body: JSON\.stringify\(\{[\s\S]*chave: normalizedChave,[\s\S]*nome,[\s\S]*projeto,[\s\S]*email: email \|\| null,[\s\S]*senha: password,[\s\S]*confirmar_senha: confirmPassword,[\s\S]*\}\)/);
   assert.doesNotMatch(checkScript, /body: JSON\.stringify\(\{[\s\S]*end_rua:/);
   assert.doesNotMatch(checkScript, /body: JSON\.stringify\(\{[\s\S]*zip:/);
-  assert.match(checkScript, /Cadastro enviado\. Aguarde aprovação para acessar o Transport\./);
+  assert.match(checkScript, /Cadastro concluído com sucesso\./);
 });

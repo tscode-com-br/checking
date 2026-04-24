@@ -42,8 +42,10 @@ from ..services.location_matching import (
     resolve_submission_local,
 )
 from ..services.managed_locations import filter_locations_for_project
-from ..services.location_settings import get_location_accuracy_threshold_meters
-from ..services.admin_auth import TRANSPORT_ACCESS_DIGIT
+from ..services.location_settings import (
+    get_location_accuracy_threshold_meters,
+    get_minimum_checkout_distance_meters_for_project,
+)
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.time_utils import now_sgt
@@ -311,15 +313,6 @@ def register_web_user(
         inactivity_days=0,
     )
     db.add(user)
-    db.add(
-        AdminAccessRequest(
-            chave=normalized,
-            nome_completo=user.nome,
-            password_hash=user.senha,
-            requested_profile=int(TRANSPORT_ACCESS_DIGIT),
-            requested_at=now_sgt(),
-        )
-    )
     db.commit()
     _set_web_session_chave(request, normalized)
     notify_admin_data_changed("admin")
@@ -328,7 +321,7 @@ def register_web_user(
         ok=True,
         authenticated=True,
         has_password=True,
-        message="Usuario cadastrado com sucesso. Aguarde aprovacao para acessar o Transport.",
+        message="Cadastro concluido com sucesso.",
     )
 
 
@@ -579,6 +572,7 @@ def match_web_check_location(
 ) -> WebLocationMatchResponse:
     user = _require_authenticated_web_user(request, db)
     accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
+    minimum_checkout_distance_meters = get_minimum_checkout_distance_meters_for_project(db, user.projeto)
     all_locations = db.execute(
         select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
@@ -593,6 +587,7 @@ def match_web_check_location(
             message="Nao ha localizacoes conhecidas cadastradas para validar a posicao no projeto atual.",
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
+            minimum_checkout_distance_meters=minimum_checkout_distance_meters,
             nearest_workplace_distance_meters=None,
         )
 
@@ -611,6 +606,7 @@ def match_web_check_location(
             message=accuracy_message,
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
+            minimum_checkout_distance_meters=minimum_checkout_distance_meters,
             nearest_workplace_distance_meters=None,
         )
 
@@ -624,6 +620,7 @@ def match_web_check_location(
     captured_label = resolve_captured_location_label(
         location=matched_location,
         nearest_workplace_distance_meters=match_result.nearest_workplace_distance_meters,
+        minimum_checkout_distance_meters=minimum_checkout_distance_meters,
     )
 
     if matched_location is None:
@@ -641,6 +638,7 @@ def match_web_check_location(
             message="",
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
+            minimum_checkout_distance_meters=minimum_checkout_distance_meters,
             nearest_workplace_distance_meters=match_result.nearest_workplace_distance_meters,
         )
 
@@ -654,6 +652,7 @@ def match_web_check_location(
         message=f"Localizacao identificada em {label}.",
         accuracy_meters=payload.accuracy_meters,
         accuracy_threshold_meters=accuracy_threshold_meters,
+        minimum_checkout_distance_meters=minimum_checkout_distance_meters,
         nearest_workplace_distance_meters=match_result.nearest_workplace_distance_meters,
     )
 

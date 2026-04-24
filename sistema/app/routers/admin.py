@@ -28,6 +28,10 @@ from ..schemas import (
     AdminActionResponse,
     AdminPasswordVerifyResponse,
     AdminProfileUpdateRequest,
+    AdminProjectMinimumCheckoutDistanceSaveResponse,
+    AdminProjectMinimumCheckoutDistanceUpdate,
+    AdminProjectMinimumCheckoutDistanceListResponse,
+    AdminProjectMinimumCheckoutDistanceRow,
     AdminSelfAccessRequest,
     AdminSelfAccessStatusResponse,
     DatabaseEventFilterOptions,
@@ -94,6 +98,8 @@ from ..services.managed_locations import (
 from ..services.location_audit import audit_locations_from_db
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
+    list_project_minimum_checkout_distance_rows,
+    upsert_project_minimum_checkout_distance_rows,
     upsert_location_settings,
 )
 from ..services.project_catalog import ensure_known_project, list_project_names, list_projects, resolve_default_project_name
@@ -1626,6 +1632,85 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     return AdminLocationsResponse(
         items=[build_location_row(row) for row in rows],
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+    )
+
+
+@router.get(
+    "/locations/auto-checkout-distances",
+    response_model=AdminProjectMinimumCheckoutDistanceListResponse,
+    dependencies=[Depends(require_admin_session)],
+)
+def list_project_minimum_checkout_distances(
+    db: Session = Depends(get_db),
+) -> AdminProjectMinimumCheckoutDistanceListResponse:
+    rows = list_project_minimum_checkout_distance_rows(db)
+    return AdminProjectMinimumCheckoutDistanceListResponse(
+        items=[
+            AdminProjectMinimumCheckoutDistanceRow(
+                project_name=row.project_name,
+                minimum_checkout_distance_meters=row.minimum_checkout_distance_meters,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/locations/auto-checkout-distances",
+    response_model=AdminProjectMinimumCheckoutDistanceSaveResponse,
+    dependencies=[Depends(require_admin_session)],
+)
+def update_project_minimum_checkout_distances(
+    payload: AdminProjectMinimumCheckoutDistanceUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> AdminProjectMinimumCheckoutDistanceSaveResponse:
+    current_rows = list_project_minimum_checkout_distance_rows(db)
+    previous_values = {
+        row.project_name: row.minimum_checkout_distance_meters
+        for row in current_rows
+    }
+    normalized_items = [
+        (
+            ensure_known_project(db, item.project_name),
+            item.minimum_checkout_distance_meters,
+        )
+        for item in payload.items
+    ]
+    upsert_project_minimum_checkout_distance_rows(db, normalized_items)
+    refreshed_rows = list_project_minimum_checkout_distance_rows(db)
+    changed_rows = [
+        f"{row.project_name}:{previous_values.get(row.project_name)}->{row.minimum_checkout_distance_meters}"
+        for row in refreshed_rows
+        if previous_values.get(row.project_name) != row.minimum_checkout_distance_meters
+    ]
+
+    log_event(
+        db,
+        source="admin",
+        action="location_config",
+        status="updated",
+        message="Project automatic checkout distances updated",
+        request_path="/api/admin/locations/auto-checkout-distances",
+        http_status=200,
+        details=(
+            f"updated_by={current_admin.chave}; "
+            f"updated_projects={len(changed_rows)}; "
+            f"changes={'; '.join(changed_rows) if changed_rows else 'none'}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("location", "event")
+    return AdminProjectMinimumCheckoutDistanceSaveResponse(
+        ok=True,
+        message="Distancias minimas para check-out automatico salvas com sucesso.",
+        items=[
+            AdminProjectMinimumCheckoutDistanceRow(
+                project_name=row.project_name,
+                minimum_checkout_distance_meters=row.minimum_checkout_distance_meters,
+            )
+            for row in refreshed_rows
+        ],
     )
 
 

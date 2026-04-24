@@ -347,6 +347,36 @@ class AdminLocationsResponse(BaseModel):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
+class AdminProjectMinimumCheckoutDistanceRow(BaseModel):
+    project_name: str
+    minimum_checkout_distance_meters: int = Field(ge=1, le=999999)
+
+
+class AdminProjectMinimumCheckoutDistanceListResponse(BaseModel):
+    items: list[AdminProjectMinimumCheckoutDistanceRow] = Field(default_factory=list)
+
+
+class AdminProjectMinimumCheckoutDistanceUpdateRow(BaseModel):
+    project_name: str = Field(min_length=2, max_length=120)
+    minimum_checkout_distance_meters: int = Field(ge=1, le=999999)
+
+    @field_validator("project_name", mode="before")
+    @classmethod
+    def validate_project_name(cls, value: str) -> str:
+        return _normalize_project_value(value)
+
+
+class AdminProjectMinimumCheckoutDistanceUpdate(BaseModel):
+    items: list[AdminProjectMinimumCheckoutDistanceUpdateRow] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_projects(self):
+        project_names = [item.project_name for item in self.items]
+        if len(project_names) != len(set(project_names)):
+            raise ValueError("Nao e permitido repetir o mesmo projeto na mesma salvacao.")
+        return self
+
+
 class LocationAuditIssueRow(BaseModel):
     code: str
     severity: Literal["error", "warning", "info"]
@@ -702,6 +732,10 @@ class TransportSessionResponse(BaseModel):
 class AdminActionResponse(BaseModel):
     ok: bool
     message: str
+
+
+class AdminProjectMinimumCheckoutDistanceSaveResponse(AdminActionResponse):
+    items: list[AdminProjectMinimumCheckoutDistanceRow] = Field(default_factory=list)
 
 
 class AdminPasswordVerifyResponse(BaseModel):
@@ -1599,6 +1633,7 @@ class WebLocationMatchResponse(BaseModel):
     message: str
     accuracy_meters: float | None = Field(default=None, ge=0)
     accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    minimum_checkout_distance_meters: int = Field(ge=1, le=999999)
     nearest_workplace_distance_meters: float | None = Field(default=None, ge=0)
 
 
@@ -1760,3 +1795,4 @@ class MobileLocationsResponse(BaseModel):
     items: list[MobileLocationRow]
     synced_at: datetime
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    minimum_checkout_distance_meters_by_project: dict[str, int] = Field(default_factory=dict)

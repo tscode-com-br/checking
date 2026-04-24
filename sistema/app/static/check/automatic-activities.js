@@ -7,7 +7,6 @@
 
   root.CheckingWebAutomaticActivities = exported;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const AUTOMATIC_CHECKOUT_DISTANCE_METERS = 2000;
   const AUTOMATIC_CHECKOUT_LOCATION = 'Fora do Local de Trabalho';
   const AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION = 'Localização não Cadastrada';
 
@@ -99,8 +98,7 @@
   }
 
   function shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState) {
-    const nearestDistanceMeters = Number(locationPayload && locationPayload.nearest_workplace_distance_meters);
-    if (!Number.isFinite(nearestDistanceMeters) || nearestDistanceMeters <= AUTOMATIC_CHECKOUT_DISTANCE_METERS) {
+    if (!locationPayload || locationPayload.status !== 'outside_workplace') {
       return false;
     }
     return resolveLastRecordedAction(remoteState) === 'checkin';
@@ -120,7 +118,6 @@
   }
 
   return {
-    AUTOMATIC_CHECKOUT_DISTANCE_METERS,
     AUTOMATIC_CHECKOUT_LOCATION,
     AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION,
     normalizeLocationName,

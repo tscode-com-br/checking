@@ -14,6 +14,27 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
 
 
+class ProjectAutoCheckoutDistance(Base):
+    __tablename__ = "project_auto_checkout_distances"
+    __table_args__ = (
+        UniqueConstraint("project_name", name="uq_project_auto_checkout_distances_project_name"),
+        CheckConstraint(
+            "minimum_checkout_distance_meters >= 1",
+            name="ck_project_auto_checkout_distances_distance_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_name: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("projects.name", ondelete="CASCADE"),
+        nullable=False,
+    )
+    minimum_checkout_distance_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Workplace(Base):
     __tablename__ = "workplaces"
     __table_args__ = (UniqueConstraint("workplace", name="uq_workplaces_workplace"),)

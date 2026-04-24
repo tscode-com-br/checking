@@ -16,9 +16,6 @@ from .location_geometry import (
     user_circle_intersects_expanded_polygon,
 )
 from .managed_locations import extract_location_coordinates
-
-
-OUT_OF_RANGE_CHECKOUT_DISTANCE_METERS = 2000.0
 CHECKOUT_ZONE_EVENT_LOCAL = "Zona de CheckOut"
 CHECKOUT_ZONE_CAPTURED_LOCATION = "Zona de Check-Out"
 OUTSIDE_WORKPLACE_CAPTURED_LOCATION = "Fora do Ambiente de Trabalho"
@@ -231,11 +228,12 @@ def resolve_captured_location_label(
     *,
     location: ManagedLocation | None,
     nearest_workplace_distance_meters: float | None,
+    minimum_checkout_distance_meters: float | int,
 ) -> str | None:
     if location is None:
         if (
             nearest_workplace_distance_meters is not None
-            and nearest_workplace_distance_meters > OUT_OF_RANGE_CHECKOUT_DISTANCE_METERS
+            and nearest_workplace_distance_meters > float(minimum_checkout_distance_meters)
         ):
             return OUTSIDE_WORKPLACE_CAPTURED_LOCATION
         return None

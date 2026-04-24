@@ -5128,7 +5128,7 @@ def test_web_password_registration_returns_not_found_for_unknown_key():
         assert response.json()["detail"] == "A chave do usuario nao esta cadastrada"
 
 
-def test_web_user_self_registration_creates_user_requests_transport_access_and_authenticates_web_session():
+def test_web_user_self_registration_creates_common_user_and_authenticates_web_session():
     with TestClient(app) as client:
         response = client.post(
             "/api/web/auth/register-user",
@@ -5147,7 +5147,7 @@ def test_web_user_self_registration_creates_user_requests_transport_access_and_a
         assert payload["ok"] is True
         assert payload["authenticated"] is True
         assert payload["has_password"] is True
-        assert "aguarde aprovacao" in payload["message"].lower()
+        assert payload["message"] == "Cadastro concluido com sucesso."
 
         status = client.get("/api/web/auth/status", params={"chave": "WU11"})
         assert status.status_code == 200
@@ -5172,28 +5172,16 @@ def test_web_user_self_registration_creates_user_requests_transport_access_and_a
         assert user.senha is not None
         assert user.senha != "cad123"
         assert verify_password("cad123", user.senha) is True
-        assert pending is not None
-        assert pending.requested_profile == 2
+        assert pending is None
 
     with TestClient(app) as admin_client:
         ensure_admin_session(admin_client)
         administrators = admin_client.get("/api/admin/administrators")
         assert administrators.status_code == 200
-        pending_row = next(row for row in administrators.json() if row["row_type"] == "request" and row["chave"] == "WU11")
-        assert pending_row["perfil"] == 2
-        assert pending_row["status"] == "pending"
-        assert "transport" in pending_row["status_label"].lower()
-
-        approve_response = admin_client.post(f"/api/admin/administrators/requests/{pending_row['id']}/approve")
-        assert approve_response.status_code == 200
-        assert approve_response.json()["ok"] is True
-
-    with SessionLocal() as db:
-        approved_user = get_user_by_chave(db, "WU11")
-        pending_after = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == "WU11")).scalar_one_or_none()
-        assert approved_user is not None
-        assert approved_user.perfil == 2
-        assert pending_after is None
+        assert not any(
+            row["row_type"] == "request" and row["chave"] == "WU11"
+            for row in administrators.json()
+        )
 
     with TestClient(app) as transport_client:
         denied_before_login = transport_client.get("/api/transport/auth/session")
@@ -5205,8 +5193,8 @@ def test_web_user_self_registration_creates_user_requests_transport_access_and_a
             json={"chave": "WU11", "senha": "cad123"},
         )
         assert transport_login.status_code == 200
-        assert transport_login.json()["authenticated"] is True
-        assert transport_login.json()["user"]["perfil"] == 2
+        assert transport_login.json()["authenticated"] is False
+        assert transport_login.json()["message"] == "This user does not have transport access."
 
 
 def test_web_user_self_registration_accepts_optional_email_blank():
@@ -7377,6 +7365,7 @@ def test_web_location_match_returns_outside_workplace_without_message():
         assert payload["label"] == "Fora do Ambiente de Trabalho"
         assert payload["status"] == "outside_workplace"
         assert payload["message"] == ""
+        assert payload["minimum_checkout_distance_meters"] == 2000
         assert payload["nearest_workplace_distance_meters"] > 2000
 
 
@@ -7430,7 +7419,63 @@ def test_web_location_match_ignores_checkout_zone_for_outside_workplace_threshol
         assert payload["resolved_local"] is None
         assert payload["label"] == "Fora do Ambiente de Trabalho"
         assert payload["status"] == "outside_workplace"
+        assert payload["minimum_checkout_distance_meters"] == 2000
         assert payload["nearest_workplace_distance_meters"] > 2000
+
+
+def test_web_location_match_uses_project_specific_outside_workplace_threshold():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P82")
+        assert auth_response.status_code == 200
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Far P82",
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
+                "projects": ["P82"],
+                "tolerance_meters": 120,
+            },
+        )
+        assert create_location.status_code == 200
+
+        update_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_settings.status_code == 200
+
+        update_checkout_threshold = client.post(
+            "/api/admin/locations/auto-checkout-distances",
+            json={
+                "items": [
+                    {
+                        "project_name": "p82",
+                        "minimum_checkout_distance_meters": 4000,
+                    }
+                ]
+            },
+        )
+        assert update_checkout_threshold.status_code == 200
+
+        match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.285936,
+                "longitude": 103.611066,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert match_response.status_code == 200
+        payload = match_response.json()
+        assert payload["matched"] is False
+        assert payload["resolved_local"] is None
+        assert payload["label"] == "Localização não Cadastrada"
+        assert payload["status"] == "not_in_known_location"
+        assert payload["minimum_checkout_distance_meters"] == 4000
+        assert 2000 < payload["nearest_workplace_distance_meters"] < 4000
 
 
 def test_web_location_match_uses_polygon_matching_when_location_has_valid_polygon():
@@ -8825,6 +8870,38 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         remove_location = client.delete(f"/api/admin/locations/{base_p80['id']}")
         assert remove_location.status_code == 200
         assert remove_location.json()["ok"] is True
+
+
+def test_admin_project_auto_checkout_distance_settings_sync_to_mobile_catalog():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        initial_settings = client.get("/api/admin/locations/auto-checkout-distances")
+        assert initial_settings.status_code == 200
+        initial_items = initial_settings.json()["items"]
+        assert next(item for item in initial_items if item["project_name"] == "P80")["minimum_checkout_distance_meters"] == 2000
+
+        update_settings = client.post(
+            "/api/admin/locations/auto-checkout-distances",
+            json={
+                "items": [
+                    {"project_name": "p80", "minimum_checkout_distance_meters": 1400},
+                    {"project_name": "P82", "minimum_checkout_distance_meters": 2600},
+                ]
+            },
+        )
+        assert update_settings.status_code == 200
+        payload = update_settings.json()
+        assert payload["ok"] is True
+        assert next(item for item in payload["items"] if item["project_name"] == "P80")["minimum_checkout_distance_meters"] == 1400
+        assert next(item for item in payload["items"] if item["project_name"] == "P82")["minimum_checkout_distance_meters"] == 2600
+
+        mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
+        assert mobile_catalog.status_code == 200
+        mobile_thresholds = mobile_catalog.json()["minimum_checkout_distance_meters_by_project"]
+        assert mobile_thresholds["P80"] == 1400
+        assert mobile_thresholds["P82"] == 2600
+        assert mobile_thresholds["P83"] == 2000
 
 
 def test_admin_locations_audit_endpoint_lists_flagged_rows_and_can_include_valid_rows():

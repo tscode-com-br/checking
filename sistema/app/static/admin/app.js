@@ -55,6 +55,7 @@ let eventArchivesTotalSizeBytes = 0;
 let nextLocationDraftId = 1;
 let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
+let projectMinimumCheckoutDistanceRows = [];
 let locationAccuracyThresholdMeters = 30;
 let locationSettingsDirty = false;
 let pendingUsersTotal = 0;
@@ -2417,6 +2418,42 @@ function renderLocations() {
   applyResponsiveLabels("locationsBody");
   addButton.disabled = hasBlankLocationRow();
 }
+
+function makeProjectMinimumCheckoutDistanceRow(row) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${escapeHtml(row.projectName)}</td>
+    <td>
+      <input
+        class="inline project-minimum-checkout-distance-input"
+        type="number"
+        min="1"
+        max="999999"
+        inputmode="numeric"
+        data-project-name="${escapeHtml(row.projectName)}"
+        value="${escapeHtml(String(row.minimumCheckoutDistanceMeters))}"
+      />
+    </td>
+  `;
+  return tr;
+}
+
+function renderProjectMinimumCheckoutDistanceRows() {
+  const body = document.getElementById("projectMinimumCheckoutDistancesBody");
+  if (!body) {
+    return;
+  }
+
+  body.innerHTML = "";
+  if (!projectMinimumCheckoutDistanceRows.length) {
+    renderEmptyStateRow("projectMinimumCheckoutDistancesBody", 2, "Nenhum projeto cadastrado.");
+    return;
+  }
+
+  projectMinimumCheckoutDistanceRows.forEach((row) => body.appendChild(makeProjectMinimumCheckoutDistanceRow(row)));
+  applyResponsiveLabels("projectMinimumCheckoutDistancesBody");
+}
+
 function renderLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
   if (accuracyInput) {
@@ -2687,9 +2724,12 @@ async function saveLocationSettings() {
 }
 
 async function loadLocations() {
-  const response = await fetchJson("/api/admin/locations");
-  locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
-  locationRows = response.items.map((row) =>
+  const [locationsResponse, checkoutDistancesResponse] = await Promise.all([
+    fetchJson("/api/admin/locations"),
+    fetchJson("/api/admin/locations/auto-checkout-distances"),
+  ]);
+  locationAccuracyThresholdMeters = locationsResponse.location_accuracy_threshold_meters;
+  locationRows = locationsResponse.items.map((row) =>
     createLocationRow({
       id: row.id,
       local: row.local,
@@ -2702,8 +2742,13 @@ async function loadLocations() {
       isEditing: false,
     })
   );
+  projectMinimumCheckoutDistanceRows = (checkoutDistancesResponse.items || []).map((row) => ({
+    projectName: row.project_name,
+    minimumCheckoutDistanceMeters: row.minimum_checkout_distance_meters,
+  }));
   renderLocations();
   renderLocationSettings();
+  renderProjectMinimumCheckoutDistanceRows();
   updateDashboardSummary();
 }
 

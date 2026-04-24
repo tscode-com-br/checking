@@ -875,7 +875,7 @@
       return 'Aguarde';
     }
     if (userSelfRegistrationInProgress) {
-      return 'Cadastrando...';
+      return 'Aguarde';
     }
     if (isMissingUserRegistrationState()) {
       return 'Chave?';
@@ -3405,7 +3405,7 @@
       dismissActiveKeyboard();
       syncFormControlStates();
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
-      setStatus('Cadastro enviado. Aguarde aprovação para acessar o Transport.', 'success');
+      setStatus('Cadastro concluído com sucesso.', 'success');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação de cadastro.', 'error');
     } finally {

@@ -23,6 +23,7 @@ from ..services.forms_queue import enqueue_forms_submission
 from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
+    list_project_minimum_checkout_distance_rows,
 )
 from ..services.project_catalog import ensure_known_project
 from ..services.user_sync import (
@@ -78,6 +79,10 @@ def get_mobile_state(chave: str, db: Session = Depends(get_db)) -> MobileSyncSta
 @router.get("/locations", response_model=MobileLocationsResponse, dependencies=[Depends(require_mobile_shared_key)])
 def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsResponse:
     rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
+    minimum_checkout_distance_meters_by_project = {
+        row.project_name: row.minimum_checkout_distance_meters
+        for row in list_project_minimum_checkout_distance_rows(db)
+    }
     return MobileLocationsResponse(
         items=[
             MobileLocationRow(
@@ -94,6 +99,7 @@ def get_mobile_locations(db: Session = Depends(get_db)) -> MobileLocationsRespon
         ],
         synced_at=now_sgt(),
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+        minimum_checkout_distance_meters_by_project=minimum_checkout_distance_meters_by_project,
     )
 
 
