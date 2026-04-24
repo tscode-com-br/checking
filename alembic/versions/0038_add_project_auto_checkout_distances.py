@@ -1,6 +1,6 @@
 """add project auto checkout distances
 
-Revision ID: 0038_project_auto_checkout_distances
+Revision ID: 0038_proj_auto_checkout_dist
 Revises: 0037_dup_location_names
 Create Date: 2026-04-24 10:30:00
 """
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0038_project_auto_checkout_distances"
+revision = "0038_proj_auto_checkout_dist"
 down_revision = "0037_dup_location_names"
 branch_labels = None
 depends_on = None
