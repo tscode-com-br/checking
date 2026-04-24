@@ -35,6 +35,7 @@
   const locationSelectField = document.getElementById('locationSelectField');
   const informeField = document.getElementById('informeField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
+  const automaticActivitiesField = document.getElementById('automaticActivitiesField');
   const automaticActivitiesToggle = document.getElementById('automaticActivitiesToggle');
   const transportButton = document.getElementById('transportButton');
   const submitButton = document.getElementById('submitButton');
@@ -3660,6 +3661,7 @@
 
   function restorePersistedUserSettingsForChave(chave) {
     applyPersistedUserSettings(chave);
+    syncAutomaticActivitiesAvailability();
     syncProjectVisibility();
   }
 
@@ -3959,10 +3961,28 @@
     return `Precisão ${formatMeters(accuracyMeters)} / Limite ${Math.round(thresholdMeters)} m`;
   }
 
+  function canShowAutomaticActivitiesField() {
+    return gpsLocationPermissionGranted || readStorageFlag(locationPermissionGrantedKey);
+  }
+
+  function syncAutomaticActivitiesAvailability() {
+    const showAutomaticActivitiesField = canShowAutomaticActivitiesField();
+
+    if (automaticActivitiesField) {
+      automaticActivitiesField.classList.toggle('is-hidden', !showAutomaticActivitiesField);
+      automaticActivitiesField.setAttribute('aria-hidden', String(!showAutomaticActivitiesField));
+    }
+
+    if (!showAutomaticActivitiesField && automaticActivitiesToggle) {
+      automaticActivitiesToggle.checked = false;
+    }
+  }
+
   function setGpsLocationPermissionGranted(value) {
     gpsLocationPermissionGranted = Boolean(value);
-    syncManualLocationControl();
+    syncAutomaticActivitiesAvailability();
     syncProjectVisibility();
+    syncManualLocationControl();
   }
 
   function getDefaultManualLocation() {
