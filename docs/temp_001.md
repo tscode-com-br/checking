@@ -1198,14 +1198,16 @@ Nota de execução 17.13 (2026-04-25): etapa concluída em `checking_kotlin_new/
 
 ### 17.14. Estado inicial bloqueado e resolução da chave
 
-- [ ] Implementar estado inicial bloqueado do app antes da autenticação válida.
-- [ ] Implementar sanitização da `chave` equivalente à SPA.
-- [ ] Persistir a última `chave` usada.
-- [ ] Restaurar a última `chave` usada ao reabrir o app.
-- [ ] Chamar `GET /api/web/auth/status` ao resolver a `chave`.
-- [ ] Atualizar a UI conforme o retorno de `found`, `has_password` e `authenticated`.
-- [ ] Limpar sessão protegida local se o status indicar que a autenticação não está mais válida.
-- [ ] Garantir que o estado bloqueado persista enquanto a senha não estiver verificada.
+- [x] Implementar estado inicial bloqueado do app antes da autenticação válida.
+- [x] Implementar sanitização da `chave` equivalente à SPA.
+- [x] Persistir a última `chave` usada.
+- [x] Restaurar a última `chave` usada ao reabrir o app.
+- [x] Chamar `GET /api/web/auth/status` ao resolver a `chave`.
+- [x] Atualizar a UI conforme o retorno de `found`, `has_password` e `authenticated`.
+- [x] Limpar sessão protegida local se o status indicar que a autenticação não está mais válida.
+- [x] Garantir que o estado bloqueado persista enquanto a senha não estiver verificada.
+
+Nota de execução 17.14 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-chave-resolution.md`. O gate inicial passou a restaurar a última `chave` persistida, sanitizá-la com a mesma regra da SPA (`uppercase`, apenas alfanuméricos e limite de 4 caracteres) e consultar `GET /api/web/auth/status` assim que a chave volta ao estado válido. A camada de sessão agora separa a última chave usada do `authenticatedChave`, permitindo limpar apenas o desbloqueio protegido local sem apagar o cookie nem a chave restaurável. `SessionGateViewModel` passou a dirigir o estado de resolução da chave e o shell principal ganhou inputs reais de `Chave` e `Senha`, mas a tela continua bloqueada até a verificação da senha, preservando o comportamento exigido antes das fases 17.16 e 17.17. A etapa foi validada com teste focal do ViewModel e compilação da nova UI.
 
 ### 17.15. Persistência local por `chave`
 
