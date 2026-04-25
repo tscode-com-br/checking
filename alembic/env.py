@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, inspect, pool
 
 from sistema.app.core.config import settings
 from sistema.app.database import Base
@@ -14,6 +14,30 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+ALEMBIC_VERSION_COLUMN_LENGTH = 64
+
+
+def ensure_alembic_version_storage(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    connection.exec_driver_sql(
+        f"CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR({ALEMBIC_VERSION_COLUMN_LENGTH}) NOT NULL PRIMARY KEY)"
+    )
+
+    version_columns = {
+        column["name"]: column for column in inspect(connection).get_columns("alembic_version")
+    }
+    version_num = version_columns.get("version_num")
+    length = getattr(version_num.get("type"), "length", None) if version_num is not None else None
+
+    if length is not None and length >= ALEMBIC_VERSION_COLUMN_LENGTH:
+        return
+
+    connection.exec_driver_sql(
+        f"ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR({ALEMBIC_VERSION_COLUMN_LENGTH})"
+    )
 
 
 def run_migrations_offline() -> None:
@@ -32,6 +56,9 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        ensure_alembic_version_storage(connection)
+        if connection.in_transaction():
+            connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
         with context.begin_transaction():
