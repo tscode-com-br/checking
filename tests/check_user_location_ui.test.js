@@ -270,11 +270,48 @@ function createLocationHelperHarness(overrides = {}) {
   };
 }
 
+function createManualLocationFallbackHarness() {
+  const context = {
+    Boolean,
+    syncProjectVisibility: () => {},
+  };
+
+  const moduleSource = [
+    'let gpsLocationPermissionGranted = false;',
+    'let currentLocationMatch = null;',
+    'let currentLocationResolutionStatus = null;',
+    extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
+    extractFunctionSource(checkScript, 'setResolvedLocation'),
+    `globalThis.__manualLocationFallbackTestExports = {
+      shouldAllowManualLocationSelection,
+      setGpsLocationPermissionGranted(value) {
+        gpsLocationPermissionGranted = Boolean(value);
+      },
+      setResolvedLocation,
+      getState() {
+        return {
+          gpsLocationPermissionGranted,
+          currentLocationMatch,
+          currentLocationResolutionStatus,
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-manual-location-fallback.vm.js' });
+  return {
+    helpers: context.__manualLocationFallbackTestExports,
+    context,
+  };
+}
+
 function toPlainValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
 test('check page keeps Projeto, Local and Informe controls addressable for toggle-driven visibility', () => {
+  assert.doesNotMatch(checkHtml, /<title>\s*Checking Mobile Web\s*<\/title>/);
+  assert.doesNotMatch(checkHtml, /<span class="header-logo-text">\s*Checking\s*<\/span>/);
   assert.match(checkHtml, /id="automaticActivitiesToggle"/);
   assert.match(checkHtml, /id="projectField"/);
   assert.match(checkHtml, /id="locationSelectField"/);
@@ -286,10 +323,47 @@ test('check controller hides manual controls during automatic mode and reruns li
   assert.match(checkScript, /if \(actionInputs\.includes\(control\)\) \{[\s\S]*automaticActivitiesEnabled/);
   assert.match(checkScript, /control === submitButton[\s\S]*automaticActivitiesEnabled/);
   assert.match(checkScript, /const hideProjectField = isAutomaticActivitiesEnabled\(\);/);
-  assert.match(checkScript, /const hideLocationField = isAutomaticActivitiesEnabled\(\) \|\| gpsLocationPermissionGranted;/);
+  assert.match(checkScript, /const hideLocationField = isAutomaticActivitiesEnabled\(\) \|\| !shouldAllowManualLocationSelection\(\);/);
+  assert.match(checkScript, /control === manualLocationSelect[\s\S]*!shouldAllowManualLocationSelection\(\)/);
+  assert.match(checkScript, /if \(shouldAllowManualLocationSelection\(\) && !manualLocationSelect\.value\) \{/);
+  assert.match(checkScript, /local: shouldAllowManualLocationSelection\(\)[\s\S]*manualLocationSelect\.value[\s\S]*currentLocationMatch \? currentLocationMatch\.resolved_local : null/);
   assert.match(checkScript, /setGpsLocationPermissionGranted\(value\) \{[\s\S]*syncProjectVisibility\(\);/);
   assert.match(checkScript, /if \(gpsLocationPermissionGranted && isApplicationUnlocked\(\)\) \{[\s\S]*runLifecycleUpdateSequence\(\{[\s\S]*ignoreCooldown: true,[\s\S]*triggerSource: 'automatic_activities_disable',[\s\S]*\}\);/);
   assert.match(checkScript, /if \(isAutomaticActivitiesEnabled\(\)\) \{[\s\S]*Desative Atividades Automáticas para registrar manualmente\./);
+});
+
+test('check controller re-enables manual local fallback when GPS ends below the required accuracy', () => {
+  const { helpers } = createManualLocationFallbackHarness();
+
+  assert.equal(helpers.shouldAllowManualLocationSelection(), true);
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setResolvedLocation({
+    matched: true,
+    status: 'matched',
+    resolved_local: 'Portaria',
+  });
+  assert.equal(helpers.shouldAllowManualLocationSelection(), false);
+
+  helpers.setResolvedLocation({
+    matched: false,
+    status: 'accuracy_too_low',
+    label: 'Precisao insuficiente',
+    resolved_local: null,
+  });
+  assert.equal(helpers.shouldAllowManualLocationSelection(), true);
+  assert.deepStrictEqual(toPlainValue(helpers.getState()), {
+    gpsLocationPermissionGranted: true,
+    currentLocationMatch: null,
+    currentLocationResolutionStatus: 'accuracy_too_low',
+  });
+
+  helpers.setResolvedLocation({
+    matched: false,
+    status: 'outside_workplace',
+    resolved_local: null,
+  });
+  assert.equal(helpers.shouldAllowManualLocationSelection(), false);
 });
 
 test('check controller exposes opt-in local measurement support for baseline GPS sessions', () => {

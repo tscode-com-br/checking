@@ -196,7 +196,7 @@ docker compose -f docker-compose.websites.yml ps
 ```bash
 bash deploy/smoke/validate_target.sh --label API --compose-file docker-compose.api.yml --service api --url http://127.0.0.1:18080/api/health
 bash deploy/smoke/validate_target.sh --label admin-web --compose-file docker-compose.websites.yml --service admin-web --url http://127.0.0.1:18081/ --contains "Checking Admin"
-bash deploy/smoke/validate_target.sh --label user-web --compose-file docker-compose.websites.yml --service user-web --url http://127.0.0.1:18082/ --contains "Checking Mobile Web"
+bash deploy/smoke/validate_target.sh --label user-web --compose-file docker-compose.websites.yml --service user-web --url http://127.0.0.1:18082/ --contains 'id="checkForm"'
 bash deploy/smoke/validate_target.sh --label transport-web --compose-file docker-compose.websites.yml --service transport-web --url http://127.0.0.1:18083/ --contains "Checking Transport"
 ```
 

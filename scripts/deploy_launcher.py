@@ -160,7 +160,7 @@ DEPLOY_ACTIONS = (
             compose_file="docker-compose.websites.yml",
             service="user-web",
             url="http://127.0.0.1:18082/",
-            contains="Checking Mobile Web",
+            contains='id="checkForm"',
         ),
         image_repository="ghcr.io/tscode-com-br/checkcheck-user-web",
         compose_image_env_var="CHECKCHECK_USER_WEB_IMAGE",

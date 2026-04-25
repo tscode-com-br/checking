@@ -101,7 +101,7 @@ test('shouldAttemptSilentLocationLookup only blocks explicit denial', () => {
 
 test('resolvePasswordActionLabel switches between register and change', () => {
   assert.equal(clientState.resolvePasswordActionLabel(false), 'Registrar');
-  assert.equal(clientState.resolvePasswordActionLabel(true), 'Alterar');
+  assert.equal(clientState.resolvePasswordActionLabel(true), 'Senha');
 });
 
 test('resolveAuthenticationPromptMessage reflects password state', () => {

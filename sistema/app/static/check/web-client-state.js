@@ -194,7 +194,7 @@
   }
 
   function resolvePasswordActionLabel(hasPassword) {
-    return hasPassword ? 'Alterar' : 'Registrar';
+    return hasPassword ? 'Senha' : 'Registrar';
   }
 
   function resolveAuthenticationPromptMessage(authState) {

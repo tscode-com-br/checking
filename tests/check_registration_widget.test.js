@@ -16,7 +16,7 @@ test('check page keeps the request-registration trigger hidden and exposes the s
 
   assert.match(checkHtml, /id="requestRegistrationButton"[^>]*hidden[^>]*aria-hidden="true"/);
   assert.match(checkHtml, />Solicitar cadastro</);
-  assert.match(checkHtml, /id="passwordActionButton"[\s\S]*>Alterar</);
+  assert.match(checkHtml, /id="passwordActionButton"[\s\S]*>Senha</);
   assert.match(checkHtml, /id="registrationDialogTitle">Solicitar Cadastro</);
   assert.match(checkHtml, /id="registrationProjectSelect"/);
   assert.match(checkHtml, /id="registrationEmailInput"[\s\S]*placeholder="Opcional"/);
@@ -36,6 +36,7 @@ test('check signup controller routes Chave? to self-registration and Senha? to t
   assert.match(checkScript, /requestRegistrationButton\.addEventListener\('click', \(\) => \{[\s\S]*openRegistrationDialog\(\);[\s\S]*\}\);/);
   assert.match(checkScript, /return 'Chave\?';/);
   assert.match(checkScript, /return 'Senha\?';/);
+  assert.match(checkScript, /return 'Senha';/);
   assert.match(checkScript, /if \(userSelfRegistrationInProgress\) \{[\s\S]*return 'Aguarde';[\s\S]*\}/);
   assert.match(checkScript, /passwordDialogTitle\.textContent = isRegisterMode \? 'Cadastrar Senha' : 'Alterar Senha';/);
   assert.match(checkScript, /passwordDialogOldPasswordField\.classList\.toggle\('is-registration-placeholder', isRegisterMode\);/);

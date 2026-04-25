@@ -103,14 +103,14 @@ fi
 if [ "$mode" = "local" ] || [ "$mode" = "full" ]; then
   check_contains "Local API" "$api_local_url" '"status":"ok"'
   check_contains "Local admin-web" "$admin_local_url" "Checking Admin"
-  check_contains "Local user-web" "$user_local_url" "Checking Mobile Web"
+  check_contains "Local user-web" "$user_local_url" 'id="checkForm"'
   check_contains "Local transport-web" "$transport_local_url" "Checking Transport"
 fi
 
 if [ "$mode" = "public" ] || [ "$mode" = "full" ]; then
   check_contains "Public API" "$public_base_url/api/health" '"status":"ok"'
   check_contains "Public admin" "$public_base_url/checking/admin" "Checking Admin"
-  check_contains "Public user" "$public_base_url/checking/user" "Checking Mobile Web"
+  check_contains "Public user" "$public_base_url/checking/user" 'id="checkForm"'
   check_contains "Public transport" "$public_base_url/checking/transport" "Checking Transport"
 fi
 

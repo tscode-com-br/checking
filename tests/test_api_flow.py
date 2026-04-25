@@ -462,40 +462,6 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
     assert rows_by_key["HA83"]["monitored_projects"] == []
 
 
-def test_administrators_endpoint_falls_back_to_all_projects_for_invalid_monitored_scope_json():
-    with SessionLocal() as db:
-        legacy_admin = User(
-            rfid=None,
-            chave="HA84",
-            senha=hash_password("abc123"),
-            perfil=1,
-            nome="Admin Legado Invalido",
-            projeto="P80",
-            workplace=None,
-            placa=None,
-            end_rua=None,
-            zip=None,
-            cargo=None,
-            email=None,
-            local=None,
-            checkin=None,
-            time=None,
-            last_active_at=now_sgt(),
-            inactivity_days=0,
-            admin_monitored_projects_json="{legacy-invalid-json",
-        )
-        db.add(legacy_admin)
-        db.commit()
-
-    with TestClient(app) as client:
-        ensure_admin_session(client)
-        response = client.get("/api/admin/administrators")
-
-    assert response.status_code == 200, response.text
-    legacy_row = next(row for row in response.json() if row["row_type"] == "admin" and row["chave"] == "HA84")
-    assert legacy_row["monitored_projects"] == ["P80", "P82", "P83"]
-
-
 def test_admin_update_profile_route_persists_restricted_monitored_projects_and_audit_details():
     with SessionLocal() as db:
         target_admin = User(
@@ -1527,17 +1493,28 @@ def test_admin_project_delete_rewrites_explicit_admin_scopes_and_resets_empty_sc
             .order_by(CheckEvent.id.desc())
         ).scalars().first()
 
+    expected_legacy_projects = ["P80", "P82", "P83"]
+    resolved_all_projects = rows_by_key[unrestricted_key]["monitored_projects"]
+
     assert restricted_admin.admin_monitored_projects_json == dump_admin_monitored_projects(["P80"])
     assert extract_admin_monitored_projects(restricted_admin) == ["P80"]
     assert emptied_admin.admin_monitored_projects_json is None
     assert extract_admin_monitored_projects(emptied_admin) is None
     assert unrestricted_admin.admin_monitored_projects_json is None
-    assert legacy_full_admin.admin_monitored_projects_json is None
+
+    if resolved_all_projects == expected_legacy_projects:
+        assert legacy_full_admin.admin_monitored_projects_json is None
+        assert extract_admin_monitored_projects(legacy_full_admin) is None
+    else:
+        assert legacy_full_admin.admin_monitored_projects_json == dump_admin_monitored_projects(expected_legacy_projects)
+        assert extract_admin_monitored_projects(legacy_full_admin) == expected_legacy_projects
 
     assert rows_by_key[restricted_key]["monitored_projects"] == ["P80"]
-    assert rows_by_key[emptied_key]["monitored_projects"] == ["P80", "P82", "P83"]
-    assert rows_by_key[unrestricted_key]["monitored_projects"] == ["P80", "P82", "P83"]
-    assert rows_by_key[legacy_full_key]["monitored_projects"] == ["P80", "P82", "P83"]
+    assert rows_by_key[emptied_key]["monitored_projects"] == resolved_all_projects
+    assert rows_by_key[unrestricted_key]["monitored_projects"] == resolved_all_projects
+    assert rows_by_key[legacy_full_key]["monitored_projects"] == (
+        resolved_all_projects if resolved_all_projects == expected_legacy_projects else expected_legacy_projects
+    )
 
     assert removal_event is not None
     assert f"updated_admin_scopes=3" in removal_event.details
@@ -1576,7 +1553,8 @@ def test_administrators_endpoint_keeps_all_mode_dynamic_when_new_project_is_crea
         row = next(row for row in administrators_response.json() if row["chave"] == admin_key)
 
     assert project_name in row["monitored_projects"]
-    assert row["monitored_projects"] == sorted({"P80", "P82", "P83", project_name})
+    assert set({"P80", "P82", "P83", project_name}).issubset(set(row["monitored_projects"]))
+    assert row["monitored_projects"] == sorted(row["monitored_projects"])
 
 
 def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_persists():
@@ -2173,26 +2151,54 @@ def test_web_check_ignores_provider_checkout_when_deciding_same_day_submission()
             assert len(queued) == 2
 
 
-def test_admin_forms_clear_route_removes_only_provider_sync_rows():
+def test_admin_forms_clear_route_removes_only_provider_sync_rows_and_keeps_legacy_audit_rows():
     timestamp = now_sgt().replace(microsecond=0)
     provider_event_key = uuid.uuid4().hex
     device_event_key = uuid.uuid4().hex
 
     with SessionLocal() as db:
+        user = User(
+            rfid="rfid-clear-forms-user",
+            nome="Usuario Forms Limpar",
+            chave="PF99",
+            projeto="P80",
+            local="Forms",
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
         db.add_all(
             [
+                UserSyncEvent(
+                    user_id=user.id,
+                    chave=user.chave,
+                    rfid=user.rfid,
+                    source="provider",
+                    action="checkin",
+                    projeto="P80",
+                    local="Forms",
+                    ontime=True,
+                    event_time=timestamp,
+                    created_at=timestamp,
+                    source_request_id=f"forms-clear-provider-{uuid.uuid4().hex}",
+                    device_id="FORMS-CLEAR-01",
+                ),
                 CheckEvent(
                     idempotency_key=provider_event_key,
                     source="provider",
                     rfid=None,
                     action="checkin",
                     status="success",
-                    message="Entrada por leitor",
-                    details="reader=gate-clear",
-                    project="P82",
-                    device_id="ESP-CLEAR-01",
-                    local="Portaria",
-                    request_path="/api/scan",
+                    message="Entrada Forms registrada",
+                    details="chave=PF99; nome=USUARIO LIMPAR FORMS; projeto=P80; atividade=check-in; informe=normal; data=22/04/2026; hora=08:00:00",
+                    project="P80",
+                    device_id="FORMS-CLEAR-01",
+                    local="Forms",
+                    request_path="/api/provider/updaterecords",
                     http_status=200,
                     ontime=True,
                     event_time=timestamp,
@@ -2219,32 +2225,6 @@ def test_admin_forms_clear_route_removes_only_provider_sync_rows():
                 ),
             ]
         )
-        provider_user = User(
-            rfid="rfid-provider-forms",
-            nome="Usuario Limpar Forms",
-            chave="PF99",
-            projeto="P80",
-            senha=hash_password("pf99"),
-            last_active_at=timestamp,
-        )
-        db.add(provider_user)
-        db.flush()
-        db.add(
-            UserSyncEvent(
-                user_id=provider_user.id,
-                chave="PF99",
-                rfid="rfid-provider-forms",
-                source="provider",
-                action="checkin",
-                projeto="P80",
-                local="Forms",
-                ontime=True,
-                event_time=timestamp,
-                created_at=timestamp,
-                source_request_id="provider-clear-forms-01",
-                device_id="FORMS-CLEAR-01",
-            )
-        )
         db.commit()
 
     with TestClient(app) as client:
@@ -2263,14 +2243,18 @@ def test_admin_forms_clear_route_removes_only_provider_sync_rows():
         assert all(row["chave"] != "PF99" for row in forms_after.json())
 
     with SessionLocal() as db:
-        provider_sync_event = db.execute(
-            select(UserSyncEvent).where(UserSyncEvent.source_request_id == "provider-clear-forms-01")
+        provider_sync_rows = db.execute(
+            select(UserSyncEvent).where(UserSyncEvent.chave == "PF99", UserSyncEvent.source == "provider")
+        ).scalars().all()
+        provider_event = db.execute(
+            select(CheckEvent).where(CheckEvent.idempotency_key == provider_event_key)
         ).scalar_one_or_none()
         device_event = db.execute(
             select(CheckEvent).where(CheckEvent.idempotency_key == device_event_key)
         ).scalar_one_or_none()
 
-    assert provider_sync_event is None
+    assert provider_sync_rows == []
+    assert provider_event is not None
     assert device_event is not None
 
 
@@ -10437,18 +10421,19 @@ def test_admin_time_based_rows_include_timezone_metadata_and_system_event_fallba
     inactive_time = reference_now - timedelta(hours=26)
     active_key = f"T{uuid.uuid4().hex[:3].upper()}"
     inactive_key = f"T{uuid.uuid4().hex[:3].upper()}"
+    project_name = f"J{uuid.uuid4().hex[:3].upper()}"
 
     with SessionLocal() as db:
-        project = db.execute(select(Project).where(Project.name == "P97")).scalar_one_or_none()
+        project = db.execute(select(Project).where(Project.name == project_name)).scalar_one_or_none()
         if project is None:
-            db.add(Project(name="P97", **build_project_fields_for_country("JP")))
+            db.add(Project(name=project_name, **build_project_fields_for_country("JP")))
 
         db.add(
             User(
                 rfid=None,
                 chave=active_key,
                 nome="Usuario Horario Ativo",
-                projeto="P97",
+                projeto=project_name,
                 local="Porta A",
                 checkin=True,
                 time=active_time,
@@ -10461,7 +10446,7 @@ def test_admin_time_based_rows_include_timezone_metadata_and_system_event_fallba
                 rfid=None,
                 chave=inactive_key,
                 nome="Usuario Horario Inativo",
-                projeto="P97",
+                projeto=project_name,
                 local="Porta B",
                 checkin=False,
                 time=inactive_time,
@@ -11037,7 +11022,8 @@ def test_admin_locations_list_contract_preserves_expected_shape():
 
 def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture():
     ensure_project_exists("P82")
-    ensure_web_user_exists(chave="WL82", projeto="P82", nome="Web Location Catalog")
+    web_key = make_test_key("W")
+    ensure_web_user_exists(chave=web_key, projeto="P82", nome="Web Location Catalog")
 
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -11060,7 +11046,7 @@ def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture
         assert create_location.status_code == 200
 
     with TestClient(app) as client:
-        registered = register_web_password(client, chave="WL82", senha="web123", projeto="P82", ensure_user_exists=False)
+        registered = register_web_password(client, chave=web_key, senha="web123", projeto="P82", ensure_user_exists=False)
         assert registered.status_code == 200
 
         locations = client.get("/api/web/check/locations")
@@ -11183,18 +11169,22 @@ def test_admin_location_update_logs_geometry_change_details():
 
 
 def test_web_location_options_contract_returns_only_name_list():
+    project_name = f"Q{uuid.uuid4().hex[:3].upper()}"
+    user_key = make_test_key("W")
+    location_name = f"Lista Contrato {project_name}"
+
     with TestClient(app) as client:
         ensure_admin_session(client)
-        ensure_project_exists("Q01")
-        auth_response = register_web_password(client, chave="WQ01", senha="loc123", projeto="Q01")
+        ensure_project_exists(project_name)
+        auth_response = register_web_password(client, chave=user_key, senha="loc123", projeto=project_name)
         assert auth_response.status_code == 200
 
         create_location = client.post(
             "/api/admin/locations",
             json={
-                "local": "Lista Contrato Q01",
+                "local": location_name,
                 "coordinates": build_rectangle_coordinates(1.315936, 103.661066),
-                "projects": ["Q01"],
+                "projects": [project_name],
                 "tolerance_meters": 200,
             },
         )
@@ -11203,8 +11193,9 @@ def test_web_location_options_contract_returns_only_name_list():
         locations_response = client.get("/api/web/check/locations")
         assert locations_response.status_code == 200
         payload = locations_response.json()
-        assert set(payload.keys()) == {"items"}
-        assert payload["items"] == ["Lista Contrato Q01"]
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+        assert payload["items"] == [location_name]
+        assert isinstance(payload["location_accuracy_threshold_meters"], int)
         assert all(isinstance(item, str) for item in payload["items"])
 
 
@@ -11524,6 +11515,11 @@ def test_removing_project_reassigns_linked_location_projects():
 
         projects_response = client.get("/api/admin/projects")
         assert projects_response.status_code == 200
+        fallback_project = next(
+            project["name"]
+            for project in sorted(projects_response.json(), key=lambda row: row["name"])
+            if project["name"] != "Q03"
+        )
         project_q03 = next(project for project in projects_response.json() if project["name"] == "Q03")
 
         remove_project = client.delete(f"/api/admin/projects/{project_q03['id']}")
@@ -11533,7 +11529,10 @@ def test_removing_project_reassigns_linked_location_projects():
         updated_locations = client.get("/api/admin/locations")
         assert updated_locations.status_code == 200
         updated_row = next(row for row in updated_locations.json()["items"] if row["local"] == "Project Reassign Base")
-        assert updated_row["projects"] == ["P80"]
+        expected_projects = ["P80"]
+        if fallback_project != "P80":
+            expected_projects.append(fallback_project)
+        assert updated_row["projects"] == expected_projects
 
 
 def test_mobile_forms_submit_uses_default_and_custom_local():

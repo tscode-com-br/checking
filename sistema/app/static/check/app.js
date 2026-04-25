@@ -270,6 +270,7 @@
   let locationMeasurementSessions = [];
   let locationRequestPromise = null;
   let currentLocationMatch = null;
+  let currentLocationResolutionStatus = null;
   let latestHistoryState = null;
   let availableLocations = [];
   let locationAccuracyThresholdMeters = null;
@@ -861,7 +862,7 @@
     if (isMissingPasswordRegistrationState()) {
       return 'Senha?';
     }
-    return 'Alterar';
+    return 'Senha';
   }
 
   function clearPasswordVerificationTimer() {
@@ -4451,6 +4452,14 @@
 
   function setResolvedLocation(matchPayload) {
     currentLocationMatch = matchPayload && matchPayload.matched ? matchPayload : null;
+    currentLocationResolutionStatus = matchPayload && typeof matchPayload.status === 'string'
+      ? matchPayload.status
+      : null;
+    syncProjectVisibility();
+  }
+
+  function shouldAllowManualLocationSelection() {
+    return !gpsLocationPermissionGranted || currentLocationResolutionStatus === 'accuracy_too_low';
   }
 
   function setLocationWithoutPermission() {
@@ -4495,7 +4504,7 @@
     });
   }
 
-  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
+        control.disabled = dialogOpen || lockActive || !unlocked || !shouldAllowManualLocationSelection() || availableLocations.length === 0;
     return automaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState);
   }
 
@@ -4707,7 +4716,7 @@
   function syncManualLocationControl() {
     const displayedLocation = (locationValue.textContent || '').trim();
 
-    if (gpsLocationPermissionGranted) {
+    if (!shouldAllowManualLocationSelection()) {
       setLocationSelectOptions(availableLocations, displayedLocation || getDefaultManualLocation(), {
         allowTemporaryValue: true,
         placeholder: displayedLocation || 'Aguardando localização.',
@@ -5462,7 +5471,7 @@
 
   function syncProjectVisibility() {
     const hideProjectField = isAutomaticActivitiesEnabled();
-    const hideLocationField = isAutomaticActivitiesEnabled() || gpsLocationPermissionGranted;
+    const hideLocationField = isAutomaticActivitiesEnabled() || !shouldAllowManualLocationSelection();
 
     projectField.classList.toggle('is-hidden', hideProjectField);
     projectField.setAttribute('aria-hidden', String(hideProjectField));
@@ -5927,7 +5936,7 @@
       return;
     }
 
-    if (!gpsLocationPermissionGranted && !manualLocationSelect.value) {
+    if (shouldAllowManualLocationSelection() && !manualLocationSelect.value) {
       setStatus('Selecione uma localização antes de registrar.', 'error');
       manualLocationSelect.focus();
       return;
@@ -5948,9 +5957,9 @@
           chave,
           projeto: projectSelect.value,
           action: selectedAction,
-          local: gpsLocationPermissionGranted
-            ? (currentLocationMatch ? currentLocationMatch.resolved_local : null)
-            : manualLocationSelect.value,
+          local: shouldAllowManualLocationSelection()
+            ? manualLocationSelect.value
+            : (currentLocationMatch ? currentLocationMatch.resolved_local : null),
           informe: getSelectedInformeValue(),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),
