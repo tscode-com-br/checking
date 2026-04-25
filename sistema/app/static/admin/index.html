@@ -120,6 +120,7 @@
         <button data-tab="forms">Forms</button>
         <button data-tab="inactive">Inativos</button>
         <button data-tab="cadastro">Cadastro</button>
+        <button data-tab="relatorios">Relatórios</button>
         <button data-tab="eventos">Eventos</button>
       </nav>
 
@@ -259,7 +260,6 @@
           <h2 id="formsTitle">Forms (0)</h2>
           <div class="section-header-actions">
             <button id="refreshFormsButton" type="button" class="secondary-button">Atualizar</button>
-            <button id="clearFormsButton" type="button" class="secondary-button" disabled>Limpar</button>
           </div>
         </div>
         <div class="table-wrap forms-wrap">
@@ -453,6 +453,40 @@
             </thead>
             <tbody id="usersBody"></tbody>
           </table>
+        </div>
+      </section>
+
+      <section id="tab-relatorios" class="tab reports-tab">
+        <div class="section-header">
+          <div>
+            <h2>Relatórios</h2>
+            <p class="section-header-copy">Busque uma pessoa por chave ou nome para visualizar o histórico consolidado em ordem decrescente.</p>
+          </div>
+        </div>
+        <div class="project-editor-panel reports-search-panel">
+          <div class="presence-controls-grid reports-search-grid">
+            <label class="presence-control-field" for="reportsSearchChave">
+              <span>Busca por Chave</span>
+              <input id="reportsSearchChave" type="text" maxlength="4" autocomplete="off" placeholder="Ex.: PV31" />
+            </label>
+            <label class="presence-control-field" for="reportsSearchNome">
+              <span>Busca por Nome</span>
+              <input id="reportsSearchNome" type="text" maxlength="180" autocomplete="off" placeholder="Ex.: Usuário Silva" />
+            </label>
+          </div>
+          <div class="locations-actions-bar reports-search-actions">
+            <button id="reportsSearchButton" type="button">Buscar</button>
+          </div>
+          <p id="reportsStatus" class="auth-status"></p>
+        </div>
+        <div class="project-editor-panel reports-results-panel">
+          <div class="section-header">
+            <div>
+              <h3 id="reportsPersonTitle">Nenhuma busca realizada</h3>
+              <p id="reportsPersonMeta" class="section-header-copy">Busque por chave ou nome para carregar o relatório.</p>
+            </div>
+          </div>
+          <div id="reportsResultsBody" class="reports-results-body"></div>
         </div>
       </section>
 

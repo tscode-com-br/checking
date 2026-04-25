@@ -62,6 +62,9 @@ from ..schemas import (
     LocationRow,
     PendingRow,
     ProviderFormRow,
+    ReportEventRow,
+    ReportEventsResponse,
+    ReportPersonRow,
     UserRow,
 )
 from ..services.admin_auth import (
@@ -177,20 +180,20 @@ def parse_event_details(details: str | None) -> dict[str, str]:
 
 def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
     rows = db.execute(
-        select(CheckEvent)
+        select(UserSyncEvent, User)
+        .join(User, User.id == UserSyncEvent.user_id, isouter=True)
         .where(
-            CheckEvent.source == "provider",
-            CheckEvent.request_path == PROVIDER_FORMS_REQUEST_PATH,
-            CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
+            UserSyncEvent.source == "provider",
+            UserSyncEvent.action.in_(DATABASE_EVENT_ACTIONS),
         )
-        .order_by(desc(CheckEvent.id))
-    ).scalars().all()
+        .order_by(desc(UserSyncEvent.id))
+    ).all()
 
     project_names = sorted(
         {
-            (parse_event_details(row.details).get("projeto") or row.project or "").strip().upper()
-            for row in rows
-            if (parse_event_details(row.details).get("projeto") or row.project)
+            (event.projeto or (user.projeto if user is not None else None) or "").strip().upper()
+            for event, user in rows
+            if (event.projeto or (user.projeto if user is not None else None))
         }
     )
     projects_by_name = {
@@ -199,9 +202,102 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
     } if project_names else {}
 
     payload: list[ProviderFormRow] = []
+    for event, user in rows:
+        project_name = (event.projeto or (user.projeto if user is not None else None) or "-").strip().upper()
+        project = projects_by_name.get(project_name) if project_name != "-" else None
+        timezone_context = build_timezone_context(
+            project_name=project.name if project is not None else (None if project_name == "-" else project_name),
+            country_name=project.country_name if project is not None else None,
+            timezone_name=project.timezone_name if project is not None else None,
+            reference_time=event.event_time,
+        )
+        localized_event_time = event.event_time.astimezone(timezone_context.timezone)
+        payload.append(
+            ProviderFormRow(
+                recebimento=event.event_time,
+                chave=(event.chave or "-").upper(),
+                nome=((user.nome if user is not None else "-") or "-").upper(),
+                projeto=project_name,
+                timezone_name=timezone_context.timezone_name,
+                timezone_label=timezone_context.timezone_label,
+                atividade="check-in" if event.action == "checkin" else "check-out",
+                informe="retroativo" if event.ontime is False else "normal",
+                data=localized_event_time.strftime("%d/%m/%Y"),
+                hora=localized_event_time.strftime("%H:%M:%S"),
+            )
+        )
+
+    return payload
+
+
+def _normalize_report_name_query(value: str | None) -> str | None:
+    normalized = " ".join(str(value or "").strip().split())
+    return normalized or None
+
+
+def resolve_report_user(db: Session, *, chave: str | None, nome: str | None) -> User:
+    normalized_key = str(chave or "").strip().upper() or None
+    normalized_name = _normalize_report_name_query(nome)
+
+    if normalized_key and normalized_name:
+        raise HTTPException(status_code=400, detail="Informe apenas chave ou nome para consultar o relatorio.")
+    if not normalized_key and not normalized_name:
+        raise HTTPException(status_code=400, detail="Informe chave ou nome para consultar o relatorio.")
+
+    if normalized_key:
+        user = find_user_by_chave(db, normalized_key)
+        if user is None:
+            raise HTTPException(status_code=404, detail="Usuario nao encontrado para a chave informada.")
+        return user
+
+    assert normalized_name is not None
+    matches = db.execute(
+        select(User)
+        .where(func.lower(User.nome) == normalized_name.lower())
+        .order_by(User.nome, User.id)
+    ).scalars().all()
+    if not matches:
+        raise HTTPException(status_code=404, detail="Usuario nao encontrado para o nome informado.")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Mais de um usuario encontrado para o nome informado. Use a chave.",
+        )
+    return matches[0]
+
+
+def build_report_events_response(db: Session, *, user: User) -> ReportEventsResponse:
+    rows = db.execute(
+        select(UserSyncEvent)
+        .where(UserSyncEvent.user_id == user.id)
+        .order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
+    ).scalars().all()
+
+    project_names = sorted(
+        {
+            str(project_name or "").strip().upper()
+            for project_name in [user.projeto, *(row.projeto for row in rows)]
+            if str(project_name or "").strip()
+        }
+    )
+    projects_by_name = {
+        project.name: project
+        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
+    } if project_names else {}
+
+    person_project_name = str(user.projeto or "").strip().upper() or "-"
+    person_project = projects_by_name.get(person_project_name) if person_project_name != "-" else None
+    person_reference_time = rows[0].event_time if rows else now_sgt()
+    person_timezone_context = build_timezone_context(
+        project_name=person_project.name if person_project is not None else (None if person_project_name == "-" else person_project_name),
+        country_name=person_project.country_name if person_project is not None else None,
+        timezone_name=person_project.timezone_name if person_project is not None else None,
+        reference_time=person_reference_time,
+    )
+
+    payload: list[ReportEventRow] = []
     for row in rows:
-        details_map = parse_event_details(row.details)
-        project_name = (details_map.get("projeto") or row.project or "-").upper()
+        project_name = str(row.projeto or user.projeto or "").strip().upper() or "-"
         project = projects_by_name.get(project_name) if project_name != "-" else None
         timezone_context = build_timezone_context(
             project_name=project.name if project is not None else (None if project_name == "-" else project_name),
@@ -209,22 +305,35 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
             timezone_name=project.timezone_name if project is not None else None,
             reference_time=row.event_time,
         )
+        localized_event_time = row.event_time.astimezone(timezone_context.timezone)
         payload.append(
-            ProviderFormRow(
-                recebimento=row.event_time,
-                chave=(details_map.get("chave") or "-").upper(),
-                nome=details_map.get("nome") or "-",
+            ReportEventRow(
+                id=row.id,
+                source=row.source,
+                action=row.action,
                 projeto=project_name,
+                local=row.local,
+                ontime=row.ontime,
+                assiduidade=format_assiduidade_label(row.ontime),
+                event_time=row.event_time,
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
-                atividade=details_map.get("atividade") or ("check-in" if row.action == "checkin" else "check-out"),
-                informe=details_map.get("informe") or ("retroativo" if row.ontime is False else "normal"),
-                data=details_map.get("data") or "-",
-                hora=details_map.get("hora") or "-",
+                event_date=localized_event_time.strftime("%d/%m/%Y"),
             )
         )
 
-    return payload
+    return ReportEventsResponse(
+        person=ReportPersonRow(
+            id=user.id,
+            rfid=user.rfid,
+            nome=user.nome,
+            chave=user.chave,
+            projeto=person_project_name,
+            timezone_name=person_timezone_context.timezone_name,
+            timezone_label=person_timezone_context.timezone_label,
+        ),
+        events=payload,
+    )
 
 
 def delete_provider_forms_rows(db: Session) -> int:
@@ -1713,27 +1822,21 @@ def list_provider_forms(db: Session = Depends(get_db)) -> list[ProviderFormRow]:
     return build_provider_forms_rows(db)
 
 
-@router.delete("/forms", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
-def clear_provider_forms(
+@router.get("/reports/events", response_model=ReportEventsResponse, dependencies=[Depends(require_full_admin_session)])
+def get_report_events(
+    chave: str | None = Query(default=None),
+    nome: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_full_admin_session),
-) -> AdminActionResponse:
-    removed_count = delete_provider_forms_rows(db)
-    log_event(
-        db,
-        source="admin",
-        action="event",
-        status="removed",
-        message="Provider forms cleared via admin",
-        request_path="/api/admin/forms",
-        http_status=200,
-        details=f"updated_by={current_admin.chave}; removed_count={removed_count}",
-    )
-    db.commit()
-    notify_admin_views("event")
-    return AdminActionResponse(
-        ok=True,
-        message=f"{format_quantity(removed_count, 'registro removido', 'registros removidos')} da aba Forms.",
+) -> ReportEventsResponse:
+    user = resolve_report_user(db, chave=chave, nome=nome)
+    return build_report_events_response(db, user=user)
+
+
+@router.delete("/forms", dependencies=[Depends(require_full_admin_session)])
+def clear_provider_forms() -> None:
+    raise HTTPException(
+        status_code=405,
+        detail="A aba Forms agora e somente leitura e usa o historico canonico de sincronizacao.",
     )
 
 

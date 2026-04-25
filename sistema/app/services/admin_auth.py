@@ -17,7 +17,7 @@ FULL_ACCESS_DIGIT = "9"
 ADMIN_ACCESS_SCOPE_LIMITED = "limited"
 ADMIN_ACCESS_SCOPE_FULL = "full"
 LIMITED_ADMIN_TABS = ("checkin", "checkout")
-FULL_ADMIN_TABS = ("checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados")
+FULL_ADMIN_TABS = ("checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados")
 BOOTSTRAP_PROFILE_BY_KEY = {
     "UTO9": 1,
     "CYMQ": 1,

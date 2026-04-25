@@ -161,9 +161,23 @@ button {
 .tabs {
   position: relative;
   z-index: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 10px;
   padding: 12px 24px;
+}
+
+.tabs button {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: normal;
 }
 
 .tabs button.active {
@@ -337,6 +351,50 @@ th, td {
 
 .project-editor-panel h3 {
   margin: 0;
+}
+
+.reports-search-panel,
+.reports-results-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.reports-search-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.reports-search-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.reports-search-actions button {
+  min-width: 168px;
+}
+
+#reportsPersonMeta {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.reports-results-body {
+  display: grid;
+  gap: 16px;
+}
+
+.reports-group {
+  display: grid;
+  gap: 12px;
+}
+
+.reports-group .section-header {
+  margin-bottom: 0;
+}
+
+.reports-group h4 {
+  margin: 0;
+  font-size: 16px;
+  color: #0f172a;
 }
 
 .project-editor-copy {
@@ -1497,7 +1555,9 @@ input.inline, select.inline, textarea.inline {
     gap: 10px;
     justify-content: center;
   }
-  .tabs { flex-wrap: wrap; }
+  .tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .session-bar {
     width: 100%;
     justify-content: center;
@@ -1539,6 +1599,12 @@ input.inline, select.inline, textarea.inline {
   }
   .locations-actions-bar button {
     width: 100%;
+  }
+  .reports-search-grid {
+    grid-template-columns: 1fr;
+  }
+  .reports-search-actions button {
+    min-width: 0;
   }
   .locations-settings-actions button {
     width: 100%;

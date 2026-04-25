@@ -29,6 +29,10 @@ const requestAdminRegistrationConfirmInput = document.getElementById("requestAdm
 const requestAdminRegistrationBackButton = document.getElementById("requestAdminRegistrationBackButton");
 const requestAdminRegistrationSaveButton = document.getElementById("requestAdminRegistrationSaveButton");
 const requestAdminRegistrationStatus = document.getElementById("requestAdminRegistrationStatus");
+const reportsSearchChaveInput = document.getElementById("reportsSearchChave");
+const reportsSearchNomeInput = document.getElementById("reportsSearchNome");
+const reportsSearchButton = document.getElementById("reportsSearchButton");
+const reportsStatus = document.getElementById("reportsStatus");
 const projectEditorTitle = document.getElementById("projectEditorTitle");
 const projectEditorHelp = document.getElementById("projectEditorHelp");
 const projectNameInput = document.getElementById("projectNameInput");
@@ -54,7 +58,7 @@ let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
-let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"];
+let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"];
 let registeredUsersTotal = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
@@ -87,6 +91,7 @@ let requestAdminLookupTimeout = null;
 let requestAdminLookupRequestToken = 0;
 let requestAdminSelfServiceInProgress = false;
 let requestAdminRegistrationSaveInProgress = false;
+let reportsSearchInProgress = false;
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
 const SUPPORTED_PROJECT_COUNTRIES = Object.freeze([
@@ -341,10 +346,11 @@ const TAB_LABELS = {
   forms: "Forms",
   inactive: "Inativos",
   cadastro: "Cadastro",
+  relatorios: "Relatórios",
   eventos: "Eventos",
   "banco-dados": "Banco de Dados",
 };
-const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"]);
+const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]);
 const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
 
 function getDefaultAllowedTabsForScope(scope) {
@@ -468,12 +474,27 @@ function setChangePasswordStatus(message, kind = "info") {
   changePasswordStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
 }
 
+function setReportsStatus(message, kind = "info") {
+  if (!reportsStatus) {
+    return;
+  }
+
+  reportsStatus.textContent = message || "";
+  reportsStatus.className = `auth-status ${kind === "error" ? "status-err" : kind === "success" ? "status-ok" : ""}`;
+}
+
 function normalizeAdminChave(value) {
   return String(value || "")
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 4);
+}
+
+function normalizeReportSearchName(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isAdminCurrentPasswordInputValid(value) {
@@ -861,6 +882,7 @@ function showAuthShell(message = "", kind = "info") {
   stopRealtimeUpdates();
   stopAutoRefresh();
   setAuthStatus(message, kind);
+  resetReportsView();
   clearStatus();
   updateOperationalChrome();
 }
@@ -3390,7 +3412,7 @@ async function loadForms() {
   updateFormsClearButtonState();
   body.innerHTML = "";
   if (formsTotal === 0) {
-    renderEmptyStateRow("formsBody", 9, "Nenhum registro recebido do endpoint updaterecords.");
+    renderEmptyStateRow("formsBody", 9, "Nenhum evento do provider encontrado no historico sincronizado.");
     updateDashboardSummary();
     return;
   }
@@ -3404,33 +3426,165 @@ async function loadForms() {
   updateDashboardSummary();
 }
 
+function resetReportsView() {
+  reportsSearchInProgress = false;
+  if (reportsSearchChaveInput) {
+    reportsSearchChaveInput.value = "";
+  }
+  if (reportsSearchNomeInput) {
+    reportsSearchNomeInput.value = "";
+  }
+  setReportsStatus("");
+  setTextContentIfPresent("reportsPersonTitle", "Nenhuma busca realizada");
+  setTextContentIfPresent("reportsPersonMeta", "Busque por chave ou nome para carregar o relatório.");
+  const body = document.getElementById("reportsResultsBody");
+  if (body) {
+    body.innerHTML = "";
+  }
+  syncReportsSearchInputs();
+}
+
+function syncReportsSearchInputs() {
+  const normalizedChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
+  if (reportsSearchChaveInput && normalizedChave !== reportsSearchChaveInput.value) {
+    reportsSearchChaveInput.value = normalizedChave;
+  }
+
+  const normalizedNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
+  const hasChave = normalizedChave.length > 0;
+  const hasNome = normalizedNome.length > 0;
+
+  if (reportsSearchNomeInput) {
+    reportsSearchNomeInput.disabled = hasChave;
+  }
+  if (reportsSearchChaveInput) {
+    reportsSearchChaveInput.disabled = hasNome;
+  }
+  if (reportsSearchButton) {
+    reportsSearchButton.disabled = reportsSearchInProgress || (!hasChave && !hasNome);
+  }
+}
+
+function renderReportsState(title, message) {
+  setTextContentIfPresent("reportsPersonTitle", title);
+  setTextContentIfPresent("reportsPersonMeta", message);
+  const body = document.getElementById("reportsResultsBody");
+  if (body) {
+    body.innerHTML = "";
+  }
+}
+
+function renderReportsResults(payload) {
+  const body = document.getElementById("reportsResultsBody");
+  if (!body) {
+    return;
+  }
+
+  const person = payload?.person || {};
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  const eventsLabel = events.length === 1 ? "1 evento" : `${events.length} eventos`;
+  setTextContentIfPresent("reportsPersonTitle", `${person.nome || "-"} (${person.chave || "-"})`);
+  setTextContentIfPresent(
+    "reportsPersonMeta",
+    `Projeto atual: ${person.projeto || "-"} | RFID: ${person.rfid || "-"} | Fuso horário: ${formatTimeZoneLabel(person.timezone_label)} | ${eventsLabel}`,
+  );
+
+  if (!events.length) {
+    body.innerHTML = `<p class="section-header-copy">Nenhum evento encontrado para a pessoa informada.</p>`;
+    return;
+  }
+
+  const groups = [];
+  const groupsByDate = new Map();
+  events.forEach((row) => {
+    const groupKey = row.event_date || formatDateTimeLines(row.event_time, row.timezone_name).date;
+    if (!groupsByDate.has(groupKey)) {
+      const group = { date: groupKey, rows: [] };
+      groupsByDate.set(groupKey, group);
+      groups.push(group);
+    }
+    groupsByDate.get(groupKey).rows.push(row);
+  });
+
+  body.innerHTML = groups.map((group, groupIndex) => {
+    const tbodyId = `reportsGroupBody${groupIndex}`;
+    const groupLabel = group.rows.length === 1 ? "1 evento" : `${group.rows.length} eventos`;
+    const rowsMarkup = group.rows.map((row) => {
+      const timeLine = formatDateTimeLines(row.event_time, row.timezone_name).time || formatDateTime(row.event_time, row.timezone_name);
+      return `<tr><td>${escapeHtml(timeLine)}</td><td>${escapeHtml(formatAction(row.action))}</td><td>${escapeHtml(row.source ?? "-")}</td><td>${escapeHtml(formatLocal(row.local))}</td><td>${escapeHtml(row.projeto ?? "-")}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td></tr>`;
+    }).join("");
+    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Horário</th><th>Ação</th><th>Origem</th><th>Local</th><th>Projeto</th><th>Fuso horário</th><th>Assiduidade</th></tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div></section>`;
+  }).join("");
+
+  groups.forEach((_, groupIndex) => {
+    applyResponsiveLabels(`reportsGroupBody${groupIndex}`);
+  });
+}
+
+async function submitReportsSearch() {
+  if (!(reportsSearchButton instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const normalizedChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
+  const normalizedNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
+  if (reportsSearchChaveInput && normalizedChave !== reportsSearchChaveInput.value) {
+    reportsSearchChaveInput.value = normalizedChave;
+  }
+  if (reportsSearchNomeInput && normalizedNome !== reportsSearchNomeInput.value) {
+    reportsSearchNomeInput.value = normalizedNome;
+  }
+
+  if (!normalizedChave && !normalizedNome) {
+    setReportsStatus("Informe a chave ou o nome para buscar o relatório.", "error");
+    renderReportsState("Nenhuma busca realizada", "Informe um critério antes de consultar o relatório.");
+    syncReportsSearchInputs();
+    return;
+  }
+
+  if (normalizedChave && normalizedNome) {
+    setReportsStatus("Informe apenas chave ou nome por busca.", "error");
+    renderReportsState("Busca não concluída", "Use apenas um critério por vez para consultar o relatório.");
+    syncReportsSearchInputs();
+    return;
+  }
+
+  const idleLabel = reportsSearchButton.dataset.idleLabel || "Buscar";
+  const query = new URLSearchParams();
+  if (normalizedChave) {
+    query.set("chave", normalizedChave);
+  } else {
+    query.set("nome", normalizedNome);
+  }
+
+  reportsSearchInProgress = true;
+  reportsSearchButton.disabled = true;
+  reportsSearchButton.classList.add("is-loading");
+  reportsSearchButton.setAttribute("aria-busy", "true");
+  reportsSearchButton.textContent = "Buscando...";
+  setReportsStatus("");
+  try {
+    const payload = await fetchJson(`/api/admin/reports/events?${query.toString()}`);
+    renderReportsResults(payload);
+    setReportsStatus("Relatório carregado com sucesso.", "success");
+  } catch (error) {
+    renderReportsState("Busca não concluída", error.message || "Não foi possível carregar o relatório.");
+    setReportsStatus(error.message || "Não foi possível carregar o relatório.", "error");
+  } finally {
+    reportsSearchInProgress = false;
+    reportsSearchButton.classList.remove("is-loading");
+    reportsSearchButton.setAttribute("aria-busy", "false");
+    reportsSearchButton.textContent = idleLabel;
+    syncReportsSearchInputs();
+  }
+}
+
 function updateFormsClearButtonState() {
   const clearButton = document.getElementById("clearFormsButton");
   if (!clearButton) {
     return;
   }
   clearButton.disabled = formsTotal === 0;
-}
-
-async function clearForms() {
-  const confirmed = window.confirm("Deseja remover todos os registros da aba Forms?");
-  if (!confirmed) {
-    return;
-  }
-
-  const clearButton = document.getElementById("clearFormsButton");
-  if (clearButton) {
-    clearButton.disabled = true;
-  }
-
-  try {
-    const payload = await deleteJson("/api/admin/forms");
-    await loadForms();
-    requestRefreshAllTables();
-    setStatus(payload?.message || "Registros de Forms removidos com sucesso.", true);
-  } finally {
-    updateFormsClearButtonState();
-  }
 }
 
 async function refreshActiveTab() {
@@ -3445,6 +3599,9 @@ async function refreshActiveTab() {
     return;
   }
   if (activeTab === "forms") {
+    return;
+  }
+  if (activeTab === "relatorios") {
     return;
   }
   if (activeTab === "inactive") {
@@ -4164,13 +4321,6 @@ function bindActions() {
     logout().catch((error) => setAuthStatus(error.message, "error"));
   });
 
-  const clearFormsButton = document.getElementById("clearFormsButton");
-  if (clearFormsButton) {
-    clearFormsButton.addEventListener("click", () => {
-      clearForms().catch((error) => setStatus(error.message, false));
-    });
-  }
-
   const changePasswordButton = document.getElementById("changePasswordButton");
   const refreshFormsButton = document.getElementById("refreshFormsButton");
   const refreshInactiveButton = document.getElementById("refreshInactiveButton");
@@ -4185,6 +4335,25 @@ function bindActions() {
   bindManualRefreshButton(refreshAdministratorsButton, loadAdministrators);
   bindManualRefreshButton(refreshUsersButton, loadRegisteredUsers);
   bindManualRefreshButton(refreshEventsButton, loadEvents);
+  if (reportsSearchButton) {
+    reportsSearchButton.dataset.idleLabel = String(reportsSearchButton.textContent || "Buscar").trim() || "Buscar";
+    reportsSearchButton.addEventListener("click", () => {
+      submitReportsSearch();
+    });
+  }
+  [reportsSearchChaveInput, reportsSearchNomeInput].filter(Boolean).forEach((input) => {
+    input.addEventListener("input", () => {
+      setReportsStatus("");
+      syncReportsSearchInputs();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitReportsSearch();
+      }
+    });
+  });
+  resetReportsView();
   if (changePasswordForm) {
     changePasswordForm.addEventListener("submit", (event) => {
       event.preventDefault();

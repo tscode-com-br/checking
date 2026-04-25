@@ -11,9 +11,8 @@ from ..database import get_db
 from ..models import User, UserSyncEvent
 from ..schemas import ProviderCheckSubmitRequest, ProviderCheckSubmitResponse
 from ..services.admin_updates import notify_admin_data_changed
-from ..services.event_logger import log_event
 from ..services.project_catalog import ensure_known_project
-from ..services.time_utils import now_sgt, resolve_project_timezone_name
+from ..services.time_utils import resolve_project_timezone_name
 from ..services.user_profiles import merge_provider_date_and_time, normalize_person_name
 from ..services.user_sync import (
     apply_user_state,
@@ -34,40 +33,12 @@ _ACTION_BY_ACTIVITY = {
 }
 
 
-def _build_provider_log_details(
-    *,
-    payload: ProviderCheckSubmitRequest,
-    event_time,
-    created_user: bool,
-    updated_project: bool,
-    updated_current_state: bool,
-) -> str:
-    return (
-        f"chave={payload.chave}; nome={payload.nome}; projeto={payload.projeto}; "
-        f"atividade={payload.atividade}; informe={payload.informe}; data={payload.data}; hora={payload.hora}; "
-        f"event_time={event_time.isoformat()}; created_user={created_user}; "
-        f"updated_project={updated_project}; updated_current_state={updated_current_state}; "
-        "forms_skipped=true; reason=source_is_forms_database"
-    )
-
-
 def require_provider_shared_key(
     x_provider_shared_key: str | None = Header(default=None),
-    db: Session = Depends(get_db),
 ) -> None:
     if x_provider_shared_key == settings.provider_shared_key:
         return
 
-    log_event(
-        db,
-        source="provider",
-        action="auth",
-        status="failed",
-        message="Provider API request rejected due to invalid shared key",
-        request_path=PROVIDER_REQUEST_PATH,
-        http_status=401,
-        commit=True,
-    )
     raise HTTPException(status_code=401, detail="Invalid provider shared key")
 
 
@@ -135,28 +106,7 @@ def submit_provider_checking(
         )
     ).scalar_one_or_none()
     if existing_event is not None:
-        log_event(
-            db,
-            source="provider",
-            action=action,
-            status="duplicate",
-            message="Provider event already processed",
-            rfid=user.rfid,
-            project=user.projeto,
-            local=PROVIDER_ACTIVITY_LOCAL,
-            request_path=PROVIDER_REQUEST_PATH,
-            http_status=200,
-            ontime=ontime,
-            details=_build_provider_log_details(
-                payload=payload,
-                event_time=event_time,
-                created_user=created_user,
-                updated_project=updated_project,
-                updated_current_state=False,
-            ),
-        )
         db.commit()
-        notify_admin_data_changed("event")
         if created_user or updated_project:
             notify_admin_data_changed("register")
         return ProviderCheckSubmitResponse(
@@ -225,31 +175,7 @@ def submit_provider_checking(
             and preferred_event_time == event_time
         )
 
-    log_event(
-        db,
-        idempotency_key=f"provider:{provider_request_id}",
-        source="provider",
-        action=action,
-        status="created" if created_user else ("updated" if updated_project or updated_current_state else "synced"),
-        message="Provider event processed successfully",
-        rfid=user.rfid,
-        project=user.projeto,
-        device_id="provider",
-        local=PROVIDER_ACTIVITY_LOCAL,
-        request_path=PROVIDER_REQUEST_PATH,
-        http_status=200,
-        ontime=ontime,
-        submitted_at=now_sgt(),
-        details=_build_provider_log_details(
-            payload=payload,
-            event_time=event_time,
-            created_user=created_user,
-            updated_project=updated_project,
-            updated_current_state=updated_current_state,
-        ),
-    )
     db.commit()
-    notify_admin_data_changed("event")
     notify_admin_data_changed(action)
     if created_user or updated_project:
         notify_admin_data_changed("register")

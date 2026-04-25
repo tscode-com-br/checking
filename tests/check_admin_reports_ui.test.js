@@ -1,0 +1,53 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const adminHtml = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/admin/index.html'),
+  'utf8'
+);
+
+const adminJs = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/admin/app.js'),
+  'utf8'
+);
+
+const adminCss = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/admin/styles.css'),
+  'utf8'
+);
+
+test('admin reports tab is inserted between cadastro and eventos with the expected search and results structure', () => {
+  assert.match(adminHtml, /data-tab="cadastro"[\s\S]*data-tab="relatorios"[\s\S]*data-tab="eventos"/);
+  assert.match(adminHtml, /<section id="tab-relatorios" class="tab reports-tab">[\s\S]*<h2>Relatórios<\/h2>/);
+  assert.match(adminHtml, /class="project-editor-panel reports-search-panel"/);
+  assert.match(adminHtml, /class="presence-controls-grid reports-search-grid"/);
+  assert.match(adminHtml, /class="locations-actions-bar reports-search-actions"/);
+  assert.match(adminHtml, /class="project-editor-panel reports-results-panel"/);
+  assert.match(adminHtml, /id="reportsSearchChave"/);
+  assert.match(adminHtml, /id="reportsSearchNome"/);
+  assert.match(adminHtml, /id="reportsSearchButton"[\s\S]*>Buscar</);
+  assert.match(adminHtml, /id="reportsResultsBody" class="reports-results-body"/);
+  assert.match(adminHtml, /id="reportsPersonTitle">Nenhuma busca realizada</);
+});
+
+test('admin reports controller keeps the tab full-admin only and wires the mutual search flow', () => {
+  assert.match(adminJs, /relatorios:\s*"Relatórios"/);
+  assert.match(adminJs, /const DEFAULT_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"\]\);/);
+  assert.match(adminJs, /const LIMITED_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout"\]\);/);
+  assert.match(adminJs, /reportsSearchNomeInput\.disabled = hasChave;/);
+  assert.match(adminJs, /reportsSearchChaveInput\.disabled = hasNome;/);
+  assert.match(adminJs, /fetchJson\(`\/api\/admin\/reports\/events\?\$\{query\.toString\(\)\}`\)/);
+  assert.match(adminJs, /if \(activeTab === "relatorios"\) \{\s*return;\s*\}/);
+  assert.match(adminJs, /reportsSearchButton\.addEventListener\("click", \(\) => \{\s*submitReportsSearch\(\);\s*\}\);/);
+});
+
+test('admin reports styles keep tabs uniform and align the new report search layout', () => {
+  assert.match(adminCss, /\.tabs \{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(auto-fit, minmax\(128px, 1fr\)\);/);
+  assert.match(adminCss, /\.tabs button \{[\s\S]*width:\s*100%;[\s\S]*justify-content:\s*center;[\s\S]*white-space:\s*normal;/);
+  assert.match(adminCss, /\.reports-search-grid \{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(adminCss, /\.reports-search-actions \{[\s\S]*justify-content:\s*flex-end;/);
+  assert.match(adminCss, /\.reports-results-body \{[\s\S]*display:\s*grid;[\s\S]*gap:\s*16px;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.tabs \{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[\s\S]*\.reports-search-grid \{[\s\S]*grid-template-columns:\s*1fr;/);
+});

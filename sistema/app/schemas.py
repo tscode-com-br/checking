@@ -682,7 +682,7 @@ class AdminIdentity(BaseModel):
     nome_completo: str
     perfil: int
     access_scope: Literal["limited", "full"]
-    allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "eventos", "banco-dados"]] = Field(default_factory=list)
+    allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]] = Field(default_factory=list)
 
 
 class AdminSessionResponse(BaseModel):
@@ -814,6 +814,35 @@ class ProviderFormRow(BaseModel):
     informe: Literal["normal", "retroativo"]
     data: str
     hora: str
+
+
+class ReportPersonRow(BaseModel):
+    id: int
+    rfid: Optional[str]
+    nome: str
+    chave: str
+    projeto: str
+    timezone_name: str
+    timezone_label: str
+
+
+class ReportEventRow(BaseModel):
+    id: int
+    source: str
+    action: Literal["checkin", "checkout"]
+    projeto: str
+    local: Optional[str]
+    ontime: bool
+    assiduidade: Literal["Normal", "Retroativo"]
+    event_time: datetime
+    timezone_name: str
+    timezone_label: str
+    event_date: str
+
+
+class ReportEventsResponse(BaseModel):
+    person: ReportPersonRow
+    events: list[ReportEventRow] = Field(default_factory=list)
 
 
 class AdminUserListRow(BaseModel):

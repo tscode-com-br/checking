@@ -646,6 +646,86 @@ def test_provider_endpoint_requires_valid_shared_key():
     assert response.json()["detail"] == "Invalid provider shared key"
 
 
+def test_provider_endpoint_never_writes_check_events_for_failed_duplicate_or_successful_requests():
+    with SessionLocal() as db:
+        check_event_ids_before = db.execute(
+            select(CheckEvent.id)
+            .where(CheckEvent.request_path == "/api/provider/updaterecords")
+            .order_by(CheckEvent.id)
+        ).scalars().all()
+
+    with TestClient(app) as client:
+        invalid = client.post(
+            "/api/provider/updaterecords",
+            json={
+                "chave": "PV14",
+                "nome": "USUARIO PROVIDER SEM LOG",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "18/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert invalid.status_code == 401, invalid.text
+
+        created = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV14",
+                "nome": "USUARIO PROVIDER SEM LOG",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "18/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert created.json()["duplicate"] is False
+
+        duplicate = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV14",
+                "nome": "USUARIO PROVIDER SEM LOG",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "18/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["duplicate"] is True
+
+    with SessionLocal() as db:
+        check_event_ids_after = db.execute(
+            select(CheckEvent.id)
+            .where(CheckEvent.request_path == "/api/provider/updaterecords")
+            .order_by(CheckEvent.id)
+        ).scalars().all()
+        history_rows = db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == "PV14")
+            .order_by(CheckingHistory.id)
+        ).scalars().all()
+        provider_events = db.execute(
+            select(UserSyncEvent)
+            .where(UserSyncEvent.chave == "PV14", UserSyncEvent.source == "provider")
+            .order_by(UserSyncEvent.id)
+        ).scalars().all()
+        user = get_user_by_chave(db, "PV14")
+
+    assert check_event_ids_after == check_event_ids_before
+    assert user is not None
+    assert len(history_rows) == 1
+    assert history_rows[0].atividade == "check-in"
+    assert len(provider_events) == 1
+
+
 def test_provider_endpoint_creates_user_and_history_with_normalized_name():
     with TestClient(app) as client:
         response = client.post(
@@ -734,13 +814,12 @@ def test_provider_endpoint_never_enqueues_forms_even_for_multiple_events():
         ).scalars().all()
         provider_log_rows = db.execute(
             select(CheckEvent)
-            .where(CheckEvent.source == "provider", CheckEvent.project == "P80")
+            .where(CheckEvent.source == "provider", CheckEvent.request_path == "/api/provider/updaterecords")
             .order_by(CheckEvent.id.desc())
         ).scalars().all()
 
     assert forms_rows == []
-    assert provider_log_rows
-    assert all("forms_skipped=true" in (row.details or "") for row in provider_log_rows[:2])
+    assert provider_log_rows == []
 
 
 def test_provider_endpoint_updates_project_but_keeps_existing_name():
@@ -1102,7 +1181,7 @@ def test_web_check_ignores_provider_checkout_when_deciding_same_day_submission()
             assert len(queued) == 2
 
 
-def test_admin_can_clear_forms_rows_without_archiving():
+def test_admin_forms_clear_route_is_disabled_and_keeps_legacy_audit_rows():
     timestamp = now_sgt().replace(microsecond=0)
     provider_event_key = uuid.uuid4().hex
     device_event_key = uuid.uuid4().hex
@@ -1155,12 +1234,11 @@ def test_admin_can_clear_forms_rows_without_archiving():
 
         forms_before = client.get("/api/admin/forms")
         assert forms_before.status_code == 200, forms_before.text
-        assert any(row["chave"] == "PF99" for row in forms_before.json())
+        assert all(row["chave"] != "PF99" for row in forms_before.json())
 
         cleared = client.delete("/api/admin/forms")
-        assert cleared.status_code == 200, cleared.text
-        assert cleared.json()["ok"] is True
-        assert "Forms" in cleared.json()["message"]
+        assert cleared.status_code == 405, cleared.text
+        assert "somente leitura" in cleared.json()["detail"]
 
         forms_after = client.get("/api/admin/forms")
         assert forms_after.status_code == 200, forms_after.text
@@ -1174,8 +1252,241 @@ def test_admin_can_clear_forms_rows_without_archiving():
             select(CheckEvent).where(CheckEvent.idempotency_key == device_event_key)
         ).scalar_one_or_none()
 
-    assert provider_event is None
+    assert provider_event is not None
     assert device_event is not None
+
+
+def test_admin_reports_events_returns_history_by_chave_in_desc_order():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P98")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P98", **build_project_fields_for_country("JP")))
+            db.flush()
+
+        user = User(
+            rfid="RPT1001",
+            chave="RP41",
+            nome="Usuario Relatorio Chave",
+            projeto="P80",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        older_time = datetime(2026, 4, 24, 18, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+        same_time = datetime(2026, 4, 25, 9, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        db.add_all(
+            [
+                UserSyncEvent(
+                    user_id=user.id,
+                    chave=user.chave,
+                    rfid=user.rfid,
+                    source="web",
+                    action="checkin",
+                    projeto="P80",
+                    local="Web",
+                    ontime=True,
+                    event_time=older_time,
+                    created_at=now_sgt(),
+                    source_request_id=f"report-web-{uuid.uuid4().hex}",
+                    device_id=None,
+                ),
+                UserSyncEvent(
+                    user_id=user.id,
+                    chave=user.chave,
+                    rfid=user.rfid,
+                    source="provider",
+                    action="checkin",
+                    projeto="P98",
+                    local="Forms",
+                    ontime=False,
+                    event_time=same_time,
+                    created_at=now_sgt(),
+                    source_request_id=f"report-provider-1-{uuid.uuid4().hex}",
+                    device_id="provider",
+                ),
+                UserSyncEvent(
+                    user_id=user.id,
+                    chave=user.chave,
+                    rfid=user.rfid,
+                    source="provider",
+                    action="checkout",
+                    projeto="P98",
+                    local="Forms",
+                    ontime=True,
+                    event_time=same_time,
+                    created_at=now_sgt(),
+                    source_request_id=f"report-provider-2-{uuid.uuid4().hex}",
+                    device_id="provider",
+                ),
+            ]
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        response = client.get("/api/admin/reports/events", params={"chave": "rp41"})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    assert payload["person"]["chave"] == "RP41"
+    assert payload["person"]["nome"] == "Usuario Relatorio Chave"
+    assert payload["person"]["projeto"] == "P80"
+    assert len(payload["events"]) == 3
+    assert [row["action"] for row in payload["events"]] == ["checkout", "checkin", "checkin"]
+    assert payload["events"][0]["source"] == "provider"
+    assert payload["events"][0]["projeto"] == "P98"
+    assert payload["events"][0]["timezone_name"] == "Asia/Tokyo"
+    assert payload["events"][0]["timezone_label"] == "Japão (+9)"
+    assert payload["events"][0]["event_date"] == "25/04/2026"
+    assert payload["events"][0]["assiduidade"] == "Normal"
+    assert payload["events"][1]["assiduidade"] == "Retroativo"
+    assert payload["events"][2]["source"] == "web"
+
+
+def test_admin_reports_events_returns_history_by_unique_nome():
+    with SessionLocal() as db:
+        user = User(
+            rfid=None,
+            chave="RP42",
+            nome="Relatorio Nome Unico",
+            projeto="P82",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="android",
+                action="checkin",
+                projeto="P82",
+                local="App",
+                ontime=True,
+                event_time=datetime(2026, 4, 25, 7, 0, 0, tzinfo=ZoneInfo(settings.tz_name)),
+                created_at=now_sgt(),
+                source_request_id=f"report-android-{uuid.uuid4().hex}",
+                device_id="android-app",
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/reports/events", params={"nome": "  RELATORIO   NOME UNICO  "})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    assert payload["person"]["chave"] == "RP42"
+    assert payload["person"]["nome"] == "Relatorio Nome Unico"
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["source"] == "android"
+    assert payload["events"][0]["local"] == "App"
+
+
+def test_admin_reports_events_rejects_ambiguous_nome():
+    duplicated_name = "Relatorio Nome Duplicado"
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                User(
+                    rfid=None,
+                    chave="RP43",
+                    nome=duplicated_name,
+                    projeto="P80",
+                    local=None,
+                    checkin=None,
+                    time=None,
+                    last_active_at=now_sgt(),
+                    inactivity_days=0,
+                ),
+                User(
+                    rfid=None,
+                    chave="RP44",
+                    nome=duplicated_name,
+                    projeto="P82",
+                    local=None,
+                    checkin=None,
+                    time=None,
+                    last_active_at=now_sgt(),
+                    inactivity_days=0,
+                ),
+            ]
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/reports/events", params={"nome": duplicated_name.upper()})
+        assert response.status_code == 409, response.text
+        assert "Use a chave" in response.json()["detail"]
+
+
+def test_admin_reports_events_require_exactly_one_search_criterion():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        missing = client.get("/api/admin/reports/events")
+        assert missing.status_code == 400, missing.text
+        assert "Informe chave ou nome" in missing.json()["detail"]
+
+        invalid = client.get("/api/admin/reports/events", params={"chave": "RP41", "nome": "Usuario"})
+        assert invalid.status_code == 400, invalid.text
+        assert "Informe apenas chave ou nome" in invalid.json()["detail"]
+
+
+def test_admin_reports_events_route_is_restricted_to_full_admin():
+    with SessionLocal() as db:
+        user = find_user_by_chave(db, "PZ00")
+        if user is None:
+            user = User(
+                rfid=None,
+                nome="Perfil Zero",
+                chave="PZ00",
+                projeto="P80",
+                senha=hash_password("lim123"),
+                perfil=0,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(user)
+        else:
+            user.nome = "Perfil Zero"
+            user.projeto = "P80"
+            user.senha = hash_password("lim123")
+            user.perfil = 0
+            user.last_active_at = now_sgt()
+            user.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="PZ00", senha="lim123")
+        assert login_response.status_code == 200
+
+        denied = client.get("/api/admin/reports/events", params={"chave": "RP41"})
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
 
 
 def test_admin_stream_requires_valid_session():
@@ -8505,6 +8816,7 @@ def test_admin_login_session_and_logout_flow():
             "forms",
             "inactive",
             "cadastro",
+            "relatorios",
             "eventos",
             "banco-dados",
         ]
