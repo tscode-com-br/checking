@@ -1166,13 +1166,16 @@ class DeployLauncher:
             f"REMOTE_ARCHIVE={archive_path}",
             f"STAGE_DIR={stage_dir}",
             'case "$DEPLOY_DIR" in "~"|"~/"*) DEPLOY_DIR="${HOME}${DEPLOY_DIR:1}" ;; esac',
+            'cleanup() {',
+            '  rm -rf "$STAGE_DIR" "$REMOTE_ARCHIVE"',
+            '}',
+            'trap cleanup EXIT',
             'mkdir -p "$DEPLOY_DIR"',
             'rm -rf "$STAGE_DIR"',
             'mkdir -p "$STAGE_DIR"',
             'tar -xzf "$REMOTE_ARCHIVE" -C "$STAGE_DIR"',
             'find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name ".env" -exec rm -rf {} +',
             'cp -a "$STAGE_DIR"/. "$DEPLOY_DIR"/',
-            'rm -rf "$STAGE_DIR" "$REMOTE_ARCHIVE"',
         ]
         return "\n".join(lines)
 

@@ -37,7 +37,7 @@ if command -v journalctl >/dev/null 2>&1; then
 fi
 
 log "Removing stale Checkcheck temp files"
-find /tmp /var/tmp -maxdepth 1 \( -name 'checkcheck-deploy-*' -o -name 'checkcheck-stage-*' -o -name 'checkcheck-rsync-*' \) -mtime +1 -exec rm -rf {} + || true
+find /tmp /var/tmp -maxdepth 1 \( -name 'checkcheck-deploy-*' -o -name 'checkcheck-stage-*' -o -name 'checkcheck-rsync-*' \) -mmin +120 -exec rm -rf {} + || true
 
 log "Root filesystem usage after cleanup"
 df -h /
