@@ -123,6 +123,21 @@ jobs:
             set -e
             mkdir -p ${{ steps.deploy_dir.outputs.path }}
 
+      - name: Remove legacy nested app directories
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ steps.deploy_dir.outputs.path }}
+            rm -rf checking_android_new checking_kotlin checking_kotlin_new
+
       - name: Sync project to server
         uses: burnett01/rsync-deployments@dc0d5d44c4728aad3f02154a87309809e62a960f # 8.0.4
         with:
@@ -143,6 +158,44 @@ jobs:
           remote_port: ${{ env.OCEAN_PORT }}
           strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
           rsh: ${{ steps.ssh_verification.outputs.rsh }}
+
+      - name: Preflight deploy disk guard
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 10m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            min_free_gib=8
+            min_free_bytes=$((min_free_gib * 1024 * 1024 * 1024))
+
+            if [ -x /usr/local/sbin/checkcheck-ssd-cleanup ]; then
+              /usr/local/sbin/checkcheck-ssd-cleanup
+            else
+              docker image prune -af || true
+              docker builder prune -af || true
+              docker system prune -af --volumes || true
+              apt-get clean || true
+              rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* || true
+              find /tmp /var/tmp -mindepth 1 -mmin +120 -exec rm -rf {} + 2>/dev/null || true
+            fi
+
+            available_bytes="$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
+            used_percent="$(df --output=pcent / | tail -n 1 | tr -dc '0-9')"
+
+            if [ "$available_bytes" -lt "$min_free_bytes" ]; then
+              echo "Free disk after preflight cleanup is below ${min_free_gib}GiB; aborting before image pull."
+              df -h /
+              docker system df || true
+              exit 1
+            fi
+
+            echo "Preflight disk guard passed with $((available_bytes / 1024 / 1024 / 1024))GiB free and ${used_percent}% used."
 
       - name: Snapshot disk usage before restart
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5

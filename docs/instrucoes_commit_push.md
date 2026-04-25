@@ -1,6 +1,6 @@
 # Commit e Push no Projeto Checking
 
-Status deste documento: validado em 2026-04-24.
+Status deste documento: validado em 2026-04-25.
 
 Este arquivo registra o procedimento recomendado para commits e pushes no workspace atual do projeto Checking. O objetivo é servir como contexto operacional de alta confiabilidade para manutenção, publicação e recuperação rápida em caso de incidente.
 
@@ -68,14 +68,18 @@ Esse workflow:
 2. compila a imagem da aplicação no GitHub Actions e publica no GHCR;
 3. prepara verificação SSH;
 4. garante que o diretório remoto existe;
-5. sincroniza o projeto operacional com `rsync`;
-6. executa `docker compose up -d db` no servidor;
-7. executa `docker compose pull` da imagem publicada e `docker compose up -d --no-build --force-recreate`;
-8. valida `http://127.0.0.1:8000/api/health` no servidor;
-9. instala ou atualiza a automação periódica de limpeza de SSD no droplet;
-10. faz prune de artefatos Docker não utilizados e remove temporários antigos.
+5. remove diretórios legados de apps aninhados no servidor, como `checking_android_new/` e `checking_kotlin/`, antes do `rsync`;
+6. sincroniza o projeto operacional com `rsync`;
+7. executa limpeza preventiva de SSD e um guard de espaço livre antes do `pull`, abortando o deploy antes da troca de imagem se o droplet ficar abaixo do piso configurado;
+8. registra snapshot de disco antes do restart;
+9. executa `docker compose up -d db` no servidor;
+10. executa `docker compose pull` da imagem publicada e `docker compose up -d --no-build --force-recreate`;
+11. registra snapshot de disco depois do restart;
+12. valida `http://127.0.0.1:8000/api/health` no servidor;
+13. instala ou atualiza a automação periódica de limpeza de SSD no droplet;
+14. faz prune de artefatos Docker não utilizados, remove temporários antigos e registra snapshot final de disco.
 
-Resumo: push em `main` do root publica o código, gera a imagem fora do droplet e envia o deploy para a DigitalOcean automaticamente com bem menos pressão de disco no servidor.
+Resumo: push em `main` do root publica o código, gera a imagem fora do droplet e envia o deploy para a DigitalOcean automaticamente com bem menos pressão de disco no servidor e com um bloqueio preventivo antes do `pull` se o espaço livre do root ficar insuficiente.
 
 ### 3.2 Repositório Flutter `checking_android_new`
 
@@ -224,6 +228,7 @@ Impacto:
 
 - esse comando publica o código no GitHub e dispara o workflow global de deploy na DigitalOcean;
 - o build pesado da imagem deixa de acontecer no droplet principal e passa a ocorrer no GitHub Actions, reduzindo acúmulo recorrente em `/var/lib/containerd` e áreas afins;
+- o workflow agora executa uma limpeza preventiva e um `Preflight deploy disk guard` antes do `docker compose pull`, para falhar cedo quando o espaço livre do root ficar abaixo do piso configurado em vez de estourar SSD no meio da troca de imagem;
 - `main` continua sendo branch sensível, porque qualquer push nela provoca rollout de produção;
 - se a orientação for risco zero, não faça push em `main` sem aprovação explícita.
 
@@ -277,6 +282,21 @@ Resposta esperada da API:
 ```json
 {"status":"ok","app":"checking-sistema"}
 ```
+
+Validação operacional adicional recomendada depois de push no root:
+
+```powershell
+gh run list -R tscode-com-br/checking --limit 5 --json databaseId,displayTitle,status,conclusion,headSha,createdAt
+gh run view <RUN_ID> -R tscode-com-br/checking --log
+```
+
+Se o workflow parar no passo `Preflight deploy disk guard`:
+
+1. não crie commit vazio nem novo push só para tentar de novo;
+2. abra o log do run e confirme os snapshots `before restart` e `after cleanup`;
+3. trate o problema como falta de espaço no droplet, não como erro de código do commit por padrão;
+4. libere espaço no servidor ou corrija a causa do crescimento antes de rerodar o workflow manualmente;
+5. só depois use `gh workflow run deploy-oceandrive.yml -R tscode-com-br/checking` como fallback.
 
 ## 7. Procedimento para o repositório Flutter
 
@@ -464,7 +484,27 @@ Isso existe para controlar crescimento de disco em `/var/lib/containerd`.
 
 Além da poda ao final do workflow, o deploy instala e mantém um timer `systemd` que executa limpeza periódica de cache Docker, journals antigos, cache `apt` e temporários antigos do projeto.
 
-### 11.7 O arquivo `.env` de produção fica somente no servidor
+### 11.7 O workflow agora faz limpeza preventiva e guard de disco antes do `pull`
+
+O deploy principal passou a executar uma limpeza preventiva no droplet antes de puxar a nova imagem e aborta o rollout antes do `docker compose pull` se o root ficar com menos espaço livre que o piso configurado.
+
+Objetivo:
+
+- evitar que deploys futuros falhem no meio da troca de imagem por falta de SSD;
+- transformar pressão de disco em falha precoce, legível e recuperável;
+- manter nos logs os snapshots `before restart`, `after restart` e `after cleanup` para diagnosticar variações reais de uso.
+
+### 11.8 Diretórios legados de apps aninhados no servidor nao devem voltar
+
+O workflow remove explicitamente `checking_android_new/`, `checking_kotlin/` e `checking_kotlin_new/` do diretório remoto antes do `rsync`.
+
+Motivo:
+
+- diretórios antigos com `.git/` interno podem sobreviver ao `rsync --delete` por causa do `--exclude ".git/"`;
+- isso gera aviso `cannot delete non-empty directory` e deixa lixo operacional ocupando SSD no servidor;
+- esses diretórios nao pertencem ao deploy do repo principal e nao devem existir no droplet de produção.
+
+### 11.9 O arquivo `.env` de produção fica somente no servidor
 
 Ele não vai para o GitHub, não vai no rsync e não deve entrar em commit.
 
