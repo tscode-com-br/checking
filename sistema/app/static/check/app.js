@@ -162,6 +162,9 @@
   const userTransportLocalStateStorageKey = 'checking.web.transport.local-state.by-chave';
   const locationPromptAttemptedKey = 'checking.web.user.location.prompt-attempted';
   const locationPermissionGrantedKey = 'checking.web.user.location.permission-granted';
+  const locationMeasurementStorageKey = 'checking.web.location.measurement.enabled';
+  const locationMeasurementConsoleLabel = '[checking.location.measurement]';
+  const locationMeasurementSessionLimit = 120;
   const defaultManualLocationLabel = 'Escritório Principal';
   const transportAutoRefreshIntervalMs = 10000;
   const transportRealtimeRefreshDebounceMs = 220;
@@ -178,6 +181,21 @@
     maximumAge: 0,
     timeout: 20000,
   };
+  const enforcedLocationCapturePlan = Object.freeze({
+    strategy: 'watch_window',
+    minimumWindowMs: 3000,
+    maxWindowMs: 7000,
+  });
+  const locationCapturePlansByTrigger = Object.freeze({
+    startup: enforcedLocationCapturePlan,
+    submit_guard: enforcedLocationCapturePlan,
+    manual_refresh: enforcedLocationCapturePlan,
+    automatic_activities_enable: enforcedLocationCapturePlan,
+    automatic_activities_disable: enforcedLocationCapturePlan,
+    visibility: enforcedLocationCapturePlan,
+    focus: enforcedLocationCapturePlan,
+    pageshow: enforcedLocationCapturePlan,
+  });
   const weekdayFormatter = new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
   });
@@ -246,10 +264,13 @@
   let authStatusRequestToken = 0;
   let authStatusAbortController = null;
   let lastLifecycleTriggerAt = 0;
+  let locationMeasurementSessionCounter = 0;
+  let locationMeasurementSessions = [];
   let locationRequestPromise = null;
   let currentLocationMatch = null;
   let latestHistoryState = null;
   let availableLocations = [];
+  let locationAccuracyThresholdMeters = null;
   let gpsLocationPermissionGranted = false;
   let lifecycleRefreshInProgress = false;
   let locationRefreshLoading = false;
@@ -1319,6 +1340,668 @@
     return toneByStatus[payload && payload.status] || 'success';
   }
 
+  function isLocationMeasurementEnabled() {
+    if (window.__CHECKING_LOCATION_MEASUREMENT__ === true) {
+      return true;
+    }
+
+    try {
+      return window.localStorage.getItem(locationMeasurementStorageKey) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function cloneLocationMeasurementSession(session) {
+    if (!session) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(session));
+    } catch {
+      return null;
+    }
+  }
+
+  function getLocationMeasurementSessions() {
+    return locationMeasurementSessions
+      .map((session) => cloneLocationMeasurementSession(session))
+      .filter(Boolean);
+  }
+
+  function cloneLocationMeasurementValue(value) {
+    if (value === null || typeof value !== 'object') {
+      return value;
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return null;
+    }
+  }
+
+  function getLocationMeasurementTrigger(options) {
+    const settings = options || {};
+    const trigger = typeof settings.measurementTrigger === 'string'
+      ? settings.measurementTrigger.trim()
+      : '';
+
+    if (trigger) {
+      return trigger;
+    }
+
+    return settings.interactive ? 'interactive' : 'silent_lookup';
+  }
+
+  function buildLocationMeasurementBrowserLabel() {
+    const navigatorRef = window.navigator || {};
+    return String(navigatorRef.userAgent || '').trim() || 'unknown';
+  }
+
+  function buildLocationMeasurementConsoleSnapshot(session) {
+    if (!session) {
+      return null;
+    }
+
+    return {
+      session_id: session.session_id,
+      trigger: session.trigger,
+      strategy: session.strategy,
+      samples_received: session.samples_received,
+      best_accuracy_meters: session.best_accuracy_meters,
+      final_accuracy_sent_meters: session.final_accuracy_sent_meters,
+      threshold_meters: session.threshold_meters,
+      final_status: session.final_status,
+      termination_reason: session.termination_reason,
+      timed_out: session.timed_out,
+      duplicate_post: session.duplicate_post,
+      duration_ms: session.duration_ms,
+    };
+  }
+
+  function shouldLogLocationMeasurementEvent(eventName) {
+    return eventName === 'session_started'
+      || eventName === 'geolocation_error'
+      || eventName === 'session_finalized'
+      || eventName === 'session_anomaly';
+  }
+
+  function recordLocationMeasurementEvent(session, eventName, details) {
+    if (!session) {
+      return;
+    }
+
+    const payload = details || {};
+    const event = {
+      event: eventName,
+      at: new Date().toISOString(),
+      elapsed_ms: Date.now() - session.started_at_ms,
+      details: payload,
+    };
+    session.events.push(event);
+
+    if (shouldLogLocationMeasurementEvent(eventName)) {
+      console.info(
+        locationMeasurementConsoleLabel,
+        eventName,
+        buildLocationMeasurementConsoleSnapshot(session),
+        payload
+      );
+    }
+  }
+
+  function createLocationMeasurementSession(options) {
+    if (!isLocationMeasurementEnabled()) {
+      return null;
+    }
+
+    const startedAtMs = Date.now();
+    const strategy = options && typeof options.captureStrategy === 'string' && options.captureStrategy.trim()
+      ? options.captureStrategy.trim()
+      : 'single_attempt';
+    const targetAccuracyMeters = options && typeof options.targetAccuracyMeters === 'number' && Number.isFinite(options.targetAccuracyMeters)
+      ? options.targetAccuracyMeters
+      : null;
+    const session = {
+      session_id: `loc-${startedAtMs}-${++locationMeasurementSessionCounter}`,
+      strategy,
+      trigger: getLocationMeasurementTrigger(options),
+      interactive: Boolean(options && options.interactive),
+      force_refresh: Boolean(options && options.forceRefresh),
+      browser: buildLocationMeasurementBrowserLabel(),
+      browser_language: String((window.navigator && window.navigator.language) || '').trim() || 'unknown',
+      secure_context: window.isSecureContext === true,
+      started_at: new Date(startedAtMs).toISOString(),
+      started_at_ms: startedAtMs,
+      finished_at: null,
+      finished_at_ms: null,
+      duration_ms: null,
+      time_to_first_sample_ms: null,
+      samples_received: 0,
+      best_accuracy_meters: null,
+      time_to_best_sample_ms: null,
+      final_accuracy_sent_meters: null,
+      threshold_meters: targetAccuracyMeters,
+      final_status: null,
+      termination_reason: null,
+      timed_out: false,
+      cancelled: false,
+      duplicate_post: false,
+      match_post_count: 0,
+      ui_stuck: false,
+      events: [],
+    };
+
+    locationMeasurementSessions.push(session);
+    if (locationMeasurementSessions.length > locationMeasurementSessionLimit) {
+      locationMeasurementSessions = locationMeasurementSessions.slice(-locationMeasurementSessionLimit);
+    }
+
+    recordLocationMeasurementEvent(session, 'session_started', {
+      trigger: session.trigger,
+      interactive: session.interactive,
+      force_refresh: session.force_refresh,
+      strategy: session.strategy,
+      target_accuracy_meters: targetAccuracyMeters,
+    });
+    return session;
+  }
+
+  function hasFiniteCoordinate(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+
+  function readPositionAccuracyMeters(position) {
+    const accuracy = position && position.coords ? position.coords.accuracy : null;
+    return typeof accuracy === 'number' && Number.isFinite(accuracy)
+      ? accuracy
+      : null;
+  }
+
+  function setLocationAccuracyThresholdMeters(value) {
+    locationAccuracyThresholdMeters = typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : null;
+  }
+
+  function isLocationSampleBetter(candidatePosition, currentBestPosition) {
+    if (!candidatePosition) {
+      return false;
+    }
+
+    const candidateCoords = candidatePosition.coords || null;
+    const candidateAccuracy = readPositionAccuracyMeters(candidatePosition);
+    if (!candidateCoords || !hasFiniteCoordinate(candidateCoords.latitude) || !hasFiniteCoordinate(candidateCoords.longitude) || candidateAccuracy === null) {
+      return false;
+    }
+
+    if (!currentBestPosition) {
+      return true;
+    }
+
+    const currentBestAccuracy = readPositionAccuracyMeters(currentBestPosition);
+
+    if (currentBestAccuracy === null) {
+      return true;
+    }
+    if (candidateAccuracy < currentBestAccuracy) {
+      return true;
+    }
+    if (candidateAccuracy > currentBestAccuracy) {
+      return false;
+    }
+
+    const candidateTimestamp = typeof candidatePosition.timestamp === 'number'
+      ? candidatePosition.timestamp
+      : 0;
+    const currentBestTimestamp = typeof currentBestPosition.timestamp === 'number'
+      ? currentBestPosition.timestamp
+      : 0;
+    return candidateTimestamp >= currentBestTimestamp;
+  }
+
+  function buildLocationCapturePlan(options) {
+    const trigger = getLocationMeasurementTrigger(options);
+    const configuredPlan = locationCapturePlansByTrigger[trigger] || null;
+
+    if (!configuredPlan) {
+      return {
+        trigger,
+        strategy: 'single_attempt',
+        minimumWindowMs: 0,
+        maxWindowMs: 0,
+        targetAccuracyMeters: locationAccuracyThresholdMeters,
+      };
+    }
+
+    return {
+      trigger,
+      strategy: configuredPlan.strategy,
+      minimumWindowMs: configuredPlan.minimumWindowMs,
+      maxWindowMs: configuredPlan.maxWindowMs,
+      targetAccuracyMeters: locationAccuracyThresholdMeters,
+    };
+  }
+
+  function shouldStopLocationWatch(bestPosition, capturePlan, startedAtMs) {
+    if (!bestPosition || !capturePlan) {
+      return false;
+    }
+
+    if (Date.now() - startedAtMs < capturePlan.minimumWindowMs) {
+      return false;
+    }
+
+    const targetAccuracyMeters = capturePlan.targetAccuracyMeters;
+    const bestAccuracyMeters = readPositionAccuracyMeters(bestPosition);
+    return typeof targetAccuracyMeters === 'number'
+      && Number.isFinite(targetAccuracyMeters)
+      && typeof bestAccuracyMeters === 'number'
+      && Number.isFinite(bestAccuracyMeters)
+      && bestAccuracyMeters <= targetAccuracyMeters;
+  }
+
+  function buildWatchGeolocationOptions(capturePlan) {
+    if (!capturePlan || !capturePlan.maxWindowMs) {
+      return geolocationOptions;
+    }
+
+    return {
+      ...geolocationOptions,
+      timeout: Math.min(geolocationOptions.timeout, capturePlan.maxWindowMs),
+    };
+  }
+
+  function buildLocationWatchTimeoutError() {
+    const error = new Error('A busca pela localização demorou mais do que o esperado.');
+    error.code = 3;
+    return error;
+  }
+
+  function requestWatchedCurrentPosition(capturePlan, measurementSession) {
+    return new Promise((resolve, reject) => {
+      const maxWindowMs = Math.max(
+        Math.trunc(capturePlan && Number.isFinite(capturePlan.maxWindowMs) ? capturePlan.maxWindowMs : 0),
+        0
+      );
+      if (maxWindowMs <= 0) {
+        requestCurrentPosition(measurementSession)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+
+      const startedAtMs = Date.now();
+      let bestPosition = null;
+      let watchId = null;
+      let finished = false;
+      let lastRecoverableError = null;
+
+      recordLocationMeasurementEvent(measurementSession, 'watch_window_started', {
+        max_window_ms: maxWindowMs,
+        minimum_window_ms: capturePlan.minimumWindowMs,
+        target_accuracy_meters: capturePlan.targetAccuracyMeters,
+      });
+
+      function finish(position, error) {
+        if (finished) {
+          return;
+        }
+        finished = true;
+
+        if (watchId !== null) {
+          navigator.geolocation.clearWatch(watchId);
+        }
+        window.clearTimeout(timeoutId);
+
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(position);
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        if (bestPosition) {
+          recordLocationMeasurementEvent(measurementSession, 'watch_window_completed', {
+            termination_reason: 'acquisition_window_elapsed',
+            best_accuracy_meters: readPositionAccuracyMeters(bestPosition),
+          });
+          finish(bestPosition, null);
+          return;
+        }
+
+        recordLocationMeasurementEvent(measurementSession, 'watch_window_completed', {
+          termination_reason: 'acquisition_window_elapsed',
+          best_accuracy_meters: null,
+        });
+        finish(null, lastRecoverableError || buildLocationWatchTimeoutError());
+      }, maxWindowMs);
+
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (position) => {
+            recordLocationMeasurementSample(measurementSession, position);
+            if (isLocationSampleBetter(position, bestPosition)) {
+              bestPosition = position;
+            }
+
+            if (shouldStopLocationWatch(bestPosition, capturePlan, startedAtMs)) {
+              recordLocationMeasurementEvent(measurementSession, 'watch_window_completed', {
+                termination_reason: 'target_accuracy_reached',
+                best_accuracy_meters: readPositionAccuracyMeters(bestPosition),
+              });
+              finish(bestPosition, null);
+            }
+          },
+          (error) => {
+            recordLocationMeasurementEvent(measurementSession, 'geolocation_error', {
+              code: error && typeof error.code === 'number' ? error.code : null,
+              message: error && typeof error.message === 'string' ? error.message : '',
+            });
+
+            if (error && error.code === 1) {
+              finish(null, error);
+              return;
+            }
+
+            lastRecoverableError = error;
+          },
+          buildWatchGeolocationOptions(capturePlan)
+        );
+      } catch (error) {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      }
+    });
+  }
+
+  function requestCurrentPositionForPlan(capturePlan, measurementSession) {
+    if (!capturePlan || capturePlan.strategy !== 'watch_window' || typeof navigator.geolocation.watchPosition !== 'function') {
+      return requestCurrentPosition(measurementSession);
+    }
+
+    return requestWatchedCurrentPosition(capturePlan, measurementSession);
+  }
+
+  function collectLocationMeasurementNumbers(sessions, fieldName) {
+    return (Array.isArray(sessions) ? sessions : [])
+      .map((session) => (session ? session[fieldName] : null))
+      .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  }
+
+  function computeLocationMeasurementMedian(values) {
+    if (!Array.isArray(values) || !values.length) {
+      return null;
+    }
+
+    const sortedValues = values
+      .slice()
+      .sort((left, right) => left - right);
+    const middleIndex = Math.floor(sortedValues.length / 2);
+
+    if (sortedValues.length % 2 === 1) {
+      return sortedValues[middleIndex];
+    }
+
+    return (sortedValues[middleIndex - 1] + sortedValues[middleIndex]) / 2;
+  }
+
+  function summarizeLocationMeasurementSessions(sessions) {
+    const sourceSessions = Array.isArray(sessions)
+      ? sessions.filter(Boolean)
+      : [];
+    const bestAccuracyValues = collectLocationMeasurementNumbers(sourceSessions, 'best_accuracy_meters');
+    const finalAccuracyValues = collectLocationMeasurementNumbers(sourceSessions, 'final_accuracy_sent_meters');
+    const firstSampleValues = collectLocationMeasurementNumbers(sourceSessions, 'time_to_first_sample_ms');
+    const durationValues = collectLocationMeasurementNumbers(sourceSessions, 'duration_ms');
+    const statusCounts = {};
+    const terminationCounts = {};
+
+    sourceSessions.forEach((session) => {
+      if (typeof session.final_status === 'string' && session.final_status) {
+        statusCounts[session.final_status] = (statusCounts[session.final_status] || 0) + 1;
+      }
+      if (typeof session.termination_reason === 'string' && session.termination_reason) {
+        terminationCounts[session.termination_reason] = (terminationCounts[session.termination_reason] || 0) + 1;
+      }
+    });
+
+    return {
+      total_sessions: sourceSessions.length,
+      completed_sessions: sourceSessions.filter((session) => session.finished_at_ms !== null).length,
+      matched_sessions: statusCounts.matched || 0,
+      accuracy_too_low_sessions: statusCounts.accuracy_too_low || 0,
+      timeout_sessions: sourceSessions.filter((session) => session.timed_out).length,
+      cancelled_sessions: sourceSessions.filter((session) => session.cancelled).length,
+      duplicate_post_sessions: sourceSessions.filter((session) => session.duplicate_post).length,
+      median_time_to_first_sample_ms: computeLocationMeasurementMedian(firstSampleValues),
+      median_duration_ms: computeLocationMeasurementMedian(durationValues),
+      median_best_accuracy_meters: computeLocationMeasurementMedian(bestAccuracyValues),
+      median_final_accuracy_sent_meters: computeLocationMeasurementMedian(finalAccuracyValues),
+      min_best_accuracy_meters: bestAccuracyValues.length ? Math.min(...bestAccuracyValues) : null,
+      max_best_accuracy_meters: bestAccuracyValues.length ? Math.max(...bestAccuracyValues) : null,
+      statuses: statusCounts,
+      terminations: terminationCounts,
+    };
+  }
+
+  function summarizeLocationMeasurementByTrigger(sessions) {
+    const groupedSessions = {};
+
+    (Array.isArray(sessions) ? sessions : []).forEach((session) => {
+      if (!session) {
+        return;
+      }
+
+      const trigger = typeof session.trigger === 'string' && session.trigger
+        ? session.trigger
+        : 'unknown';
+      if (!groupedSessions[trigger]) {
+        groupedSessions[trigger] = [];
+      }
+      groupedSessions[trigger].push(session);
+    });
+
+    return Object.fromEntries(
+      Object.entries(groupedSessions)
+        .sort(([leftTrigger], [rightTrigger]) => leftTrigger.localeCompare(rightTrigger))
+        .map(([trigger, triggerSessions]) => [trigger, summarizeLocationMeasurementSessions(triggerSessions)])
+    );
+  }
+
+  function buildLocationMeasurementReport(metadata) {
+    const sessions = getLocationMeasurementSessions();
+    const strategies = Array.from(
+      new Set(
+        sessions
+          .map((session) => (session && typeof session.strategy === 'string' ? session.strategy : ''))
+          .filter(Boolean)
+      )
+    ).sort();
+
+    return {
+      generated_at: new Date().toISOString(),
+      metadata: cloneLocationMeasurementValue(metadata) || {},
+      strategy: strategies.length <= 1 ? (strategies[0] || null) : 'mixed',
+      strategies,
+      overall: summarizeLocationMeasurementSessions(sessions),
+      by_trigger: summarizeLocationMeasurementByTrigger(sessions),
+      sessions,
+    };
+  }
+
+  function recordLocationMeasurementSample(session, position) {
+    if (!session) {
+      return;
+    }
+
+    const coords = position && position.coords ? position.coords : null;
+    if (!coords || !hasFiniteCoordinate(coords.latitude) || !hasFiniteCoordinate(coords.longitude)) {
+      recordLocationMeasurementEvent(session, 'session_anomaly', {
+        reason: 'invalid_position_sample',
+      });
+      return;
+    }
+
+    const elapsedMs = Date.now() - session.started_at_ms;
+    const accuracyMeters = readPositionAccuracyMeters(position);
+    session.samples_received += 1;
+
+    if (session.time_to_first_sample_ms === null) {
+      session.time_to_first_sample_ms = elapsedMs;
+    }
+
+    if (accuracyMeters !== null) {
+      if (session.best_accuracy_meters === null || accuracyMeters <= session.best_accuracy_meters) {
+        session.best_accuracy_meters = accuracyMeters;
+        session.time_to_best_sample_ms = elapsedMs;
+      }
+      session.final_accuracy_sent_meters = accuracyMeters;
+    }
+  }
+
+  function recordLocationMeasurementMatchRequest(session, accuracyMeters) {
+    if (!session) {
+      return;
+    }
+
+    session.match_post_count += 1;
+    session.duplicate_post = session.match_post_count > 1;
+    session.final_accuracy_sent_meters = accuracyMeters;
+
+    if (session.duplicate_post) {
+      recordLocationMeasurementEvent(session, 'session_anomaly', {
+        reason: 'duplicate_match_post',
+        match_post_count: session.match_post_count,
+      });
+    }
+  }
+
+  function finalizeLocationMeasurementSession(session, details) {
+    if (!session || session.finished_at_ms !== null) {
+      return;
+    }
+
+    const payload = details || {};
+    const finishedAtMs = Date.now();
+    session.finished_at_ms = finishedAtMs;
+    session.finished_at = new Date(finishedAtMs).toISOString();
+    session.duration_ms = finishedAtMs - session.started_at_ms;
+
+    if (typeof payload.final_status === 'string' && payload.final_status.trim()) {
+      session.final_status = payload.final_status.trim();
+    }
+    if (typeof payload.termination_reason === 'string' && payload.termination_reason.trim()) {
+      session.termination_reason = payload.termination_reason.trim();
+    }
+    if (typeof payload.threshold_meters === 'number' && Number.isFinite(payload.threshold_meters)) {
+      session.threshold_meters = payload.threshold_meters;
+    }
+    if (typeof payload.final_accuracy_sent_meters === 'number' && Number.isFinite(payload.final_accuracy_sent_meters)) {
+      session.final_accuracy_sent_meters = payload.final_accuracy_sent_meters;
+    }
+    if (typeof payload.timed_out === 'boolean') {
+      session.timed_out = payload.timed_out;
+    }
+    if (typeof payload.cancelled === 'boolean') {
+      session.cancelled = payload.cancelled;
+    }
+    if (typeof payload.ui_stuck === 'boolean') {
+      session.ui_stuck = payload.ui_stuck;
+    }
+
+    recordLocationMeasurementEvent(session, 'session_finalized', payload);
+  }
+
+  function describeLocationMeasurementFailure(error) {
+    if (error && typeof error.code === 'number') {
+      if (error.code === 1) {
+        return {
+          termination_reason: 'browser_permission_denied',
+          timed_out: false,
+        };
+      }
+      if (error.code === 2) {
+        return {
+          termination_reason: 'browser_position_unavailable',
+          timed_out: false,
+        };
+      }
+      if (error.code === 3) {
+        return {
+          termination_reason: 'browser_timeout',
+          timed_out: true,
+        };
+      }
+    }
+
+    if (error && typeof error.status === 'number') {
+      return {
+        termination_reason: 'match_request_failed',
+        timed_out: false,
+      };
+    }
+
+    return {
+      termination_reason: 'location_lookup_failed',
+      timed_out: false,
+    };
+  }
+
+  window.CheckingWebLocationMeasurement = Object.freeze({
+    enable() {
+      window.__CHECKING_LOCATION_MEASUREMENT__ = true;
+      try {
+        window.localStorage.setItem(locationMeasurementStorageKey, '1');
+      } catch {
+        // Ignore browsers with unavailable storage.
+      }
+      console.info(locationMeasurementConsoleLabel, 'enabled');
+      return true;
+    },
+    disable() {
+      window.__CHECKING_LOCATION_MEASUREMENT__ = false;
+      try {
+        window.localStorage.removeItem(locationMeasurementStorageKey);
+      } catch {
+        // Ignore browsers with unavailable storage.
+      }
+      console.info(locationMeasurementConsoleLabel, 'disabled');
+      return false;
+    },
+    isEnabled() {
+      return isLocationMeasurementEnabled();
+    },
+    clear() {
+      locationMeasurementSessions = [];
+      return [];
+    },
+    getSessions() {
+      return getLocationMeasurementSessions();
+    },
+    getLatestSession() {
+      const sessions = getLocationMeasurementSessions();
+      return sessions.length ? sessions[sessions.length - 1] : null;
+    },
+    summarize() {
+      return summarizeLocationMeasurementSessions(getLocationMeasurementSessions());
+    },
+    summarizeByTrigger() {
+      return summarizeLocationMeasurementByTrigger(getLocationMeasurementSessions());
+    },
+    buildReport(metadata) {
+      return buildLocationMeasurementReport(metadata);
+    },
+    printReport(metadata) {
+      const report = buildLocationMeasurementReport(metadata);
+      console.info(locationMeasurementConsoleLabel, 'report', report);
+      return report;
+    },
+  });
+
   function sanitizeChave(value) {
     return String(value || '')
       .toUpperCase()
@@ -1375,6 +2058,7 @@
     setResolvedLocation(null);
     currentLocationMatch = null;
     availableLocations = [];
+    locationAccuracyThresholdMeters = null;
     setLocationPresentation('Aguardando autenticação.', '', null, '--', { suppressNotification: true });
   }
 
@@ -2954,7 +3638,7 @@
       setStatus('Autenticação concluída. Atualizando a aplicação...', 'info');
     }
 
-    await runLifecycleUpdateSequence({ ignoreCooldown: true });
+    await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
     return true;
   }
 
@@ -4056,6 +4740,7 @@
   async function loadManualLocations() {
     if (!isApplicationUnlocked()) {
       availableLocations = [];
+      setLocationAccuracyThresholdMeters(null);
       syncManualLocationControl();
       return;
     }
@@ -4072,6 +4757,8 @@
       if (!response.ok) {
         throw buildProtectedRequestError(response, payload);
       }
+
+      setLocationAccuracyThresholdMeters(payload.location_accuracy_threshold_meters);
 
       availableLocations = Array.from(
         new Set(
@@ -4102,16 +4789,32 @@
     }
   }
 
-  function requestCurrentPosition() {
+  function requestCurrentPosition(measurementSession) {
     return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, geolocationOptions);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          recordLocationMeasurementSample(measurementSession, position);
+          resolve(position);
+        },
+        (error) => {
+          recordLocationMeasurementEvent(measurementSession, 'geolocation_error', {
+            code: error && typeof error.code === 'number' ? error.code : null,
+            message: error && typeof error.message === 'string' ? error.message : '',
+          });
+          reject(error);
+        },
+        geolocationOptions
+      );
     });
   }
 
-  async function matchCurrentPosition(position) {
+  async function matchCurrentPosition(position, measurementSession) {
     if (!isApplicationUnlocked()) {
       throw new Error('Digite sua senha para iniciar.');
     }
+
+    const accuracyMeters = readPositionAccuracyMeters(position);
+    recordLocationMeasurementMatchRequest(measurementSession, accuracyMeters);
 
     const response = await fetch(locationEndpoint, {
       method: 'POST',
@@ -4122,14 +4825,24 @@
       body: JSON.stringify({
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
-        accuracy_meters:
-          typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
-            ? position.coords.accuracy
-            : null,
+        accuracy_meters: accuracyMeters,
       }),
     });
 
     const payload = await response.json().catch(() => ({}));
+    if (measurementSession) {
+      if (typeof payload.accuracy_threshold_meters === 'number' && Number.isFinite(payload.accuracy_threshold_meters)) {
+        measurementSession.threshold_meters = payload.accuracy_threshold_meters;
+      }
+      recordLocationMeasurementEvent(measurementSession, 'match_response_received', {
+        http_status: response.status,
+        status: typeof payload.status === 'string' ? payload.status : null,
+        accuracy_threshold_meters:
+          typeof payload.accuracy_threshold_meters === 'number' && Number.isFinite(payload.accuracy_threshold_meters)
+            ? payload.accuracy_threshold_meters
+            : null,
+      });
+    }
     if (!response.ok) {
       throw buildProtectedRequestError(response, payload);
     }
@@ -4145,6 +4858,7 @@
       outside_workplace: 'warning',
       no_known_locations: 'error',
     };
+    setLocationAccuracyThresholdMeters(payload.accuracy_threshold_meters);
     const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
     const locationMessage = payload.status === 'matched' ? '' : payload.message;
     setResolvedLocation(payload);
@@ -4210,6 +4924,14 @@
   async function resolveCurrentLocation(options) {
     const settings = options || {};
     const suppressNotification = Boolean(settings.suppressNotification);
+    const capturePlan = buildLocationCapturePlan(settings);
+    const measurementSession = createLocationMeasurementSession({
+      interactive: settings.interactive,
+      forceRefresh: settings.forceRefresh,
+      measurementTrigger: capturePlan.trigger,
+      captureStrategy: capturePlan.strategy,
+      targetAccuracyMeters: capturePlan.targetAccuracyMeters,
+    });
     if (!window.isSecureContext || !navigator.geolocation) {
       setResolvedLocation(null);
       setLocationPresentation(
@@ -4221,10 +4943,17 @@
         '--',
         { suppressNotification }
       );
+      finalizeLocationMeasurementSession(measurementSession, {
+        termination_reason: 'geolocation_unsupported',
+      });
       return null;
     }
 
     if (locationRequestPromise && !settings.forceRefresh) {
+      finalizeLocationMeasurementSession(measurementSession, {
+        termination_reason: 'reused_pending_request',
+        cancelled: true,
+      });
       return locationRequestPromise;
     }
 
@@ -4254,16 +4983,31 @@
       );
 
       if (!shouldAttemptLookup) {
+        finalizeLocationMeasurementSession(measurementSession, {
+          termination_reason: 'permission_not_granted',
+        });
         setLocationWithoutPermission();
         return null;
       }
 
       try {
-        const position = await requestCurrentPosition();
+        const position = await requestCurrentPositionForPlan(capturePlan, measurementSession);
         writeStorageFlag(locationPermissionGrantedKey, true);
         setGpsLocationPermissionGranted(true);
-        const matchPayload = await matchCurrentPosition(position);
+        const matchPayload = await matchCurrentPosition(position, measurementSession);
         applyLocationMatch(matchPayload, { suppressNotification });
+        finalizeLocationMeasurementSession(measurementSession, {
+          final_status: matchPayload && typeof matchPayload.status === 'string' ? matchPayload.status : null,
+          termination_reason: 'match_response',
+          threshold_meters:
+            matchPayload && typeof matchPayload.accuracy_threshold_meters === 'number' && Number.isFinite(matchPayload.accuracy_threshold_meters)
+              ? matchPayload.accuracy_threshold_meters
+              : null,
+          final_accuracy_sent_meters:
+            matchPayload && typeof matchPayload.accuracy_meters === 'number' && Number.isFinite(matchPayload.accuracy_meters)
+              ? matchPayload.accuracy_meters
+              : null,
+        });
         if (settings.showCompletionStatus) {
           setStatus(
             buildLocationCompletionMessage(matchPayload),
@@ -4272,6 +5016,10 @@
         }
         return matchPayload;
       } catch (error) {
+        finalizeLocationMeasurementSession(
+          measurementSession,
+          describeLocationMeasurementFailure(error)
+        );
         applyLocationBrowserError(error, { suppressNotification });
         return null;
       }
@@ -4293,6 +5041,7 @@
     return resolveCurrentLocation({
       interactive: Boolean(settings.interactive),
       forceRefresh: Boolean(settings.forceRefresh),
+      measurementTrigger: settings.measurementTrigger,
       showCompletionStatus: Boolean(settings.showCompletionStatus),
       suppressNotification: Boolean(settings.suppressNotification),
       showDetectingState: settings.showDetectingState !== false,
@@ -4304,6 +5053,7 @@
     return resolveCurrentLocation({
       interactive: false,
       forceRefresh: Boolean(settings.forceRefresh),
+      measurementTrigger: settings.triggerSource,
       suppressNotification: settings.suppressNotification !== false,
       showDetectingState: Boolean(settings.showDetectingState),
     });
@@ -4326,7 +5076,11 @@
         readStorageFlag(locationPermissionGrantedKey)
       )
     ) {
-      await captureAndResolveLocation({ interactive: false, forceRefresh: true });
+      await captureAndResolveLocation({
+        interactive: false,
+        forceRefresh: true,
+        measurementTrigger: 'submit_guard',
+      });
     }
   }
 
@@ -4620,7 +5374,7 @@
       });
 
       setSequenceStatus('Atualizando a localização.....');
-      const locationPayload = await updateLocationForLifecycleSequence();
+      const locationPayload = await updateLocationForLifecycleSequence(settings);
 
       if (isAutomaticActivitiesEnabled()) {
         setSequenceStatus('Realizando check-in ou check-out, se aplicável.....');
@@ -4658,6 +5412,7 @@
       await resolveCurrentLocation({
         interactive: true,
         forceRefresh: true,
+        measurementTrigger: 'manual_refresh',
         showDetectingState: true,
         showCompletionStatus: true,
         suppressNotification: false,
@@ -4684,6 +5439,7 @@
         const locationPayload = await resolveCurrentLocation({
           interactive: true,
           forceRefresh: true,
+          measurementTrigger: 'automatic_activities_enable',
           showDetectingState: true,
           showCompletionStatus: false,
           suppressNotification: true,
@@ -5105,7 +5861,10 @@
       }
 
       if (gpsLocationPermissionGranted && isApplicationUnlocked()) {
-        void runLifecycleUpdateSequence({ ignoreCooldown: true });
+        void runLifecycleUpdateSequence({
+          ignoreCooldown: true,
+          triggerSource: 'automatic_activities_disable',
+        });
         return;
       }
 
@@ -5118,7 +5877,7 @@
       scheduleViewportLayoutMetricsSync();
       syncPortraitLockState();
       schedulePasswordAutofillSync();
-      void runLifecycleUpdateSequence();
+      void runLifecycleUpdateSequence({ triggerSource: 'visibility' });
       if (isTransportScreenOpen()) {
         void loadTransportState();
       }
@@ -5129,7 +5888,7 @@
     scheduleViewportLayoutMetricsSync();
     syncPortraitLockState();
     schedulePasswordAutofillSync();
-    void runLifecycleUpdateSequence();
+    void runLifecycleUpdateSequence({ triggerSource: 'focus' });
     if (isTransportScreenOpen()) {
       void loadTransportState();
     }
@@ -5138,7 +5897,7 @@
     scheduleViewportLayoutMetricsSync();
     syncPortraitLockState();
     schedulePasswordAutofillSync();
-    void runLifecycleUpdateSequence();
+    void runLifecycleUpdateSequence({ triggerSource: 'pageshow' });
     if (isTransportScreenOpen()) {
       void loadTransportState();
     }

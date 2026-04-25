@@ -1117,72 +1117,84 @@ Nota de execução 17.7 (2026-04-25): etapa concluída em `checking_kotlin_new/d
 
 ### 17.8. Sessão HTTP, cookies e transporte de autenticação
 
-- [ ] Validar se o cliente HTTP atual do Kotlin persiste cookies entre chamadas.
-- [ ] Implementar `CookieJar` persistente se ainda não existir comportamento equivalente ao navegador.
-- [ ] Garantir que o cookie de sessão seja reaproveitado entre autenticação, check, localização e transporte.
-- [ ] Garantir que o cliente SSE use o mesmo contexto de sessão do cliente HTTP comum.
-- [ ] Garantir limpeza completa da sessão local ao chamar logout.
-- [ ] Garantir limpeza completa da sessão local quando o backend responder `401`.
-- [ ] Garantir que a UI volte ao estado bloqueado quando a sessão expirar.
-- [ ] Garantir que cookies residuais não liberem a UI sem coerência com a autenticação exigida pela SPA.
+- [x] Validar se o cliente HTTP atual do Kotlin persiste cookies entre chamadas.
+- [x] Implementar `CookieJar` persistente se ainda não existir comportamento equivalente ao navegador.
+- [x] Garantir que o cookie de sessão seja reaproveitado entre autenticação, check, localização e transporte.
+- [x] Garantir que o cliente SSE use o mesmo contexto de sessão do cliente HTTP comum.
+- [x] Garantir limpeza completa da sessão local ao chamar logout.
+- [x] Garantir limpeza completa da sessão local quando o backend responder `401`.
+- [x] Garantir que a UI volte ao estado bloqueado quando a sessão expirar.
+- [x] Garantir que cookies residuais não liberem a UI sem coerência com a autenticação exigida pela SPA.
+
+Nota de execução 17.8 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-http/session-http-foundation.md`. A implementação abriu a base Android mínima do repositório `checking_kotlin_new` com Gradle/Hilt/DataStore/OkHttp, adicionou `WebSessionRepository`, `PersistentSessionCookieJar`, `SessionInvalidationInterceptor`, `WebJsonHttpClient` e `WebTransportStreamClient`, além de uma `SessionGate` inicial que mantém a UI bloqueada sem `authenticatedChave`. A validação foi executada com `.\gradlew.bat :app:testDebugUnitTest`, cobrindo persistência de cookie entre requests, limpeza da sessão no logout e em `401`, compartilhamento do mesmo cookie no SSE e bloqueio da UI diante de cookie residual sem autenticação coerente.
 
 ### 17.9. Base URL, configuração e segurança de ambiente
 
-- [ ] Validar `CheckingPresetConfig.apiBaseUrl` como ponto único de configuração da API.
-- [ ] Validar os fallbacks de URL existentes.
-- [ ] Eliminar qualquer hardcode alternativo de base URL fora do ponto central.
-- [ ] Validar se o app debug consegue apontar para o ambiente correto da API.
-- [ ] Garantir que o app não dependa de chave compartilhada móvel para o fluxo equivalente à SPA.
-- [ ] Garantir que o fluxo web não seja misturado com contratos protegidos por outro modelo de autenticação.
+- [x] Validar `CheckingPresetConfig.apiBaseUrl` como ponto único de configuração da API.
+- [x] Validar os fallbacks de URL existentes.
+- [x] Eliminar qualquer hardcode alternativo de base URL fora do ponto central.
+- [x] Validar se o app debug consegue apontar para o ambiente correto da API.
+- [x] Garantir que o app não dependa de chave compartilhada móvel para o fluxo equivalente à SPA.
+- [x] Garantir que o fluxo web não seja misturado com contratos protegidos por outro modelo de autenticação.
+
+Nota de execução 17.9 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/api-environment/api-environment-foundation.md`. A configuração da API foi centralizada em `CheckingPresetConfig` a partir de campos `BuildConfig` gerados no `app/build.gradle.kts`, com validação de HTTPS e fallbacks em tempo de build. O build debug agora pode apontar para outro ambiente via `-Pchecking.debugApiBaseUrl=...` e `-Pchecking.debugApiBaseUrlFallbacks=...`, e a gate inicial exibe a URL efetiva para conferência rápida do alvo. A etapa também removeu dependência implícita de fallbacks hardcoded no resolver de URL e confirmou, por busca no código e testes, que `checking_kotlin_new` não usa `apiSharedKey`, `x-mobile-shared-key` nem contratos `/api/mobile/*` no fluxo equivalente à SPA.
 
 ### 17.10. Implementação ou ajuste da camada de modelos e mapeamento
 
-- [ ] Confirmar que todos os modelos de request do Kotlin refletem os campos exatos dos schemas web.
-- [ ] Confirmar que todos os modelos de response do Kotlin refletem os campos exatos dos schemas web.
-- [ ] Ajustar serialização de booleanos, datas, horários e listas conforme o backend espera.
-- [ ] Ajustar serialização de `selected_weekdays`, `requested_date` e `requested_time` conforme o contrato real.
-- [ ] Ajustar leitura dos estados de transporte e normalizações locais necessárias.
-- [ ] Ajustar leitura dos campos de mensagem retornados pelo backend para renderização fiel na UI.
+- [x] Confirmar que todos os modelos de request do Kotlin refletem os campos exatos dos schemas web.
+- [x] Confirmar que todos os modelos de response do Kotlin refletem os campos exatos dos schemas web.
+- [x] Ajustar serialização de booleanos, datas, horários e listas conforme o backend espera.
+- [x] Ajustar serialização de `selected_weekdays`, `requested_date` e `requested_time` conforme o contrato real.
+- [x] Ajustar leitura dos estados de transporte e normalizações locais necessárias.
+- [x] Ajustar leitura dos campos de mensagem retornados pelo backend para renderização fiel na UI.
+
+Nota de execução 17.10 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/model-layer/model-layer-foundation.md`. O projeto novo passou a ter uma camada tipada de modelos web em `WebApiModels.kt` e um `WebCheckApiService` cobrindo `/api/web/auth/*`, projeto, check, localização e transporte sobre `WebJsonHttpClient`. A serialização foi ajustada para refletir o contrato real do backend, incluindo `selected_weekdays` deduplicado/ordenado, `requested_date` apenas para `extra`, `event_time` em ISO-8601, `zip` sanitizado em dígitos e remoção de campos herdados incorretos no autocadastro web. A leitura dos estados de transporte agora expõe a normalização mínima necessária para o estado local futuro, e as mensagens `detail/message` do backend passaram a ser preservadas em erros e respostas tipadas. A etapa foi validada com testes focados de DTOs e service layer.
 
 ### 17.11. Tokens visuais e fundação da interface nativa
 
-- [ ] Criar tokens equivalentes para altura do cabeçalho.
-- [ ] Criar tokens equivalentes para largura máxima do card principal.
-- [ ] Criar tokens equivalentes para altura dos controles.
-- [ ] Criar tokens equivalentes para raio dos cards e dos campos.
-- [ ] Criar tokens equivalentes para espaçamento vertical entre seções.
-- [ ] Criar tokens equivalentes para tamanho de labels, corpo, opções e título.
-- [ ] Implementar o gradiente de fundo equivalente ao CSS da SPA.
-- [ ] Implementar a marca d’água da Petrobras em camada de fundo com opacidade equivalente.
-- [ ] Implementar a cor do cabeçalho `#0f766e`.
-- [ ] Implementar a paleta de textos principal, sucesso, erro, informação e alerta.
-- [ ] Implementar sombras equivalentes para card principal e overlays.
-- [ ] Implementar tratamento de safe areas e recortes de tela.
-- [ ] Implementar lógica de viewport dinâmico equivalente ao `100svh/100dvh` da SPA.
+- [x] Criar tokens equivalentes para altura do cabeçalho.
+- [x] Criar tokens equivalentes para largura máxima do card principal.
+- [x] Criar tokens equivalentes para altura dos controles.
+- [x] Criar tokens equivalentes para raio dos cards e dos campos.
+- [x] Criar tokens equivalentes para espaçamento vertical entre seções.
+- [x] Criar tokens equivalentes para tamanho de labels, corpo, opções e título.
+- [x] Implementar o gradiente de fundo equivalente ao CSS da SPA.
+- [x] Implementar a marca d’água da Petrobras em camada de fundo com opacidade equivalente.
+- [x] Implementar a cor do cabeçalho `#0f766e`.
+- [x] Implementar a paleta de textos principal, sucesso, erro, informação e alerta.
+- [x] Implementar sombras equivalentes para card principal e overlays.
+- [x] Implementar tratamento de safe areas e recortes de tela.
+- [x] Implementar lógica de viewport dinâmico equivalente ao `100svh/100dvh` da SPA.
+
+Nota de execução 17.11 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/visual-foundation/visual-foundation.md`. O app novo ganhou `CheckingVisualTokens` responsivos, `CheckingAppTheme` e `CheckingAppFrame` como fundação Compose para gradiente, watermark Petrobras, faixa superior `#0f766e`, paleta semântica, sombras e tratamento edge-to-edge com `enableEdgeToEdge()` e insets de `systemBars`. A gate atual foi mantida como primeira consumidora dos tokens para provar o uso da fundação sem antecipar o shell completo da fase 17.12. A etapa foi validada com teste focal de tokens e clamp equivalentes à SPA.
 
 ### 17.12. Estrutura do shell principal
 
-- [ ] Criar o composable do shell principal do check.
-- [ ] Criar o cabeçalho com logo e texto `Checking`.
-- [ ] Criar o card central com largura e padding equivalentes.
-- [ ] Criar o card de histórico com duas colunas.
-- [ ] Criar o card de notificação com duas linhas fixas.
-- [ ] Criar o card de localização com título, valor, precisão e botão refresh.
-- [ ] Criar a linha de autenticação com `Chave`, `Senha` e botão lateral.
-- [ ] Criar o grupo `Registro`.
-- [ ] Criar o grupo `Informe`.
-- [ ] Criar a linha `Projeto` + `Local`.
-- [ ] Criar o botão principal `Registrar`.
-- [ ] Garantir que os estados disabled e busy de todos os controles estejam implementados.
+- [x] Criar o composable do shell principal do check.
+- [x] Criar o cabeçalho com logo e texto `Checking`.
+- [x] Criar o card central com largura e padding equivalentes.
+- [x] Criar o card de histórico com duas colunas.
+- [x] Criar o card de notificação com duas linhas fixas.
+- [x] Criar o card de localização com título, valor, precisão e botão refresh.
+- [x] Criar a linha de autenticação com `Chave`, `Senha` e botão lateral.
+- [x] Criar o grupo `Registro`.
+- [x] Criar o grupo `Informe`.
+- [x] Criar a linha `Projeto` + `Local`.
+- [x] Criar o botão principal `Registrar`.
+- [x] Garantir que os estados disabled e busy de todos os controles estejam implementados.
+
+Nota de execução 17.12 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/main-shell/main-shell-structure.md`. A UI provisoria deixou de ser uma card de gate e passou a renderizar um shell Compose equivalente ao HTML principal da SPA, com header real (`site_icon.png` + texto `Checking`) encaixado no `CheckingAppFrame`, card central, historico, notificacao, localizacao, linha de autenticacao, grupos `Registro` e `Informe`, linha `Projeto` + `Local` e botao `Registrar`. Os controles ficaram preparados com estados `disabled` e `busy` no nivel de apresentacao, mas sem handlers reais ainda, preservando o recorte das fases 17.13+ e 17.14+. A etapa foi validada com teste focal do estado do shell e compilacao da nova UI.
 
 ### 17.13. Overlay de paisagem e comportamento de orientação
 
-- [ ] Implementar overlay que informe ao usuário que o app foi otimizado para visualização vertical.
-- [ ] Implementar ocultação do conteúdo principal quando a paisagem estiver ativa.
-- [ ] Implementar a lógica equivalente de detecção de paisagem.
-- [ ] Garantir que a activity continue utilizável em retrato sem glitches após rotação.
-- [ ] Validar se será necessário forçar orientação em nível de activity ou apenas reproduzir o overlay da SPA.
-- [ ] Garantir que a decisão adotada preserve a experiência funcional da SPA.
+- [x] Implementar overlay que informe ao usuário que o app foi otimizado para visualização vertical.
+- [x] Implementar ocultação do conteúdo principal quando a paisagem estiver ativa.
+- [x] Implementar a lógica equivalente de detecção de paisagem.
+- [x] Garantir que a activity continue utilizável em retrato sem glitches após rotação.
+- [x] Validar se será necessário forçar orientação em nível de activity ou apenas reproduzir o overlay da SPA.
+- [x] Garantir que a decisão adotada preserve a experiência funcional da SPA.
+
+Nota de execução 17.13 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/portrait-lock/portrait-lock-overlay.md`. O app ganhou um guard de orientação no topo da árvore Compose com `PortraitLockOverlay`, `resolvePortraitLockUiState(...)` e `rememberPortraitLockUiState()`, espelhando a estratégia da SPA de detectar paisagem e ocultar o chrome principal enquanto o aparelho estiver fora do retrato. `MainActivity` passou a esconder header e shell quando o overlay estiver ativo, e `CheckingAppFrame` ganhou um slot `overlayContent` para suportar sobreposições em tela cheia sem quebrar a fundação visual da 17.11. A decisão técnica desta fase foi não forçar orientação no nível da `Activity` nem do manifesto, preservando o comportamento funcional da SPA, que usa overlay como garantia visual e não uma trava rígida de runtime. A etapa foi validada com teste focal da regra de orientação e compilação da nova UI.
 
 ### 17.14. Estado inicial bloqueado e resolução da chave
 

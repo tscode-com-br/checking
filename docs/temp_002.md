@@ -454,6 +454,71 @@ A Fase 1 so deve ser considerada concluida quando existir:
 4. janelas iniciais de captura definidas para a Fase 2;
 5. lista curta de riscos observados que precisarao de protecao na implementacao.
 
+#### 11.8 Instrumentacao local minima para a bateria baseline
+
+Para viabilizar a bateria baseline sem alterar contrato HTTP, payload nem resposta da API, a Fase 1 passa a contar com uma instrumentacao local opt-in em `sistema/app/static/check/app.js`, com estes objetivos:
+
+- registrar sessoes de captura em memoria, sempre com `strategy = single_attempt` enquanto a estrategia atual continuar ativa;
+- espelhar no `console` apenas o inicio e o encerramento das sessoes, deixando o detalhamento completo disponivel em memoria;
+- distinguir pelo menos os gatilhos `startup`, `manual_refresh`, `visibility`, `focus`, `pageshow` e `automatic_activities_enable`;
+- registrar, sem mudar o contrato do backend, `session_id`, `trigger`, `samples_received`, `best_accuracy_meters`, `final_accuracy_sent_meters`, `threshold_meters`, `final_status`, `termination_reason`, `timed_out`, `duplicate_post` e `duration_ms`.
+
+Uso local sugerido para homologacao controlada:
+
+1. abrir a pagina do web check em ambiente de teste;
+2. habilitar a instrumentacao com `window.CheckingWebLocationMeasurement.enable()`;
+3. limpar sessoes anteriores com `window.CheckingWebLocationMeasurement.clear()` antes de cada bateria;
+4. executar as repeticoes do baseline nas celulas `A1`, `A2`, `B1`, `B2` e `B3`;
+5. coletar os registros com `window.CheckingWebLocationMeasurement.getSessions()` ao final de cada bloco;
+6. desabilitar a instrumentacao com `window.CheckingWebLocationMeasurement.disable()` quando a bateria terminar.
+
+Restricoes desta instrumentacao:
+
+- nao altera `POST /api/web/check/location`;
+- nao altera mensagens de UX por si so;
+- nao muda a estrategia atual de captura;
+- nao substitui a medicao em aparelho, navegador e ambiente reais.
+
+#### 11.9 Consolidacao objetiva por gatilho
+
+Para viabilizar a segunda sugestao sem depender de consolidacao manual pesada, a instrumentacao local passa a expor tambem estes comandos no navegador:
+
+- `window.CheckingWebLocationMeasurement.summarize()` para o consolidado geral da bateria atual;
+- `window.CheckingWebLocationMeasurement.summarizeByTrigger()` para o consolidado por gatilho;
+- `window.CheckingWebLocationMeasurement.buildReport({ ...metadados })` para gerar um relatorio unico com `overall`, `by_trigger` e `sessions`;
+- `window.CheckingWebLocationMeasurement.printReport({ ...metadados })` para imprimir o relatorio completo no `console`.
+
+Metadados minimos recomendados para cada bateria:
+
+1. `scenario`, por exemplo `A1`, `A2`, `B1`, `B2` ou `B3`;
+2. `device_model`;
+3. `browser` e versao;
+4. `environment`, por exemplo `aberto`, `interno`, `degradado`;
+5. `operator` ou identificador da rodada, se necessario.
+
+Sequencia operacional recomendada para cada bloco de medicao:
+
+1. `window.CheckingWebLocationMeasurement.enable()`;
+2. `window.CheckingWebLocationMeasurement.clear()`;
+3. executar as repeticoes planejadas do bloco;
+4. `window.CheckingWebLocationMeasurement.printReport({ scenario: 'A1', device_model: '...', browser: '...', environment: '...' })`;
+5. copiar o objeto retornado e salvar junto da planilha da Fase 1;
+6. repetir para o proximo bloco;
+7. ao final da bateria, revisar `summarizeByTrigger()` para comparar `startup`, `manual_refresh`, `visibility`, `focus`, `pageshow` e demais gatilhos capturados.
+
+Interpretacao minima esperada para a decisao da estrategia principal:
+
+- se `manual_refresh` mostrar ganho material de precisao apos pequenas janelas adicionais e os gatilhos silenciosos permanecerem ruins, a ativacao progressiva deve continuar pelo refresh manual primeiro;
+- se `visibility`, `focus` e `pageshow` apresentarem comportamento equivalente e previsivel, eles podem compartilhar a mesma estrategia na Fase 3;
+- se algum gatilho concentrar `timeout`, `browser_position_unavailable` ou `accuracy_too_low` de forma desproporcional, ele deve ser tratado como caso especial na escolha entre `watchPosition()` e fallback.
+
+Leitura de campo ja observada em validacao online de 2026-04-25:
+
+- ao carregar ou recarregar o link, a aplicacao convergiu para precisao excelente, com relato de aproximadamente `3 m`, o que indica que o caminho de `startup` nao deve ser mexido nesta rodada;
+- ao acionar `Atualizar localizacao`, a atualizacao continuou acontecendo rapido demais, o que manteve o problema exatamente no gatilho interativo que queremos corrigir;
+- ao mandar a pagina para segundo plano e trazê-la de volta, os gatilhos `visibility`, `focus` e `pageshow` tambem continuaram resolvendo rapido demais, com o mesmo perfil de defeito;
+- a conclusao operacional foi estreitar a proxima implementacao para `manual_refresh` e retorno ao primeiro plano, preservando `startup`, `submit_guard` e automacoes no caminho anterior ate nova validacao.
+
 ### Fase 2 - Refatoracao da captura no frontend
 
 Objetivo:
@@ -604,6 +669,9 @@ Execução registrada em 2026-04-25:
 
 - [x] Definir um roteiro objetivo de medição em campo com sequência, cenários mínimos, número de repetições e ficha de coleta.
 - [x] Definir critérios objetivos para escolher entre `watchPosition()` principal e loop controlado de `getCurrentPosition()` como fallback.
+- [x] Preparar instrumentação local mínima em memória e `console`, com ativação opt-in e sem alterar o contrato HTTP.
+- [x] Preparar um consolidado local por gatilho para reduzir trabalho manual na análise comparativa da bateria baseline.
+- [ ] Executar a bateria baseline da estratégia atual nas células `A1`, `A2`, `B1`, `B2` e `B3` com a instrumentação local habilitada.
 - [ ] Medir, em navegador e aparelho reais, quanto a precisão melhora entre a primeira amostra e as amostras subsequentes em abertura de página, retorno ao primeiro plano e refresh manual.
 - [ ] Registrar tempos de convergência típicos para cenário aberto, cenário interno e cenário de GPS degradado, para calibrar as janelas de captura.
 - [ ] Validar se `watchPosition()` entrega amostras sucessivas confiáveis nos navegadores-alvo do projeto.
@@ -619,34 +687,53 @@ Execução registrada em 2026-04-25:
 2. Foi definido que a comparação deve usar a estratégia atual como baseline e evitar cenários de borda geométrica, tangência exata e tolerância zero como base principal da decisão, para não contaminar a escolha da estratégia de captura.
 3. Foram registrados os critérios objetivos de `captura bem-sucedida`, `encerramento sem sucesso`, `ganho útil de precisão` e `anomalia operacional`.
 4. Foram definidos critérios numéricos para escolher entre `watchPosition()` e loop controlado de `getCurrentPosition()`, incluindo regra explícita de desempate pró-fallback quando o ganho for marginal.
-5. As medições reais em aparelho e navegador, a consolidação por ambiente e a decisão final da estratégia principal continuam pendentes desta fase.
+5. Foi preparada uma instrumentação local mínima, opt-in, em memória e `console`, para registrar a bateria baseline da estratégia atual sem alterar o contrato do backend nem a UX consolidada.
+6. Foi preparado um consolidado local por gatilho, com resumo geral, resumo por gatilho e relatório único exportável em memória, para apoiar a decisão entre `watchPosition()` e fallback sem depender de tabulação manual bruta no navegador.
+7. A bateria baseline real nas células `A1`, `A2`, `B1`, `B2` e `B3` continua dependente de execução manual em aparelho, navegador e ambiente físicos compatíveis com a homologação de campo.
 
 ### Fase 2. Implementação isolada e reversível da nova aquisição
 
-- [ ] Introduzir, em `sistema/app/static/check/app.js`, constantes ou configuração interna para janela silenciosa, janela interativa, prazo máximo da sessão, regra de encerramento antecipado e escolha do caminho de fallback.
-- [ ] Criar a abstração interna da sessão de aquisição com responsabilidades explícitas de iniciar, receber amostras, comparar precisão, encerrar, cancelar e devolver um resultado padronizado.
-- [ ] Garantir que a melhor amostra seja definida pela menor `accuracy_meters` válida e, em empate, pela amostra mais recente.
-- [ ] Garantir que amostras sem latitude, sem longitude ou sem `accuracy` numérica válida sejam descartadas.
-- [ ] Implementar encerramento antecipado quando alguma amostra atingir o limite administrativo vigente.
-- [ ] Implementar encerramento por prazo máximo reaproveitando a melhor amostra observada até aquele momento.
+- [x] Introduzir, em `sistema/app/static/check/app.js`, constantes ou configuração interna para janela silenciosa, janela interativa, prazo máximo da sessão, regra de encerramento antecipado e escolha do caminho de fallback.
+- [x] Criar a abstração interna da sessão de aquisição com responsabilidades explícitas de iniciar, receber amostras, comparar precisão, encerrar, cancelar e devolver um resultado padronizado.
+- [x] Garantir que a melhor amostra seja definida pela menor `accuracy_meters` válida e, em empate, pela amostra mais recente.
+- [x] Garantir que amostras sem latitude, sem longitude ou sem `accuracy` numérica válida sejam descartadas.
+- [x] Implementar encerramento antecipado quando alguma amostra atingir o limite administrativo vigente.
+- [x] Implementar encerramento por prazo máximo reaproveitando a melhor amostra observada até aquele momento.
 - [ ] Implementar cancelamento limpo da sessão anterior quando um refresh manual forçado substituir uma captura em andamento.
-- [ ] Preservar e reforçar os bloqueios já existentes por `locationRequestPromise`, `lifecycleRefreshInProgress` e `lifecycleTriggerCooldownMs`.
-- [ ] Garantir que apenas uma chamada final de `POST /api/web/check/location` seja enviada ao backend por sessão de captura.
-- [ ] Preservar integralmente o payload atual enviado ao backend: `latitude`, `longitude` e `accuracy_meters`.
-- [ ] Preservar integralmente o tratamento atual do backend para `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations`.
-- [ ] Garantir que a lógica de permissão continue respeitando `navigator.permissions`, `locationPromptAttemptedKey` e `locationPermissionGrantedKey`.
-- [ ] Garantir que a captura continue falhando de forma finita quando o navegador negar permissão, devolver erro irrecuperável ou não produzir amostras válidas.
-- [ ] Garantir que a nova lógica possa ser desligada rapidamente, restaurando o comportamento atual sem refatoração ampla.
+- [x] Preservar e reforçar os bloqueios já existentes por `locationRequestPromise`, `lifecycleRefreshInProgress` e `lifecycleTriggerCooldownMs`.
+- [x] Garantir que apenas uma chamada final de `POST /api/web/check/location` seja enviada ao backend por sessão de captura.
+- [x] Preservar integralmente o payload atual enviado ao backend: `latitude`, `longitude` e `accuracy_meters`.
+- [x] Preservar integralmente o tratamento atual do backend para `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations`.
+- [x] Garantir que a lógica de permissão continue respeitando `navigator.permissions`, `locationPromptAttemptedKey` e `locationPermissionGrantedKey`.
+- [x] Garantir que a captura continue falhando de forma finita quando o navegador negar permissão, devolver erro irrecuperável ou não produzir amostras válidas.
+- [x] Garantir que a nova lógica possa ser desligada rapidamente, restaurando o comportamento atual sem refatoração ampla.
+
+Execucao registrada em 2026-04-25:
+
+1. O frontend passou a expor um plano interno unico de captura com `strategy = watch_window`, `minimumWindowMs = 3000` e `maxWindowMs = 7000` para os gatilhos `startup`, `submit_guard`, `manual_refresh`, `automatic_activities_enable`, `automatic_activities_disable`, `visibility`, `focus` e `pageshow`.
+2. O helper `shouldStopLocationWatch()` passou a bloquear encerramento antecipado antes de `3000 ms`, mesmo quando a primeira amostra ja vier com boa precisao, e a sessao so encerra antes de `7000 ms` quando a melhor amostra ficar dentro do limite administrativo apos a janela minima.
+3. O limite administrativo continua sendo reutilizado pelo proprio frontend quando disponivel, e a melhor amostra valida continua sendo enviada uma unica vez ao backend apenas no encerramento da sessao.
+4. O caminho antigo de leitura unica foi preservado como fallback centralizado em `requestCurrentPositionForPlan()` para gatilhos nao mapeados, o que mantem rollback rapido sem abrir escopo em backend ou UI.
+5. Em revisao corretiva da mesma data, foi identificado que `runLifecycleUpdateSequence()` nao estava repassando seus `settings` para `updateLocationForLifecycleSequence()`, o que fazia `startup`, `visibility`, `focus` e `pageshow` cairem silenciosamente no fallback `single_attempt` apesar do mapa de gatilhos ja apontar para `watch_window`.
+6. A correcao efetiva foi repassar `settings` nessa chamada, restaurando a aplicacao real da janela `3000-7000 ms` aos gatilhos de ciclo de vida, com teste focado atualizado e redeploy validado em `https://tscode.com.br`.
 
 ### Fase 3. Ativação progressiva por gatilho
 
-- [ ] Integrar a nova sessão primeiro apenas a `runManualLocationRefreshSequence()`, mantendo abertura de página, retorno ao primeiro plano e fluxos automáticos na estratégia atual até validação explícita.
-- [ ] Validar o refresh manual isoladamente antes de ampliar o escopo para outros gatilhos.
-- [ ] Só depois da validação do refresh manual, integrar a nova sessão a `ensureLocationReadyForSubmit()`, se ainda for necessário para a submissão manual.
-- [ ] Só depois da validação do refresh manual, integrar a nova sessão a `runLifecycleUpdateSequence()` para os gatilhos `visibilitychange`, `focus` e `pageshow`.
-- [ ] Garantir que `visibilitychange`, `focus` e `pageshow` não disparem múltiplas sessões concorrentes para a mesma intenção de atualização.
-- [ ] Só depois da validação dos gatilhos de ciclo de vida, integrar a nova sessão a `runAutomaticActivitiesEnableSequence()` e aos pontos de automação que realmente precisarem dela.
+- [x] Integrar a nova sessão primeiro apenas a `runManualLocationRefreshSequence()`, mantendo abertura de página, retorno ao primeiro plano e fluxos automáticos na estratégia atual até validação explícita.
+- [x] Validar o refresh manual isoladamente antes de ampliar o escopo para outros gatilhos.
+- [x] Só depois da validação do refresh manual, integrar a nova sessão a `ensureLocationReadyForSubmit()`, se ainda for necessário para a submissão manual.
+- [x] Só depois da validação do refresh manual, integrar a nova sessão a `runLifecycleUpdateSequence()` para os gatilhos `visibilitychange`, `focus` e `pageshow`.
+- [x] Garantir que `visibilitychange`, `focus` e `pageshow` não disparem múltiplas sessões concorrentes para a mesma intenção de atualização.
+- [x] Só depois da validação dos gatilhos de ciclo de vida, integrar a nova sessão a `runAutomaticActivitiesEnableSequence()` e aos pontos de automação que realmente precisarem dela.
 - [ ] Manter, em cada etapa, os gatilhos ainda não migrados no comportamento antigo até a etapa anterior ficar comprovadamente estável.
+
+Execucao registrada em 2026-04-25:
+
+1. A ativacao progressiva comecou pelo `manual_refresh`, depois foi expandida para os gatilhos de retorno ao primeiro plano e, por fim, para os demais gatilhos atuais que dependem da mesma resolucao centralizada de localizacao.
+2. A reclamacao de que a aplicacao ainda respondia rapido demais expôs uma causa raiz diferente da janela em si: os gatilhos de ciclo de vida continuavam entrando em `single_attempt` porque `runLifecycleUpdateSequence()` chamava `updateLocationForLifecycleSequence()` sem repassar `triggerSource` nem os demais `settings`.
+3. Depois do ajuste dessa chamada para `updateLocationForLifecycleSequence(settings)`, os gatilhos `startup`, `visibility`, `focus` e `pageshow` passaram a usar de fato o mesmo plano `watch_window` ja configurado no mapa de gatilhos.
+4. A validacao local foi refeita com `node --test tests/check_user_location_ui.test.js`, incluindo uma assercao dedicada ao encaminhamento de `settings`, e o deploy publico foi refeito diretamente no `app` principal da DigitalOcean.
+5. O proximo checkpoint obrigatorio continua sendo homologacao em aparelho fisico com a instrumentacao local habilitada, para confirmar `duration_ms`, `termination_reason`, `samples_received` e `final_status` nos cenarios reais que ainda apresentarem duvida.
 
 ### Fase 4. UX e observabilidade com impacto mínimo
 
@@ -663,7 +750,7 @@ Execução registrada em 2026-04-25:
 
 ### Fase 5. Testes automatizados e proteção de contrato
 
-- [ ] Ampliar `tests/check_user_location_ui.test.js` para cobrir a nova estratégia de captura, os novos textos de progresso e a preservação das regras de visibilidade do campo de localização manual.
+- [x] Ampliar `tests/check_user_location_ui.test.js` para cobrir a nova estratégia de captura, os novos textos de progresso e a preservação das regras de visibilidade do campo de localização manual.
 - [ ] Ampliar `tests/check_automatic_activities_layout.test.js` para garantir que a nova captura não quebre a disponibilidade de `Atividades Automáticas` nem o sincronismo com permissão de GPS.
 - [ ] Criar ou ampliar testes JavaScript focados na sessão de aquisição para validar seleção da melhor amostra, descarte de leituras inválidas, encerramento antecipado, reaproveitamento da melhor amostra e cancelamento por refresh forçado.
 - [ ] Usar `tests/test_api_flow.py` como guarda de contrato para `accuracy_too_low`, `label`, `status` e `accuracy_threshold_meters`, sem abrir diff em backend por padrão.

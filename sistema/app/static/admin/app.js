@@ -2555,6 +2555,8 @@ function getLocationSettingsSaveButton() {
   return document.getElementById("saveLocationSettingsButton");
 }
 
+const LOCATION_SETTINGS_PENDING_STATUS = "Alterações pendentes nas configurações de localização. Clique em Salvar para registrar.";
+
 function normalizeLocationAccuracyThreshold(value) {
   const normalized = String(value ?? "").trim();
   if (!/^\d+$/.test(normalized)) {
@@ -3004,8 +3006,34 @@ function refreshLocationSettingsDirtyState() {
 function handleLocationSettingsInputChange() {
   refreshLocationSettingsDirtyState();
   if (locationSettingsDirty) {
-    setStatus("Alterações pendentes nas configurações de localização. Clique em Salvar para registrar.", true);
+    setStatus(LOCATION_SETTINGS_PENDING_STATUS, true);
+    return;
   }
+
+  if (statusLine.textContent === LOCATION_SETTINGS_PENDING_STATUS) {
+    clearStatus();
+  }
+}
+
+function handleLocationSettingsInputKeydown(event) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    discardLocationSettingsDraft();
+    event.currentTarget.blur();
+    return;
+  }
+
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  refreshLocationSettingsDirtyState();
+  if (!locationSettingsDirty) {
+    return;
+  }
+
+  saveLocationSettings().catch((error) => setStatus(error.message, false));
 }
 
 function discardLocationSettingsDraft() {
@@ -4475,13 +4503,7 @@ function bindLocationSettingsInput(inputId) {
 
   input.addEventListener("input", handleLocationSettingsInputChange);
   input.addEventListener("change", handleLocationSettingsInputChange);
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      discardLocationSettingsDraft();
-      event.currentTarget.blur();
-    }
-  });
+  input.addEventListener("keydown", handleLocationSettingsInputKeydown);
 }
 
 function bindActions() {
