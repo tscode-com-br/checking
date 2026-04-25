@@ -70,9 +70,9 @@ class DeployAction:
     label: str
     summary: str
     release_marker: str
-    prepare_commands: tuple[str, ...] = ()
     restart_commands: tuple[str, ...]
     smoke_validation: SmokeValidation
+    prepare_commands: tuple[str, ...] = ()
     image_repository: str | None = None
     compose_image_env_var: str | None = None
     requires_remote_env: bool = False
