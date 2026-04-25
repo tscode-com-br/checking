@@ -2,6 +2,18 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=1MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=40
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-checking}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
