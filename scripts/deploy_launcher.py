@@ -23,6 +23,8 @@ DEFAULT_DEPLOY_USER = "root"
 DEFAULT_DEPLOY_DIR = "/root/checkcheck"
 DEFAULT_DEPLOY_HOST_FINGERPRINT = "SHA256:pRjhMF0bKZ6t2+u3szubzGYEY+HOu4KwkCI1mCe3C3o"
 DEFAULT_DEPLOY_KEY_PATH = PROJECT_ROOT / "deploy" / "keys" / "do_checkcheck"
+DEFAULT_GHCR_REGISTRY = "ghcr.io"
+DEFAULT_MANUAL_IMAGE_TAG_ENV = "CHECKCHECK_DEPLOY_IMAGE_TAG"
 DEFAULT_DEPLOY_HOST_KEYS = (
     "157.230.35.21 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcKvmHEtkkl9nI02Ds50toJUbMM4LFIWF011kR/Sq8k",
     "157.230.35.21 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDIFqEj9xCsCoggqcYsL+m7vSELFOnpUJiI8WHP3/qtDE4DYxjNBhlbB9Qw/yWip/Obl5T7jcCCCKf7OLtiYTNFUZKES9S6Eyy25DUz3ij7rbFWYVjF0HbUS6FiQXXUgZc0eEO9b89qUHomuL4p/RjIMZ6Qj/FVTgNAfLND0c2OeKVn/yIaKXDncTX7rWD5jjP9Ygdo2VMkTLZ8R92RqELqI8VjmtZBoLESWqa680q9siwrtuTzvYNW5Bsmv3nt1oQELKds6LzhpZwC43vsyg5yNDIsTp4rhNpjblfj+GDj/NimffGemPJqCL3XsJpVskhCfRhagekyLpCE6bpGThHDrEFPWV/M6wYnOs0Yl0qUrsM4xPm41ubMN4h+hcN5S4wXbK+6K6eT+8NWc39qftOezLryRQOfuhBZLmERqr30Tgyrxot+Td1lXZXpiXdDoDZvIMmhKzEW5SLdijrUYdzang3jWREiJ5zADX5DcPzy3ahYsMePwmQ5ZBEoMZKu4gU=",
@@ -68,8 +70,11 @@ class DeployAction:
     label: str
     summary: str
     release_marker: str
+    prepare_commands: tuple[str, ...] = ()
     restart_commands: tuple[str, ...]
     smoke_validation: SmokeValidation
+    image_repository: str | None = None
+    compose_image_env_var: str | None = None
     requires_remote_env: bool = False
     prune_after_success: bool = False
 
@@ -89,9 +94,11 @@ DEPLOY_ACTIONS = (
         label="Fallback Global",
         summary="Redeploy completo direto do working tree local.",
         release_marker=".deploy-release",
-        restart_commands=(
+        prepare_commands=(
             "docker compose up -d db",
-            "docker compose up -d --build --remove-orphans",
+        ),
+        restart_commands=(
+            "docker compose up -d --no-build --force-recreate --remove-orphans app",
         ),
         smoke_validation=SmokeValidation(
             label="application",
@@ -99,6 +106,8 @@ DEPLOY_ACTIONS = (
             service="app",
             url="http://127.0.0.1:8000/api/health",
         ),
+        image_repository="ghcr.io/tscode-com-br/checkcheck-app",
+        compose_image_env_var="CHECKCHECK_APP_IMAGE",
         requires_remote_env=True,
         prune_after_success=True,
     ),
@@ -106,9 +115,11 @@ DEPLOY_ACTIONS = (
         label="API",
         summary="Deploy isolado da API direto para a DigitalOcean.",
         release_marker=".deploy-release-api",
-        restart_commands=(
+        prepare_commands=(
             "docker compose -f docker-compose.api.yml up -d db",
-            "docker compose -f docker-compose.api.yml up -d --build api",
+        ),
+        restart_commands=(
+            "docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api",
         ),
         smoke_validation=SmokeValidation(
             label="API",
@@ -116,6 +127,8 @@ DEPLOY_ACTIONS = (
             service="api",
             url="http://127.0.0.1:18080/api/health",
         ),
+        image_repository="ghcr.io/tscode-com-br/checkcheck-api",
+        compose_image_env_var="CHECKCHECK_API_IMAGE",
         requires_remote_env=True,
     ),
     DeployAction(
@@ -123,7 +136,7 @@ DEPLOY_ACTIONS = (
         summary="Deploy isolado do Admin direto para a DigitalOcean.",
         release_marker=".deploy-release-admin-web",
         restart_commands=(
-            "docker compose -f docker-compose.websites.yml up -d --build admin-web",
+            "docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate admin-web",
         ),
         smoke_validation=SmokeValidation(
             label="admin-web",
@@ -132,13 +145,15 @@ DEPLOY_ACTIONS = (
             url="http://127.0.0.1:18081/",
             contains="Checking Admin",
         ),
+        image_repository="ghcr.io/tscode-com-br/checkcheck-admin-web",
+        compose_image_env_var="CHECKCHECK_ADMIN_WEB_IMAGE",
     ),
     DeployAction(
         label="CHECK",
         summary="Deploy isolado do site de check direto para a DigitalOcean.",
         release_marker=".deploy-release-user-web",
         restart_commands=(
-            "docker compose -f docker-compose.websites.yml up -d --build user-web",
+            "docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate user-web",
         ),
         smoke_validation=SmokeValidation(
             label="user-web",
@@ -147,13 +162,15 @@ DEPLOY_ACTIONS = (
             url="http://127.0.0.1:18082/",
             contains="Checking Mobile Web",
         ),
+        image_repository="ghcr.io/tscode-com-br/checkcheck-user-web",
+        compose_image_env_var="CHECKCHECK_USER_WEB_IMAGE",
     ),
     DeployAction(
         label="TRANSPORT",
         summary="Deploy isolado do transporte direto para a DigitalOcean.",
         release_marker=".deploy-release-transport-web",
         restart_commands=(
-            "docker compose -f docker-compose.websites.yml up -d --build transport-web",
+            "docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate transport-web",
         ),
         smoke_validation=SmokeValidation(
             label="transport-web",
@@ -162,12 +179,137 @@ DEPLOY_ACTIONS = (
             url="http://127.0.0.1:18083/",
             contains="Checking Transport",
         ),
+        image_repository="ghcr.io/tscode-com-br/checkcheck-transport-web",
+        compose_image_env_var="CHECKCHECK_TRANSPORT_WEB_IMAGE",
     ),
 )
 
 
 class DeployError(RuntimeError):
     pass
+
+
+def _run_local_capture(command: list[str]) -> tuple[int, str]:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+            check=False,
+        )
+    except OSError:
+        return 127, ""
+    return completed.returncode, (completed.stdout or "").strip()
+
+
+def resolve_git_commit_sha() -> str | None:
+    git_path = shutil.which("git")
+    if not git_path:
+        return None
+
+    returncode, output = _run_local_capture([git_path, "rev-parse", "HEAD"])
+    if returncode != 0 or not output:
+        return None
+    return output
+
+
+def is_git_working_tree_dirty() -> bool | None:
+    git_path = shutil.which("git")
+    if not git_path:
+        return None
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            [git_path, "diff", "--quiet", "--ignore-submodules", "HEAD", "--"],
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            check=False,
+        )
+    except OSError:
+        return None
+    return completed.returncode != 0
+
+
+def resolve_manual_image_tag(image_tag_override: str | None = None) -> str:
+    override = (image_tag_override or os.getenv(DEFAULT_MANUAL_IMAGE_TAG_ENV) or "").strip()
+    if override:
+        return override
+
+    commit_sha = resolve_git_commit_sha()
+    if not commit_sha:
+        raise DeployError(
+            "Nao foi possivel resolver a imagem publicada do deploy manual. "
+            f"Defina {DEFAULT_MANUAL_IMAGE_TAG_ENV} ou execute a partir de um clone Git valido."
+        )
+
+    dirty = is_git_working_tree_dirty()
+    if dirty is None:
+        raise DeployError(
+            "Nao foi possivel validar o estado do working tree local. "
+            f"Defina {DEFAULT_MANUAL_IMAGE_TAG_ENV} explicitamente para o redeploy manual."
+        )
+    if dirty:
+        raise DeployError(
+            "O deploy manual por imagem precompilada exige working tree limpo. "
+            f"Faça commit/push primeiro ou defina {DEFAULT_MANUAL_IMAGE_TAG_ENV} para redeployar uma imagem ja publicada."
+        )
+
+    return commit_sha
+
+
+def resolve_registry_username(username_override: str | None = None) -> str:
+    for candidate in (
+        username_override,
+        os.getenv("GHCR_USERNAME"),
+        os.getenv("GH_USERNAME"),
+        os.getenv("GITHUB_ACTOR"),
+    ):
+        value = (candidate or "").strip()
+        if value:
+            return value
+
+    gh_path = shutil.which("gh")
+    if gh_path:
+        returncode, output = _run_local_capture([gh_path, "api", "user", "--jq", ".login"])
+        if returncode == 0 and output:
+            return output
+
+    raise DeployError(
+        "Nenhum usuario do GHCR foi encontrado. Defina GHCR_USERNAME/GITHUB_ACTOR "
+        "ou autentique o GitHub CLI com `gh auth login`."
+    )
+
+
+def resolve_registry_token(token_override: str | None = None) -> str:
+    for candidate in (
+        token_override,
+        os.getenv("GHCR_TOKEN"),
+        os.getenv("GH_TOKEN"),
+        os.getenv("GITHUB_TOKEN"),
+    ):
+        value = (candidate or "").strip()
+        if value:
+            return value
+
+    gh_path = shutil.which("gh")
+    if gh_path:
+        returncode, output = _run_local_capture([gh_path, "auth", "token"])
+        if returncode == 0 and output:
+            return output
+
+    raise DeployError(
+        "Nenhum token do GHCR foi encontrado. Defina GHCR_TOKEN/GH_TOKEN/GITHUB_TOKEN "
+        "ou autentique o GitHub CLI com `gh auth login`."
+    )
 
 
 def _normalize_archive_member(name: str) -> str:
@@ -329,6 +471,9 @@ class DeployLauncher:
         key_path: str,
         host_fingerprint: str,
         deploy_dir: str,
+        image_tag: str,
+        registry_username: str,
+        registry_token: str,
     ) -> None:
         self.root = root
         self.host_var = tk.StringVar(value=host)
@@ -338,6 +483,9 @@ class DeployLauncher:
         self.host_fingerprint_var = tk.StringVar(value=host_fingerprint)
         self.deploy_dir_var = tk.StringVar(value=deploy_dir)
         self.status_var = tk.StringVar(value="Pronto.")
+        self.image_tag_override = image_tag.strip()
+        self.registry_username_override = registry_username.strip()
+        self.registry_token_override = registry_token.strip()
         self.environment_var = tk.StringVar(value="Verificando ambiente local...")
         self.log_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.command_running = False
@@ -707,7 +855,13 @@ class DeployLauncher:
     def _run_direct_deploy(self, action: DeployAction, config: DeployConfig) -> None:
         try:
             release_id = resolve_release_identifier()
+            image_tag = resolve_manual_image_tag(self.image_tag_override)
+            registry_username = resolve_registry_username(self.registry_username_override)
+            registry_token = resolve_registry_token(self.registry_token_override)
+            deployed_release_id = image_tag if action.image_repository else release_id
             self.log_queue.put(("output", f"Release local: {release_id}"))
+            if action.image_repository:
+                self.log_queue.put(("output", f"Imagem publicada: {action.image_repository}:{image_tag}"))
 
             with tempfile.TemporaryDirectory(prefix="checking-deploy-") as temp_dir_value:
                 temp_dir = Path(temp_dir_value)
@@ -751,7 +905,14 @@ class DeployLauncher:
                     self._build_ssh_command(
                         config,
                         known_hosts_path,
-                        self._build_remote_deploy_script(action, config, release_id),
+                        self._build_remote_deploy_script(
+                            action,
+                            config,
+                            deployed_release_id,
+                            image_tag,
+                            registry_username,
+                            registry_token,
+                        ),
                     ),
                     f"Deploy remoto {action.label}",
                 )
@@ -1015,7 +1176,15 @@ class DeployLauncher:
         ]
         return "\n".join(lines)
 
-    def _build_remote_deploy_script(self, action: DeployAction, config: DeployConfig, release_id: str) -> str:
+    def _build_remote_deploy_script(
+        self,
+        action: DeployAction,
+        config: DeployConfig,
+        release_id: str,
+        image_tag: str,
+        registry_username: str,
+        registry_token: str,
+    ) -> str:
         deploy_dir = shlex.quote(config.deploy_dir)
         smoke_command = [
             "bash",
@@ -1048,7 +1217,27 @@ class DeployLauncher:
                 ]
             )
 
+        compose_command = "docker compose"
+        if action.smoke_validation.compose_file != "docker-compose.yml":
+            compose_command = f"docker compose -f {shlex.quote(action.smoke_validation.compose_file)}"
+
         lines.append(f"printf '%s\\n' {shlex.quote(release_id)} > {shlex.quote(action.release_marker)}")
+        lines.extend(action.prepare_commands)
+
+        if action.image_repository and action.compose_image_env_var:
+            image_ref = f"{action.image_repository}:{image_tag}"
+            lines.extend(
+                [
+                    'TEMP_DOCKER_CONFIG="$(mktemp -d)"',
+                    'cleanup() { rm -rf "$TEMP_DOCKER_CONFIG"; }',
+                    'trap cleanup EXIT',
+                    'export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"',
+                    f"printf '%s' {shlex.quote(registry_token)} | docker login {DEFAULT_GHCR_REGISTRY} -u {shlex.quote(registry_username)} --password-stdin",
+                    f"{action.compose_image_env_var}={shlex.quote(image_ref)} {compose_command} pull {shlex.quote(action.smoke_validation.service)}",
+                    f"docker logout {DEFAULT_GHCR_REGISTRY} || true",
+                ]
+            )
+
         lines.extend(action.restart_commands)
         lines.append(shlex.join(smoke_command))
 
@@ -1133,6 +1322,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=os.getenv("OCEAN_APP_DIR", DEFAULT_DEPLOY_DIR),
         help="Diretório remoto onde o projeto será sincronizado.",
     )
+    parser.add_argument(
+        "--image-tag",
+        default=os.getenv(DEFAULT_MANUAL_IMAGE_TAG_ENV, ""),
+        help=(
+            "Tag da imagem ja publicada no GHCR para o deploy manual. "
+            "Quando omitida, o launcher exige working tree limpo e usa o commit atual."
+        ),
+    )
+    parser.add_argument(
+        "--registry-username",
+        default=os.getenv("GHCR_USERNAME", os.getenv("GITHUB_ACTOR", "")),
+        help="Usuario do GHCR. Quando omitido, tenta usar o GitHub CLI autenticado.",
+    )
+    parser.add_argument(
+        "--registry-token",
+        default=os.getenv("GHCR_TOKEN", os.getenv("GH_TOKEN", os.getenv("GITHUB_TOKEN", ""))),
+        help="Token do GHCR. Quando omitido, tenta usar `gh auth token`.",
+    )
     return parser
 
 
@@ -1147,6 +1354,9 @@ def main(argv: list[str] | None = None) -> int:
         key_path=args.key_path,
         host_fingerprint=args.host_fingerprint,
         deploy_dir=args.deploy_dir,
+        image_tag=args.image_tag,
+        registry_username=args.registry_username,
+        registry_token=args.registry_token,
     )
     root.mainloop()
     return 0

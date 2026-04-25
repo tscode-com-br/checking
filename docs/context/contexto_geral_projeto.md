@@ -53,9 +53,10 @@ Os dois canais atualizam o mesmo backend FastAPI, que persiste dados no banco e 
 - Regra atual: push em `main` dispara deploy automático no servidor DigitalOcean.
 - Processo do workflow:
   1. valida secrets
-  2. sincroniza código por SSH/rsync
-  3. sobe `db` e atualiza containers com `docker compose up -d --build --remove-orphans`
-  4. valida `GET /api/health`
+  2. compila a imagem da aplicação no GitHub Actions e publica no GHCR
+  3. sincroniza código operacional por SSH/rsync
+  4. sobe `db`, faz `docker compose pull` da imagem publicada e atualiza containers com `docker compose up -d --no-build --force-recreate`
+  5. valida `GET /api/health`
 
 Observação informada pelo projeto:
 - O workspace contem dois repositorios Git: o principal `checkcheck` e o aninhado `checking_android_new`.

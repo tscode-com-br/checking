@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   deploy-api:
@@ -52,6 +53,18 @@ jobs:
           test -n "$OCEAN_USER"
           test -n "${{ steps.deploy_dir.outputs.path }}"
           test -n "$OCEAN_SSH_KEY"
+
+      - name: Build and push API image
+        env:
+          API_IMAGE: ghcr.io/tscode-com-br/checkcheck-api
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$API_IMAGE:main" || true
+          docker build --pull --cache-from "$API_IMAGE:main" -f deploy/docker/Dockerfile.api -t "$API_IMAGE:${{ github.sha }}" -t "$API_IMAGE:main" .
+          docker push "$API_IMAGE:${{ github.sha }}"
+          docker push "$API_IMAGE:main"
+          docker logout ghcr.io || true
 
       - name: Resolve SSH verification settings
         id: ssh_verification
@@ -128,7 +141,7 @@ jobs:
           strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
           rsh: ${{ steps.ssh_verification.outputs.rsh }}
 
-      - name: Rebuild and restart API services
+      - name: Pull and restart API services
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -145,9 +158,19 @@ jobs:
               echo "Arquivo .env nao encontrado em ${{ steps.deploy_dir.outputs.path }}"
               exit 1
             fi
+            API_IMAGE='ghcr.io/tscode-com-br/checkcheck-api:${{ github.sha }}'
+            TEMP_DOCKER_CONFIG="$(mktemp -d)"
+            cleanup() {
+              rm -rf "$TEMP_DOCKER_CONFIG"
+            }
+            trap cleanup EXIT
+            export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
             printf '%s\n' '${{ github.sha }}' > .deploy-release-api
             docker compose -f docker-compose.api.yml up -d db
-            docker compose -f docker-compose.api.yml up -d --build api
+            printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            CHECKCHECK_API_IMAGE="$API_IMAGE" docker compose -f docker-compose.api.yml pull api
+            docker logout ghcr.io || true
+            CHECKCHECK_API_IMAGE="$API_IMAGE" docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api
 
       - name: Validate API health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5

@@ -20,15 +20,15 @@ Em 2026-04-24, o workspace possui três repositórios Git distintos:
 
 | Repositório | Pasta local | Remote principal | Escopo | Push em `main` faz deploy automático na DigitalOcean? |
 | --- | --- | --- | --- | --- |
-| Sistema principal | `c:\dev\projetos\checkcheck` | `https://github.com/tscode-com-br/checking.git` | API FastAPI, websites, firmware, docs do sistema, migrações, testes do backend/web | Não |
+| Sistema principal | `c:\dev\projetos\checkcheck` | `https://github.com/tscode-com-br/checking.git` | API FastAPI, websites, firmware, docs do sistema, migrações, testes do backend/web | Sim |
 | App Flutter | `c:\dev\projetos\checkcheck\checking_android_new` | `https://github.com/tscode-com-br/checking_app_flutter.git` | Aplicativo Flutter | Não |
 | App Kotlin | `c:\dev\projetos\checkcheck\checking_kotlin` | `https://github.com/tscode-com-br/checking_app_kotlin.git` | Aplicativo Kotlin nativo | Não |
 
 Consequências práticas:
 
 - o repositório principal continua sendo o dono do deploy da API e dos websites;
-- push em `main` do repositório principal publica código no GitHub, mas não reinicia produção sozinho;
-- o deploy de produção passou a depender de execução manual do workflow global de fallback ou dos workflows manuais por alvo;
+- push em `main` do repositório principal publica código no GitHub e dispara o workflow global de produção;
+- o workflow global continua disponível para reexecução manual de fallback, e os workflows manuais por alvo seguem úteis para deploy isolado;
 - os apps Flutter e Kotlin têm histórico, commit e push próprios;
 - os apps móveis não devem entrar em commits do repositório principal;
 - o repositório principal ignora `checking_android_new/` e `checking_kotlin/`.
@@ -65,16 +65,17 @@ O mesmo workflow também continua disponível para reexecução manual de fallba
 Esse workflow:
 
 1. valida secrets de deploy;
-2. prepara verificação SSH;
-3. garante que o diretório remoto existe;
-4. sincroniza o projeto com `rsync`;
-5. executa `docker compose up -d db`;
-6. executa `docker compose up -d --build --remove-orphans`;
-7. valida `http://127.0.0.1:8000/api/health` no servidor;
-8. instala ou atualiza a automação periódica de limpeza de SSD no droplet;
-9. faz prune de artefatos Docker não utilizados e remove temporários antigos.
+2. compila a imagem da aplicação no GitHub Actions e publica no GHCR;
+3. prepara verificação SSH;
+4. garante que o diretório remoto existe;
+5. sincroniza o projeto operacional com `rsync`;
+6. executa `docker compose up -d db` no servidor;
+7. executa `docker compose pull` da imagem publicada e `docker compose up -d --no-build --force-recreate`;
+8. valida `http://127.0.0.1:8000/api/health` no servidor;
+9. instala ou atualiza a automação periódica de limpeza de SSD no droplet;
+10. faz prune de artefatos Docker não utilizados e remove temporários antigos.
 
-Resumo: push em `main` do root publica o código e envia o deploy para a DigitalOcean automaticamente.
+Resumo: push em `main` do root publica o código, gera a imagem fora do droplet e envia o deploy para a DigitalOcean automaticamente com bem menos pressão de disco no servidor.
 
 ### 3.2 Repositório Flutter `checking_android_new`
 
@@ -222,6 +223,7 @@ git push origin main
 Impacto:
 
 - esse comando publica o código no GitHub e dispara o workflow global de deploy na DigitalOcean;
+- o build pesado da imagem deixa de acontecer no droplet principal e passa a ocorrer no GitHub Actions, reduzindo acúmulo recorrente em `/var/lib/containerd` e áreas afins;
 - `main` continua sendo branch sensível, porque qualquer push nela provoca rollout de produção;
 - se a orientação for risco zero, não faça push em `main` sem aprovação explícita.
 
@@ -240,6 +242,8 @@ gh workflow run deploy-oceandrive.yml -R tscode-com-br/checking -f deploy_dir=/r
 ```
 
 Esse é o caminho recomendado quando for necessário redeployar o pacote completo sem criar novo commit.
+
+Os legados locais `scripts/deploy_launcher.py` e `deploy/deploy_do_ssh.ps1` agora também consomem imagem já publicada no GHCR em vez de rebuildar no droplet. Sem `CHECKCHECK_DEPLOY_IMAGE_TAG`, eles usam o commit atual e exigem working tree limpo; com a variável definida, fazem redeploy explícito da tag informada.
 
 ### 6.9 Validação obrigatória depois do deploy
 

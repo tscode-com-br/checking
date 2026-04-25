@@ -18,6 +18,7 @@ services:
       start_period: 10s
 
   api:
+    image: ${CHECKCHECK_API_IMAGE:-checkcheck-api:local}
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.api

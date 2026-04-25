@@ -18,6 +18,7 @@ services:
       start_period: 10s
 
   app:
+    image: ${CHECKCHECK_APP_IMAGE:-checkcheck-app:local}
     build: .
     restart: unless-stopped
     depends_on:

@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   deploy-admin:
@@ -52,6 +53,18 @@ jobs:
           test -n "$OCEAN_USER"
           test -n "${{ steps.deploy_dir.outputs.path }}"
           test -n "$OCEAN_SSH_KEY"
+
+      - name: Build and push admin website image
+        env:
+          ADMIN_WEB_IMAGE: ghcr.io/tscode-com-br/checkcheck-admin-web
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$ADMIN_WEB_IMAGE:main" || true
+          docker build --pull --cache-from "$ADMIN_WEB_IMAGE:main" -f deploy/docker/Dockerfile.admin-web -t "$ADMIN_WEB_IMAGE:${{ github.sha }}" -t "$ADMIN_WEB_IMAGE:main" .
+          docker push "$ADMIN_WEB_IMAGE:${{ github.sha }}"
+          docker push "$ADMIN_WEB_IMAGE:main"
+          docker logout ghcr.io || true
 
       - name: Resolve SSH verification settings
         id: ssh_verification
@@ -128,7 +141,7 @@ jobs:
           strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
           rsh: ${{ steps.ssh_verification.outputs.rsh }}
 
-      - name: Rebuild and restart admin website
+      - name: Pull and restart admin website
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -141,8 +154,18 @@ jobs:
           script: |
             set -e
             cd ${{ steps.deploy_dir.outputs.path }}
+            ADMIN_WEB_IMAGE='ghcr.io/tscode-com-br/checkcheck-admin-web:${{ github.sha }}'
+            TEMP_DOCKER_CONFIG="$(mktemp -d)"
+            cleanup() {
+              rm -rf "$TEMP_DOCKER_CONFIG"
+            }
+            trap cleanup EXIT
+            export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
             printf '%s\n' '${{ github.sha }}' > .deploy-release-admin-web
-            docker compose -f docker-compose.websites.yml up -d --build admin-web
+            printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            CHECKCHECK_ADMIN_WEB_IMAGE="$ADMIN_WEB_IMAGE" docker compose -f docker-compose.websites.yml pull admin-web
+            docker logout ghcr.io || true
+            CHECKCHECK_ADMIN_WEB_IMAGE="$ADMIN_WEB_IMAGE" docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate admin-web
 
       - name: Validate admin website health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5

@@ -148,11 +148,12 @@ To https://github.com/tscode-com-br/checking.git
 
 Ao subir para `main`, o fluxo automático do projeto deve:
 
-1. sincronizar o código no servidor;
-2. atualizar containers com `docker compose up -d --build --remove-orphans`;
-3. manter a API FastAPI acessível no domínio de produção;
-4. servir a versão nova do website administrativo;
-5. validar o health check da aplicação.
+1. compilar a imagem no GitHub Actions e publicar no GHCR;
+2. sincronizar o código operacional no servidor;
+3. atualizar containers no servidor com `docker compose pull` e `docker compose up -d --no-build --force-recreate`;
+4. manter a API FastAPI acessível no domínio de produção;
+5. servir a versão nova do website administrativo;
+6. validar o health check da aplicação.
 
 ## 11. Verificação após o push
 
@@ -312,7 +313,7 @@ Análise de camadas da imagem em produção:
 
 Conclusão prática:
 
-- o crescimento perigoso de SSD foi resolvido pela poda automática de cache e artefatos não utilizados;
+- o crescimento perigoso de SSD foi reduzido principalmente ao tirar o build recorrente de dentro do droplet e complementar isso com poda automática de cache e artefatos não utilizados;
 - o tamanho ainda elevado da imagem da aplicação decorre majoritariamente do runtime do Playwright/Chromium, necessário para a automação do Microsoft Forms.
 
 ## 17. Regra de segurança para produção sem risco
@@ -324,7 +325,7 @@ Se a exigência for não afetar a aplicação em hipótese alguma, existe uma re
 Motivo:
 
 - qualquer push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`;
-- esse workflow sincroniza o código no servidor e executa `docker compose up -d --build --remove-orphans`;
+- esse workflow sincroniza o código no servidor, publica a imagem no GHCR e executa `docker compose pull` seguido de `docker compose up -d --no-build --force-recreate`;
 - portanto, mesmo um commit apenas de documentação gera um novo deploy de produção.
 
 Quando a orientação for risco zero absoluto, o procedimento correto é:

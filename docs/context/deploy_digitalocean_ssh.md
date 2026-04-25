@@ -82,10 +82,11 @@ Para ativar:
 Com isso, todo push na branch `main`:
 
 1. Faz checkout do código mais recente no GitHub Actions.
-2. Cria o diretório remoto caso ele ainda não exista.
-3. Sincroniza o código no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
-4. Sobe primeiro o serviço `db` e depois executa `docker compose up -d --build --remove-orphans` para atualizar os serviços.
-5. Valida `http://127.0.0.1:8000/api/health` no servidor, registra o commit implantado em `.deploy-release` e falha o workflow se a aplicação não subir.
+2. Compila a imagem da aplicação no GitHub Actions e publica essa imagem no GHCR.
+3. Cria o diretório remoto caso ele ainda não exista.
+4. Sincroniza o código operacional no servidor por SSH, sem enviar `.env`, banco local nem chaves de deploy.
+5. Sobe primeiro o serviço `db`, faz `docker compose pull` da imagem publicada e executa `docker compose up -d --no-build --force-recreate` para atualizar os serviços.
+6. Valida `http://127.0.0.1:8000/api/health` no servidor, registra o commit implantado em `.deploy-release` e falha o workflow se a aplicação não subir.
 
 ## 7) Remoto Git recomendado
 No clone local, padronize o remoto principal:

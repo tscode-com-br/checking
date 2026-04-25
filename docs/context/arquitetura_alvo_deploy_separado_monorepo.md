@@ -39,7 +39,7 @@ Hoje o deploy de produção é uma unidade única.
 ### 2.3 Deploy
 
 - `.github/workflows/deploy-oceandrive.yml` continua sendo o workflow global do root, disparado em `push` para `main` e também disponível via `workflow_dispatch`;
-- ele sincroniza o projeto por `rsync` e depois executa `docker compose up -d --build --remove-orphans`;
+- ele compila a imagem global no GitHub Actions, publica no GHCR, sincroniza o projeto por `rsync` e depois executa `docker compose pull` seguido de `docker compose up -d --no-build --force-recreate`;
 - o health check global valida `http://127.0.0.1:8000/api/health`;
 - ao final do rollout, ele reinstala a automação periódica de limpeza de SSD e executa uma limpeza imediata de cache Docker e temporários antigos.
 

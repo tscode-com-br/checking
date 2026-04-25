@@ -10,7 +10,9 @@ __pycache__
 .mypy_cache/
 .env
 *.db
-deploy/
+deploy/*
+!deploy/nginx/
+!deploy/nginx/static-site.conf
 docs/
 firmware/
 node_modules/
