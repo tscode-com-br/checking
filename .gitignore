@@ -21,6 +21,7 @@ deploy/keys/
 # Separate Flutter repository and local artifacts
 checking_android_new/
 checking_kotlin/
+checking_kotlin_new/
 package-lock.json
 tmp_*.png
 assets/img/app_icon.png

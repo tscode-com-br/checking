@@ -1,411 +1,693 @@
-# Planejamento técnico - data de partida no cadastro de veículo extra do transporte
+# Plano para elevar a precisao da captura GPS no web check
 
-## Status deste documento
+## 1. Objetivo
 
-- Objetivo: planejar a alteração, não executar a alteração.
-- Escopo: página `https://www.tscode.com.br/checking/transport`, com foco no cadastro de veículos da lista `EXTRA TRANSPORT LIST`.
-- Base do plano: comportamento atual confirmado no frontend estático em `sistema/app/static/transport`, no backend FastAPI de transporte e nos testes automatizados existentes.
+Definir uma estrategia tecnica, incremental e verificavel para reduzir a frequencia com que a aplicacao web em `sistema/app/static/check` recebe coordenadas com precisao insuficiente no momento em que:
 
-## Objetivo funcional
+- a pagina e aberta;
+- a pagina volta para primeiro plano;
+- o usuario pressiona o botao `Atualizar localizacao`.
 
-Implementar o seguinte comportamento no fluxo de cadastro de veículos extra:
+O objetivo **nao** e afrouxar a regra de negocio. O objetivo e aumentar a chance de a aplicacao obter uma leitura GPS boa o suficiente para passar pelo limite configurado no admin em `Erro maximo para considerar a coordenada do usuario`.
 
-1. No modal de cadastro aberto pelo `+` da `EXTRA TRANSPORT LIST`, inserir um campo de data imediatamente antes do campo `Departure Time`.
-2. O administrador deve conseguir escolher explicitamente a data de partida do veículo extra, sem depender da data atualmente aberta no dashboard.
-3. Ao clicar em `Save Vehicle`, o veículo extra deve ser criado apenas para a data escolhida no modal.
-4. O veículo não deve aparecer em outras datas, mantendo a semântica atual de agenda `single_date`.
-5. O fluxo de rota (`Home to Work` ou `Work to Home`) e horário de partida deve continuar funcionando exatamente como hoje.
-6. O feedback visual da tela deve deixar claro que o cadastro foi salvo para a data escolhida, mesmo quando ela for diferente da data que estava aberta antes do modal.
+## 2. Diagnostico do estado atual
 
-## Estado atual confirmado no código
+### 2.1 Fluxo atual no frontend web
 
-### Frontend do transporte
+Pelo codigo atual em `sistema/app/static/check/app.js`:
 
-- O modal de cadastro de veículo em `sistema/app/static/transport/index.html` hoje mostra os campos `Type`, `Plate`, `Color`, `Places`, `Tolerance`, `Departure Time` e `Route` para `extra`, mas não possui campo de data editável para esse escopo.
-- Em `sistema/app/static/transport/app.js`, a função `buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind)` sempre injeta `service_date` a partir da data atual do dashboard, recebida pelo parâmetro `serviceDate`.
-- Para `extra`, essa mesma função apenas acrescenta `route_kind` e `departure_time`; ela não lê nenhuma data do formulário porque esse campo ainda não existe.
-- No submit do modal, o frontend envia `POST /api/transport/vehicles` e, em caso de sucesso, recarrega o dashboard com `loadDashboard(dateStore.getValue(), { announce: false })`, isto é, continua na data que estava aberta antes do submit.
-- Ao abrir o modal `extra`, o código atual limpa o formulário com `form.reset()`, reaplica defaults de tipo, lugares e tolerância e coloca foco em `departure_time`.
-- A memória do repositório já registra um gotcha importante desse modal: como `form.reset()` é usado, qualquer valor default visível precisa ser reposto de forma consistente no HTML e no JS ao abrir o modal.
+- a captura usa `navigator.geolocation.getCurrentPosition(...)`;
+- as opcoes atuais sao:
+  - `enableHighAccuracy: true`
+  - `maximumAge: 0`
+  - `timeout: 20000`
+- a funcao `resolveCurrentLocation()` faz **uma unica tentativa de leitura** por ciclo de captura;
+- quando a pagina volta para foco, o fluxo passa por `runLifecycleUpdateSequence()`;
+- quando o usuario clica no botao de refresh, o fluxo passa por `runManualLocationRefreshSequence()`;
+- depois que o navegador entrega uma posicao, o frontend envia `latitude`, `longitude` e `accuracy_meters` para `POST /api/web/check/location`.
 
-### Backend já suporta a semântica de data única
+### 2.2 Fluxo atual no backend
 
-- O schema `TransportVehicleCreate` em `sistema/app/schemas.py` já possui o campo `service_date: date`.
-- Para `service_scope == "extra"`, o backend já exige `route_kind` e `departure_time` e usa `service_date` como parte do contrato.
-- Em `sistema/app/services/transport.py`, a criação do cadastro transforma um veículo `extra` em uma agenda com:
-  - `recurrence_kind = "single_date"`
-  - `service_date = payload.service_date`
-  - `route_kind = payload.route_kind`
-  - `departure_time = payload.departure_time`
-- A função `vehicle_schedule_applies_to_date()` compara agendas `single_date` por igualdade exata de data, então um veículo extra já aparece somente na data gravada.
-- O builder do dashboard também respeita essa regra: veículos extra só entram na resposta quando a data solicitada no dashboard bate exatamente com `schedule.service_date`.
-- O registry de veículos extra já expõe `service_date` e `route_kind`, o que confirma que a estrutura atual já sabe lidar com um veículo extra datado.
+Pelo codigo atual em `sistema/app/routers/web_check.py`:
 
-### Testes existentes que já travam o contrato atual
+- o backend le o limite global via `get_location_accuracy_threshold_meters(db)`;
+- se `accuracy_meters` vier `null` ou acima do limite configurado, o backend retorna:
+  - `status = accuracy_too_low`
+  - `label = Precisao insuficiente`
+- so depois de passar por esse filtro de qualidade a geometria de matching e avaliada.
 
-- `tests/test_api_flow.py` já valida que o cadastro de veículo `extra` cria agenda `single_date` com `service_date` persistido.
-- `tests/test_api_flow.py` também já valida que veículos extra aparecem apenas nas datas corretas do dashboard e do registry.
-- `tests/transport_page_date.test.js` atualmente valida que `buildVehicleCreatePayload()` envia `service_date` para `extra`, mas esse valor vem do parâmetro da data selecionada no dashboard, não de um campo do formulário.
-- Não existe hoje teste de frontend cobrindo um campo editável de data dentro do modal `extra`.
+Isso esta coerente com a especificacao existente: o limite administrativo continua obrigatorio e o matching nao deve ser executado quando a leitura GPS for ruim demais.
 
-## Diagnóstico técnico
+### 2.3 Conclusao tecnica do diagnostico
 
-O banco e a API já têm a semântica necessária para suportar a funcionalidade pedida. O gargalo real está no frontend:
+O problema principal, no estado atual, **nao parece estar no matching**. O problema parece estar na **estrategia de aquisicao da posicao no navegador**.
 
-1. a UI não expõe um campo de data para o cadastro `extra`
-2. o payload ainda acopla `service_date` à data corrente do dashboard
-3. o reload após salvar continua preso à data antiga da tela, o que faria um veículo salvo para outra data parecer "sumir"
+Hoje a aplicacao aceita a primeira leitura que o navegador entregar para aquela tentativa. Em cenarios reais, especialmente em ambiente interno, transicao recente de rede, aparelho frio ou GPS ainda convergindo, a primeira leitura pode chegar rapidamente, mas com `accuracy_meters` acima do necessario.
 
-Por isso, esta alteração não pede uma migration nova nem uma mudança estrutural de backend. O principal trabalho está em HTML, JS, i18n e testes de regressão.
+## 3. Hipotese principal
 
-## Decisão técnica recomendada
+Hipotese de trabalho:
 
-### Fonte de verdade
+> a aplicacao web esta encerrando a captura cedo demais, aceitando uma leitura inicial ainda imprecisa, quando seria melhor manter uma janela curta e controlada de aquisicao para aguardar amostras melhores antes de decidir qual coordenada enviar ao backend.
 
-Manter a fonte de verdade atual:
+Observacao importante:
 
-- `payload.service_date` na API
-- `transport_vehicle_schedules.service_date` no banco
+- aumentar apenas o `timeout` de `getCurrentPosition()` **nao garante** melhora real;
+- em muitos navegadores, `getCurrentPosition()` resolve assim que a primeira posicao aceitavel e obtida, mesmo que poucos segundos depois fosse possivel receber uma posicao melhor;
+- portanto, a ideia de "esperar um pouco mais" faz sentido, mas provavelmente deve ser implementada como **janela de aquisicao com selecao da melhor amostra**, e nao apenas como aumento cego de timeout.
 
-Não criar nova coluna, não duplicar data em outro campo e não alterar a modelagem das agendas de transporte.
+## 4. Diretrizes da solucao
 
-### UX recomendada para o modal `extra`
+Para resolver o problema sem quebrar comportamento homologado, a solucao deve seguir estas diretrizes:
 
-1. Inserir um novo campo `Departure Date` imediatamente antes de `Departure Time`.
-2. Esse campo deve ficar visível apenas quando `service_scope === "extra"`.
-3. Ao abrir o modal `extra`, preencher `Departure Date` com a data atual do dashboard.
-4. Ao abrir o modal `extra`, o foco inicial deve ir para `Departure Date`, porque ela passa a ser a primeira decisão específica desse fluxo.
-5. Se o administrador alterar a data e salvar com sucesso, o dashboard deve navegar automaticamente para a data escolhida antes de recarregar os dados, para que o veículo recém-criado apareça imediatamente.
+1. Preservar o contrato atual da API de matching web.
+2. Preservar o papel do limite administrativo `location_accuracy_threshold_meters`.
+3. Melhorar apenas a forma como o frontend escolhe **qual** leitura GPS enviar.
+4. Evitar rajadas de chamadas ao backend durante uma mesma captura.
+5. Manter experiencia silenciosa nos gatilhos automaticos e experiencia mais orientada no refresh manual.
+6. Nao degradar atividades automaticas que dependem da localizacao final resolvida.
 
-### Regra de envio do payload
+## 5. Opcoes de abordagem
 
-- Para `extra`, `service_date` deve vir do novo input do formulário.
-- Para `regular` e `weekend`, `service_date` continua vindo da data selecionada no dashboard, preservando a semântica atual de data-base de início.
+### 5.1 Aumentar somente o timeout atual
 
-### Regra de validação
+**Descricao**
 
-Para `extra`:
+- manter `getCurrentPosition()` como esta;
+- aumentar `timeout` de 20 s para um valor maior.
 
-1. `Departure Date` obrigatória no frontend.
-2. `Departure Time` obrigatório no frontend.
-3. `Route` continua obrigatória no frontend.
-4. O backend continua como guard-rail com o contrato atual; não é necessário mudar schema nem tabela para suportar essa entrega.
+**Vantagens**
 
-### Regra de visibilidade após salvar
+- mudanca pequena;
+- baixo risco estrutural.
 
-Se o veículo extra for salvo para uma data diferente da data aberta no dashboard, o frontend deve trocar `dateStore` para a data escolhida e então chamar `loadDashboard()` nessa nova data.
+**Desvantagens**
 
-Motivo dessa decisão:
+- baixa chance de resolver a causa real;
+- o navegador pode continuar entregando uma primeira leitura ruim cedo demais;
+- piora a espera nos casos de timeout sem garantir leitura melhor.
 
-- evita a percepção de falha no salvamento
-- confirma visualmente a alocação na data correta
-- reduz suporte manual e retrabalho do administrador
+**Recomendacao**
 
-## Escopo detalhado por camada
+- nao adotar como solucao principal.
 
-## 1. Frontend - estrutura visual do modal
+### 5.2 Repetir `getCurrentPosition()` em loop controlado
 
-### Alteração principal em `index.html`
+**Descricao**
 
-Adicionar um novo bloco de campo extra-only no modal de cadastro, imediatamente antes do bloco atual de `Departure Time`.
+- fazer tentativas sucessivas por janela limitada;
+- guardar a melhor `accuracy_meters` encontrada;
+- ao final, enviar ao backend apenas a melhor leitura.
 
-Recomendação de markup:
+**Vantagens**
 
-- `label.transport-field`
-- atributo marcador dedicado, por exemplo `data-extra-service-date-field`
-- `input type="date"`
-- `name="service_date"`
+- mais simples de encaixar no desenho atual;
+- reduz dependencia de comportamento especifico de `watchPosition()`.
 
-Regras desse campo:
+**Desvantagens**
 
-- hidden quando o modal não estiver em `extra`
-- required apenas em `extra`
-- disabled fora de `extra`
-- valor inicial sincronizado pelo JS ao abrir o modal
+- pode ficar mais verboso e menos elegante;
+- pode repetir overhead desnecessario entre chamadas;
+- tende a ser inferior a uma sessao de observacao continua.
 
-### Impacto visual esperado
+**Recomendacao**
 
-- A altura do modal aumenta um pouco.
-- Em princípio, os estilos genéricos de `.transport-field` já devem acomodar o novo input sem nova folha de estilo.
-- Ainda assim, será necessário validar manualmente responsividade e overflow em telas menores, porque a combinação `Departure Date + Departure Time + Route` aumenta a densidade do bloco extra.
+- manter como fallback tecnico caso `watchPosition()` se mostre instavel na homologacao.
 
-## 2. Frontend - comportamento em `app.js`
+### 5.3 Sessao limitada com `watchPosition()` e selecao da melhor amostra
 
-### Refatoração do builder do payload
+**Descricao**
 
-Hoje `buildVehicleCreatePayload()` recebe a data do dashboard por parâmetro e a usa para todos os escopos. O plano recomendado é:
+- iniciar uma sessao de captura por tempo limitado;
+- acompanhar varias amostras durante uma janela curta;
+- manter sempre a melhor leitura observada;
+- encerrar cedo quando a precisao ficar dentro do limite exigido;
+- enviar ao backend apenas a melhor leitura final daquela sessao.
 
-1. Manter a data do dashboard como fallback geral.
-2. Para `extra`, ler `formData.get("service_date")`.
-3. Se esse valor estiver preenchido, usar esse valor como `payload.service_date`.
-4. Se estiver vazio por algum motivo, bloquear o submit com mensagem amigável e foco no campo.
+**Vantagens**
 
-Isso pode ser implementado com uma pequena função auxiliar, por exemplo:
+- ataca diretamente a causa mais provavel;
+- melhora a chance de convergencia do GPS;
+- permite equilibrio entre rapidez e qualidade.
 
-- resolver a data efetiva do cadastro por escopo
-- manter a lógica de `regular` e `weekend` intacta
-- evitar espalhar condições extras no submit
+**Desvantagens**
 
-### Ajustes no ciclo de vida do modal
+- requer refatoracao maior no frontend;
+- exige cuidado com cancelamento, foco, concorrencia e UX.
 
-`syncVehicleModalFields(scope)` precisa passar a controlar também o novo campo de data:
+**Recomendacao**
 
-1. mostrar e esconder o bloco da data
-2. marcar `required` somente em `extra`
-3. habilitar e desabilitar somente em `extra`
-4. limpar o valor quando sair de `extra`, para não vazar estado entre escopos
+- **abordagem principal recomendada**.
 
-`openVehicleModal(scope)` precisa:
+### 5.4 Relaxar o limite administrativo de precisao
 
-1. preencher `service_date` com `getCurrentServiceDateIso()` quando `scope === "extra"`
-2. manter os defaults atuais de tipo, lugares e tolerância
-3. trocar o foco inicial de `departure_time` para `service_date`
+**Descricao**
 
-### Ajustes no submit do modal
+- aumentar o valor configurado no admin para reduzir rejeicoes por `accuracy_too_low`.
 
-O submit deve ganhar uma validação local adicional para `extra`:
+**Vantagens**
 
-1. se `service_date` estiver vazia, exibir mensagem dedicada
-2. focar o input de data
-3. não enviar request
+- efeito imediato;
+- zero mudanca tecnica no frontend.
 
-Depois do `POST` com sucesso:
+**Desvantagens**
 
-1. se `payload.service_scope === "extra"`, atualizar a data selecionada do dashboard para `payload.service_date`
-2. recarregar o dashboard nessa data
-3. só depois anunciar status de sucesso, evitando reload visual incoerente
+- reduz o rigor da regra de negocio;
+- pode aumentar falso positivo;
+- nao corrige a causa operacional da captura ruim.
 
-### Ponto de atenção com `form.reset()`
+**Recomendacao**
 
-Como o modal usa `form.reset()`, o novo campo de data não pode depender apenas do valor digitado anteriormente. Ele precisa ser sempre reposto ao abrir o modal `extra`, senão o usuário pode reabrir o formulário e encontrar o campo vazio ou com um valor residual incorreto.
+- tratar apenas como contingencia operacional temporaria, nunca como correcao principal.
 
-## 3. i18n - textos e mensagens
+## 6. Estrategia recomendada
 
-### Novos textos necessários em `i18n.js`
+### 6.1 Resumo executivo
 
-Adicionar, em todos os idiomas já suportados pelo transporte:
+Implementar no frontend uma **sessao de aquisicao GPS com janela limitada**, preferencialmente baseada em `watchPosition()`, com estes principios:
 
-1. novo label de campo: `Departure Date`
-2. nova mensagem de validação: `Departure Date is required for extra vehicles.`
-3. ajuste da nota do modal `extra` para explicitar que o veículo é criado para a rota selecionada e para a data de partida escolhida no formulário
+- uma sessao por gatilho de captura;
+- varias amostras do navegador durante poucos segundos;
+- selecao da melhor amostra pela menor `accuracy_meters` valida;
+- encerramento antecipado assim que a amostra atingir o limite administrativo;
+- envio de apenas uma chamada final ao backend de matching.
 
-### Idiomas que precisam ser atualizados juntos
+### 6.2 Comportamento recomendado por tipo de gatilho
 
-O arquivo de i18n do transporte hoje carrega pelo menos estes blocos de tradução:
+#### Abertura da aplicacao e retorno ao primeiro plano
 
-- inglês
-- português
-- chinês
-- malaio
-- filipino
+- usar modo silencioso;
+- abrir uma janela curta de captura;
+- nao exibir mensagens excessivas enquanto a pagina apenas retomou foco;
+- se surgir amostra suficiente cedo, encerrar cedo;
+- se a melhor amostra ainda ficar ruim ao final da janela, manter o comportamento de alerta atual, mas com mensagem mais informativa.
 
-O planejamento deve tratar todos esses blocos na mesma alteração para evitar chaves faltantes e regressão visual de localização.
+#### Botao `Atualizar localizacao`
 
-## 4. Backend - impacto esperado
+- usar modo interativo;
+- permitir uma janela um pouco maior do que a silenciosa;
+- mostrar que a aplicacao esta buscando uma leitura mais precisa, e nao apenas consultando uma unica vez;
+- exibir a melhor precisao obtida ate o momento;
+- quando a sessao terminar sem atingir o limite, informar qual foi a melhor precisao encontrada e qual era o limite exigido.
 
-### O que precisa permanecer igual
+### 6.3 Regra de selecao da melhor amostra
 
-- `TransportVehicleCreate` continua usando `service_date`.
-- `create_transport_vehicle_registration()` continua criando agenda `single_date` para `extra`.
-- `vehicle_schedule_applies_to_date()` continua exigindo igualdade exata para `single_date`.
-- O endpoint `POST /api/transport/vehicles` continua sem mudança de rota nem de formato principal.
+Cada amostra recebida do navegador deve ser avaliada assim:
 
-### O que provavelmente não precisa mudar
+1. descartar amostras sem latitude/longitude validas;
+2. descartar amostras com `accuracy` ausente, negativa ou nao numerica;
+3. considerar melhor amostra a de menor `accuracy_meters`;
+4. em empate tecnico, preferir a mais recente;
+5. se alguma amostra atingir `accuracy_meters <= threshold`, encerrar imediatamente com sucesso tecnico da captura.
 
-- nenhuma migration nova
-- nenhuma coluna nova em `transport_vehicle_schedules`
-- nenhuma alteração de model SQLAlchemy
-- nenhuma alteração obrigatória em `routers/transport.py`
+### 6.4 Regra de encerramento da sessao
 
-### Ajuste opcional, não obrigatório
+A sessao deve terminar quando ocorrer qualquer um destes eventos:
 
-Se durante a implementação o time quiser fortalecer o guard-rail de UX também no servidor, pode adicionar uma mensagem mais explícita para `service_date` ausente em `extra`. Mas isso não é requisito técnico para atender à funcionalidade, porque o campo já faz parte do contrato e o frontend pode resolver a experiência principal.
+1. a precisao atingir o limite administrativo;
+2. a janela maxima de captura expirar;
+3. ocorrer erro irrecuperavel do navegador;
+4. a sessao for cancelada por novo gatilho concorrente;
+5. a pagina deixar de estar em contexto valido para continuar aquela tentativa.
 
-## 5. Testes automatizados
+### 6.5 Janela de captura sugerida
 
-### Frontend JS
+Os valores exatos devem ser calibrados em homologacao, mas o plano recomenda partir de algo nesta linha:
 
-Atualizar `tests/transport_page_date.test.js` para refletir o novo contrato do modal:
+- modo silencioso de ciclo de vida: 6 a 10 segundos;
+- modo interativo do botao manual: 12 a 20 segundos;
+- encerramento antecipado imediato quando `accuracy_meters <= threshold`.
 
-1. `buildVehicleCreatePayload()` deve usar o valor do campo `service_date` para `extra`, mesmo quando a data atual do dashboard for outra.
-2. `buildVehicleCreatePayload()` deve continuar usando a data passada por parâmetro para `regular` e `weekend`.
-3. Adicionar cobertura para a abertura do modal `extra` preencher `service_date` com a data atual do dashboard.
-4. Adicionar cobertura para a validação que bloqueia submit de `extra` sem data.
+Esses numeros sao **ponto de partida**, nao decisao final. O ajuste deve ser guiado por testes reais em aparelho e por observacao de quantas capturas melhoram significativamente apos os primeiros segundos.
 
-### Backend/API
+## 7. Arquitetura proposta para a implementacao futura
 
-Atualizar ou adicionar cenários em `tests/test_api_flow.py` para registrar explicitamente o comportamento pedido:
+### 7.1 Novo conceito no frontend: sessao de aquisicao
 
-1. criar veículo `extra` com `service_date` diferente da data inicialmente aberta pelo dashboard
-2. validar que a agenda criada tem `recurrence_kind == "single_date"`
-3. validar que o veículo aparece no dashboard da data escolhida
-4. validar que o mesmo veículo não aparece no dashboard de outra data
-5. validar que o `extra_vehicle_registry` também mostra a data correta
+Introduzir uma abstracao explicita para a captura, por exemplo um controlador interno com estas responsabilidades:
 
-### O que não deve ser quebrado
+- iniciar a sessao;
+- registrar timestamp de inicio;
+- acompanhar amostras recebidas;
+- guardar melhor amostra;
+- encerrar/cancelar sessao;
+- devolver um resultado padronizado para `resolveCurrentLocation()`.
 
-- criação de `regular`
-- criação de `weekend`
-- validação atual de `departure_time` obrigatória para `extra`
-- filtros por rota para `extra`
-- visibilidade por data já existente no dashboard e no registry
+### 7.2 Resultado padronizado da sessao
 
-## 6. Riscos de regressão que o plano precisa cobrir
+Mesmo que a API publica permaneça igual, internamente o frontend deve passar a diferenciar:
 
-1. Se o campo de data for mostrado, mas `buildVehicleCreatePayload()` continuar usando apenas a data do dashboard, a UI dará a impressão de aceitar a escolha do usuário sem realmente persistí-la.
-2. Se o submit salvar o veículo em outra data, mas o dashboard continuar recarregando a data antiga, o administrador pode interpretar o fluxo como erro de gravação.
-3. Se o novo `service_date` do formulário vazar para `regular` ou `weekend`, o sistema pode alterar sem querer a semântica atual dessas listas.
-4. Se o novo campo não for limpo ou refeito corretamente após `form.reset()`, o modal pode reabrir com valor residual incorreto.
-5. Se os textos de i18n não forem atualizados em todos os idiomas, a UI pode mostrar labels quebrados ou mensagens em branco.
-6. Se os testes cobrirem apenas backend e ignorarem o builder do payload no frontend, a regressão principal pode escapar mesmo com a API funcionando.
+- erro do navegador sem nenhuma amostra;
+- sessao encerrada com melhor amostra abaixo do limite;
+- sessao encerrada com melhor amostra acima do limite;
+- sessao cancelada por concorrencia ou perda de contexto.
 
-## 7. Estratégia de implementação recomendada
+Isso facilita UX, telemetria e testes.
 
-### Fase 1 - UI do modal
+### 7.3 Compatibilidade com o fluxo existente
 
-1. Inserir o campo `Departure Date` no HTML, imediatamente antes de `Departure Time`.
-2. Atualizar i18n para label, nota e mensagem de validação.
-3. Ajustar `syncVehicleModalFields()` para controlar visibilidade e obrigatoriedade do novo campo.
+`resolveCurrentLocation()` pode continuar como fachada principal, mas deixando de depender de uma chamada unica a `getCurrentPosition()`.
 
-### Fase 2 - Lógica de submit
+O ideal e que:
 
-1. Refatorar `buildVehicleCreatePayload()` para `extra` usar a data do formulário.
-2. Adicionar validação de `Departure Date` no submit.
-3. Ajustar `openVehicleModal()` para preencher a data automaticamente e focar o novo campo.
+- `runLifecycleUpdateSequence()` continue chamando uma atualizacao silenciosa;
+- `runManualLocationRefreshSequence()` continue chamando uma atualizacao interativa;
+- `runAutomaticActivitiesEnableSequence()` continue recebendo apenas a localizacao final resolvida, nunca amostras intermediarias.
 
-### Fase 3 - Feedback e navegação
+### 7.4 Concorrencia e cancelamento
 
-1. Ajustar o fluxo de sucesso para mudar o dashboard para a data escolhida quando o escopo for `extra`.
-2. Confirmar que o status de sucesso continua sendo exibido depois do reload.
-3. Confirmar que o comportamento de `regular` e `weekend` não muda.
+Como o app ja possui mecanismos como `locationRequestPromise`, `lifecycleRefreshInProgress` e cooldown de gatilhos, a futura implementacao deve manter ou reforcar estas garantias:
 
-### Fase 4 - Testes
+- nao abrir duas sessoes de captura em paralelo;
+- cancelar observador anterior ao iniciar um novo refresh forcado;
+- impedir que `visibilitychange`, `focus` e `pageshow` criem captura duplicada em cascata;
+- impedir envio duplicado de `POST /api/web/check/location` para uma mesma intencao de refresh.
 
-1. Atualizar testes JS do modal e do payload.
-2. Atualizar ou adicionar testes Python de API e dashboard.
-3. Rodar os testes afetados antes de considerar a entrega concluída.
+## 8. Observabilidade e diagnostico
 
-## 8. Arquivos mais prováveis de alteração
+Antes ou junto da mudanca de comportamento, vale incluir observabilidade suficiente para comprovar que a solucao realmente melhorou a taxa de sucesso.
 
-### Frontend
+### 8.1 Dados que interessam medir
 
-- `sistema/app/static/transport/index.html`
-- `sistema/app/static/transport/app.js`
-- `sistema/app/static/transport/i18n.js`
-- `sistema/app/static/transport/styles.css` apenas se a validação visual mostrar necessidade real
+Por sessao de captura:
 
-### Testes
+- origem do gatilho: `startup`, `visibility`, `focus`, `pageshow`, `manual_refresh`, `automatic_activities_enable`;
+- tempo total de captura em ms;
+- quantidade de amostras recebidas;
+- melhor `accuracy_meters` observado;
+- `accuracy_meters` enviado ao backend;
+- `threshold` vigente;
+- resultado final do matching: `matched`, `accuracy_too_low`, `not_in_known_location`, `outside_workplace`, `no_known_locations`;
+- existencia de cancelamento ou timeout.
 
-- `tests/transport_page_date.test.js`
-- `tests/test_api_flow.py`
+### 8.2 Forma de coletar
 
-### Backend
+Fase inicial sugerida:
 
-Nenhum arquivo Python parece exigir alteração obrigatória para a funcionalidade principal, porque o contrato de `service_date` para `extra` já existe e já é respeitado na persistência e no dashboard.
+- diagnostico em memoria e `console` durante homologacao controlada;
+- sem alterar contrato de resposta da API.
 
-## 9. Validações obrigatórias após a implementação
+Fase posterior opcional:
 
-1. Abrir o dashboard em uma data A, cadastrar um veículo `extra` escolhendo uma data B diferente de A e confirmar que o sistema navega para B após salvar.
-2. Confirmar que o veículo aparece na `EXTRA TRANSPORT LIST` da data B.
-3. Voltar para a data A e confirmar que o veículo não aparece lá.
-4. Confirmar que `Departure Time` e `Route` continuam sendo gravados corretamente.
-5. Confirmar que o registry de veículos extra mostra a data correta do cadastro.
-6. Confirmar que `regular` e `weekend` continuam usando a data do dashboard como referência de início.
-7. Confirmar que o modal bloqueia submit sem `Departure Date` e sem `Departure Time` para `extra`.
-8. Confirmar que a tela continua funcional em todos os idiomas suportados pelo transporte.
+- enviar telemetria controlada para logs de servidor ou endpoint diagnostico dedicado, se houver necessidade operacional real.
 
-## 10. Lista to-do completa para execução futura
+## 9. UX recomendada
 
-### Preparação
+### 9.1 Mensagens durante captura manual
 
-- [x] Revisar o modal atual de `EXTRA TRANSPORT LIST` em `sistema/app/static/transport/index.html` e identificar o ponto exato de inserção do novo campo imediatamente antes de `Departure Time`.
-- [x] Revisar `buildVehicleCreatePayload()`, `syncVehicleModalFields()` e `openVehicleModal()` em `sistema/app/static/transport/app.js` antes da edição para manter o escopo da alteração restrito ao fluxo `extra`.
-- [x] Revisar os blocos de tradução de `sistema/app/static/transport/i18n.js` para adicionar as novas chaves em todos os idiomas no mesmo commit.
+O refresh manual deve deixar claro que o sistema esta tentando obter **melhor precisao**, e nao apenas "rodando de novo".
 
-Observações confirmadas nesta execução:
+Sugestao de semantica de mensagens:
 
-1. Em `sistema/app/static/transport/index.html`, o ponto exato de inserção do novo campo é entre o label de `Tolerance (minutes)` e o label já existente com `data-extra-departure-field`, preservando a sequência `Tolerance -> Departure Date -> Departure Time -> Route`.
-2. Em `sistema/app/static/transport/app.js`, `buildVehicleCreatePayload()` ainda define `service_date` diretamente a partir do parâmetro `serviceDate`, então o novo campo precisará sobrescrever esse valor apenas no escopo `extra`.
-3. Em `sistema/app/static/transport/app.js`, `syncVehicleModalFields()` hoje só controla visibilidade, obrigatoriedade e limpeza para `departure_time` e `route_kind` no fluxo `extra`; o novo campo de data deverá seguir exatamente esse mesmo padrão de controle.
-4. Em `sistema/app/static/transport/app.js`, `openVehicleModal()` executa `form.reset()`, reaplica defaults com `applyVehicleFormDefaults("carro", vehicleForm)`, limpa `departure_time` e foca esse campo quando o escopo é `extra`; a nova data precisará ser preenchida após o reset e antes da troca de foco.
-5. No submit atual do modal, a validação específica de `extra` cobre apenas `departure_time`; ainda não existe validação dedicada para `service_date` no frontend.
-6. Em `sistema/app/static/transport/i18n.js`, o bloco do modal de veículos aparece em cinco idiomas já ativos no transporte: inglês, português, chinês, malaio e filipino. As novas chaves de label, nota e validação precisam entrar em todos esses blocos no mesmo commit para evitar inconsistência de localização.
+- inicio: "Buscando uma leitura GPS mais precisa...";
+- progresso: "Melhor precisao ate agora: X m. Limite exigido: Y m.";
+- sucesso tecnico de captura: "Precisao suficiente atingida. Validando localizacao...";
+- encerramento sem atingir limite: "A melhor leitura obtida foi X m, acima do limite de Y m.".
 
-### HTML do modal
+### 9.2 Mensagens para gatilhos automaticos
 
-- [x] Adicionar um novo campo `Departure Date` no modal de cadastro de veículo.
-- [x] Posicionar esse campo imediatamente antes de `Departure Time`.
-- [x] Marcar o novo campo com um seletor de controle específico para o escopo `extra`.
-- [x] Definir `type="date"` e `name="service_date"` no novo input.
-- [x] Garantir que o campo inicie hidden no markup, assim como os demais campos específicos de `extra`.
+Nos gatilhos silenciosos, a UX deve continuar discreta:
 
-### Comportamento do modal em JS
+- evitar poluir o usuario com mensagens transitorias a cada retorno de foco;
+- manter feedback visivel apenas quando o resultado final realmente importa;
+- preservar o botao manual como acao explicita de nova tentativa.
 
-- [x] Atualizar `syncVehicleModalFields()` para mostrar e esconder o novo campo de data apenas no escopo `extra`.
-- [x] Atualizar `syncVehicleModalFields()` para tornar o campo obrigatório e habilitado apenas no escopo `extra`.
-- [x] Limpar o valor do campo ao sair do escopo `extra`, evitando vazamento de estado entre formulários.
-- [x] Atualizar `openVehicleModal()` para preencher `service_date` com `getCurrentServiceDateIso()` ao abrir `extra`.
-- [x] Alterar o foco inicial do modal `extra` para o novo campo `service_date`.
-- [x] Confirmar que `form.reset()` não apaga os defaults necessários de tipo, lugares e tolerância.
+### 9.3 O que nao fazer na UX
 
-### Payload e submit
+- nao prometer "GPS exato";
+- nao manter spinner infinito;
+- nao disparar mensagens repetitivas em sequencia por `focus` e `visibilitychange`;
+- nao esconder do usuario qual foi a melhor precisao obtida quando houver falha por baixa precisao.
 
-- [x] Refatorar `buildVehicleCreatePayload()` para que `extra` leia `service_date` do formulário.
-- [x] Manter `regular` e `weekend` usando a data atual do dashboard recebida por parâmetro.
-- [x] Adicionar validação de frontend para bloquear submit de `extra` sem `service_date`.
-- [x] Adicionar mensagem de erro dedicada para data ausente em `extra`.
-- [x] Focar o input `service_date` quando essa validação falhar.
-- [x] Preservar a validação atual de `departure_time` obrigatória para `extra`.
-- [x] Garantir que `route_kind` continue sendo enviado apenas para `extra`.
+## 10. Impactos no backend e no contrato
 
-### Feedback após salvar
+### 10.1 O que deve permanecer igual
 
-- [x] Ajustar o fluxo de sucesso para que `extra` troque a data selecionada do dashboard para `payload.service_date` antes do reload.
-- [x] Garantir que o reload após salvar use a nova data quando o cadastro for `extra`.
-- [x] Garantir que o fluxo de sucesso de `regular` e `weekend` continue recarregando a data atual do dashboard.
-- [x] Validar se a mensagem `Vehicle saved successfully.` continua visível no timing correto depois da troca de data.
+- `POST /api/web/check/location` continua recebendo `latitude`, `longitude` e `accuracy_meters`;
+- o backend continua devolvendo `accuracy_too_low` quando a leitura estiver acima do limite;
+- o campo administrativo `location_accuracy_threshold_meters` continua sendo a referencia unica de qualidade minima;
+- a semantica homologada do matching nao muda.
 
-### i18n
+### 10.2 O que pode mudar sem quebrar contrato
 
-- [x] Adicionar a chave de label para `Departure Date` em todos os idiomas do transporte.
-- [x] Adicionar a chave de erro para `Departure Date is required for extra vehicles.` em todos os idiomas do transporte.
-- [x] Atualizar a nota do modal `extra` para refletir que a data vem do formulário, não implicitamente da tela.
-- [x] Revisar consistência terminológica entre `Departure Date`, `Departure Time` e `Route` em todas as línguas.
+- o frontend passa a escolher melhor a amostra antes de enviar;
+- a mensagem local apresentada ao usuario pode ficar mais descritiva;
+- a telemetria interna pode registrar estatisticas da sessao de captura.
 
-### CSS e responsividade
+### 10.3 O que deve ser evitado nesta etapa
 
-- [x] Verificar se o novo campo cabe no modal sem regressão visual em desktop.
-- [x] Verificar se o novo campo cabe no modal sem regressão visual em mobile.
-- [x] Alterar `styles.css` somente se a validação visual mostrar necessidade real de espaçamento, overflow ou alinhamento.
+- mudar o significado do limite administrativo;
+- alterar a estrutura do response de `POST /api/web/check/location` sem necessidade;
+- misturar esta correcao com mudancas de geometria, tolerancia ou regra de projeto.
 
-### Testes frontend
+## 11. Plano de execucao por fases
 
-- [x] Atualizar o teste de `buildVehicleCreatePayload()` em `tests/transport_page_date.test.js` para esperar `service_date` vindo do formulário no escopo `extra`.
-- [x] Manter a cobertura que garante `service_date` vindo da data do dashboard para `regular` e `weekend`.
-- [x] Adicionar teste cobrindo o prefill automático de `service_date` ao abrir o modal `extra`.
-- [x] Adicionar teste cobrindo o bloqueio de submit quando `service_date` estiver vazia em `extra`.
-- [x] Adicionar teste cobrindo a troca de foco para o campo de data no modal `extra`.
+### Fase 1 - Medicao e desenho detalhado
 
-### Testes backend/API
+Objetivo:
 
-- [x] Adicionar ou ajustar teste em `tests/test_api_flow.py` para criar veículo `extra` com uma data explícita escolhida no payload.
-- [x] Validar por teste que a agenda criada continua sendo `single_date`.
-- [x] Validar por teste que o veículo aparece apenas na data escolhida e não em outra data do dashboard.
-- [x] Validar por teste que o `extra_vehicle_registry` devolve `service_date` correta após a criação.
-- [x] Confirmar por teste que `regular` e `weekend` não sofreram regressão no uso da data-base de início.
+- confirmar, em aparelho e navegador reais, quanto a precisao melhora apos os primeiros segundos.
 
-### Validação manual final
+Entregas:
 
-- [x] Testar o cadastro de um veículo `extra` escolhendo a mesma data atual do dashboard.
-- [x] Testar o cadastro de um veículo `extra` escolhendo uma data futura diferente da data atual do dashboard.
-- [x] Testar submit inválido sem `Departure Date`.
-- [x] Testar submit inválido sem `Departure Time`.
-- [x] Testar se a rota escolhida continua refletida corretamente no dashboard e no registry.
-- [x] Testar se o cadastro de `regular` continua usando dias úteis e ambos os trajetos.
-- [x] Testar se o cadastro de `weekend` continua usando persistência por sábado e domingo.
+- tabela de cenarios de campo;
+- amostras de tempos de convergencia;
+- decisao final entre `watchPosition()` principal e loop de `getCurrentPosition()` como fallback.
 
-## Encerramento
+#### 11.1 Premissas obrigatorias da medicao
 
-Este plano parte de um ponto importante: a regra de persistência por data já existe no backend de transporte. A entrega pedida consiste principalmente em tornar essa data editável no modal de `EXTRA TRANSPORT LIST`, ajustar o fluxo de submit para respeitar a escolha do administrador e alinhar o feedback visual da tela com a nova possibilidade de cadastro em uma data diferente da data atualmente aberta no dashboard.
+- medir primeiro o comportamento atual de leitura unica como baseline, antes de comparar qualquer estrategia nova;
+- manter o mesmo `location_accuracy_threshold_meters` durante cada bateria comparativa;
+- executar a comparacao dentro de um local conhecido com margem confortavel para dentro da area, evitando borda geometrica, tangencia exata e locais com tolerancia zero como base principal da decisao;
+- registrar dispositivo, navegador, versao do navegador, tipo de conexao, nivel de bateria aproximado e horario de cada sessao;
+- considerar uma sessao encerrada apenas quando a UI estabilizar o resultado final ou quando a janela maxima expirar.
 
-Seguindo a estratégia acima, a alteração fica pequena, local, coerente com a arquitetura atual do transporte e com baixo risco de regressão fora do escopo `extra`.
+#### 11.2 Roteiro objetivo de medicao em campo
+
+1. Escolher um projeto e um local conhecido que permitam medicao dentro da area com folga operacional, sem depender de match em borda.
+2. Registrar o threshold administrativo vigente antes da primeira repeticao e nao altera-lo ate o fim daquela bateria.
+3. Executar a estrategia atual de leitura unica para formar o baseline comparativo.
+4. Executar a candidata com `watchPosition()` sob os mesmos cenarios, aparelho e navegador.
+5. Executar a candidata com loop controlado de `getCurrentPosition()` apenas se a bateria com `watchPosition()` mostrar instabilidade, baixa quantidade de amostras ou ganho inconclusivo.
+6. Consolidar os resultados por cenario, por gatilho e por combinacao aparelho+navegador antes de escolher a estrategia principal.
+
+#### 11.3 Matriz minima de cenarios e repeticoes
+
+| Bloco | Condicao de campo | Gatilho | Repeticoes validas minimas | Objetivo da celula |
+| --- | --- | --- | --- | --- |
+| A1 | Area aberta, aparelho parado, dentro de local conhecido | `startup` | 3 | medir limite superior de captura e tempo de convergencia sem degradacao ambiental |
+| A2 | Area aberta, aparelho parado, dentro de local conhecido | `manual_refresh` | 3 | medir o melhor caso do fluxo interativo |
+| B1 | Area interna, GPS degradado mas recuperavel, dentro de local conhecido | `startup` | 5 | medir se a estrategia melhora a primeira carga em ambiente dificil |
+| B2 | Area interna, GPS degradado mas recuperavel, dentro de local conhecido | `manual_refresh` | 5 | medir se a estrategia melhora a acao explicita do usuario |
+| B3 | Area interna, GPS degradado mas recuperavel, dentro de local conhecido | `foreground_resume` | 5 | medir estabilidade de retorno ao primeiro plano |
+| C1 | Movimento leve, ainda dentro de local conhecido ou em aproximacao clara | `manual_refresh` | 3 | medir comportamento com pequena variacao de radio e coordenada |
+| C2 | Movimento leve, ainda dentro de local conhecido ou em aproximacao clara | `foreground_resume` | 3 | medir sensibilidade da retomada com aparelho em deslocamento leve |
+
+Regra pratica para `foreground_resume`:
+
+- carregar a pagina autenticada;
+- enviar a aba para segundo plano por 15 a 30 segundos;
+- retornar ao app e medir apenas a sessao iniciada pelo retorno ao primeiro plano.
+
+#### 11.4 Ficha minima de coleta por sessao
+
+Cada repeticao deve registrar, no minimo, estas colunas:
+
+| Campo | Descricao |
+| --- | --- |
+| `session_id` | identificador unico da repeticao |
+| `strategy` | `single_attempt`, `watch_position` ou `loop_get_current_position` |
+| `device` | modelo do aparelho |
+| `browser` | navegador e versao |
+| `scenario` | celula da matriz (`A1`, `A2`, `B1`, etc.) |
+| `trigger` | `startup`, `manual_refresh` ou `foreground_resume` |
+| `threshold_meters` | limite vigente no admin durante a sessao |
+| `time_to_first_sample_ms` | tempo ate a primeira amostra valida |
+| `samples_received` | quantidade total de amostras validas observadas |
+| `best_accuracy_meters` | menor `accuracy_meters` observada na sessao |
+| `time_to_best_sample_ms` | tempo ate a melhor amostra |
+| `final_accuracy_sent_meters` | precisao efetivamente enviada ao backend |
+| `final_status` | `matched`, `accuracy_too_low`, `not_in_known_location`, `outside_workplace` ou `no_known_locations` |
+| `timed_out` | se a sessao terminou por prazo maximo |
+| `cancelled` | se a sessao foi cancelada por outro gatilho |
+| `duplicate_post` | se houve mais de um `POST /api/web/check/location` para a mesma sessao |
+| `ui_stuck` | se houve loading preso, spinner preso ou status final ausente |
+| `notes` | observacoes livres relevantes |
+
+#### 11.5 Definicoes objetivas para a comparacao
+
+Para a Fase 1, usar estas definicoes:
+
+- `captura bem-sucedida`: sessao que produz pelo menos uma amostra valida e atinge `best_accuracy_meters <= threshold_meters` dentro da janela prevista;
+- `encerramento sem sucesso`: sessao que termina por timeout, cancelamento ou erro sem nenhuma amostra valida suficiente, ou que termina com `best_accuracy_meters > threshold_meters`;
+- `ganho util de precisao`: diferenca positiva entre a taxa de `captura bem-sucedida` de uma estrategia candidata e a taxa observada na estrategia de comparacao;
+- `anomalia operacional`: qualquer sessao com `duplicate_post = true`, `ui_stuck = true`, cancelamento incorreto ou ausencia de finalizacao finita.
+
+#### 11.6 Critérios objetivos para escolher entre `watchPosition()` e fallback
+
+Escolher `watchPosition()` como estrategia principal somente se todos os criterios abaixo forem atendidos:
+
+1. Em pelo menos 80% das sessoes dos blocos `B1`, `B2` e `B3`, a estrategia produzir duas ou mais amostras validas, provando que existe beneficio real de observacao continua.
+2. A taxa de `captura bem-sucedida` de `watchPosition()` nos blocos internos degradados (`B1`, `B2`, `B3`) for pelo menos 10 pontos percentuais maior que a do fallback, ou empatar nessa taxa com mediana de `time_to_best_sample_ms` pelo menos 20% menor.
+3. Nos blocos de area aberta (`A1`, `A2`), `watchPosition()` nao piorar a mediana de `time_to_first_sample_ms` em mais de 20% nem introduzir anomalia operacional.
+4. Nao houver `duplicate_post`, sessao sem finalizacao finita ou loading preso em nenhuma repeticao valida.
+5. Nao houver navegador-alvo critico em que `watchPosition()` apresente falha recorrente de amostragem, timeout dominante ou comportamento inconsistente.
+
+Escolher o loop controlado de `getCurrentPosition()` como estrategia principal se ocorrer qualquer uma destas situacoes:
+
+1. `watchPosition()` nao atingir o criterio minimo de duas ou mais amostras validas em 80% das sessoes internas degradadas.
+2. O ganho util de precisao de `watchPosition()` ficar abaixo de 10 pontos percentuais e a vantagem de tempo tambem nao compensar com pelo menos 20% de melhora na mediana.
+3. `watchPosition()` introduzir anomalia operacional em qualquer cenario critico.
+4. O resultado de `watchPosition()` for significativamente instavel entre navegadores-alvo e essa instabilidade nao puder ser isolada com um ponto unico de decisao e fallback seguro.
+
+Regra de desempate para producao:
+
+- se `watchPosition()` e fallback entregarem praticamente a mesma taxa de sucesso, com diferenca menor que 5 pontos percentuais e sem vantagem clara de tempo, preferir o fallback por menor complexidade operacional.
+
+#### 11.7 Gate de saida da Fase 1
+
+A Fase 1 so deve ser considerada concluida quando existir:
+
+1. planilha ou tabela preenchida para todas as celulas obrigatorias da matriz minima;
+2. consolidado por aparelho+navegador;
+3. decisao escrita e rastreavel entre `watchPosition()` principal ou fallback principal;
+4. janelas iniciais de captura definidas para a Fase 2;
+5. lista curta de riscos observados que precisarao de protecao na implementacao.
+
+### Fase 2 - Refatoracao da captura no frontend
+
+Objetivo:
+
+- trocar a logica de captura de tentativa unica por sessao limitada de aquisicao.
+
+Arquivos mais provaveis:
+
+- `sistema/app/static/check/app.js`
+- possivelmente `sistema/app/static/check/index.html`
+- possivelmente `sistema/app/static/check/styles.css`
+
+Entregas:
+
+- controlador de sessao de aquisicao;
+- selecao da melhor amostra;
+- cancelamento limpo;
+- integracao com refresh manual e gatilhos de ciclo de vida.
+
+### Fase 3 - Ajuste de UX
+
+Objetivo:
+
+- tornar a espera compreensivel e reduzir percepcao de falha arbitraria.
+
+Entregas:
+
+- novos textos de progresso;
+- exibicao mais clara da melhor precisao obtida;
+- finalizacao consistente em sucesso, timeout, cancelamento e baixa precisao.
+
+### Fase 4 - Testes automatizados e checks de regressao
+
+Objetivo:
+
+- garantir que a melhora de captura nao quebre contratos e fluxos vizinhos.
+
+Cobertura minima desejada:
+
+- selecao da melhor amostra por menor `accuracy_meters`;
+- encerramento antecipado quando atinge o limite;
+- timeout com reaproveitamento da melhor amostra observada;
+- cancelamento da sessao anterior em refresh forcado;
+- ausencia de multiplos `POST /api/web/check/location` por uma mesma sessao;
+- preservacao do comportamento `accuracy_too_low` no backend.
+
+Checks de regressao importantes:
+
+- refresh manual de localizacao;
+- atualizacao ao voltar para primeiro plano;
+- habilitacao de atividades automaticas;
+- submissao manual quando a localizacao foi resolvida apos sessao mais longa;
+- fallback para localizacao manual quando permissao GPS nao existe.
+
+### Fase 5 - Homologacao real em campo
+
+Objetivo:
+
+- validar que houve melhora concreta em ambiente operacional.
+
+Cenarios minimos:
+
+- area aberta com GPS bom;
+- area interna com GPS degradado, mas recuperavel;
+- aparelho parado apos abrir a pagina;
+- pagina enviada para segundo plano e trazida de volta;
+- clique manual em `Atualizar localizacao` logo apos abrir;
+- aparelho em movimento leve;
+- repeticao em pelo menos dois modelos de aparelho e mais de um navegador, se suportado pelo negocio.
+
+## 12. Criterios de aceite
+
+Uma futura implementacao deve ser considerada aprovada somente se atender, no minimo, a estes criterios:
+
+1. O contrato atual de `POST /api/web/check/location` continua funcional.
+2. O limite administrativo de precisao continua sendo respeitado sem flexibilizacao oculta.
+3. O numero de casos `accuracy_too_low` cai de forma perceptivel na homologacao comparativa.
+4. O refresh manual passa a ter comportamento explicavel e previsivel para o usuario.
+5. O app nao dispara capturas paralelas nem chamadas duplicadas ao backend.
+6. Fluxos de atividades automaticas e de historico continuam funcionando sem regressao.
+7. A sessao sempre termina de forma finita, sem spinner preso.
+
+## 13. Riscos e mitigacoes
+
+### Risco 1 - `watchPosition()` variar entre navegadores
+
+Mitigacao:
+
+- homologar em navegadores reais antes de fechar a estrategia;
+- manter plano de fallback com loop controlado de `getCurrentPosition()`.
+
+### Risco 2 - espera maior piorar UX
+
+Mitigacao:
+
+- usar janelas curtas e encerramento antecipado por sucesso;
+- separar modo silencioso e modo interativo.
+
+### Risco 3 - consumo maior de bateria ou radio
+
+Mitigacao:
+
+- sessao curta, limitada e cancelavel;
+- nenhuma observacao continua em background fora da janela necessaria.
+
+### Risco 4 - regressao em atividades automaticas
+
+Mitigacao:
+
+- tratar `resolveCurrentLocation()` como contrato interno central;
+- validar explicitamente fluxo de auto check-in/check-out na homologacao.
+
+## 14. Recomendacao final
+
+O caminho mais solido e:
+
+1. **nao mexer no limite administrativo como resposta principal**;
+2. **nao confiar apenas em aumento de timeout**;
+3. **implementar uma sessao limitada de captura GPS com selecao da melhor amostra**;
+4. **preservar o backend e o contrato atual, mudando principalmente a estrategia do frontend**;
+5. **homologar com telemetria comparativa antes de declarar o problema resolvido**.
+
+Em resumo: a sugestao de "esperar um pouco mais" esta tecnicamente bem direcionada, mas a forma correta de aplicar isso, muito provavelmente, e manter a captura aberta por uma janela controlada e escolher a melhor leitura disponivel, em vez de aceitar a primeira leitura que aparecer.
+
+## 15. To-do list completa de execução
+
+### Fase 0. Guard rails obrigatórios para produção
+
+- [x] Tratar o comportamento atual em produção como baseline intocável: qualquer diferença fora do problema de aquisição GPS deve ser considerada regressão.
+- [x] Confirmar que a implementação será frontend-only em primeira e segunda intenção, concentrada em `sistema/app/static/check/app.js`.
+- [x] Não abrir diffs em `sistema/app/routers/web_check.py`, `sistema/app/schemas.py`, `sistema/app/static/admin/**`, migrations, banco ou contratos HTTP, salvo se um teste de contrato provar de forma inequívoca que o problema não pode ser resolvido 100% no frontend.
+- [x] Não alterar autenticação, histórico, projeto, localização manual, transporte, regras de negócio de check-in/check-out automático nem layout já consolidado, salvo no ponto estritamente necessário para a nova estratégia de captura.
+- [x] Não tocar em `index.html` e `styles.css` por padrão; só abrir esse escopo se uma revisão visual demonstrar que o feedback mínimo necessário não cabe na UI atual.
+- [x] Isolar a nova lógica de aquisição em um helper ou controlador único, mantendo o caminho atual de leitura única facilmente restaurável.
+- [x] Definir um fallback explícito para a estratégia atual de `getCurrentPosition()` em um único ponto de decisão, para rollback rápido se a nova abordagem falhar.
+- [x] Confirmar que a primeira validação da nova estratégia ocorrerá fora de produção ou, no mínimo, sem ativação ampla dos gatilhos mais sensíveis.
+- [x] Registrar como critério de aceite técnico que a solução precisa melhorar a aquisição sem alterar o contrato de `POST /api/web/check/location`.
+
+Execução registrada em 2026-04-25:
+
+1. Foi confirmado em `sistema/app/static/check/app.js` que a captura GPS atual está centralizada em `geolocationOptions`, `requestCurrentPosition()`, `resolveCurrentLocation()`, `runLifecycleUpdateSequence()` e `runManualLocationRefreshSequence()`, o que fecha a Fase 0 com escopo inicial concentrado no frontend e, por padrão, em um único arquivo.
+2. Foi confirmado em `tests/test_api_flow.py` que o contrato de `POST /api/web/check/location` já protege `status = accuracy_too_low`, `label = Precisao insuficiente` e `accuracy_threshold_meters`, então backend e contrato HTTP ficam congelados por padrão nesta demanda.
+3. Foi confirmado em `tests/check_user_location_ui.test.js` que já existem guardas de regressão para a visibilidade do campo de localização manual e para o sincronismo com permissão de GPS e `Atividades Automáticas`, o que sustenta a decisão de não abrir `index.html` nem `styles.css` nesta fase.
+4. Ficou definido que o ponto único de decisão da futura estratégia de captura continuará passando por `resolveCurrentLocation()`, enquanto o caminho atual de leitura única via `requestCurrentPosition()` deverá permanecer disponível como fallback explícito e de rollback rápido.
+5. Ficou definido que a primeira ativação da nova estratégia deverá começar fora de produção ou, no mínimo, sem habilitação ampla dos gatilhos mais sensíveis, iniciando pelo refresh manual antes de qualquer expansão para gatilhos automáticos ou de ciclo de vida.
+
+### Fase 1. Medição e desenho final da estratégia de captura
+
+- [x] Definir um roteiro objetivo de medição em campo com sequência, cenários mínimos, número de repetições e ficha de coleta.
+- [x] Definir critérios objetivos para escolher entre `watchPosition()` principal e loop controlado de `getCurrentPosition()` como fallback.
+- [ ] Medir, em navegador e aparelho reais, quanto a precisão melhora entre a primeira amostra e as amostras subsequentes em abertura de página, retorno ao primeiro plano e refresh manual.
+- [ ] Registrar tempos de convergência típicos para cenário aberto, cenário interno e cenário de GPS degradado, para calibrar as janelas de captura.
+- [ ] Validar se `watchPosition()` entrega amostras sucessivas confiáveis nos navegadores-alvo do projeto.
+- [ ] Validar se há necessidade real de fallback com loop controlado de `getCurrentPosition()` para algum navegador ou aparelho específico.
+- [ ] Fechar os valores iniciais de janela silenciosa, janela interativa, prazo máximo da sessão, tolerância de encerramento antecipado e comportamento de cancelamento.
+- [x] Registrar o critério objetivo de “captura bem-sucedida”: melhor amostra válida com `accuracy_meters <= location_accuracy_threshold_meters`.
+- [x] Registrar o critério objetivo de “encerramento sem sucesso”: janela encerrada com melhor amostra ainda acima do limite, sem quebrar o contrato atual do backend.
+- [ ] Fechar os textos de progresso, sucesso e falha da captura manual, com a ortografia final aprovada.
+
+Execução registrada em 2026-04-25:
+
+1. Foi definido um roteiro objetivo de medição em campo com ordem de execução, matriz mínima de cenários, quantidade mínima de repetições e ficha de coleta por sessão.
+2. Foi definido que a comparação deve usar a estratégia atual como baseline e evitar cenários de borda geométrica, tangência exata e tolerância zero como base principal da decisão, para não contaminar a escolha da estratégia de captura.
+3. Foram registrados os critérios objetivos de `captura bem-sucedida`, `encerramento sem sucesso`, `ganho útil de precisão` e `anomalia operacional`.
+4. Foram definidos critérios numéricos para escolher entre `watchPosition()` e loop controlado de `getCurrentPosition()`, incluindo regra explícita de desempate pró-fallback quando o ganho for marginal.
+5. As medições reais em aparelho e navegador, a consolidação por ambiente e a decisão final da estratégia principal continuam pendentes desta fase.
+
+### Fase 2. Implementação isolada e reversível da nova aquisição
+
+- [ ] Introduzir, em `sistema/app/static/check/app.js`, constantes ou configuração interna para janela silenciosa, janela interativa, prazo máximo da sessão, regra de encerramento antecipado e escolha do caminho de fallback.
+- [ ] Criar a abstração interna da sessão de aquisição com responsabilidades explícitas de iniciar, receber amostras, comparar precisão, encerrar, cancelar e devolver um resultado padronizado.
+- [ ] Garantir que a melhor amostra seja definida pela menor `accuracy_meters` válida e, em empate, pela amostra mais recente.
+- [ ] Garantir que amostras sem latitude, sem longitude ou sem `accuracy` numérica válida sejam descartadas.
+- [ ] Implementar encerramento antecipado quando alguma amostra atingir o limite administrativo vigente.
+- [ ] Implementar encerramento por prazo máximo reaproveitando a melhor amostra observada até aquele momento.
+- [ ] Implementar cancelamento limpo da sessão anterior quando um refresh manual forçado substituir uma captura em andamento.
+- [ ] Preservar e reforçar os bloqueios já existentes por `locationRequestPromise`, `lifecycleRefreshInProgress` e `lifecycleTriggerCooldownMs`.
+- [ ] Garantir que apenas uma chamada final de `POST /api/web/check/location` seja enviada ao backend por sessão de captura.
+- [ ] Preservar integralmente o payload atual enviado ao backend: `latitude`, `longitude` e `accuracy_meters`.
+- [ ] Preservar integralmente o tratamento atual do backend para `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations`.
+- [ ] Garantir que a lógica de permissão continue respeitando `navigator.permissions`, `locationPromptAttemptedKey` e `locationPermissionGrantedKey`.
+- [ ] Garantir que a captura continue falhando de forma finita quando o navegador negar permissão, devolver erro irrecuperável ou não produzir amostras válidas.
+- [ ] Garantir que a nova lógica possa ser desligada rapidamente, restaurando o comportamento atual sem refatoração ampla.
+
+### Fase 3. Ativação progressiva por gatilho
+
+- [ ] Integrar a nova sessão primeiro apenas a `runManualLocationRefreshSequence()`, mantendo abertura de página, retorno ao primeiro plano e fluxos automáticos na estratégia atual até validação explícita.
+- [ ] Validar o refresh manual isoladamente antes de ampliar o escopo para outros gatilhos.
+- [ ] Só depois da validação do refresh manual, integrar a nova sessão a `ensureLocationReadyForSubmit()`, se ainda for necessário para a submissão manual.
+- [ ] Só depois da validação do refresh manual, integrar a nova sessão a `runLifecycleUpdateSequence()` para os gatilhos `visibilitychange`, `focus` e `pageshow`.
+- [ ] Garantir que `visibilitychange`, `focus` e `pageshow` não disparem múltiplas sessões concorrentes para a mesma intenção de atualização.
+- [ ] Só depois da validação dos gatilhos de ciclo de vida, integrar a nova sessão a `runAutomaticActivitiesEnableSequence()` e aos pontos de automação que realmente precisarem dela.
+- [ ] Manter, em cada etapa, os gatilhos ainda não migrados no comportamento antigo até a etapa anterior ficar comprovadamente estável.
+
+### Fase 4. UX e observabilidade com impacto mínimo
+
+- [ ] Diferenciar com clareza o modo silencioso do modo interativo apenas onde isso trouxer ganho real de compreensão para o usuário.
+- [ ] Atualizar os textos do refresh manual para explicar que o sistema está buscando uma leitura GPS mais precisa, e não apenas repetindo a consulta.
+- [ ] Exibir, no fluxo manual, a melhor precisão já obtida e o limite administrativo correspondente durante a captura, sem poluir os gatilhos silenciosos.
+- [ ] Ajustar a mensagem final de sucesso técnico para informar quando a precisão suficiente for atingida antes do fim da janela.
+- [ ] Ajustar a mensagem final de falha para informar a melhor precisão obtida quando ela continuar acima do limite.
+- [ ] Garantir que o botão `Atualizar localização` mantenha estados corretos de `loading`, `aria-busy`, `aria-label` e `title` durante toda a sessão.
+- [ ] Preservar o comportamento de `setLocationPresentation()` e `setStatus()` sem criar mensagens duplicadas ou contraditórias.
+- [ ] Manter qualquer diagnóstico apenas no escopo local de homologação, com logs discretos e facilmente removíveis ou desativáveis.
+- [ ] Não introduzir telemetria nova de servidor, novo endpoint de diagnóstico nem alteração de payload nesta demanda.
+- [ ] Só abrir escopo em `index.html` ou `styles.css` se uma revisão visual controlada provar que a UX mínima aprovada não cabe no layout atual.
+
+### Fase 5. Testes automatizados e proteção de contrato
+
+- [ ] Ampliar `tests/check_user_location_ui.test.js` para cobrir a nova estratégia de captura, os novos textos de progresso e a preservação das regras de visibilidade do campo de localização manual.
+- [ ] Ampliar `tests/check_automatic_activities_layout.test.js` para garantir que a nova captura não quebre a disponibilidade de `Atividades Automáticas` nem o sincronismo com permissão de GPS.
+- [ ] Criar ou ampliar testes JavaScript focados na sessão de aquisição para validar seleção da melhor amostra, descarte de leituras inválidas, encerramento antecipado, reaproveitamento da melhor amostra e cancelamento por refresh forçado.
+- [ ] Usar `tests/test_api_flow.py` como guarda de contrato para `accuracy_too_low`, `label`, `status` e `accuracy_threshold_meters`, sem abrir diff em backend por padrão.
+- [ ] Só editar testes Python se faltar guarda suficiente para proteger o contrato atual; a expectativa padrão desta demanda é não tocar backend nem seu contrato.
+- [ ] Adicionar testes de regressão que confirmem que o frontend continua enviando apenas uma amostra final ao backend por sessão.
+- [ ] Adicionar testes de regressão separados para: refresh manual, gatilhos de abertura/retorno ao primeiro plano, `ensureLocationReadyForSubmit()` e habilitação de `Atividades Automáticas`.
+- [ ] Executar primeiro os testes JavaScript diretamente tocados pela mudança.
+- [ ] Executar, como guarda final, os testes de contrato e smoke tests relacionados ao fluxo web já existente.
+- [ ] Revisar os diffs e corrigir qualquer regressão textual, de acessibilidade, concorrência ou comportamento lateral antes da homologação manual.
+
+### Fase 6. Homologação segura, rollout progressivo e rollback
+
+- [ ] Homologar a nova captura em área aberta com GPS bom.
+- [ ] Homologar a nova captura em área interna com GPS degradado, mas recuperável.
+- [ ] Homologar o fluxo de refresh manual imediatamente após a abertura da página.
+- [ ] Homologar o fluxo de refresh manual após uma captura anterior com `accuracy_too_low`.
+- [ ] Só depois disso homologar os gatilhos ao abrir a página já autenticada, ao enviar a página para segundo plano e ao trazê-la de volta.
+- [ ] Só depois disso homologar o fluxo de submissão manual com localização resolvida após sessão longa de aquisição.
+- [ ] Só depois disso homologar o fluxo de `Atividades Automáticas` para garantir ausência de regressão em check-in e check-out automáticos.
+- [ ] Homologar em pelo menos dois aparelhos ou perfis de navegador representativos do uso real.
+- [ ] Confirmar que a sessão sempre termina de forma finita, sem spinner preso e sem requisições duplicadas.
+- [ ] Confirmar que a solução final não alterou o limite administrativo nem afrouxou a regra de negócio.
+- [ ] Confirmar que a solução final melhorou a aquisição no frontend preservando o contrato atual do backend.
+- [ ] Planejar o rollout em produção de forma progressiva: primeiro com o novo comportamento restrito ao refresh manual, depois aos gatilhos de ciclo de vida e, por último, aos fluxos automáticos.
+- [ ] Manter pronto o rollback para a estratégia atual de leitura única por meio do ponto único de fallback definido na Fase 0.
+- [ ] Comparar a taxa de `accuracy_too_low` antes e depois da mudança, usando os mesmos cenários de validação.
+- [ ] Registrar os resultados da homologação, a calibração final das janelas de captura e a decisão de ativação de cada gatilho antes do encerramento da demanda.

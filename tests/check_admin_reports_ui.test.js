@@ -25,22 +25,27 @@ test('admin reports tab is inserted between cadastro and eventos with the expect
   assert.match(adminHtml, /class="presence-controls-grid reports-search-grid"/);
   assert.match(adminHtml, /class="locations-actions-bar reports-search-actions"/);
   assert.match(adminHtml, /class="project-editor-panel reports-results-panel"/);
-  assert.match(adminHtml, /id="reportsSearchChave"/);
-  assert.match(adminHtml, /id="reportsSearchNome"/);
+  assert.match(adminHtml, /<select id="reportsSearchChave">[\s\S]*<option value="">Selecione uma chave<\/option>/);
+  assert.match(adminHtml, /<select id="reportsSearchNome">[\s\S]*<option value="">Selecione um nome<\/option>/);
   assert.match(adminHtml, /id="reportsSearchButton"[\s\S]*>Buscar</);
   assert.match(adminHtml, /id="reportsResultsBody" class="reports-results-body"/);
   assert.match(adminHtml, /id="reportsPersonTitle">Nenhuma busca realizada</);
+  assert.match(adminHtml, /id="reportsPersonMeta" class="section-header-copy">Selecione uma chave ou um nome para carregar o relatório\./);
 });
 
 test('admin reports controller keeps the tab full-admin only and wires the mutual search flow', () => {
   assert.match(adminJs, /relatorios:\s*"Relatórios"/);
   assert.match(adminJs, /const DEFAULT_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"\]\);/);
   assert.match(adminJs, /const LIMITED_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout"\]\);/);
+  assert.match(adminJs, /async function loadRegisteredUsers\(\) \{[\s\S]*fetchJson\("\/api\/admin\/users"\);[\s\S]*populateReportsSearchOptions\(rows\);/);
+  assert.match(adminJs, /function populateReportsSearchOptions\(rows\) \{[\s\S]*Selecione uma chave[\s\S]*Selecione um nome/);
+  assert.match(adminJs, /const label = entry\.count > 1[\s\S]*usuários; use a chave/);
   assert.match(adminJs, /reportsSearchNomeInput\.disabled = hasChave;/);
   assert.match(adminJs, /reportsSearchChaveInput\.disabled = hasNome;/);
   assert.match(adminJs, /fetchJson\(`\/api\/admin\/reports\/events\?\$\{query\.toString\(\)\}`\)/);
   assert.match(adminJs, /if \(activeTab === "relatorios"\) \{\s*return;\s*\}/);
   assert.match(adminJs, /reportsSearchButton\.addEventListener\("click", \(\) => \{\s*submitReportsSearch\(\);\s*\}\);/);
+  assert.match(adminJs, /input\.addEventListener\("change", \(\) => \{/);
 });
 
 test('admin reports styles keep tabs uniform and align the new report search layout', () => {

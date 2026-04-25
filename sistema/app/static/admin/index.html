@@ -467,11 +467,15 @@
           <div class="presence-controls-grid reports-search-grid">
             <label class="presence-control-field" for="reportsSearchChave">
               <span>Busca por Chave</span>
-              <input id="reportsSearchChave" type="text" maxlength="4" autocomplete="off" placeholder="Ex.: PV31" />
+              <select id="reportsSearchChave">
+                <option value="">Selecione uma chave</option>
+              </select>
             </label>
             <label class="presence-control-field" for="reportsSearchNome">
               <span>Busca por Nome</span>
-              <input id="reportsSearchNome" type="text" maxlength="180" autocomplete="off" placeholder="Ex.: Usuário Silva" />
+              <select id="reportsSearchNome">
+                <option value="">Selecione um nome</option>
+              </select>
             </label>
           </div>
           <div class="locations-actions-bar reports-search-actions">
@@ -483,7 +487,7 @@
           <div class="section-header">
             <div>
               <h3 id="reportsPersonTitle">Nenhuma busca realizada</h3>
-              <p id="reportsPersonMeta" class="section-header-copy">Busque por chave ou nome para carregar o relatório.</p>
+              <p id="reportsPersonMeta" class="section-header-copy">Selecione uma chave ou um nome para carregar o relatório.</p>
             </div>
           </div>
           <div id="reportsResultsBody" class="reports-results-body"></div>

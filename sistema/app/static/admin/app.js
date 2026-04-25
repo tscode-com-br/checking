@@ -497,6 +497,82 @@ function normalizeReportSearchName(value) {
     .trim();
 }
 
+function appendSelectOption(selectElement, value, label) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  selectElement.appendChild(option);
+}
+
+function hasSelectOption(selectElement, value) {
+  return selectElement instanceof HTMLSelectElement
+    && Array.from(selectElement.options).some((option) => option.value === value);
+}
+
+function populateReportsSearchOptions(rows) {
+  const users = Array.isArray(rows) ? rows : [];
+  const previousChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
+  const previousNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
+
+  if (reportsSearchChaveInput instanceof HTMLSelectElement) {
+    reportsSearchChaveInput.innerHTML = "";
+    appendSelectOption(reportsSearchChaveInput, "", "Selecione uma chave");
+    const seenChaves = new Set();
+    users.forEach((user) => {
+      const chave = normalizeAdminChave(user?.chave);
+      if (!chave || seenChaves.has(chave)) {
+        return;
+      }
+
+      seenChaves.add(chave);
+      appendSelectOption(reportsSearchChaveInput, chave, chave);
+    });
+  }
+
+  if (reportsSearchNomeInput instanceof HTMLSelectElement) {
+    reportsSearchNomeInput.innerHTML = "";
+    appendSelectOption(reportsSearchNomeInput, "", "Selecione um nome");
+    const namesByKey = new Map();
+    users.forEach((user) => {
+      const nome = normalizeReportSearchName(user?.nome);
+      if (!nome) {
+        return;
+      }
+
+      const mapKey = nome.toLocaleLowerCase("pt-BR");
+      const current = namesByKey.get(mapKey);
+      if (current) {
+        current.count += 1;
+        return;
+      }
+
+      namesByKey.set(mapKey, { value: nome, label: nome, count: 1 });
+    });
+
+    Array.from(namesByKey.values())
+      .sort((left, right) => left.label.localeCompare(right.label, "pt-BR", { sensitivity: "base" }))
+      .forEach((entry) => {
+        const label = entry.count > 1
+          ? `${entry.label} (${entry.count} usuários; use a chave)`
+          : entry.label;
+        appendSelectOption(reportsSearchNomeInput, entry.value, label);
+      });
+  }
+
+  if (reportsSearchChaveInput instanceof HTMLSelectElement) {
+    reportsSearchChaveInput.value = hasSelectOption(reportsSearchChaveInput, previousChave) ? previousChave : "";
+  }
+  if (reportsSearchNomeInput instanceof HTMLSelectElement) {
+    reportsSearchNomeInput.value = hasSelectOption(reportsSearchNomeInput, previousNome) ? previousNome : "";
+  }
+
+  syncReportsSearchInputs();
+}
+
 function isAdminCurrentPasswordInputValid(value) {
   const password = String(value || "");
   return password.length >= 3 && password.length <= 20 && password.trim().length > 0;
@@ -3308,6 +3384,7 @@ async function loadProjects() {
 async function loadRegisteredUsers() {
   const rows = await fetchJson("/api/admin/users");
   registeredUsersTotal = rows.length;
+  populateReportsSearchOptions(rows);
   const body = document.getElementById("usersBody");
   body.innerHTML = "";
   rows.forEach((user) => body.appendChild(makeRegisteredUserRow(user)));
@@ -3436,7 +3513,7 @@ function resetReportsView() {
   }
   setReportsStatus("");
   setTextContentIfPresent("reportsPersonTitle", "Nenhuma busca realizada");
-  setTextContentIfPresent("reportsPersonMeta", "Busque por chave ou nome para carregar o relatório.");
+  setTextContentIfPresent("reportsPersonMeta", "Selecione uma chave ou um nome para carregar o relatório.");
   const body = document.getElementById("reportsResultsBody");
   if (body) {
     body.innerHTML = "";
@@ -3536,14 +3613,14 @@ async function submitReportsSearch() {
   }
 
   if (!normalizedChave && !normalizedNome) {
-    setReportsStatus("Informe a chave ou o nome para buscar o relatório.", "error");
-    renderReportsState("Nenhuma busca realizada", "Informe um critério antes de consultar o relatório.");
+    setReportsStatus("Selecione a chave ou o nome para buscar o relatório.", "error");
+    renderReportsState("Nenhuma busca realizada", "Selecione um critério antes de consultar o relatório.");
     syncReportsSearchInputs();
     return;
   }
 
   if (normalizedChave && normalizedNome) {
-    setReportsStatus("Informe apenas chave ou nome por busca.", "error");
+    setReportsStatus("Selecione apenas chave ou nome por busca.", "error");
     renderReportsState("Busca não concluída", "Use apenas um critério por vez para consultar o relatório.");
     syncReportsSearchInputs();
     return;
@@ -4342,7 +4419,7 @@ function bindActions() {
     });
   }
   [reportsSearchChaveInput, reportsSearchNomeInput].filter(Boolean).forEach((input) => {
-    input.addEventListener("input", () => {
+    input.addEventListener("change", () => {
       setReportsStatus("");
       syncReportsSearchInputs();
     });
