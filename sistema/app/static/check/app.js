@@ -4504,7 +4504,7 @@
     });
   }
 
-        control.disabled = dialogOpen || lockActive || !unlocked || !shouldAllowManualLocationSelection() || availableLocations.length === 0;
+  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
     return automaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState);
   }
 

@@ -309,6 +309,12 @@ function toPlainValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+test('check controller source parses as valid JavaScript', () => {
+  assert.doesNotThrow(() => {
+    new vm.Script(checkScript);
+  });
+});
+
 test('check page keeps Projeto, Local and Informe controls addressable for toggle-driven visibility', () => {
   assert.doesNotMatch(checkHtml, /<title>\s*Checking Mobile Web\s*<\/title>/);
   assert.doesNotMatch(checkHtml, /<span class="header-logo-text">\s*Checking\s*<\/span>/);
