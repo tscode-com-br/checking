@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import unicodedata
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 from sqlalchemy import inspect, select
@@ -13,6 +15,8 @@ from ..models import Project
 DEFAULT_PROJECT_NAMES = ("P80", "P82", "P83")
 PROJECT_NAME_MAX_LENGTH = 120
 DEFAULT_PROJECT_COUNTRY_CODE = "SG"
+PROJECT_COUNTRY_NAME_MAX_LENGTH = 80
+PROJECT_TIMEZONE_NAME_MAX_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,16 @@ class ProjectCountryConfig:
 
 
 SUPPORTED_PROJECT_COUNTRIES: dict[str, ProjectCountryConfig] = {
+    "BR": ProjectCountryConfig(
+        country_code="BR",
+        country_name="Brasil",
+        timezone_name="America/Sao_Paulo",
+    ),
+    "CN": ProjectCountryConfig(
+        country_code="CN",
+        country_name="China",
+        timezone_name="Asia/Shanghai",
+    ),
     "AE": ProjectCountryConfig(
         country_code="AE",
         country_name="Emirados Árabes Unidos",
@@ -99,6 +113,69 @@ def normalize_project_country_code(value: str, *, field_name: str = "O país do 
     return normalized
 
 
+def normalize_optional_project_country_code(value: str | None) -> str | None:
+    normalized = str(value or "").strip().upper()
+    if not normalized:
+        return None
+    if len(normalized) != 2 or not normalized.isalpha():
+        raise ValueError("O código do país do projeto deve ter 2 letras")
+    return normalized
+
+
+def normalize_project_country_name(value: str, *, field_name: str = "O país do projeto") -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if len(normalized) < 2:
+        raise ValueError(f"{field_name} deve ter ao menos 2 caracteres")
+    if len(normalized) > PROJECT_COUNTRY_NAME_MAX_LENGTH:
+        raise ValueError(f"{field_name} deve ter no maximo {PROJECT_COUNTRY_NAME_MAX_LENGTH} caracteres")
+    return normalized
+
+
+def normalize_project_timezone_name(value: str, *, field_name: str = "O fuso horário do projeto") -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} deve ser informado")
+    if len(normalized) > PROJECT_TIMEZONE_NAME_MAX_LENGTH:
+        raise ValueError(f"{field_name} deve ter no maximo {PROJECT_TIMEZONE_NAME_MAX_LENGTH} caracteres")
+    try:
+        ZoneInfo(normalized)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(f"{field_name} deve usar um identificador IANA válido") from error
+    return normalized
+
+
+def resolve_project_country_config_by_name(country_name: str | None) -> ProjectCountryConfig | None:
+    if country_name is None:
+        return None
+    normalized_name = normalize_project_country_name(country_name).casefold()
+    for config in SUPPORTED_PROJECT_COUNTRIES.values():
+        if config.country_name.casefold() == normalized_name:
+            return config
+    return None
+
+
+def derive_project_country_code(country_name: str, country_code: str | None = None) -> str:
+    normalized_country_code = normalize_optional_project_country_code(country_code)
+    if normalized_country_code is not None:
+        return normalized_country_code
+
+    known_config = resolve_project_country_config_by_name(country_name)
+    if known_config is not None:
+        return known_config.country_code
+
+    normalized_country_name = normalize_project_country_name(country_name)
+    ascii_letters = "".join(
+        character
+        for character in unicodedata.normalize("NFD", normalized_country_name)
+        if character.isascii() and character.isalpha()
+    ).upper()
+    if len(ascii_letters) >= 2:
+        return ascii_letters[:2]
+    if len(ascii_letters) == 1:
+        return f"{ascii_letters}X"
+    return DEFAULT_PROJECT_COUNTRY_CODE
+
+
 def list_supported_project_countries() -> list[ProjectCountryConfig]:
     return [SUPPORTED_PROJECT_COUNTRIES[key] for key in sorted(SUPPORTED_PROJECT_COUNTRIES)]
 
@@ -116,6 +193,40 @@ def build_project_fields_for_country(country_code: str | None = None) -> dict[st
         "country_name": config.country_name,
         "timezone_name": config.timezone_name,
     }
+
+
+def build_project_fields(
+    *,
+    country_name: str,
+    timezone_name: str,
+    country_code: str | None = None,
+) -> dict[str, str]:
+    normalized_country_name = normalize_project_country_name(country_name)
+    normalized_timezone_name = normalize_project_timezone_name(timezone_name)
+    return {
+        "country_code": derive_project_country_code(normalized_country_name, country_code),
+        "country_name": normalized_country_name,
+        "timezone_name": normalized_timezone_name,
+    }
+
+
+def normalize_project_country_payload(
+    *,
+    country_code: str | None = None,
+    country_name: str | None = None,
+    timezone_name: str | None = None,
+) -> dict[str, str]:
+    normalized_country_name = " ".join(str(country_name or "").strip().split())
+    normalized_timezone_name = str(timezone_name or "").strip()
+    if normalized_country_name or normalized_timezone_name:
+        if not normalized_country_name or not normalized_timezone_name:
+            raise ValueError("Informe país e fuso horário do projeto em conjunto")
+        return build_project_fields(
+            country_name=normalized_country_name,
+            timezone_name=normalized_timezone_name,
+            country_code=country_code,
+        )
+    return build_project_fields_for_country(country_code)
 
 
 def list_projects(db: Session) -> list[Project]:

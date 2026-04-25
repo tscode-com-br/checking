@@ -1,5 +1,6 @@
 import asyncio
 import json
+from io import BytesIO
 from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
 
@@ -113,7 +114,7 @@ from ..services.location_settings import (
     upsert_location_settings,
 )
 from ..services.project_catalog import (
-    build_project_fields_for_country,
+    build_project_fields,
     ensure_known_project,
     list_project_names,
     list_projects,
@@ -152,6 +153,35 @@ DATABASE_EVENT_SQL_SORT_FIELDS = {
 }
 DATABASE_EVENT_SORTABLE_FIELDS = frozenset((*DATABASE_EVENT_SQL_SORT_FIELDS.keys(), "chave"))
 DATABASE_EVENT_SORT_DIRECTIONS = frozenset(("asc", "desc"))
+REPORT_EXPORT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+REPORT_EXPORT_COLUMNS = (
+    "Horário",
+    "Ação",
+    "Origem",
+    "Local",
+    "Projeto",
+    "Fuso horário",
+    "Assiduidade",
+)
+REPORT_SOURCE_LABELS = {
+    "web": "Aplicativo",
+    "device": "Box ESP32-0001",
+    "provider": "Forms",
+}
+REPORT_ACTION_LABELS = {
+    "checkin": "Check-In",
+    "checkout": "Check-Out",
+    "register": "Cadastro",
+    "admin_request": "Solicitação Admin",
+    "admin_access": "Admin",
+}
+REPORT_LOCAL_LABELS = {
+    "main": "Escritório Principal",
+    "co80": "Escritório Avançado P80",
+    "un80": "A bordo da P80",
+    "co83": "Escritório Avançado P83",
+    "un83": "A bordo da P83",
+}
 
 
 def format_assiduidade_label(ontime: bool | None) -> str:
@@ -160,6 +190,103 @@ def format_assiduidade_label(ontime: bool | None) -> str:
 
 def format_quantity(value: int, singular: str, plural: str) -> str:
     return f"{value} {singular if value == 1 else plural}"
+
+
+def format_report_source_label(source: str | None) -> str:
+    normalized = str(source or "").strip().lower()
+    if not normalized:
+        return "-"
+    return REPORT_SOURCE_LABELS.get(normalized, source or "-")
+
+
+def format_report_action_label(action: str | None) -> str:
+    normalized = str(action or "").strip().lower()
+    if not normalized:
+        return "-"
+    return REPORT_ACTION_LABELS.get(normalized, action or "-")
+
+
+def format_report_local_label(local: str | None) -> str:
+    normalized = str(local or "").strip().lower()
+    if not normalized:
+        return "-"
+    return REPORT_LOCAL_LABELS.get(normalized, local or "-")
+
+
+def build_report_export_file_name(*, user: User, timestamp: datetime) -> str:
+    return f"Relatorio - {user.chave} - {timestamp:%Y%m%d - %H%M%S}.xlsx"
+
+
+def build_report_export_metadata(*, report: ReportEventsResponse) -> str:
+    person = report.person
+    events_count = len(report.events)
+    events_label = "1 evento" if events_count == 1 else f"{events_count} eventos"
+    return (
+        f"Projeto atual: {person.projeto or '-'} | RFID: {person.rfid or '-'} | "
+        f"Fuso horário: {person.timezone_label or '-'} | {events_label}"
+    )
+
+
+def build_report_events_export(*, user: User, report: ReportEventsResponse) -> tuple[str, bytes]:
+    from openpyxl import Workbook
+
+    timestamp = now_sgt()
+    file_name = build_report_export_file_name(user=user, timestamp=timestamp)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Relatório"
+
+    worksheet.append([f"{report.person.nome or '-'} ({report.person.chave or '-'})"])
+    worksheet.append([build_report_export_metadata(report=report)])
+    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(REPORT_EXPORT_COLUMNS))
+    worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(REPORT_EXPORT_COLUMNS))
+
+    grouped_events: dict[str, list[ReportEventRow]] = {}
+    ordered_dates: list[str] = []
+    for row in report.events:
+        group_key = row.event_date or "-"
+        if group_key not in grouped_events:
+            grouped_events[group_key] = []
+            ordered_dates.append(group_key)
+        grouped_events[group_key].append(row)
+
+    if not ordered_dates:
+        worksheet.append([])
+        worksheet.append(["Nenhum evento encontrado para a pessoa informada."])
+        worksheet.merge_cells(start_row=4, start_column=1, end_row=4, end_column=len(REPORT_EXPORT_COLUMNS))
+    else:
+        current_row = 2
+        for group_date in ordered_dates:
+            worksheet.append([])
+            current_row += 1
+            worksheet.append([group_date])
+            current_row += 1
+            worksheet.merge_cells(
+                start_row=current_row,
+                start_column=1,
+                end_row=current_row,
+                end_column=len(REPORT_EXPORT_COLUMNS),
+            )
+            worksheet.append(list(REPORT_EXPORT_COLUMNS))
+            current_row += 1
+            for row in grouped_events[group_date]:
+                worksheet.append([
+                    row.event_time_label or "-",
+                    row.action_label or format_report_action_label(row.action),
+                    row.source_label or format_report_source_label(row.source),
+                    row.local_label or format_report_local_label(row.local),
+                    row.projeto or "-",
+                    row.timezone_label or "-",
+                    row.assiduidade or "Normal",
+                ])
+                current_row += 1
+
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    content = output.getvalue()
+    output.close()
+    return file_name, content
 
 
 def parse_event_details(details: str | None) -> dict[str, str]:
@@ -310,12 +437,16 @@ def build_report_events_response(db: Session, *, user: User) -> ReportEventsResp
             ReportEventRow(
                 id=row.id,
                 source=row.source,
+                source_label=format_report_source_label(row.source),
                 action=row.action,
+                action_label=format_report_action_label(row.action),
                 projeto=project_name,
                 local=row.local,
+                local_label=format_report_local_label(row.local),
                 ontime=row.ontime,
                 assiduidade=format_assiduidade_label(row.ontime),
                 event_time=row.event_time,
+                event_time_label=localized_event_time.strftime("%H:%M:%S"),
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
                 event_date=localized_event_time.strftime("%d/%m/%Y"),
@@ -1387,7 +1518,14 @@ def create_admin_project(
     if existing_project is not None:
         raise HTTPException(status_code=409, detail="Ja existe um projeto com esse nome.")
 
-    project = Project(name=payload.name, **build_project_fields_for_country(payload.country_code))
+    project = Project(
+        name=payload.name,
+        **build_project_fields(
+            country_code=payload.country_code,
+            country_name=payload.country_name,
+            timezone_name=payload.timezone_name,
+        ),
+    )
     db.add(project)
     log_event(
         db,
@@ -1397,7 +1535,10 @@ def create_admin_project(
         message="Project created via admin",
         request_path="/api/admin/projects",
         http_status=200,
-        details=f"updated_by={current_admin.chave}; project_name={payload.name}; country_code={payload.country_code}",
+        details=(
+            f"updated_by={current_admin.chave}; project_name={payload.name}; country_code={payload.country_code}; "
+            f"country_name={payload.country_name}; timezone_name={payload.timezone_name}"
+        ),
     )
     db.commit()
     db.refresh(project)
@@ -1420,8 +1561,13 @@ def update_admin_project(
         raise HTTPException(status_code=422, detail="Renomear projeto existente ainda nao e suportado.")
 
     previous_country_code = project.country_code
+    previous_country_name = project.country_name
     previous_timezone_name = project.timezone_name
-    updated_fields = build_project_fields_for_country(payload.country_code)
+    updated_fields = build_project_fields(
+        country_code=payload.country_code,
+        country_name=payload.country_name,
+        timezone_name=payload.timezone_name,
+    )
     project.country_code = updated_fields["country_code"]
     project.country_name = updated_fields["country_name"]
     project.timezone_name = updated_fields["timezone_name"]
@@ -1437,6 +1583,7 @@ def update_admin_project(
         details=(
             f"updated_by={current_admin.chave}; project_id={project_id}; project_name={project.name}; "
             f"country_code={previous_country_code}->{project.country_code}; "
+            f"country_name={previous_country_name}->{project.country_name}; "
             f"timezone_name={previous_timezone_name}->{project.timezone_name}"
         ),
     )
@@ -1830,6 +1977,22 @@ def get_report_events(
 ) -> ReportEventsResponse:
     user = resolve_report_user(db, chave=chave, nome=nome)
     return build_report_events_response(db, user=user)
+
+
+@router.get("/reports/events/export", dependencies=[Depends(require_full_admin_session)])
+def export_report_events(
+    chave: str | None = Query(default=None),
+    nome: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> Response:
+    user = resolve_report_user(db, chave=chave, nome=nome)
+    report = build_report_events_response(db, user=user)
+    file_name, content = build_report_events_export(user=user, report=report)
+    return Response(
+        content=content,
+        media_type=REPORT_EXPORT_CONTENT_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @router.delete("/forms", dependencies=[Depends(require_full_admin_session)])

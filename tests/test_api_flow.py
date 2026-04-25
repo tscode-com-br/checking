@@ -12,6 +12,7 @@ from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
@@ -477,14 +478,17 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
         assert listed_p80["timezone_name"] == "Asia/Singapore"
         assert listed_p80["timezone_label"] == "Singapura (+8)"
 
-        created = client.post("/api/admin/projects", json={"name": "P90", "country_code": "JP"})
+        created = client.post(
+            "/api/admin/projects",
+            json={"name": "P90", "country_name": "China", "timezone_name": "Asia/Shanghai"},
+        )
         assert created.status_code == 200, created.text
         project_payload = created.json()
         assert project_payload["name"] == "P90"
-        assert project_payload["country_code"] == "JP"
-        assert project_payload["country_name"] == "Japão"
-        assert project_payload["timezone_name"] == "Asia/Tokyo"
-        assert project_payload["timezone_label"] == "Japão (+9)"
+        assert project_payload["country_code"] == "CN"
+        assert project_payload["country_name"] == "China"
+        assert project_payload["timezone_name"] == "Asia/Shanghai"
+        assert project_payload["timezone_label"] == "China (+8)"
 
         with SessionLocal() as db:
             db.add(
@@ -525,29 +529,50 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
 def test_admin_project_update_changes_country_metadata_without_renaming():
     with TestClient(app) as client:
         ensure_admin_session(client)
-        created = client.post("/api/admin/projects", json={"name": "P96", "country_code": "SG"})
+        created = client.post(
+            "/api/admin/projects",
+            json={"name": "P96", "country_name": "Singapura", "timezone_name": "Asia/Singapore"},
+        )
         assert created.status_code == 200, created.text
         project_payload = created.json()
 
         updated = client.put(
             f"/api/admin/projects/{project_payload['id']}",
-            json={"name": "P96", "country_code": "VN"},
+            json={"name": "P96", "country_name": "Brasil", "timezone_name": "America/Sao_Paulo"},
         )
         assert updated.status_code == 200, updated.text
         updated_payload = updated.json()
         assert updated_payload["id"] == project_payload["id"]
         assert updated_payload["name"] == "P96"
-        assert updated_payload["country_code"] == "VN"
-        assert updated_payload["country_name"] == "Vietnã"
-        assert updated_payload["timezone_name"] == "Asia/Ho_Chi_Minh"
-        assert updated_payload["timezone_label"] == "Vietnã (+7)"
+        assert updated_payload["country_code"] == "BR"
+        assert updated_payload["country_name"] == "Brasil"
+        assert updated_payload["timezone_name"] == "America/Sao_Paulo"
+        assert updated_payload["timezone_label"] == "Brasil (-3)"
 
     with SessionLocal() as db:
         project = db.execute(select(Project).where(Project.name == "P96")).scalar_one()
 
-    assert project.country_code == "VN"
-    assert project.country_name == "Vietnã"
-    assert project.timezone_name == "Asia/Ho_Chi_Minh"
+    assert project.country_code == "BR"
+    assert project.country_name == "Brasil"
+    assert project.timezone_name == "America/Sao_Paulo"
+
+
+def test_admin_project_create_accepts_custom_country_and_timezone_pair():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        created = client.post(
+            "/api/admin/projects",
+            json={"name": "P97", "country_name": "Chile", "timezone_name": "America/Santiago"},
+        )
+
+    assert created.status_code == 200, created.text
+    payload = created.json()
+    assert payload["name"] == "P97"
+    assert payload["country_code"] == "CH"
+    assert payload["country_name"] == "Chile"
+    assert payload["timezone_name"] == "America/Santiago"
+    assert payload["timezone_label"] == "Chile (-4)"
 
 
 def test_admin_project_delete_reassigns_admin_only_users_to_fallback_project():
@@ -1340,13 +1365,18 @@ def test_admin_reports_events_returns_history_by_chave_in_desc_order():
     assert len(payload["events"]) == 3
     assert [row["action"] for row in payload["events"]] == ["checkout", "checkin", "checkin"]
     assert payload["events"][0]["source"] == "provider"
+    assert payload["events"][0]["source_label"] == "Forms"
     assert payload["events"][0]["projeto"] == "P98"
     assert payload["events"][0]["timezone_name"] == "Asia/Tokyo"
     assert payload["events"][0]["timezone_label"] == "Japão (+9)"
     assert payload["events"][0]["event_date"] == "25/04/2026"
+    assert payload["events"][0]["event_time_label"] == "10:30:00"
+    assert payload["events"][0]["action_label"] == "Check-Out"
+    assert payload["events"][0]["local_label"] == "Forms"
     assert payload["events"][0]["assiduidade"] == "Normal"
     assert payload["events"][1]["assiduidade"] == "Retroativo"
     assert payload["events"][2]["source"] == "web"
+    assert payload["events"][2]["source_label"] == "Aplicativo"
 
 
 def test_admin_reports_events_returns_history_by_unique_nome():
@@ -1392,7 +1422,90 @@ def test_admin_reports_events_returns_history_by_unique_nome():
     assert payload["person"]["nome"] == "Relatorio Nome Unico"
     assert len(payload["events"]) == 1
     assert payload["events"][0]["source"] == "android"
+    assert payload["events"][0]["source_label"] == "android"
     assert payload["events"][0]["local"] == "App"
+    assert payload["events"][0]["local_label"] == "App"
+
+
+def test_admin_reports_events_export_builds_xlsx_download_with_display_labels():
+    fixed_now = datetime(2026, 4, 22, 15, 26, 45, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P80")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P80", **build_project_fields_for_country("SG")))
+            db.flush()
+
+        user = User(
+            rfid="RPT1003",
+            chave="RP49",
+            nome="Usuario Relatorio Export",
+            projeto="P80",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="device",
+                action="checkout",
+                projeto="P80",
+                local="main",
+                ontime=False,
+                event_time=datetime(2026, 4, 25, 7, 8, 9, tzinfo=ZoneInfo(settings.tz_name)),
+                created_at=now_sgt(),
+                source_request_id=f"report-device-export-{uuid.uuid4().hex}",
+                device_id="esp32-box-0001",
+            )
+        )
+        db.commit()
+
+    with patch("sistema.app.routers.admin.now_sgt", return_value=fixed_now):
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            exported = client.get("/api/admin/reports/events/export", params={"chave": "RP49"})
+
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Relatorio - RP49 - 20260422 - 152645.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    worksheet = workbook.active
+    assert worksheet.title == "Relatório"
+    assert worksheet["A1"].value == "Usuario Relatorio Export (RP49)"
+    assert worksheet["A2"].value == "Projeto atual: P80 | RFID: RPT1003 | Fuso horário: Singapura (+8) | 1 evento"
+    assert worksheet["A4"].value == "25/04/2026"
+    assert [worksheet["A5"].value, worksheet["B5"].value, worksheet["C5"].value, worksheet["D5"].value, worksheet["E5"].value, worksheet["F5"].value, worksheet["G5"].value] == [
+        "Horário",
+        "Ação",
+        "Origem",
+        "Local",
+        "Projeto",
+        "Fuso horário",
+        "Assiduidade",
+    ]
+    assert [worksheet["A6"].value, worksheet["B6"].value, worksheet["C6"].value, worksheet["D6"].value, worksheet["E6"].value, worksheet["F6"].value, worksheet["G6"].value] == [
+        "07:08:09",
+        "Check-Out",
+        "Box ESP32-0001",
+        "Escritório Principal",
+        "P80",
+        "Singapura (+8)",
+        "Retroativo",
+    ]
+    workbook.close()
 
 
 def test_admin_reports_events_rejects_ambiguous_nome():
@@ -8900,6 +9013,14 @@ def test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout():
             denied = client.get(path)
             assert denied.status_code == 403, path
             assert denied.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
+
+        denied_reports = client.get("/api/admin/reports/events", params={"chave": "RP41"})
+        assert denied_reports.status_code == 403, denied_reports.text
+        assert denied_reports.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
+
+        denied_reports_export = client.get("/api/admin/reports/events/export", params={"chave": "RP41"})
+        assert denied_reports_export.status_code == 403, denied_reports_export.text
+        assert denied_reports_export.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
 
 
 def test_admin_request_access_and_approval_flow():

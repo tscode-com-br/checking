@@ -173,7 +173,7 @@
           </div>
         </div>
         <div class="table-wrap">
-          <table class="responsive-table">
+          <table class="responsive-table presence-users-table">
             <thead>
               <tr>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -238,7 +238,7 @@
           </div>
         </div>
         <div class="table-wrap">
-          <table class="responsive-table">
+          <table class="responsive-table presence-users-table">
             <thead>
               <tr>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -412,7 +412,7 @@
               <div class="section-header">
                 <div>
                   <h3 id="projectEditorTitle">Novo Projeto</h3>
-                  <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome e o país do projeto. O fuso horário será definido automaticamente.</p>
+                  <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome do projeto, escolha um país da lista ou cadastre um novo e defina o fuso horário desejado.</p>
                 </div>
               </div>
               <div class="project-editor-grid">
@@ -424,7 +424,16 @@
                   <span>País</span>
                   <select id="projectCountrySelect"></select>
                 </label>
+                <label class="presence-control-field" for="projectTimezoneInput">
+                  <span>Fuso horário</span>
+                  <input id="projectTimezoneInput" type="text" list="projectTimezoneOptions" maxlength="64" autocomplete="off" placeholder="Ex.: Asia/Singapore" />
+                </label>
+                <label class="presence-control-field" for="projectCustomCountryInput">
+                  <span>Novo país</span>
+                  <input id="projectCustomCountryInput" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Chile" />
+                </label>
               </div>
+              <datalist id="projectTimezoneOptions"></datalist>
               <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
                 <button id="saveProjectButton" type="button">Salvar Projeto</button>
                 <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
@@ -479,15 +488,19 @@
             </label>
           </div>
           <div class="locations-actions-bar reports-search-actions">
+            <button id="reportsClearButton" type="button" class="secondary-button">Limpar</button>
             <button id="reportsSearchButton" type="button">Buscar</button>
           </div>
           <p id="reportsStatus" class="auth-status"></p>
         </div>
         <div class="project-editor-panel reports-results-panel">
-          <div class="section-header">
+          <div class="section-header reports-results-header">
             <div>
               <h3 id="reportsPersonTitle">Nenhuma busca realizada</h3>
               <p id="reportsPersonMeta" class="section-header-copy">Selecione uma chave ou um nome para carregar o relatório.</p>
+            </div>
+            <div class="section-header-actions reports-results-actions">
+              <button id="reportsExportButton" type="button" class="secondary-button hidden" disabled>Exportar</button>
             </div>
           </div>
           <div id="reportsResultsBody" class="reports-results-body"></div>

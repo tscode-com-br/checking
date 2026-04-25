@@ -7,7 +7,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .models import ManagedLocation
 from .services.location_audit import audit_managed_location
 from .services.managed_locations import dump_location_coordinates
-from .services.project_catalog import DEFAULT_PROJECT_COUNTRY_CODE, normalize_project_country_code, normalize_project_name
+from .services.project_catalog import (
+    normalize_optional_project_country_code,
+    normalize_project_country_name,
+    normalize_project_country_payload,
+    normalize_project_name,
+    normalize_project_timezone_name,
+)
 from .services.user_profiles import normalize_person_name
 
 
@@ -757,7 +763,9 @@ class ProjectRow(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
-    country_code: str = Field(default=DEFAULT_PROJECT_COUNTRY_CODE, min_length=2, max_length=2)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    country_name: str | None = Field(default=None, min_length=2, max_length=80)
+    timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -766,13 +774,41 @@ class ProjectCreate(BaseModel):
 
     @field_validator("country_code", mode="before")
     @classmethod
-    def validate_country_code(cls, value: str) -> str:
-        return normalize_project_country_code(value)
+    def validate_country_code(cls, value: str | None) -> str | None:
+        return normalize_optional_project_country_code(value)
+
+    @field_validator("country_name", mode="before")
+    @classmethod
+    def validate_country_name(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return normalize_project_country_name(value)
+
+    @field_validator("timezone_name", mode="before")
+    @classmethod
+    def validate_timezone_name(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return normalize_project_timezone_name(value)
+
+    @model_validator(mode="after")
+    def normalize_country_payload(self):
+        normalized = normalize_project_country_payload(
+            country_code=self.country_code,
+            country_name=self.country_name,
+            timezone_name=self.timezone_name,
+        )
+        self.country_code = normalized["country_code"]
+        self.country_name = normalized["country_name"]
+        self.timezone_name = normalized["timezone_name"]
+        return self
 
 
 class ProjectUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
-    country_code: str = Field(min_length=2, max_length=2)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    country_name: str | None = Field(default=None, min_length=2, max_length=80)
+    timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -781,8 +817,34 @@ class ProjectUpdate(BaseModel):
 
     @field_validator("country_code", mode="before")
     @classmethod
-    def validate_country_code(cls, value: str) -> str:
-        return normalize_project_country_code(value)
+    def validate_country_code(cls, value: str | None) -> str | None:
+        return normalize_optional_project_country_code(value)
+
+    @field_validator("country_name", mode="before")
+    @classmethod
+    def validate_country_name(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return normalize_project_country_name(value)
+
+    @field_validator("timezone_name", mode="before")
+    @classmethod
+    def validate_timezone_name(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return normalize_project_timezone_name(value)
+
+    @model_validator(mode="after")
+    def normalize_country_payload(self):
+        normalized = normalize_project_country_payload(
+            country_code=self.country_code,
+            country_name=self.country_name,
+            timezone_name=self.timezone_name,
+        )
+        self.country_code = normalized["country_code"]
+        self.country_name = normalized["country_name"]
+        self.timezone_name = normalized["timezone_name"]
+        return self
 
 
 class AdminLocationSettingsResponse(AdminActionResponse):
@@ -829,12 +891,16 @@ class ReportPersonRow(BaseModel):
 class ReportEventRow(BaseModel):
     id: int
     source: str
+    source_label: str
     action: Literal["checkin", "checkout"]
+    action_label: str
     projeto: str
     local: Optional[str]
+    local_label: str
     ontime: bool
     assiduidade: Literal["Normal", "Retroativo"]
     event_time: datetime
+    event_time_label: str
     timezone_name: str
     timezone_label: str
     event_date: str

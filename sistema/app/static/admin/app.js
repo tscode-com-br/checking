@@ -31,12 +31,17 @@ const requestAdminRegistrationSaveButton = document.getElementById("requestAdmin
 const requestAdminRegistrationStatus = document.getElementById("requestAdminRegistrationStatus");
 const reportsSearchChaveInput = document.getElementById("reportsSearchChave");
 const reportsSearchNomeInput = document.getElementById("reportsSearchNome");
+const reportsClearButton = document.getElementById("reportsClearButton");
 const reportsSearchButton = document.getElementById("reportsSearchButton");
+const reportsExportButton = document.getElementById("reportsExportButton");
 const reportsStatus = document.getElementById("reportsStatus");
 const projectEditorTitle = document.getElementById("projectEditorTitle");
 const projectEditorHelp = document.getElementById("projectEditorHelp");
 const projectNameInput = document.getElementById("projectNameInput");
 const projectCountrySelect = document.getElementById("projectCountrySelect");
+const projectTimezoneInput = document.getElementById("projectTimezoneInput");
+const projectCustomCountryInput = document.getElementById("projectCustomCountryInput");
+const projectTimezoneOptions = document.getElementById("projectTimezoneOptions");
 const saveProjectButton = document.getElementById("saveProjectButton");
 const cancelProjectEditButton = document.getElementById("cancelProjectEditButton");
 const addProjectButton = document.getElementById("addProjectButton");
@@ -50,6 +55,8 @@ const DATABASE_EVENT_DEFAULT_SORT_DIRECTION = "desc";
 const ADMIN_SELF_PASSWORD_VERIFY_DEBOUNCE_MS = 260;
 const ADMIN_REQUEST_LOOKUP_DEBOUNCE_MS = 260;
 const DEFAULT_PROJECT_COUNTRY_CODE = "SG";
+const DEFAULT_PROJECT_COUNTRY_NAME = "Singapura";
+const DEFAULT_PROJECT_TIMEZONE = "Asia/Singapore";
 
 let activeTab = "checkin";
 let autoRefreshHandle = null;
@@ -92,20 +99,15 @@ let requestAdminLookupRequestToken = 0;
 let requestAdminSelfServiceInProgress = false;
 let requestAdminRegistrationSaveInProgress = false;
 let reportsSearchInProgress = false;
+let reportsExportInProgress = false;
+let reportsHasLoadedResult = false;
+let reportsExportQueryString = "";
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
 const SUPPORTED_PROJECT_COUNTRIES = Object.freeze([
-  { code: "AE", name: "Emirados Árabes Unidos" },
-  { code: "IN", name: "Índia" },
-  { code: "JP", name: "Japão" },
-  { code: "KR", name: "Coreia do Sul" },
-  { code: "MY", name: "Malásia" },
-  { code: "PH", name: "Filipinas" },
-  { code: "QA", name: "Catar" },
-  { code: "SA", name: "Arábia Saudita" },
-  { code: "SG", name: "Singapura" },
-  { code: "TH", name: "Tailândia" },
-  { code: "VN", name: "Vietnã" },
+  { code: "BR", name: "Brasil", timezone_name: "America/Sao_Paulo" },
+  { code: "CN", name: "China", timezone_name: "Asia/Shanghai" },
+  { code: "SG", name: "Singapura", timezone_name: "Asia/Singapore" },
 ]);
 
 function createDefaultDatabaseEventFilters() {
@@ -215,24 +217,165 @@ function getProjectById(projectId) {
   return projectCatalog.find((row) => String(row.id) === normalizedProjectId) || null;
 }
 
-function getProjectCountryOptions(selectedValue = DEFAULT_PROJECT_COUNTRY_CODE) {
-  const normalizedSelectedValue = String(selectedValue ?? "").trim().toUpperCase();
-  const options = SUPPORTED_PROJECT_COUNTRIES.map((row) => ({ ...row }));
-  if (normalizedSelectedValue && !options.some((row) => row.code === normalizedSelectedValue)) {
-    options.unshift({ code: normalizedSelectedValue, name: normalizedSelectedValue });
+function normalizeProjectCountryName(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeProjectTimezoneName(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeProjectCountryCode(value) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function stripProjectCountryDiacritics(value) {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function deriveProjectCountryCode(countryName, fallbackCode = "") {
+  const normalizedFallbackCode = normalizeProjectCountryCode(fallbackCode);
+  if (/^[A-Z]{2}$/.test(normalizedFallbackCode)) {
+    return normalizedFallbackCode;
   }
+
+  const normalizedCountryName = normalizeProjectCountryName(countryName);
+  const knownCountry = SUPPORTED_PROJECT_COUNTRIES.find((row) => row.name.localeCompare(normalizedCountryName, "pt-BR", { sensitivity: "accent" }) === 0);
+  if (knownCountry) {
+    return knownCountry.code;
+  }
+
+  const letters = stripProjectCountryDiacritics(normalizedCountryName).replace(/[^A-Za-z]/g, "").toUpperCase();
+  if (letters.length >= 2) {
+    return letters.slice(0, 2);
+  }
+  if (letters.length === 1) {
+    return `${letters}X`;
+  }
+  return DEFAULT_PROJECT_COUNTRY_CODE;
+}
+
+function getProjectCountryOptions(selectedValue = DEFAULT_PROJECT_COUNTRY_NAME) {
+  const normalizedSelectedValue = normalizeProjectCountryName(selectedValue);
+  const optionsByName = new Map();
+  const options = [];
+
+  function registerOption(row) {
+    const normalizedName = normalizeProjectCountryName(row?.name ?? row?.country_name);
+    if (!normalizedName) {
+      return;
+    }
+
+    const key = normalizedName.toLocaleLowerCase("pt-BR");
+    const normalizedTimeZone = normalizeProjectTimezoneName(row?.timezone_name);
+    const normalizedCode = deriveProjectCountryCode(normalizedName, row?.code ?? row?.country_code);
+    if (optionsByName.has(key)) {
+      const existing = optionsByName.get(key);
+      if (!existing.timezone_name && normalizedTimeZone) {
+        existing.timezone_name = normalizedTimeZone;
+      }
+      return;
+    }
+
+    const option = {
+      code: normalizedCode,
+      name: normalizedName,
+      timezone_name: normalizedTimeZone,
+    };
+    optionsByName.set(key, option);
+    options.push(option);
+  }
+
+  SUPPORTED_PROJECT_COUNTRIES.forEach(registerOption);
+  projectCatalog.forEach(registerOption);
+
+  if (normalizedSelectedValue && !optionsByName.has(normalizedSelectedValue.toLocaleLowerCase("pt-BR"))) {
+    registerOption({
+      name: normalizedSelectedValue,
+      country_code: deriveProjectCountryCode(normalizedSelectedValue),
+      timezone_name: normalizeProjectTimezoneName(projectTimezoneInput ? projectTimezoneInput.value : ""),
+    });
+  }
+
   return options;
 }
 
-function syncProjectCountrySelect(selectedValue = DEFAULT_PROJECT_COUNTRY_CODE) {
+function getProjectCountryOptionByName(countryName) {
+  const normalizedCountryName = normalizeProjectCountryName(countryName);
+  if (!normalizedCountryName) {
+    return null;
+  }
+  return getProjectCountryOptions(normalizedCountryName).find(
+    (row) => row.name.localeCompare(normalizedCountryName, "pt-BR", { sensitivity: "accent" }) === 0,
+  ) || null;
+}
+
+function getProjectTimezoneValues(selectedValue = "") {
+  const values = new Map();
+
+  function registerTimeZone(value) {
+    const normalizedValue = normalizeProjectTimezoneName(value);
+    if (!normalizedValue) {
+      return;
+    }
+    if (!values.has(normalizedValue)) {
+      values.set(normalizedValue, normalizedValue);
+    }
+  }
+
+  SUPPORTED_PROJECT_COUNTRIES.forEach((row) => registerTimeZone(row.timezone_name));
+  projectCatalog.forEach((row) => registerTimeZone(row.timezone_name));
+  registerTimeZone(selectedValue);
+  return Array.from(values.values()).sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" }));
+}
+
+function syncProjectTimezoneSuggestions(selectedValue = "") {
+  if (!projectTimezoneOptions) {
+    return;
+  }
+  projectTimezoneOptions.innerHTML = getProjectTimezoneValues(selectedValue)
+    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
+    .join("");
+}
+
+function syncProjectCountrySelect(selectedValue = DEFAULT_PROJECT_COUNTRY_NAME) {
   if (!projectCountrySelect) {
     return;
   }
-  const options = getProjectCountryOptions(selectedValue);
+  const normalizedSelectedValue = normalizeProjectCountryName(selectedValue) || DEFAULT_PROJECT_COUNTRY_NAME;
+  const options = getProjectCountryOptions(normalizedSelectedValue);
   projectCountrySelect.innerHTML = options
-    .map((country) => `<option value="${escapeHtml(country.code)}">${escapeHtml(country.name)}</option>`)
+    .map(
+      (country) => `<option value="${escapeHtml(country.name)}" data-country-code="${escapeHtml(country.code)}" data-timezone-name="${escapeHtml(country.timezone_name)}">${escapeHtml(country.name)}</option>`,
+    )
     .join("");
-  projectCountrySelect.value = String(selectedValue ?? DEFAULT_PROJECT_COUNTRY_CODE).trim().toUpperCase() || DEFAULT_PROJECT_COUNTRY_CODE;
+  projectCountrySelect.value = normalizedSelectedValue;
+}
+
+function syncProjectTimezoneInput(selectedValue = "", preferredCountryName = DEFAULT_PROJECT_COUNTRY_NAME) {
+  const preferredCountry = getProjectCountryOptionByName(preferredCountryName);
+  const normalizedTimeZone = normalizeProjectTimezoneName(selectedValue) || preferredCountry?.timezone_name || DEFAULT_PROJECT_TIMEZONE;
+  syncProjectTimezoneSuggestions(normalizedTimeZone);
+  if (projectTimezoneInput) {
+    projectTimezoneInput.value = normalizedTimeZone;
+  }
+}
+
+function getSelectedProjectCountryOption() {
+  if (!projectCountrySelect) {
+    return null;
+  }
+
+  const selectedOption = projectCountrySelect.selectedOptions[0];
+  if (selectedOption) {
+    return {
+      code: normalizeProjectCountryCode(selectedOption.dataset.countryCode),
+      name: normalizeProjectCountryName(selectedOption.value),
+      timezone_name: normalizeProjectTimezoneName(selectedOption.dataset.timezoneName),
+    };
+  }
+
+  return getProjectCountryOptionByName(projectCountrySelect.value);
 }
 
 function syncProjectEditorState(options = {}) {
@@ -243,11 +386,15 @@ function syncProjectEditorState(options = {}) {
   }
 
   const isEditing = Boolean(editingProject);
-  const selectedCountryCode = isEditing
-    ? editingProject.country_code
-    : String(projectCountrySelect ? projectCountrySelect.value : "").trim().toUpperCase() || DEFAULT_PROJECT_COUNTRY_CODE;
+  const selectedCountryName = isEditing
+    ? normalizeProjectCountryName(editingProject.country_name)
+    : normalizeProjectCountryName(projectCountrySelect ? projectCountrySelect.value : "") || DEFAULT_PROJECT_COUNTRY_NAME;
 
-  syncProjectCountrySelect(selectedCountryCode);
+  syncProjectCountrySelect(selectedCountryName);
+  syncProjectTimezoneInput(
+    isEditing ? editingProject.timezone_name : normalizeProjectTimezoneName(projectTimezoneInput ? projectTimezoneInput.value : ""),
+    selectedCountryName,
+  );
 
   if (projectNameInput) {
     if (isEditing) {
@@ -259,6 +406,9 @@ function syncProjectEditorState(options = {}) {
       projectNameInput.readOnly = false;
     }
   }
+  if (projectCustomCountryInput) {
+    projectCustomCountryInput.value = "";
+  }
 
   if (projectEditorTitle) {
     projectEditorTitle.textContent = isEditing ? `Editar Projeto ${editingProject.name}` : "Novo Projeto";
@@ -266,7 +416,7 @@ function syncProjectEditorState(options = {}) {
   if (projectEditorHelp) {
     projectEditorHelp.textContent = isEditing
       ? "Nesta etapa, a edição altera país e fuso horário. O nome do projeto permanece bloqueado."
-      : "Informe o nome e o país do projeto. O fuso horário será definido automaticamente.";
+      : "Informe o nome do projeto, escolha um país da lista ou cadastre um novo e defina o fuso horário desejado.";
   }
   if (saveProjectButton) {
     saveProjectButton.textContent = isEditing ? "Salvar Alteração" : "Salvar Projeto";
@@ -289,7 +439,11 @@ function resetProjectEditor(options = {}) {
   if (projectNameInput) {
     projectNameInput.value = "";
   }
-  syncProjectCountrySelect(DEFAULT_PROJECT_COUNTRY_CODE);
+  if (projectCustomCountryInput) {
+    projectCustomCountryInput.value = "";
+  }
+  syncProjectCountrySelect(DEFAULT_PROJECT_COUNTRY_NAME);
+  syncProjectTimezoneInput(DEFAULT_PROJECT_TIMEZONE, DEFAULT_PROJECT_COUNTRY_NAME);
   syncProjectEditorState({ focus });
 }
 
@@ -3401,7 +3555,13 @@ async function saveProject() {
   }
 
   const projectName = String(projectNameInput ? projectNameInput.value : "").trim();
-  const countryCode = String(projectCountrySelect ? projectCountrySelect.value : "").trim().toUpperCase();
+  const customCountryName = normalizeProjectCountryName(projectCustomCountryInput ? projectCustomCountryInput.value : "");
+  const selectedCountry = getSelectedProjectCountryOption();
+  const countryName = customCountryName || normalizeProjectCountryName(selectedCountry ? selectedCountry.name : "");
+  const timezoneName = normalizeProjectTimezoneName(projectTimezoneInput ? projectTimezoneInput.value : "");
+  const countryCode = customCountryName
+    ? deriveProjectCountryCode(countryName)
+    : normalizeProjectCountryCode(selectedCountry ? selectedCountry.code : "") || deriveProjectCountryCode(countryName);
 
   if (!projectName) {
     setStatus("Informe o nome do projeto.", false);
@@ -3411,23 +3571,37 @@ async function saveProject() {
     return;
   }
 
-  if (!countryCode) {
-    setStatus("Selecione o país do projeto.", false);
-    if (projectCountrySelect) {
+  if (!countryName) {
+    setStatus("Selecione o país do projeto ou informe um novo país.", false);
+    if (projectCustomCountryInput) {
+      projectCustomCountryInput.focus();
+    } else if (projectCountrySelect) {
       projectCountrySelect.focus();
     }
     return;
   }
 
+  if (!timezoneName) {
+    setStatus("Informe o fuso horário do projeto.", false);
+    if (projectTimezoneInput) {
+      projectTimezoneInput.focus();
+    }
+    return;
+  }
+
+  const projectPayload = {
+    name: projectName,
+    country_code: countryCode,
+    country_name: countryName,
+    timezone_name: timezoneName,
+  };
+
   if (projectEditorProjectId === null) {
-    await postJson("/api/admin/projects", { name: projectName, country_code: countryCode });
+    await postJson("/api/admin/projects", projectPayload);
     setStatus("Projeto adicionado com sucesso", true);
   } else {
     const normalizedProjectId = requireIntegerId(projectEditorProjectId, "Projeto");
-    await putJson(`/api/admin/projects/${normalizedProjectId}`, {
-      name: projectName,
-      country_code: countryCode,
-    });
+    await putJson(`/api/admin/projects/${normalizedProjectId}`, projectPayload);
     setStatus("Projeto atualizado com sucesso", true);
   }
 
@@ -3503,8 +3677,12 @@ async function loadForms() {
   updateDashboardSummary();
 }
 
-function resetReportsView() {
+function resetReportsView(options = {}) {
+  const { focusPrimary = false } = options;
   reportsSearchInProgress = false;
+  reportsExportInProgress = false;
+  reportsHasLoadedResult = false;
+  reportsExportQueryString = "";
   if (reportsSearchChaveInput) {
     reportsSearchChaveInput.value = "";
   }
@@ -3519,6 +3697,27 @@ function resetReportsView() {
     body.innerHTML = "";
   }
   syncReportsSearchInputs();
+  if (focusPrimary && reportsSearchChaveInput) {
+    reportsSearchChaveInput.focus();
+  }
+}
+
+function updateReportsActionButtons() {
+  const hasChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "").length > 0;
+  const hasNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "").length > 0;
+  const hasCriteria = hasChave || hasNome;
+  const hasExportableResult = reportsHasLoadedResult && reportsExportQueryString.length > 0;
+
+  if (reportsSearchButton) {
+    reportsSearchButton.disabled = reportsSearchInProgress || reportsExportInProgress || !hasCriteria;
+  }
+  if (reportsClearButton) {
+    reportsClearButton.disabled = reportsSearchInProgress || reportsExportInProgress || (!hasCriteria && !reportsHasLoadedResult);
+  }
+  if (reportsExportButton) {
+    reportsExportButton.classList.toggle("hidden", !hasExportableResult);
+    reportsExportButton.disabled = reportsSearchInProgress || reportsExportInProgress || !hasExportableResult;
+  }
 }
 
 function syncReportsSearchInputs() {
@@ -3537,24 +3736,25 @@ function syncReportsSearchInputs() {
   if (reportsSearchChaveInput) {
     reportsSearchChaveInput.disabled = hasNome;
   }
-  if (reportsSearchButton) {
-    reportsSearchButton.disabled = reportsSearchInProgress || (!hasChave && !hasNome);
-  }
+  updateReportsActionButtons();
 }
 
 function renderReportsState(title, message) {
+  reportsHasLoadedResult = false;
+  reportsExportQueryString = "";
   setTextContentIfPresent("reportsPersonTitle", title);
   setTextContentIfPresent("reportsPersonMeta", message);
   const body = document.getElementById("reportsResultsBody");
   if (body) {
     body.innerHTML = "";
   }
+  updateReportsActionButtons();
 }
 
 function renderReportsResults(payload) {
   const body = document.getElementById("reportsResultsBody");
   if (!body) {
-    return;
+    return false;
   }
 
   const person = payload?.person || {};
@@ -3568,7 +3768,7 @@ function renderReportsResults(payload) {
 
   if (!events.length) {
     body.innerHTML = `<p class="section-header-copy">Nenhum evento encontrado para a pessoa informada.</p>`;
-    return;
+    return false;
   }
 
   const groups = [];
@@ -3587,15 +3787,47 @@ function renderReportsResults(payload) {
     const tbodyId = `reportsGroupBody${groupIndex}`;
     const groupLabel = group.rows.length === 1 ? "1 evento" : `${group.rows.length} eventos`;
     const rowsMarkup = group.rows.map((row) => {
-      const timeLine = formatDateTimeLines(row.event_time, row.timezone_name).time || formatDateTime(row.event_time, row.timezone_name);
-      return `<tr><td>${escapeHtml(timeLine)}</td><td>${escapeHtml(formatAction(row.action))}</td><td>${escapeHtml(row.source ?? "-")}</td><td>${escapeHtml(formatLocal(row.local))}</td><td>${escapeHtml(row.projeto ?? "-")}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td></tr>`;
+      const timeLine = row.event_time_label || formatDateTimeLines(row.event_time, row.timezone_name).time || formatDateTime(row.event_time, row.timezone_name);
+      const actionLabel = row.action_label || formatAction(row.action);
+      const sourceLabel = row.source_label || row.source || "-";
+      const localLabel = row.local_label || formatLocal(row.local);
+      return `<tr><td>${escapeHtml(timeLine)}</td><td>${escapeHtml(actionLabel)}</td><td>${escapeHtml(sourceLabel)}</td><td>${escapeHtml(localLabel)}</td><td>${escapeHtml(row.projeto ?? "-")}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td></tr>`;
     }).join("");
-    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Horário</th><th>Ação</th><th>Origem</th><th>Local</th><th>Projeto</th><th>Fuso horário</th><th>Assiduidade</th></tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div></section>`;
+    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div><div class="table-wrap"><table class="responsive-table reports-results-table"><colgroup><col class="reports-col-time"><col class="reports-col-action"><col class="reports-col-source"><col class="reports-col-local"><col class="reports-col-project"><col class="reports-col-timezone"><col class="reports-col-assiduidade"></colgroup><thead><tr><th>Horário</th><th>Ação</th><th>Origem</th><th>Local</th><th>Projeto</th><th>Fuso horário</th><th>Assiduidade</th></tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div></section>`;
   }).join("");
 
   groups.forEach((_, groupIndex) => {
     applyResponsiveLabels(`reportsGroupBody${groupIndex}`);
   });
+  return true;
+}
+
+async function downloadReportsExport() {
+  if (!(reportsExportButton instanceof HTMLButtonElement) || reportsExportQueryString.length === 0 || reportsExportInProgress) {
+    return;
+  }
+
+  const idleLabel = reportsExportButton.dataset.idleLabel || "Exportar";
+  reportsExportInProgress = true;
+  reportsExportButton.disabled = true;
+  reportsExportButton.classList.add("is-loading");
+  reportsExportButton.setAttribute("aria-busy", "true");
+  reportsExportButton.textContent = "Exportando...";
+  updateReportsActionButtons();
+  setReportsStatus("");
+  try {
+    const { blob, fileName } = await fetchBlob(`/api/admin/reports/events/export?${reportsExportQueryString}`, "relatorio.xlsx");
+    downloadBlob(blob, fileName);
+    setReportsStatus("Relatório exportado com sucesso.", "success");
+  } catch (error) {
+    setReportsStatus(error.message || "Não foi possível exportar o relatório.", "error");
+  } finally {
+    reportsExportInProgress = false;
+    reportsExportButton.classList.remove("is-loading");
+    reportsExportButton.setAttribute("aria-busy", "false");
+    reportsExportButton.textContent = idleLabel;
+    updateReportsActionButtons();
+  }
 }
 
 async function submitReportsSearch() {
@@ -3635,14 +3867,16 @@ async function submitReportsSearch() {
   }
 
   reportsSearchInProgress = true;
-  reportsSearchButton.disabled = true;
   reportsSearchButton.classList.add("is-loading");
   reportsSearchButton.setAttribute("aria-busy", "true");
   reportsSearchButton.textContent = "Buscando...";
+  updateReportsActionButtons();
   setReportsStatus("");
   try {
     const payload = await fetchJson(`/api/admin/reports/events?${query.toString()}`);
-    renderReportsResults(payload);
+    reportsHasLoadedResult = renderReportsResults(payload);
+    reportsExportQueryString = reportsHasLoadedResult ? query.toString() : "";
+    updateReportsActionButtons();
     setReportsStatus("Relatório carregado com sucesso.", "success");
   } catch (error) {
     renderReportsState("Busca não concluída", error.message || "Não foi possível carregar o relatório.");
@@ -4418,6 +4652,17 @@ function bindActions() {
       submitReportsSearch();
     });
   }
+  if (reportsClearButton) {
+    reportsClearButton.addEventListener("click", () => {
+      resetReportsView({ focusPrimary: true });
+    });
+  }
+  if (reportsExportButton) {
+    reportsExportButton.dataset.idleLabel = String(reportsExportButton.textContent || "Exportar").trim() || "Exportar";
+    reportsExportButton.addEventListener("click", () => {
+      downloadReportsExport();
+    });
+  }
   [reportsSearchChaveInput, reportsSearchNomeInput].filter(Boolean).forEach((input) => {
     input.addEventListener("change", () => {
       setReportsStatus("");
@@ -4696,6 +4941,25 @@ function bindActions() {
   if (cancelProjectEditButton) {
     cancelProjectEditButton.addEventListener("click", () => {
       resetProjectEditor({ focus: true });
+    });
+  }
+
+  if (projectCountrySelect) {
+    projectCountrySelect.addEventListener("change", () => {
+      const selectedCountry = getSelectedProjectCountryOption();
+      syncProjectTimezoneInput(
+        selectedCountry ? selectedCountry.timezone_name : DEFAULT_PROJECT_TIMEZONE,
+        selectedCountry ? selectedCountry.name : DEFAULT_PROJECT_COUNTRY_NAME,
+      );
+      if (projectCustomCountryInput) {
+        projectCustomCountryInput.value = "";
+      }
+    });
+  }
+
+  if (projectTimezoneInput) {
+    projectTimezoneInput.addEventListener("input", () => {
+      syncProjectTimezoneSuggestions(projectTimezoneInput.value);
     });
   }
 
