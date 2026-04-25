@@ -57,6 +57,7 @@ class User(Base):
     chave: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
     senha: Mapped[str | None] = mapped_column(String(255), nullable=True)
     perfil: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    admin_monitored_projects_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)

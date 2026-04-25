@@ -16,30 +16,23 @@ const checkAppScript = fs.readFileSync(
   'utf8'
 );
 
-test('check webapp includes a portrait-only orientation guard overlay', () => {
-  assert.match(checkHtml, /id="orientationLockScreen"/);
-  assert.match(checkHtml, /Use o aparelho em retrato/);
-  assert.match(checkHtml, /Este webapp foi otimizado somente para visualização vertical/);
+test('check webapp no longer renders a portrait-only orientation guard overlay', () => {
+  assert.doesNotMatch(checkHtml, /id="orientationLockScreen"/);
+  assert.doesNotMatch(checkHtml, /Use o aparelho em retrato/);
+  assert.doesNotMatch(checkHtml, /Este webapp foi otimizado somente para visualização vertical/);
 });
 
-test('portrait-only orientation guard hides the app chrome while the landscape overlay is active', () => {
-  assert.match(
-    checkCss,
-    /body\.portrait-lock-active\s*\{[\s\S]*overflow:\s*hidden;/
-  );
-  assert.match(
-    checkCss,
-    /body\.portrait-lock-active > header,[\s\S]*body\.portrait-lock-active > \.check-shell\s*\{[\s\S]*visibility:\s*hidden;[\s\S]*pointer-events:\s*none;/
-  );
-  assert.match(
-    checkCss,
-    /\.orientation-lock-screen\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*z-index:\s*40;/
-  );
+test('check webapp no longer hides the chrome behind portrait-only landscape classes', () => {
+  assert.doesNotMatch(checkCss, /body\.portrait-lock-active/);
+  assert.doesNotMatch(checkCss, /\.orientation-lock-screen/);
+  assert.doesNotMatch(checkCss, /\.orientation-lock-card/);
 });
 
-test('portrait-only orientation guard script attempts portrait lock and refreshes on viewport changes', () => {
-  assert.match(checkAppScript, /function requestPortraitOrientationLock\(\)\s*\{[\s\S]*orientationApi\.lock\('portrait'\);/);
-  assert.match(checkAppScript, /function syncPortraitLockState\(\)\s*\{[\s\S]*classList\.toggle\('portrait-lock-active', isLandscape\);/);
-  assert.match(checkAppScript, /window\.addEventListener\('resize', syncPortraitLockState\);/);
-  assert.match(checkAppScript, /window\.addEventListener\('orientationchange', \(\) => \{[\s\S]*syncPortraitLockState\(\);[\s\S]*realignViewport\(\);[\s\S]*\}\);/);
+test('check webapp stops forcing portrait orientation but keeps viewport metric sync on viewport changes', () => {
+  assert.doesNotMatch(checkAppScript, /function requestPortraitOrientationLock\(/);
+  assert.doesNotMatch(checkAppScript, /function syncPortraitLockState\(/);
+  assert.doesNotMatch(checkAppScript, /window\.addEventListener\('resize', syncPortraitLockState\);/);
+  assert.match(checkAppScript, /window\.addEventListener\('resize', scheduleViewportLayoutMetricsSync\);/);
+  assert.match(checkAppScript, /window\.addEventListener\('orientationchange', \(\) => \{[\s\S]*scheduleViewportLayoutMetricsSync\(\);[\s\S]*realignViewport\(\);[\s\S]*\}\);/);
+  assert.match(checkAppScript, /window\.visualViewport\.addEventListener\('resize', scheduleViewportLayoutMetricsSync\);/);
 });

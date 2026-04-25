@@ -102,91 +102,6 @@ header {
   letter-spacing: -0.03em;
 }
 
-.orientation-lock-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--page-padding-block) max(var(--page-padding-inline), env(safe-area-inset-right)) max(var(--page-padding-block), env(safe-area-inset-bottom)) max(var(--page-padding-inline), env(safe-area-inset-left));
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(12px);
-}
-
-.orientation-lock-card {
-  width: min(100%, 360px);
-  display: grid;
-  gap: 14px;
-  justify-items: center;
-  padding: clamp(20px, 5vw, 28px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: calc(var(--card-radius) + 2px);
-  background: linear-gradient(180deg, rgba(15, 118, 110, 0.96), rgba(15, 23, 42, 0.94));
-  color: #ffffff;
-  text-align: center;
-  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.34);
-}
-
-.orientation-lock-icon {
-  position: relative;
-  display: inline-flex;
-  width: 68px;
-  height: 68px;
-  align-items: center;
-  justify-content: center;
-}
-
-.orientation-lock-icon::before {
-  content: "";
-  width: 32px;
-  height: 48px;
-  border: 3px solid rgba(255, 255, 255, 0.92);
-  border-radius: 10px;
-  box-shadow: inset 0 0 0 2px rgba(15, 118, 110, 0.18);
-  transform: rotate(-90deg);
-}
-
-.orientation-lock-icon::after {
-  content: "↻";
-  position: absolute;
-  right: 3px;
-  bottom: 4px;
-  font-size: 1.6rem;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.orientation-lock-card h2 {
-  margin: 0;
-  font-size: clamp(1rem, 3.5vw, 1.28rem);
-  line-height: 1.2;
-}
-
-.orientation-lock-card p {
-  margin: 0;
-  font-size: clamp(0.84rem, 2.8vw, 0.96rem);
-  font-weight: 600;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.92);
-}
-
-body.portrait-lock-active {
-  overflow: hidden;
-}
-
-body.portrait-lock-active > header,
-body.portrait-lock-active > .check-shell {
-  visibility: hidden;
-  pointer-events: none;
-  user-select: none;
-}
-
-body.portrait-lock-active > .orientation-lock-screen {
-  visibility: visible;
-  pointer-events: auto;
-}
-
 .check-shell {
   position: relative;
   z-index: 1;
@@ -1768,25 +1683,12 @@ body.portrait-lock-active > .orientation-lock-screen {
     font-size: 0.8rem;
   }
 
-  .orientation-lock-card {
-    gap: 12px;
-    padding: 18px;
-  }
-
-  .orientation-lock-icon {
-    width: 60px;
-    height: 60px;
-  }
-
-  .orientation-lock-icon::before {
-    width: 28px;
-    height: 42px;
-  }
 }
 
 @media (orientation: landscape) and (max-height: 540px) {
   :root {
     --header-height: 56px;
+    --page-padding-inline: clamp(10px, 2vw, 18px);
     --page-padding-block: 10px;
     --card-padding: 12px;
     --section-gap: 8px;
@@ -1801,6 +1703,172 @@ body.portrait-lock-active > .orientation-lock-screen {
   .header-logo-icon {
     width: 32px;
   }
+
+  .header-brand {
+    gap: 8px;
+  }
+
+  .header-logo-text {
+    font-size: clamp(0.98rem, 2.2vw, 1.28rem);
+  }
+
+  .check-shell {
+    padding-top: 10px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  .check-card {
+    width: min(100%, 960px);
+    align-self: start;
+  }
+
+  .check-form {
+    grid-template-columns: minmax(220px, 0.92fr) minmax(0, 1.08fr);
+    grid-template-areas:
+      "history auth"
+      "notification auth"
+      "location registration"
+      "location informe"
+      "location project"
+      "location submit";
+    column-gap: 12px;
+    row-gap: 8px;
+    align-items: start;
+  }
+
+  .check-form > * {
+    min-width: 0;
+  }
+
+  .check-form > .history-card {
+    grid-area: history;
+  }
+
+  .check-form > .notification-card {
+    grid-area: notification;
+  }
+
+  .check-form > .location-card {
+    grid-area: location;
+  }
+
+  .check-form > .auth-credentials-row {
+    grid-area: auth;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(92px, 15vw, 118px);
+    gap: 6px;
+  }
+
+  .check-form > #registrationField {
+    grid-area: registration;
+  }
+
+  .check-form > #informeField {
+    grid-area: informe;
+  }
+
+  .check-form > .form-row {
+    grid-area: project;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .check-form > .submit-button {
+    grid-area: submit;
+  }
+
+  .history-card,
+  .notification-card,
+  .location-card {
+    padding: 10px 12px;
+  }
+
+  .history-grid {
+    gap: 8px;
+  }
+
+  .history-item {
+    gap: 4px;
+    padding: 7px;
+  }
+
+  .history-value {
+    min-height: calc(3 * 1.02em + 4px);
+  }
+
+  .location-card {
+    gap: 6px;
+  }
+
+  .location-card-header {
+    align-items: center;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+  }
+
+  .location-main-row {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .location-refresh-button {
+    width: 34px;
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .check-group-legend-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .legend-toggle {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .choice-grid {
+    margin-top: 4px;
+    gap: 6px;
+  }
+
+  .choice-card {
+    padding: 6px 4px;
+  }
+
+  .check-field input,
+  .check-field select,
+  .auth-action-button,
+  .submit-button,
+  .secondary-button {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .password-dialog,
+  .transport-screen {
+    align-items: flex-start;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .password-dialog-card {
+    width: min(100%, 480px);
+  }
+
+  .transport-screen {
+    --transport-screen-card-height: calc(var(--app-viewport-height) - max(20px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  }
+
+  .transport-screen-card {
+    width: min(100%, 760px);
+    gap: 10px;
+  }
+
+  .transport-request-history-list {
+    padding-right: 0;
+  }
 }
 
 @media (min-width: 640px) {
@@ -1814,11 +1882,193 @@ body.portrait-lock-active > .orientation-lock-screen {
 }
 
 @media (min-width: 1024px) {
-  .check-card {
-    --card-max-width: 920px;
+  .check-shell {
+    padding: clamp(24px, 4.4vw, 46px) max(clamp(24px, 4.4vw, 46px), env(safe-area-inset-right)) max(clamp(24px, 4.4vw, 46px), env(safe-area-inset-bottom)) max(clamp(24px, 4.4vw, 46px), env(safe-area-inset-left));
   }
 
-  .history-card {
+  .check-card {
+    --card-max-width: 1040px;
+    padding: clamp(18px, 1.9vw, 26px);
+  }
+
+  .history-card,
+  .notification-card,
+  .location-card {
     padding: 14px 16px;
+  }
+
+  .password-dialog-card {
+    width: min(100%, 520px);
+  }
+
+  .registration-dialog-card {
+    width: min(100%, 560px);
+  }
+
+  .transport-screen-card {
+    width: min(100%, 900px);
+    min-height: auto;
+    height: auto;
+    gap: 14px;
+  }
+
+  .transport-screen-header h2 {
+    font-size: clamp(0.98rem, 1.2vw, 1.14rem);
+  }
+
+  .transport-option-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .transport-request-builder {
+    width: min(100%, 460px);
+  }
+
+  .transport-request-detail-widget-card {
+    width: min(100%, 440px);
+  }
+}
+
+@media (min-width: 1180px) {
+  body::before {
+    background-size: min(52vw, 720px);
+  }
+
+  .check-card {
+    --card-max-width: 1160px;
+  }
+
+  .check-form {
+    grid-template-columns: minmax(300px, 0.88fr) minmax(0, 1.12fr);
+    grid-template-areas:
+      "history auth"
+      "notification auth"
+      "location registration"
+      "location informe"
+      "location project"
+      "location submit";
+    column-gap: 18px;
+    row-gap: 12px;
+    align-items: start;
+  }
+
+  .check-form > * {
+    min-width: 0;
+  }
+
+  .check-form > .history-card {
+    grid-area: history;
+  }
+
+  .check-form > .notification-card {
+    grid-area: notification;
+  }
+
+  .check-form > .location-card {
+    grid-area: location;
+  }
+
+  .check-form > .auth-credentials-row {
+    grid-area: auth;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(124px, 12vw, 140px);
+    gap: 10px;
+  }
+
+  .check-form > #registrationField {
+    grid-area: registration;
+  }
+
+  .check-form > #informeField {
+    grid-area: informe;
+  }
+
+  .check-form > .form-row {
+    grid-area: project;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .check-form > .submit-button {
+    grid-area: submit;
+    max-width: 360px;
+    justify-self: start;
+  }
+
+  .check-field-compact {
+    flex: 0 0 148px;
+    width: 148px;
+    min-width: 148px;
+  }
+
+  .history-grid {
+    gap: 10px;
+  }
+
+  .history-item {
+    padding: 10px;
+  }
+
+  .check-group-legend-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .legend-toggle {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .choice-grid {
+    gap: 10px;
+  }
+
+  .choice-card {
+    padding: 10px 8px;
+  }
+
+  .location-card-header,
+  .location-main-row {
+    gap: 12px;
+  }
+
+  .location-main-row {
+    align-items: flex-start;
+  }
+
+  .location-value {
+    font-size: clamp(0.92rem, 0.86vw, 1rem);
+    line-height: 1.22;
+  }
+
+  .transport-inline-field {
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .transport-request-weekday-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .transport-request-history-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-content: start;
+    padding-right: 0;
+  }
+
+  .transport-request-card {
+    min-height: 96px;
+  }
+
+  .transport-request-detail-widget {
+    padding: 24px;
+  }
+
+  .transport-request-detail-widget-card {
+    width: min(100%, 480px);
   }
 }

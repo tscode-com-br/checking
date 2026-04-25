@@ -30,6 +30,7 @@ test('admin reports tab is inserted between cadastro and eventos with the expect
   assert.match(adminHtml, /id="reportsClearButton"[\s\S]*>Limpar</);
   assert.match(adminHtml, /id="reportsSearchButton"[\s\S]*>Buscar</);
   assert.match(adminHtml, /id="reportsExportButton"[\s\S]*>Exportar</);
+  assert.match(adminHtml, /id="reportsExportAllButton"[\s\S]*>Exportar Tudo</);
   assert.match(adminHtml, /id="reportsResultsBody" class="reports-results-body"/);
   assert.match(adminHtml, /id="reportsPersonTitle">Nenhuma busca realizada</);
   assert.match(adminHtml, /id="reportsPersonMeta" class="section-header-copy">Selecione uma chave ou um nome para carregar o relatório\./);
@@ -40,20 +41,21 @@ test('admin reports controller keeps the tab full-admin only and wires the mutua
   assert.match(adminJs, /const DEFAULT_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"\]\);/);
   assert.match(adminJs, /const LIMITED_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout"\]\);/);
   assert.match(adminJs, /async function loadRegisteredUsers\(\) \{[\s\S]*fetchJson\("\/api\/admin\/users"\);[\s\S]*populateReportsSearchOptions\(rows\);/);
-  assert.match(adminJs, /function populateReportsSearchOptions\(rows\) \{[\s\S]*Selecione uma chave[\s\S]*Selecione um nome/);
-  assert.match(adminJs, /const label = entry\.count > 1[\s\S]*usuários; use a chave/);
-  assert.match(adminJs, /reportsSearchNomeInput\.disabled = hasChave;/);
-  assert.match(adminJs, /reportsSearchChaveInput\.disabled = hasNome;/);
+  assert.match(adminJs, /function populateReportsSearchOptions\(rows\) \{[\s\S]*sort\(\(left, right\) => left\.chave\.localeCompare\(right\.chave, "pt-BR", \{ sensitivity: "base" \}\)\)[\s\S]*Selecione uma chave[\s\S]*Selecione um nome/);
+  assert.match(adminJs, /const label = duplicateNameCounts\.get\(duplicateKey\) > 1[\s\S]*`\$\{user\.nome\} \(\$\{user\.chave\}\)`[\s\S]*: user\.nome;/);
+  assert.match(adminJs, /function syncReportsSearchInputs\(source = null\) \{[\s\S]*reportsSearchChaveInput\.value = hasSelectOption\(reportsSearchChaveInput, normalizedSelectedKey\) \? normalizedSelectedKey : "";[\s\S]*reportsSearchNomeInput\.value = hasSelectOption\(reportsSearchNomeInput, normalizedSelectedKey\) \? normalizedSelectedKey : "";/);
   assert.match(adminJs, /fetchJson\(`\/api\/admin\/reports\/events\?\$\{query\.toString\(\)\}`\)/);
   assert.match(adminJs, /fetchBlob\(`\/api\/admin\/reports\/events\/export\?\$\{reportsExportQueryString\}`,\s*"relatorio\.xlsx"\);/);
+  assert.match(adminJs, /fetchBlob\("\/api\/admin\/reports\/events\/export-all",\s*"relatorio-todos\.xlsx"\);/);
   assert.match(adminJs, /reportsClearButton\.addEventListener\("click", \(\) => \{\s*resetReportsView\(\{ focusPrimary: true \}\);\s*\}\);/);
   assert.match(adminJs, /reportsExportButton\.addEventListener\("click", \(\) => \{\s*downloadReportsExport\(\);\s*\}\);/);
+  assert.match(adminJs, /reportsExportAllButton\.addEventListener\("click", \(\) => \{\s*downloadReportsExportAll\(\);\s*\}\);/);
   assert.match(adminJs, /row\.source_label \|\| row\.source \|\| "-"/);
   assert.match(adminJs, /class="responsive-table reports-results-table"/);
   assert.match(adminJs, /if \(focusPrimary && reportsSearchChaveInput\) \{\s*reportsSearchChaveInput\.focus\(\);\s*\}/);
   assert.match(adminJs, /if \(activeTab === "relatorios"\) \{\s*return;\s*\}/);
   assert.match(adminJs, /reportsSearchButton\.addEventListener\("click", \(\) => \{\s*submitReportsSearch\(\);\s*\}\);/);
-  assert.match(adminJs, /input\.addEventListener\("change", \(\) => \{/);
+  assert.match(adminJs, /input\.addEventListener\("change", \(\) => \{[\s\S]*syncReportsSearchInputs\(input === reportsSearchNomeInput \? "nome" : "chave"\);/);
 });
 
 test('admin reports styles keep tabs uniform and align the new report search layout', () => {

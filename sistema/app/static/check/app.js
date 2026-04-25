@@ -1,9 +1,6 @@
 (function () {
   const form = document.getElementById('checkForm');
-  const appBody = document.body;
   const appHeader = document.querySelector('body > header');
-  const appShell = document.querySelector('main.check-shell');
-  const orientationLockScreen = document.getElementById('orientationLockScreen');
   const authStatusEndpoint = form.dataset.authStatusEndpoint || '/api/web/auth/status';
   const authRegisterEndpoint = form.dataset.authRegisterEndpoint || '/api/web/auth/register-password';
   const authUserRegisterEndpoint = form.dataset.authUserRegisterEndpoint || '/api/web/auth/register-user';
@@ -181,20 +178,25 @@
     maximumAge: 0,
     timeout: 20000,
   };
+  const lifecycleLocationCapturePlan = Object.freeze({
+    strategy: 'watch_window',
+    minimumWindowMs: 0,
+    maxWindowMs: 5000,
+  });
   const enforcedLocationCapturePlan = Object.freeze({
     strategy: 'watch_window',
     minimumWindowMs: 3000,
     maxWindowMs: 7000,
   });
   const locationCapturePlansByTrigger = Object.freeze({
-    startup: enforcedLocationCapturePlan,
+    startup: lifecycleLocationCapturePlan,
     submit_guard: enforcedLocationCapturePlan,
     manual_refresh: enforcedLocationCapturePlan,
     automatic_activities_enable: enforcedLocationCapturePlan,
     automatic_activities_disable: enforcedLocationCapturePlan,
-    visibility: enforcedLocationCapturePlan,
-    focus: enforcedLocationCapturePlan,
-    pageshow: enforcedLocationCapturePlan,
+    visibility: lifecycleLocationCapturePlan,
+    focus: lifecycleLocationCapturePlan,
+    pageshow: lifecycleLocationCapturePlan,
   });
   const weekdayFormatter = new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
@@ -410,53 +412,6 @@
     if (activeElement && typeof activeElement.blur === 'function') {
       activeElement.blur();
     }
-  }
-
-  function isLandscapeOrientationActive() {
-    if (window.matchMedia) {
-      return window.matchMedia('(orientation: landscape)').matches;
-    }
-
-    const metrics = getViewportLayoutMetrics();
-    return metrics.viewportWidth > metrics.viewportHeight;
-  }
-
-  async function requestPortraitOrientationLock() {
-    const orientationApi = window.screen && window.screen.orientation;
-    if (!orientationApi || typeof orientationApi.lock !== 'function') {
-      return false;
-    }
-
-    try {
-      await orientationApi.lock('portrait');
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  function syncPortraitLockState() {
-    const isLandscape = isLandscapeOrientationActive();
-
-    if (appBody) {
-      appBody.classList.toggle('portrait-lock-active', isLandscape);
-    }
-
-    if (orientationLockScreen) {
-      orientationLockScreen.hidden = !isLandscape;
-      orientationLockScreen.classList.toggle('is-hidden', !isLandscape);
-    }
-
-    [appHeader, appShell].filter(Boolean).forEach((element) => {
-      element.setAttribute('aria-hidden', String(isLandscape));
-    });
-
-    if (isLandscape) {
-      dismissActiveKeyboard();
-      return;
-    }
-
-    void requestPortraitOrientationLock();
   }
 
   function getViewportLayoutMetrics() {
@@ -1620,7 +1575,38 @@
     return error;
   }
 
-  function requestWatchedCurrentPosition(capturePlan, measurementSession) {
+  function buildLocationCaptureProgressAccuracyText(accuracyMeters, capturePlan) {
+    const accuracyText = buildAccuracyText(
+      accuracyMeters,
+      capturePlan && capturePlan.targetAccuracyMeters
+    );
+    return accuracyText.startsWith('Precisão ')
+      ? accuracyText.replace('Precisão ', 'Precisão atual ')
+      : accuracyText;
+  }
+
+  function updateLocationCaptureProgress(position, capturePlan, options) {
+    const settings = options || {};
+    if (!settings.showDetectingState || !position) {
+      return;
+    }
+
+    const currentAccuracyMeters = readPositionAccuracyMeters(position);
+    if (typeof currentAccuracyMeters !== 'number' || !Number.isFinite(currentAccuracyMeters)) {
+      return;
+    }
+
+    setLocationPresentation(
+      'Buscando precisão suficiente...',
+      '',
+      'info',
+      buildLocationCaptureProgressAccuracyText(currentAccuracyMeters, capturePlan),
+      { suppressNotification: true }
+    );
+  }
+
+  function requestWatchedCurrentPosition(capturePlan, measurementSession, options) {
+    const progressOptions = options || {};
     return new Promise((resolve, reject) => {
       const maxWindowMs = Math.max(
         Math.trunc(capturePlan && Number.isFinite(capturePlan.maxWindowMs) ? capturePlan.maxWindowMs : 0),
@@ -1684,6 +1670,8 @@
         watchId = navigator.geolocation.watchPosition(
           (position) => {
             recordLocationMeasurementSample(measurementSession, position);
+            updateLocationCaptureProgress(position, capturePlan, progressOptions);
+
             if (isLocationSampleBetter(position, bestPosition)) {
               bestPosition = position;
             }
@@ -1718,12 +1706,12 @@
     });
   }
 
-  function requestCurrentPositionForPlan(capturePlan, measurementSession) {
+  function requestCurrentPositionForPlan(capturePlan, measurementSession, options) {
     if (!capturePlan || capturePlan.strategy !== 'watch_window' || typeof navigator.geolocation.watchPosition !== 'function') {
       return requestCurrentPosition(measurementSession);
     }
 
-    return requestWatchedCurrentPosition(capturePlan, measurementSession);
+    return requestWatchedCurrentPosition(capturePlan, measurementSession, options);
   }
 
   function collectLocationMeasurementNumbers(sessions, fieldName) {
@@ -4991,7 +4979,9 @@
       }
 
       try {
-        const position = await requestCurrentPositionForPlan(capturePlan, measurementSession);
+        const position = await requestCurrentPositionForPlan(capturePlan, measurementSession, {
+          showDetectingState: settings.showDetectingState,
+        });
         writeStorageFlag(locationPermissionGrantedKey, true);
         setGpsLocationPermissionGranted(true);
         const matchPayload = await matchCurrentPosition(position, measurementSession);
@@ -5055,7 +5045,7 @@
       forceRefresh: Boolean(settings.forceRefresh),
       measurementTrigger: settings.triggerSource,
       suppressNotification: settings.suppressNotification !== false,
-      showDetectingState: Boolean(settings.showDetectingState),
+      showDetectingState: settings.showDetectingState !== false,
     });
   }
 
@@ -5875,7 +5865,6 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       scheduleViewportLayoutMetricsSync();
-      syncPortraitLockState();
       schedulePasswordAutofillSync();
       void runLifecycleUpdateSequence({ triggerSource: 'visibility' });
       if (isTransportScreenOpen()) {
@@ -5886,7 +5875,6 @@
 
   window.addEventListener('focus', () => {
     scheduleViewportLayoutMetricsSync();
-    syncPortraitLockState();
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence({ triggerSource: 'focus' });
     if (isTransportScreenOpen()) {
@@ -5895,7 +5883,6 @@
   });
   window.addEventListener('pageshow', () => {
     scheduleViewportLayoutMetricsSync();
-    syncPortraitLockState();
     schedulePasswordAutofillSync();
     void runLifecycleUpdateSequence({ triggerSource: 'pageshow' });
     if (isTransportScreenOpen()) {
@@ -5903,15 +5890,12 @@
     }
   });
   window.addEventListener('resize', scheduleViewportLayoutMetricsSync);
-  window.addEventListener('resize', syncPortraitLockState);
   window.addEventListener('orientationchange', () => {
     scheduleViewportLayoutMetricsSync();
-    syncPortraitLockState();
     realignViewport();
   });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', scheduleViewportLayoutMetricsSync);
-    window.visualViewport.addEventListener('resize', syncPortraitLockState);
     window.visualViewport.addEventListener('scroll', scheduleViewportLayoutMetricsSync);
   }
 
@@ -6060,7 +6044,6 @@
 
   syncProjectVisibility();
   scheduleViewportLayoutMetricsSync();
-  syncPortraitLockState();
   syncAutomaticActivitiesToggle();
   clearProtectedClientState();
   syncFormControlStates();

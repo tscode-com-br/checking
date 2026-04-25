@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import json
+import pytest
 import shutil
 import socket
 import threading
@@ -17,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright
+from pydantic import ValidationError
 from sqlalchemy import select, text
 import uvicorn
 
@@ -71,6 +73,15 @@ from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
 from sistema.app.services import user_activity as user_activity_module
+from sistema.app.services.admin_project_scope import (
+    admin_monitors_project,
+    dump_admin_monitored_projects,
+    extract_admin_monitored_projects,
+    normalize_admin_monitored_project_names,
+    resolve_effective_admin_monitored_projects,
+)
+from sistema.app.schemas import AdminManagementRow, AdminProfileUpdateRequest
+from sistema.app.services.admin_auth import ensure_default_admin
 from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import build_project_fields_for_country, seed_default_projects
@@ -205,6 +216,815 @@ def reserve_tcp_port() -> int:
         sock.bind(("127.0.0.1", 0))
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return int(sock.getsockname()[1])
+
+
+def test_admin_project_scope_normalizes_and_serializes_unique_sorted_projects():
+    assert normalize_admin_monitored_project_names([" p83 ", "P80", "p83", "P82 "]) == ["P80", "P82", "P83"]
+    assert dump_admin_monitored_projects([" p83 ", "P80", "p83", "P82 "]) == '["P80","P82","P83"]'
+
+
+def test_admin_project_scope_extracts_none_for_blank_and_invalid_payloads():
+    assert extract_admin_monitored_projects(SimpleNamespace(admin_monitored_projects_json=None)) is None
+    assert extract_admin_monitored_projects(SimpleNamespace(admin_monitored_projects_json="   ")) is None
+    assert extract_admin_monitored_projects(SimpleNamespace(admin_monitored_projects_json="{invalid")) is None
+    assert extract_admin_monitored_projects(SimpleNamespace(admin_monitored_projects_json='{"projects":["P80"]}')) is None
+
+
+def test_admin_project_scope_extracts_explicit_projects_and_filters_unknown_catalog_entries():
+    admin_user = SimpleNamespace(admin_monitored_projects_json='[" P83 ", "P80", "P83", " ", null]')
+    assert extract_admin_monitored_projects(admin_user) == ["P80", "P83"]
+    assert resolve_effective_admin_monitored_projects(admin_user, ["P83", "P80", "P99"]) == ["P80", "P83"]
+
+    restricted_user = SimpleNamespace(admin_monitored_projects_json='["P80", "P99", "P80"]')
+    assert resolve_effective_admin_monitored_projects(restricted_user, ["P83", "P80"]) == ["P80"]
+
+
+def test_admin_project_scope_all_mode_and_explicit_mode_project_matching():
+    unrestricted_user = SimpleNamespace(admin_monitored_projects_json=None)
+    assert resolve_effective_admin_monitored_projects(unrestricted_user, ["P80", "P83"]) is None
+    assert admin_monitors_project(unrestricted_user, "p80", ["P80", "P83"]) is True
+
+    restricted_user = SimpleNamespace(admin_monitored_projects_json='["P80"]')
+    assert admin_monitors_project(restricted_user, "P80", ["P80", "P83"]) is True
+    assert admin_monitors_project(restricted_user, "P83", ["P80", "P83"]) is False
+    assert admin_monitors_project(restricted_user, "", ["P80", "P83"]) is False
+
+
+def test_admin_profile_update_request_accepts_backward_compatible_profile_only_payload():
+    payload = AdminProfileUpdateRequest.model_validate({"perfil": 7})
+    assert payload.perfil == 7
+    assert payload.monitored_projects is None
+
+
+def test_admin_profile_update_request_normalizes_and_deduplicates_monitored_projects():
+    payload = AdminProfileUpdateRequest.model_validate(
+        {"perfil": 2, "monitored_projects": [" p83 ", "P80", "p83"]}
+    )
+    assert payload.perfil == 2
+    assert payload.monitored_projects == ["P80", "P83"]
+
+
+def test_admin_profile_update_request_rejects_empty_or_non_list_monitored_projects():
+    with pytest.raises(ValidationError, match="Selecione ao menos um projeto para o administrador"):
+        AdminProfileUpdateRequest.model_validate({"perfil": 1, "monitored_projects": []})
+
+    with pytest.raises(ValidationError, match="Os projetos monitorados devem ser enviados como lista"):
+        AdminProfileUpdateRequest.model_validate({"perfil": 1, "monitored_projects": "P80"})
+
+
+def test_admin_profile_update_request_can_validate_against_catalog_context():
+    payload = AdminProfileUpdateRequest.model_validate(
+        {"perfil": 3, "monitored_projects": ["P80", "P83"]},
+        context={"allowed_project_names": ["P83", "P80", "P90"]},
+    )
+    assert payload.monitored_projects == ["P80", "P83"]
+
+    with pytest.raises(ValidationError, match="Um ou mais projetos monitorados nao existem no catalogo atual"):
+        AdminProfileUpdateRequest.model_validate(
+            {"perfil": 3, "monitored_projects": ["P80", "P99"]},
+            context={"allowed_project_names": ["P83", "P80", "P90"]},
+        )
+
+
+def test_admin_management_row_keeps_router_compatibility_and_exposes_empty_projects_by_default():
+    row = AdminManagementRow(
+        id=1,
+        row_type="admin",
+        chave="HR70",
+        nome="Tamer Salmem",
+        perfil=999,
+        status="active",
+        status_label="Administrador",
+        can_revoke=True,
+        can_approve=False,
+        can_reject=False,
+        can_set_password=False,
+    )
+    assert row.monitored_projects == []
+
+
+def test_admin_management_row_normalizes_monitored_projects_when_provided():
+    row = AdminManagementRow(
+        id=2,
+        row_type="admin",
+        chave="HR71",
+        nome="Admin Secundario",
+        perfil=100,
+        monitored_projects=[" p83 ", "P80", "p83"],
+        status="active",
+        status_label="Administrador",
+        can_revoke=True,
+        can_approve=False,
+        can_reject=False,
+        can_set_password=False,
+    )
+    assert row.monitored_projects == ["P80", "P83"]
+
+
+def test_admin_update_profile_route_accepts_valid_monitored_projects_payload_shape():
+    with SessionLocal() as db:
+        target_admin = User(
+            rfid=None,
+            chave="HA71",
+            senha=hash_password("abc123"),
+            perfil=100,
+            nome="Admin Contrato",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(target_admin)
+        db.commit()
+        db.refresh(target_admin)
+        admin_id = target_admin.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            f"/api/admin/administrators/{admin_id}/profile",
+            json={"perfil": 101, "monitored_projects": ["P83", " p80 ", "P83"]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+
+def test_admin_update_profile_route_rejects_unknown_monitored_projects_from_catalog():
+    with SessionLocal() as db:
+        target_admin = User(
+            rfid=None,
+            chave="HA72",
+            senha=hash_password("abc123"),
+            perfil=100,
+            nome="Admin Contrato Invalido",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(target_admin)
+        db.commit()
+        db.refresh(target_admin)
+        admin_id = target_admin.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            f"/api/admin/administrators/{admin_id}/profile",
+            json={"perfil": 101, "monitored_projects": ["P80", "PX99"]},
+        )
+
+    assert response.status_code == 422, response.text
+    payload = response.json()
+    assert payload["detail"][0]["msg"] == "Value error, Um ou mais projetos monitorados nao existem no catalogo atual"
+
+
+def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_rows_only():
+    with SessionLocal() as db:
+        unrestricted_admin = User(
+            rfid=None,
+            chave="HA81",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Todos",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=None,
+        )
+        restricted_admin = User(
+            rfid=None,
+            chave="HA82",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Restrito",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P83"]),
+        )
+        pending_request = AdminAccessRequest(
+            chave="HA83",
+            nome_completo="Admin Pendente",
+            password_hash=hash_password("abc123"),
+            requested_profile=1,
+            requested_at=now_sgt(),
+        )
+        db.add_all([unrestricted_admin, restricted_admin, pending_request])
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/administrators")
+
+    assert response.status_code == 200, response.text
+    rows_by_key = {row["chave"]: row for row in response.json() if row["chave"] in {"HA81", "HA82", "HA83"}}
+    assert rows_by_key["HA81"]["row_type"] == "admin"
+    assert rows_by_key["HA81"]["monitored_projects"] == ["P80", "P82", "P83"]
+    assert rows_by_key["HA82"]["row_type"] == "admin"
+    assert rows_by_key["HA82"]["monitored_projects"] == ["P83"]
+    assert rows_by_key["HA83"]["row_type"] == "request"
+    assert rows_by_key["HA83"]["monitored_projects"] == []
+
+
+def test_administrators_endpoint_falls_back_to_all_projects_for_invalid_monitored_scope_json():
+    with SessionLocal() as db:
+        legacy_admin = User(
+            rfid=None,
+            chave="HA84",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Legado Invalido",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json="{legacy-invalid-json",
+        )
+        db.add(legacy_admin)
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/administrators")
+
+    assert response.status_code == 200, response.text
+    legacy_row = next(row for row in response.json() if row["row_type"] == "admin" and row["chave"] == "HA84")
+    assert legacy_row["monitored_projects"] == ["P80", "P82", "P83"]
+
+
+def test_admin_update_profile_route_persists_restricted_monitored_projects_and_audit_details():
+    with SessionLocal() as db:
+        target_admin = User(
+            rfid=None,
+            chave="HA73",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Persistencia",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=None,
+        )
+        db.add(target_admin)
+        db.commit()
+        db.refresh(target_admin)
+        admin_id = target_admin.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            f"/api/admin/administrators/{admin_id}/profile",
+            json={"perfil": 2, "monitored_projects": ["P83", " p80 "]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": True,
+        "message": "Configuracoes do administrador atualizadas com sucesso.",
+    }
+
+    with SessionLocal() as db:
+        refreshed_admin = db.get(User, admin_id)
+        audit_event = db.execute(
+            select(CheckEvent)
+            .where(CheckEvent.request_path == f"/api/admin/administrators/{admin_id}/profile")
+            .order_by(CheckEvent.id.desc())
+        ).scalar_one()
+
+    assert refreshed_admin is not None
+    assert refreshed_admin.perfil == 12
+    assert refreshed_admin.admin_monitored_projects_json == dump_admin_monitored_projects(["P80", "P83"])
+    assert audit_event.message == "Administrator configuration updated"
+    assert "old_profile=1" in audit_event.details
+    assert "new_profile=12" in audit_event.details
+    assert "old_monitored_projects=ALL" in audit_event.details
+    assert 'new_monitored_projects=["P80","P83"]' in audit_event.details
+
+
+def test_admin_update_profile_route_persists_null_for_all_projects_and_keeps_legacy_scope_when_omitted():
+    with SessionLocal() as db:
+        legacy_admin = User(
+            rfid=None,
+            chave="HA74",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Compatibilidade",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P80"]),
+        )
+        db.add(legacy_admin)
+        db.commit()
+        db.refresh(legacy_admin)
+        admin_id = legacy_admin.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        all_projects_response = client.post(
+            f"/api/admin/administrators/{admin_id}/profile",
+            json={"perfil": 1, "monitored_projects": ["P80", "P82", "P83"]},
+        )
+        legacy_payload_response = client.post(
+            f"/api/admin/administrators/{admin_id}/profile",
+            json={"perfil": 2},
+        )
+
+    assert all_projects_response.status_code == 200, all_projects_response.text
+    assert legacy_payload_response.status_code == 200, legacy_payload_response.text
+
+    with SessionLocal() as db:
+        refreshed_admin = db.get(User, admin_id)
+        latest_audit_event = db.execute(
+            select(CheckEvent)
+            .where(CheckEvent.request_path == f"/api/admin/administrators/{admin_id}/profile")
+            .order_by(CheckEvent.id.desc())
+        ).scalars().first()
+
+    assert refreshed_admin is not None
+    assert latest_audit_event is not None
+    assert refreshed_admin.perfil == 12
+    assert refreshed_admin.admin_monitored_projects_json is None
+    assert "old_monitored_projects=ALL" in latest_audit_event.details
+    assert "new_monitored_projects=ALL" in latest_audit_event.details
+
+
+def test_admin_approval_initializes_all_scope_for_new_admin_even_if_payload_includes_projects():
+    with SessionLocal() as db:
+        pending_request = AdminAccessRequest(
+            chave="HA91",
+            nome_completo="Admin Novo Fase 6",
+            password_hash=hash_password("abc123"),
+            requested_profile=1,
+            requested_at=now_sgt(),
+        )
+        db.add(pending_request)
+        db.commit()
+        db.refresh(pending_request)
+        request_id = pending_request.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            f"/api/admin/administrators/requests/{request_id}/approve",
+            json={"perfil": 1, "monitored_projects": ["P80"]},
+        )
+        rows_response = client.get("/api/admin/administrators")
+
+    assert response.status_code == 200, response.text
+    assert rows_response.status_code == 200, rows_response.text
+
+    with SessionLocal() as db:
+        approved_admin = db.execute(select(User).where(User.chave == "HA91")).scalar_one_or_none()
+        pending_request = db.get(AdminAccessRequest, request_id)
+
+    assert approved_admin is not None
+    assert approved_admin.admin_monitored_projects_json is None
+    assert pending_request is None
+    approved_row = next(
+        row for row in rows_response.json() if row["row_type"] == "admin" and row["chave"] == "HA91"
+    )
+    assert approved_row["monitored_projects"] == ["P80", "P82", "P83"]
+
+
+def test_admin_approval_resets_existing_scope_to_all_and_preserves_transport_password_rule():
+    original_password = "keep123"
+    requested_password = "new123"
+
+    with SessionLocal() as db:
+        existing_user = User(
+            rfid=None,
+            chave="HA92",
+            senha=hash_password(original_password),
+            perfil=2,
+            nome="Admin Transporte Existente",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P80"]),
+        )
+        pending_request = AdminAccessRequest(
+            chave="HA92",
+            nome_completo="Admin Transporte Existente",
+            password_hash=hash_password(requested_password),
+            requested_profile=2,
+            requested_at=now_sgt(),
+        )
+        db.add_all([existing_user, pending_request])
+        db.commit()
+        db.refresh(existing_user)
+        db.refresh(pending_request)
+        request_id = pending_request.id
+        user_id = existing_user.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            f"/api/admin/administrators/requests/{request_id}/approve",
+            json={"perfil": 2, "monitored_projects": ["P80"]},
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        approved_admin = db.get(User, user_id)
+
+    assert approved_admin is not None
+    assert approved_admin.perfil == 12
+    assert approved_admin.admin_monitored_projects_json is None
+    assert approved_admin.senha is not None
+    assert verify_password(original_password, approved_admin.senha) is False
+    assert verify_password(requested_password, approved_admin.senha) is True
+
+
+def test_admin_revocation_does_not_depend_on_monitored_scope_storage():
+    with SessionLocal() as db:
+        target_admin = User(
+            rfid=None,
+            chave="HA93",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Revogavel",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json="{legacy-invalid-json",
+        )
+        db.add(target_admin)
+        db.commit()
+        db.refresh(target_admin)
+        admin_id = target_admin.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(f"/api/admin/administrators/{admin_id}/revoke")
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        revoked_admin = db.get(User, admin_id)
+
+    assert revoked_admin is not None
+    assert revoked_admin.perfil == 0
+    assert revoked_admin.admin_monitored_projects_json == "{legacy-invalid-json"
+
+
+def test_bootstrap_admin_seed_resets_monitored_scope_to_all_mode():
+    bootstrap_key = "HB70"
+
+    with patch.object(settings, "bootstrap_admin_key", bootstrap_key), patch.object(
+        settings,
+        "bootstrap_admin_name",
+        "Bootstrap Fase 6",
+    ), patch.object(settings, "bootstrap_admin_password", "SeedPass123"):
+        with SessionLocal() as db:
+            bootstrap_user = User(
+                rfid=None,
+                chave=bootstrap_key,
+                senha=hash_password("oldpass"),
+                perfil=9,
+                nome="Bootstrap Fase 6",
+                projeto="P80",
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+                admin_monitored_projects_json=dump_admin_monitored_projects(["P80"]),
+            )
+            db.add(bootstrap_user)
+            db.commit()
+
+            ensured_admin = ensure_default_admin(db)
+            db.refresh(ensured_admin)
+
+        assert ensured_admin.chave == bootstrap_key
+        assert ensured_admin.admin_monitored_projects_json is None
+
+
+def test_restricted_admin_scope_filters_presence_tables_by_monitored_projects():
+    recent_time = now_sgt() - timedelta(hours=1)
+    stale_time = now_sgt() - timedelta(hours=26)
+
+    with SessionLocal() as db:
+        restricted_admin = User(
+            rfid=None,
+            chave="S7A0",
+            senha=hash_password("scope123"),
+            perfil=1,
+            nome="Admin Restrito Fase 7",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P80"]),
+        )
+        rows = [
+            User(
+                rfid=None,
+                chave="S7CI",
+                nome="Checkin P80",
+                projeto="P80",
+                local="Porta 80",
+                checkin=True,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7CJ",
+                nome="Checkin P83",
+                projeto="P83",
+                local="Porta 83",
+                checkin=True,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7CO",
+                nome="Checkout P80",
+                projeto="P80",
+                local="Saida 80",
+                checkin=False,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7CP",
+                nome="Checkout P83",
+                projeto="P83",
+                local="Saida 83",
+                checkin=False,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7IA",
+                nome="Inativo P80",
+                projeto="P80",
+                local="Inativo 80",
+                checkin=True,
+                time=stale_time,
+                last_active_at=stale_time,
+                inactivity_days=1,
+            ),
+            User(
+                rfid=None,
+                chave="S7IB",
+                nome="Inativo P83",
+                projeto="P83",
+                local="Inativo 83",
+                checkin=False,
+                time=stale_time,
+                last_active_at=stale_time,
+                inactivity_days=1,
+            ),
+        ]
+        db.add(restricted_admin)
+        db.add_all(rows)
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="S7A0", senha="scope123")
+        assert login_response.status_code == 200, login_response.text
+
+        checkin_response = client.get("/api/admin/checkin")
+        checkout_response = client.get("/api/admin/checkout")
+        inactive_response = client.get("/api/admin/inactive")
+
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert checkout_response.status_code == 200, checkout_response.text
+    assert inactive_response.status_code == 200, inactive_response.text
+
+    checkin_keys = {row["chave"] for row in checkin_response.json()}
+    checkout_keys = {row["chave"] for row in checkout_response.json()}
+    inactive_keys = {row["chave"] for row in inactive_response.json()}
+
+    assert "S7CI" in checkin_keys
+    assert "S7CJ" not in checkin_keys
+    assert "S7CO" in checkout_keys
+    assert "S7CP" not in checkout_keys
+    assert "S7IA" in inactive_keys
+    assert "S7IB" not in inactive_keys
+
+
+def test_unrestricted_admin_scope_keeps_all_presence_rows_visible():
+    recent_time = now_sgt() - timedelta(hours=1)
+    stale_time = now_sgt() - timedelta(hours=26)
+
+    with SessionLocal() as db:
+        unrestricted_admin = User(
+            rfid=None,
+            chave="S7A1",
+            senha=hash_password("scope123"),
+            perfil=1,
+            nome="Admin Sem Restricao Fase 7",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=None,
+        )
+        rows = [
+            User(
+                rfid=None,
+                chave="S7UI",
+                nome="Checkin Livre P80",
+                projeto="P80",
+                local="Porta U80",
+                checkin=True,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7UJ",
+                nome="Checkin Livre P83",
+                projeto="P83",
+                local="Porta U83",
+                checkin=True,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7UO",
+                nome="Checkout Livre P80",
+                projeto="P80",
+                local="Saida U80",
+                checkin=False,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7UP",
+                nome="Checkout Livre P83",
+                projeto="P83",
+                local="Saida U83",
+                checkin=False,
+                time=recent_time,
+                last_active_at=recent_time,
+                inactivity_days=0,
+            ),
+            User(
+                rfid=None,
+                chave="S7UA",
+                nome="Inativo Livre P80",
+                projeto="P80",
+                local="Inativo U80",
+                checkin=True,
+                time=stale_time,
+                last_active_at=stale_time,
+                inactivity_days=1,
+            ),
+            User(
+                rfid=None,
+                chave="S7UB",
+                nome="Inativo Livre P83",
+                projeto="P83",
+                local="Inativo U83",
+                checkin=False,
+                time=stale_time,
+                last_active_at=stale_time,
+                inactivity_days=1,
+            ),
+        ]
+        db.add(unrestricted_admin)
+        db.add_all(rows)
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="S7A1", senha="scope123")
+        assert login_response.status_code == 200, login_response.text
+
+        checkin_response = client.get("/api/admin/checkin")
+        checkout_response = client.get("/api/admin/checkout")
+        inactive_response = client.get("/api/admin/inactive")
+
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert checkout_response.status_code == 200, checkout_response.text
+    assert inactive_response.status_code == 200, inactive_response.text
+
+    checkin_keys = {row["chave"] for row in checkin_response.json()}
+    checkout_keys = {row["chave"] for row in checkout_response.json()}
+    inactive_keys = {row["chave"] for row in inactive_response.json()}
+
+    assert {"S7UI", "S7UJ"}.issubset(checkin_keys)
+    assert {"S7UO", "S7UP"}.issubset(checkout_keys)
+    assert {"S7UA", "S7UB"}.issubset(inactive_keys)
 
 
 @contextmanager
@@ -610,6 +1430,153 @@ def test_admin_project_delete_reassigns_admin_only_users_to_fallback_project():
     assert removed_project is None
     assert admin_user.projeto in {"P80", "P82", "P83"}
     assert admin_user.projeto != "P91"
+
+
+def test_admin_project_delete_rewrites_explicit_admin_scopes_and_resets_empty_scope_to_all_mode():
+    project_name = f"Q{uuid.uuid4().hex[:3].upper()}"
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post("/api/admin/projects", json={"name": project_name})
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+
+        restricted_key = make_test_key("S")
+        emptied_key = make_test_key("S")
+        unrestricted_key = make_test_key("S")
+        legacy_full_key = make_test_key("S")
+
+        with SessionLocal() as db:
+            db.add_all(
+                [
+                    User(
+                        rfid=None,
+                        nome="Admin Restrito Projeto Removido",
+                        chave=restricted_key,
+                        projeto="P80",
+                        perfil=1,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                        admin_monitored_projects_json=dump_admin_monitored_projects(["P80", project_name]),
+                    ),
+                    User(
+                        rfid=None,
+                        nome="Admin Escopo Esvaziado",
+                        chave=emptied_key,
+                        projeto="P80",
+                        perfil=1,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                        admin_monitored_projects_json=dump_admin_monitored_projects([project_name]),
+                    ),
+                    User(
+                        rfid=None,
+                        nome="Admin Todos",
+                        chave=unrestricted_key,
+                        projeto="P80",
+                        perfil=1,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                        admin_monitored_projects_json=None,
+                    ),
+                    User(
+                        rfid=None,
+                        nome="Admin Todos Legado",
+                        chave=legacy_full_key,
+                        projeto="P80",
+                        perfil=1,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                        admin_monitored_projects_json=dump_admin_monitored_projects(["P80", "P82", "P83", project_name]),
+                    ),
+                ]
+            )
+            db.commit()
+
+        removed = client.delete(f"/api/admin/projects/{project_payload['id']}")
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["ok"] is True
+
+        administrators_response = client.get("/api/admin/administrators")
+        assert administrators_response.status_code == 200, administrators_response.text
+        rows_by_key = {row["chave"]: row for row in administrators_response.json()}
+
+    with SessionLocal() as db:
+        restricted_admin = get_user_by_chave(db, restricted_key)
+        emptied_admin = get_user_by_chave(db, emptied_key)
+        unrestricted_admin = get_user_by_chave(db, unrestricted_key)
+        legacy_full_admin = get_user_by_chave(db, legacy_full_key)
+        removal_event = db.execute(
+            select(CheckEvent)
+            .where(
+                CheckEvent.request_path == f"/api/admin/projects/{project_payload['id']}",
+                CheckEvent.message == "Project removed via admin",
+            )
+            .order_by(CheckEvent.id.desc())
+        ).scalars().first()
+
+    assert restricted_admin.admin_monitored_projects_json == dump_admin_monitored_projects(["P80"])
+    assert extract_admin_monitored_projects(restricted_admin) == ["P80"]
+    assert emptied_admin.admin_monitored_projects_json is None
+    assert extract_admin_monitored_projects(emptied_admin) is None
+    assert unrestricted_admin.admin_monitored_projects_json is None
+    assert legacy_full_admin.admin_monitored_projects_json is None
+
+    assert rows_by_key[restricted_key]["monitored_projects"] == ["P80"]
+    assert rows_by_key[emptied_key]["monitored_projects"] == ["P80", "P82", "P83"]
+    assert rows_by_key[unrestricted_key]["monitored_projects"] == ["P80", "P82", "P83"]
+    assert rows_by_key[legacy_full_key]["monitored_projects"] == ["P80", "P82", "P83"]
+
+    assert removal_event is not None
+    assert f"updated_admin_scopes=3" in removal_event.details
+
+
+def test_administrators_endpoint_keeps_all_mode_dynamic_when_new_project_is_created():
+    project_name = f"Q{uuid.uuid4().hex[:3].upper()}"
+    admin_key = make_test_key("S")
+
+    with SessionLocal() as db:
+        db.add(
+            User(
+                rfid=None,
+                nome="Admin Todos Dinamico",
+                chave=admin_key,
+                projeto="P80",
+                perfil=1,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+                admin_monitored_projects_json=None,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        created = client.post("/api/admin/projects", json={"name": project_name})
+        assert created.status_code == 200, created.text
+
+        administrators_response = client.get("/api/admin/administrators")
+        assert administrators_response.status_code == 200, administrators_response.text
+        row = next(row for row in administrators_response.json() if row["chave"] == admin_key)
+
+    assert project_name in row["monitored_projects"]
+    assert row["monitored_projects"] == sorted({"P80", "P82", "P83", project_name})
 
 
 def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_persists():
@@ -1206,7 +2173,7 @@ def test_web_check_ignores_provider_checkout_when_deciding_same_day_submission()
             assert len(queued) == 2
 
 
-def test_admin_forms_clear_route_is_disabled_and_keeps_legacy_audit_rows():
+def test_admin_forms_clear_route_removes_only_provider_sync_rows():
     timestamp = now_sgt().replace(microsecond=0)
     provider_event_key = uuid.uuid4().hex
     device_event_key = uuid.uuid4().hex
@@ -1220,12 +2187,12 @@ def test_admin_forms_clear_route_is_disabled_and_keeps_legacy_audit_rows():
                     rfid=None,
                     action="checkin",
                     status="success",
-                    message="Entrada Forms registrada",
-                    details="chave=PF99; nome=USUARIO LIMPAR FORMS; projeto=P80; atividade=check-in; informe=normal; data=22/04/2026; hora=08:00:00",
-                    project="P80",
-                    device_id="FORMS-CLEAR-01",
-                    local="Forms",
-                    request_path="/api/provider/updaterecords",
+                    message="Entrada por leitor",
+                    details="reader=gate-clear",
+                    project="P82",
+                    device_id="ESP-CLEAR-01",
+                    local="Portaria",
+                    request_path="/api/scan",
                     http_status=200,
                     ontime=True,
                     event_time=timestamp,
@@ -1252,6 +2219,32 @@ def test_admin_forms_clear_route_is_disabled_and_keeps_legacy_audit_rows():
                 ),
             ]
         )
+        provider_user = User(
+            rfid="rfid-provider-forms",
+            nome="Usuario Limpar Forms",
+            chave="PF99",
+            projeto="P80",
+            senha=hash_password("pf99"),
+            last_active_at=timestamp,
+        )
+        db.add(provider_user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=provider_user.id,
+                chave="PF99",
+                rfid="rfid-provider-forms",
+                source="provider",
+                action="checkin",
+                projeto="P80",
+                local="Forms",
+                ontime=True,
+                event_time=timestamp,
+                created_at=timestamp,
+                source_request_id="provider-clear-forms-01",
+                device_id="FORMS-CLEAR-01",
+            )
+        )
         db.commit()
 
     with TestClient(app) as client:
@@ -1259,25 +2252,25 @@ def test_admin_forms_clear_route_is_disabled_and_keeps_legacy_audit_rows():
 
         forms_before = client.get("/api/admin/forms")
         assert forms_before.status_code == 200, forms_before.text
-        assert all(row["chave"] != "PF99" for row in forms_before.json())
+        assert any(row["chave"] == "PF99" for row in forms_before.json())
 
         cleared = client.delete("/api/admin/forms")
-        assert cleared.status_code == 405, cleared.text
-        assert "somente leitura" in cleared.json()["detail"]
+        assert cleared.status_code == 200, cleared.text
+        assert "Forms removido" in cleared.json()["message"]
 
         forms_after = client.get("/api/admin/forms")
         assert forms_after.status_code == 200, forms_after.text
         assert all(row["chave"] != "PF99" for row in forms_after.json())
 
     with SessionLocal() as db:
-        provider_event = db.execute(
-            select(CheckEvent).where(CheckEvent.idempotency_key == provider_event_key)
+        provider_sync_event = db.execute(
+            select(UserSyncEvent).where(UserSyncEvent.source_request_id == "provider-clear-forms-01")
         ).scalar_one_or_none()
         device_event = db.execute(
             select(CheckEvent).where(CheckEvent.idempotency_key == device_event_key)
         ).scalar_one_or_none()
 
-    assert provider_event is not None
+    assert provider_sync_event is None
     assert device_event is not None
 
 
@@ -1486,23 +2479,149 @@ def test_admin_reports_events_export_builds_xlsx_download_with_display_labels():
     assert worksheet.title == "Relatório"
     assert worksheet["A1"].value == "Usuario Relatorio Export (RP49)"
     assert worksheet["A2"].value == "Projeto atual: P80 | RFID: RPT1003 | Fuso horário: Singapura (+8) | 1 evento"
-    assert worksheet["A4"].value == "25/04/2026"
-    assert [worksheet["A5"].value, worksheet["B5"].value, worksheet["C5"].value, worksheet["D5"].value, worksheet["E5"].value, worksheet["F5"].value, worksheet["G5"].value] == [
+    assert [worksheet["A4"].value, worksheet["B4"].value, worksheet["C4"].value, worksheet["D4"].value, worksheet["E4"].value, worksheet["F4"].value, worksheet["G4"].value, worksheet["H4"].value] == [
+        "Data",
         "Horário",
         "Ação",
         "Origem",
         "Local",
         "Projeto",
-        "Fuso horário",
+        "Fuso Horário",
         "Assiduidade",
     ]
-    assert [worksheet["A6"].value, worksheet["B6"].value, worksheet["C6"].value, worksheet["D6"].value, worksheet["E6"].value, worksheet["F6"].value, worksheet["G6"].value] == [
+    assert [worksheet["A5"].value, worksheet["B5"].value, worksheet["C5"].value, worksheet["D5"].value, worksheet["E5"].value, worksheet["F5"].value, worksheet["G5"].value, worksheet["H5"].value] == [
+        "25/04/2026",
         "07:08:09",
         "Check-Out",
         "Box ESP32-0001",
         "Escritório Principal",
         "P80",
         "Singapura (+8)",
+        "Retroativo",
+    ]
+    workbook.close()
+
+
+def test_admin_reports_events_export_all_builds_xlsx_download_for_all_users():
+    fixed_now = datetime(2026, 4, 22, 16, 45, 30, tzinfo=ZoneInfo(settings.tz_name))
+    project_name_a = "P910"
+    project_name_b = "P911"
+
+    with SessionLocal() as db:
+        project_a = db.execute(select(Project).where(Project.name == project_name_a)).scalar_one_or_none()
+        if project_a is None:
+            db.add(Project(name=project_name_a, **build_project_fields_for_country("SG")))
+        project_b = db.execute(select(Project).where(Project.name == project_name_b)).scalar_one_or_none()
+        if project_b is None:
+            db.add(Project(name=project_name_b, **build_project_fields_for_country("BR")))
+        db.flush()
+
+        user_a = User(
+            rfid="RPT2001",
+            chave="RA11",
+            nome="Ana Relatorio",
+            projeto=project_name_a,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        user_b = User(
+            rfid="RPT2002",
+            chave="RB22",
+            nome="Bruno Relatorio",
+            projeto=project_name_b,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([user_a, user_b])
+        db.flush()
+        db.add_all(
+            [
+                UserSyncEvent(
+                    user_id=user_a.id,
+                    chave=user_a.chave,
+                    rfid=user_a.rfid,
+                    source="web",
+                    action="checkin",
+                        projeto=project_name_a,
+                    local="main",
+                    ontime=True,
+                    event_time=datetime(2026, 4, 25, 7, 15, 0, tzinfo=ZoneInfo(settings.tz_name)),
+                    created_at=now_sgt(),
+                    source_request_id=f"report-export-all-a-{uuid.uuid4().hex}",
+                    device_id=None,
+                ),
+                UserSyncEvent(
+                    user_id=user_b.id,
+                    chave=user_b.chave,
+                    rfid=user_b.rfid,
+                    source="provider",
+                    action="checkout",
+                        projeto=project_name_b,
+                    local="Forms",
+                    ontime=False,
+                    event_time=datetime(2026, 4, 25, 8, 30, 0, tzinfo=ZoneInfo(settings.tz_name)),
+                    created_at=now_sgt(),
+                    source_request_id=f"report-export-all-b-{uuid.uuid4().hex}",
+                    device_id="provider",
+                ),
+            ]
+        )
+        db.commit()
+
+    with patch("sistema.app.routers.admin.now_sgt", return_value=fixed_now):
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            exported = client.get("/api/admin/reports/events/export-all")
+
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Relatorio - Todos - 20260422 - 164530.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    worksheet = workbook.active
+    assert worksheet.title == "Relatório"
+    assert [worksheet["A1"].value, worksheet["B1"].value, worksheet["C1"].value, worksheet["D1"].value, worksheet["E1"].value, worksheet["F1"].value, worksheet["G1"].value, worksheet["H1"].value, worksheet["I1"].value] == [
+        "Nome",
+        "Data",
+        "Horário",
+        "Ação",
+        "Origem",
+        "Local",
+        "Projeto",
+        "Fuso Horário",
+        "Assiduidade",
+    ]
+    assert [worksheet["A2"].value, worksheet["B2"].value, worksheet["C2"].value, worksheet["D2"].value, worksheet["E2"].value, worksheet["F2"].value, worksheet["G2"].value, worksheet["H2"].value, worksheet["I2"].value] == [
+        "Ana Relatorio",
+        "25/04/2026",
+        "07:15:00",
+        "Check-In",
+        "Aplicativo",
+        "Escritório Principal",
+        project_name_a,
+        "Singapura (+8)",
+        "Normal",
+    ]
+    assert [worksheet["A3"].value, worksheet["B3"].value, worksheet["C3"].value, worksheet["D3"].value, worksheet["E3"].value, worksheet["F3"].value, worksheet["G3"].value, worksheet["H3"].value, worksheet["I3"].value] == [
+        "Bruno Relatorio",
+        "24/04/2026",
+        "21:30:00",
+        "Check-Out",
+        "Forms",
+        "Forms",
+        project_name_b,
+        "Brasil (-3)",
         "Retroativo",
     ]
     workbook.close()
@@ -9022,6 +10141,10 @@ def test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout():
         assert denied_reports_export.status_code == 403, denied_reports_export.text
         assert denied_reports_export.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
 
+        denied_reports_export_all = client.get("/api/admin/reports/events/export-all")
+        assert denied_reports_export_all.status_code == 403, denied_reports_export_all.text
+        assert denied_reports_export_all.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
+
 
 def test_admin_request_access_and_approval_flow():
     with TestClient(app) as client:
@@ -9910,6 +11033,42 @@ def test_admin_locations_list_contract_preserves_expected_shape():
         assert location_row["coordinates"] == build_rectangle_coordinates(1.295936, 103.641066)
         assert location_row["projects"] == ["P98"]
         assert location_row["tolerance_meters"] == 180
+
+
+def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture():
+    ensure_project_exists("P82")
+    ensure_web_user_exists(chave="WL82", projeto="P82", nome="Web Location Catalog")
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        update_location_settings = client.post(
+            "/api/admin/locations/settings",
+            json={"location_accuracy_threshold_meters": 25},
+        )
+        assert update_location_settings.status_code == 200
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": "Web Catalog Base P82",
+                "coordinates": build_rectangle_coordinates(1.265936, 103.621066),
+                "projects": ["P82"],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200
+
+    with TestClient(app) as client:
+        registered = register_web_password(client, chave="WL82", senha="web123", projeto="P82", ensure_user_exists=False)
+        assert registered.status_code == 200
+
+        locations = client.get("/api/web/check/locations")
+        assert locations.status_code == 200
+        payload = locations.json()
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+        assert payload["location_accuracy_threshold_meters"] == 25
+        assert "Web Catalog Base P82" in payload["items"]
 
 
 def test_admin_location_save_contract_returns_simple_action_response():

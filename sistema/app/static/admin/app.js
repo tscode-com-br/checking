@@ -34,6 +34,7 @@ const reportsSearchNomeInput = document.getElementById("reportsSearchNome");
 const reportsClearButton = document.getElementById("reportsClearButton");
 const reportsSearchButton = document.getElementById("reportsSearchButton");
 const reportsExportButton = document.getElementById("reportsExportButton");
+const reportsExportAllButton = document.getElementById("reportsExportAllButton");
 const reportsStatus = document.getElementById("reportsStatus");
 const projectEditorTitle = document.getElementById("projectEditorTitle");
 const projectEditorHelp = document.getElementById("projectEditorHelp");
@@ -102,6 +103,7 @@ let reportsSearchInProgress = false;
 let reportsExportInProgress = false;
 let reportsHasLoadedResult = false;
 let reportsExportQueryString = "";
+let reportsSearchUsersByChave = new Map();
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
 const SUPPORTED_PROJECT_COUNTRIES = Object.freeze([
@@ -667,61 +669,88 @@ function hasSelectOption(selectElement, value) {
     && Array.from(selectElement.options).some((option) => option.value === value);
 }
 
+function getReportSearchUserByChave(chave) {
+  const normalizedChave = normalizeAdminChave(chave);
+  if (!normalizedChave) {
+    return null;
+  }
+
+  return reportsSearchUsersByChave.get(normalizedChave) || null;
+}
+
+function getSelectedReportSearchKey(source = null) {
+  const selectedChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
+  const selectedNomeKey = normalizeAdminChave(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
+
+  if (source === "nome") {
+    return selectedNomeKey || selectedChave;
+  }
+  if (source === "chave") {
+    return selectedChave || selectedNomeKey;
+  }
+
+  return selectedChave || selectedNomeKey;
+}
+
 function populateReportsSearchOptions(rows) {
   const users = Array.isArray(rows) ? rows : [];
-  const previousChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
-  const previousNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
+  const previousSelectedKey = getSelectedReportSearchKey();
+  reportsSearchUsersByChave = new Map();
+
+  users
+    .map((user) => ({
+      chave: normalizeAdminChave(user?.chave),
+      nome: normalizeReportSearchName(user?.nome),
+    }))
+    .filter((user) => user.chave && user.nome)
+    .sort((left, right) => left.chave.localeCompare(right.chave, "pt-BR", { sensitivity: "base" }))
+    .forEach((user) => {
+      if (!reportsSearchUsersByChave.has(user.chave)) {
+        reportsSearchUsersByChave.set(user.chave, user);
+      }
+    });
+
+  const reportUsers = Array.from(reportsSearchUsersByChave.values());
+  const duplicateNameCounts = new Map();
+  reportUsers.forEach((user) => {
+    const duplicateKey = user.nome.toLocaleLowerCase("pt-BR");
+    duplicateNameCounts.set(duplicateKey, (duplicateNameCounts.get(duplicateKey) || 0) + 1);
+  });
 
   if (reportsSearchChaveInput instanceof HTMLSelectElement) {
     reportsSearchChaveInput.innerHTML = "";
     appendSelectOption(reportsSearchChaveInput, "", "Selecione uma chave");
-    const seenChaves = new Set();
-    users.forEach((user) => {
-      const chave = normalizeAdminChave(user?.chave);
-      if (!chave || seenChaves.has(chave)) {
-        return;
-      }
-
-      seenChaves.add(chave);
-      appendSelectOption(reportsSearchChaveInput, chave, chave);
+    reportUsers.forEach((user) => {
+      appendSelectOption(reportsSearchChaveInput, user.chave, user.chave);
     });
   }
 
   if (reportsSearchNomeInput instanceof HTMLSelectElement) {
     reportsSearchNomeInput.innerHTML = "";
     appendSelectOption(reportsSearchNomeInput, "", "Selecione um nome");
-    const namesByKey = new Map();
-    users.forEach((user) => {
-      const nome = normalizeReportSearchName(user?.nome);
-      if (!nome) {
-        return;
-      }
-
-      const mapKey = nome.toLocaleLowerCase("pt-BR");
-      const current = namesByKey.get(mapKey);
-      if (current) {
-        current.count += 1;
-        return;
-      }
-
-      namesByKey.set(mapKey, { value: nome, label: nome, count: 1 });
-    });
-
-    Array.from(namesByKey.values())
-      .sort((left, right) => left.label.localeCompare(right.label, "pt-BR", { sensitivity: "base" }))
-      .forEach((entry) => {
-        const label = entry.count > 1
-          ? `${entry.label} (${entry.count} usuários; use a chave)`
-          : entry.label;
-        appendSelectOption(reportsSearchNomeInput, entry.value, label);
+    reportUsers
+      .slice()
+      .sort((left, right) => {
+        const nameComparison = left.nome.localeCompare(right.nome, "pt-BR", { sensitivity: "base" });
+        if (nameComparison !== 0) {
+          return nameComparison;
+        }
+        return left.chave.localeCompare(right.chave, "pt-BR", { sensitivity: "base" });
+      })
+      .forEach((user) => {
+        const duplicateKey = user.nome.toLocaleLowerCase("pt-BR");
+        const label = duplicateNameCounts.get(duplicateKey) > 1
+          ? `${user.nome} (${user.chave})`
+          : user.nome;
+        appendSelectOption(reportsSearchNomeInput, user.chave, label);
       });
   }
 
   if (reportsSearchChaveInput instanceof HTMLSelectElement) {
-    reportsSearchChaveInput.value = hasSelectOption(reportsSearchChaveInput, previousChave) ? previousChave : "";
+    reportsSearchChaveInput.value = hasSelectOption(reportsSearchChaveInput, previousSelectedKey) ? previousSelectedKey : "";
   }
   if (reportsSearchNomeInput instanceof HTMLSelectElement) {
-    reportsSearchNomeInput.value = hasSelectOption(reportsSearchNomeInput, previousNome) ? previousNome : "";
+    reportsSearchNomeInput.value = hasSelectOption(reportsSearchNomeInput, previousSelectedKey) ? previousSelectedKey : "";
   }
 
   syncReportsSearchInputs();
@@ -3353,11 +3382,49 @@ function makeProjectRow(project) {
   return tr;
 }
 
+function makeAdministratorProjectOptions(row) {
+  const monitoredProjectNames = normalizeProjectNames(row?.monitored_projects);
+  const monitoredProjectSet = new Set(monitoredProjectNames);
+  return getLocationProjectOptions(monitoredProjectNames)
+    .map((projectName) => `
+      <label class="admin-project-option">
+        <input
+          type="checkbox"
+          data-admin-project-option="${row.id}"
+          value="${escapeHtml(projectName)}"
+          ${monitoredProjectSet.has(projectName) ? "checked" : ""}
+        />
+        <span>${escapeHtml(projectName)}</span>
+      </label>
+    `)
+    .join("");
+}
+
+function makeAdministratorProjectsCell(row) {
+  if (row.row_type === "request") {
+    return `
+      <div class="admin-projects-cell admin-projects-cell-readonly">
+        <span class="admin-projects-readonly-copy">Defina os projetos apos aprovar o administrador.</span>
+      </div>
+    `;
+  }
+
+  const projectOptionsMarkup = makeAdministratorProjectOptions(row);
+  return `
+    <div class="admin-projects-cell">
+      <div class="admin-projects-panel">
+        ${projectOptionsMarkup || '<span class="location-empty-copy">Nenhum projeto cadastrado.</span>'}
+      </div>
+    </div>
+  `;
+}
+
 function makeAdministratorRow(row) {
   const tr = document.createElement("tr");
   const isRequestRow = row.row_type === "request";
   const profileValue = Number.parseInt(row.perfil, 10);
   const normalizedProfileValue = Number.isFinite(profileValue) ? profileValue : 0;
+  const projectsCell = makeAdministratorProjectsCell(row);
   const actionButtons = isRequestRow
     ? `
       ${row.can_approve ? `<button data-admin-approve="${row.id}">Aprovar</button>` : ""}
@@ -3382,6 +3449,7 @@ function makeAdministratorRow(row) {
         value="${escapeHtml(normalizedProfileValue)}"
       />
     </td>
+    <td>${projectsCell}</td>
     <td><span class="admin-status-badge${isRequestRow ? " is-pending" : ""}">${escapeHtml(row.status_label)}</span></td>
     <td class="pending-actions user-actions">${actionButtons}</td>
   `;
@@ -3489,6 +3557,29 @@ function readAdministratorProfileValue(id) {
   return Number.parseInt(normalized, 10);
 }
 
+function readAdministratorMonitoredProjects(id) {
+  const inputs = Array.from(
+    document.querySelectorAll(`input[data-admin-project-option="${CSS.escape(String(id))}"]`)
+  ).filter((input) => input instanceof HTMLInputElement);
+
+  if (!inputs.length) {
+    throw new Error("Projetos do administrador nao encontrados.");
+  }
+
+  const monitoredProjects = normalizeProjectNames(
+    inputs
+      .filter((input) => input.checked)
+      .map((input) => input.value)
+  );
+
+  if (!monitoredProjects.length) {
+    inputs[0].focus();
+    throw new Error("Selecione ao menos um projeto para o administrador.");
+  }
+
+  return monitoredProjects;
+}
+
 async function loadCheckin() {
   const rows = await fetchJson("/api/admin/checkin");
   presenceTableStates.checkin.rawRows = Array.isArray(rows) ? rows : [];
@@ -3524,6 +3615,10 @@ async function loadPending() {
 }
 
 async function loadAdministrators() {
+  if (!projectCatalog.length) {
+    await loadProjects();
+  }
+
   const rows = await fetchJson("/api/admin/administrators");
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const adminRows = normalizedRows.filter((row) => row.row_type === "admin");
@@ -3531,12 +3626,17 @@ async function loadAdministrators() {
   const body = document.getElementById("administratorsBody");
   body.innerHTML = "";
   if (normalizedRows.length === 0) {
-    renderEmptyStateRow("administratorsBody", 5, "Nenhum administrador ou solicitacao pendente encontrada.");
+    renderEmptyStateRow("administratorsBody", 6, "Nenhum administrador ou solicitacao pendente encontrada.");
   } else {
     normalizedRows.forEach((row) => body.appendChild(makeAdministratorRow(row)));
   }
   applyResponsiveLabels("administratorsBody");
   updateDashboardSummary();
+}
+
+async function loadAdministratorsWithProjectCatalog() {
+  await loadProjects();
+  await loadAdministrators();
 }
 
 async function loadProjects() {
@@ -3634,7 +3734,8 @@ async function saveProject() {
   }
 
   resetProjectEditor();
-  await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
+  await loadProjects();
+  await Promise.all([loadAdministrators(), loadPending(), loadRegisteredUsers()]);
 }
 
 async function removeProject(projectId) {
@@ -3654,7 +3755,8 @@ async function removeProject(projectId) {
     resetProjectEditor();
   }
   setStatus("Projeto removido com sucesso", true);
-  await Promise.all([loadProjects(), loadPending(), loadRegisteredUsers()]);
+  await loadProjects();
+  await Promise.all([loadAdministrators(), loadPending(), loadRegisteredUsers()]);
 }
 
 async function loadEvents() {
@@ -3705,6 +3807,22 @@ async function loadForms() {
   updateDashboardSummary();
 }
 
+async function clearForms() {
+  if (formsTotal === 0) {
+    return;
+  }
+
+  const confirmed = window.confirm("Deseja remover todos os registros da tabela Forms?");
+  if (!confirmed) {
+    return;
+  }
+
+  const payload = await deleteJson("/api/admin/forms");
+  await loadForms();
+  markDashboardRefreshed();
+  setStatus(payload?.message || "Registros de Forms removidos com sucesso.", true);
+}
+
 function resetReportsView(options = {}) {
   const { focusPrimary = false } = options;
   reportsSearchInProgress = false;
@@ -3731,9 +3849,7 @@ function resetReportsView(options = {}) {
 }
 
 function updateReportsActionButtons() {
-  const hasChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "").length > 0;
-  const hasNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "").length > 0;
-  const hasCriteria = hasChave || hasNome;
+  const hasCriteria = getSelectedReportSearchKey().length > 0;
   const hasExportableResult = reportsHasLoadedResult && reportsExportQueryString.length > 0;
 
   if (reportsSearchButton) {
@@ -3746,24 +3862,23 @@ function updateReportsActionButtons() {
     reportsExportButton.classList.toggle("hidden", !hasExportableResult);
     reportsExportButton.disabled = reportsSearchInProgress || reportsExportInProgress || !hasExportableResult;
   }
+  if (reportsExportAllButton) {
+    reportsExportAllButton.disabled = reportsSearchInProgress || reportsExportInProgress;
+  }
 }
 
-function syncReportsSearchInputs() {
-  const normalizedChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
-  if (reportsSearchChaveInput && normalizedChave !== reportsSearchChaveInput.value) {
-    reportsSearchChaveInput.value = normalizedChave;
+function syncReportsSearchInputs(source = null) {
+  const selectedKey = getSelectedReportSearchKey(source);
+  const selectedUser = getReportSearchUserByChave(selectedKey);
+  const normalizedSelectedKey = selectedUser ? selectedUser.chave : "";
+
+  if (reportsSearchChaveInput instanceof HTMLSelectElement) {
+    reportsSearchChaveInput.value = hasSelectOption(reportsSearchChaveInput, normalizedSelectedKey) ? normalizedSelectedKey : "";
+  }
+  if (reportsSearchNomeInput instanceof HTMLSelectElement) {
+    reportsSearchNomeInput.value = hasSelectOption(reportsSearchNomeInput, normalizedSelectedKey) ? normalizedSelectedKey : "";
   }
 
-  const normalizedNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
-  const hasChave = normalizedChave.length > 0;
-  const hasNome = normalizedNome.length > 0;
-
-  if (reportsSearchNomeInput) {
-    reportsSearchNomeInput.disabled = hasChave;
-  }
-  if (reportsSearchChaveInput) {
-    reportsSearchChaveInput.disabled = hasNome;
-  }
   updateReportsActionButtons();
 }
 
@@ -3858,41 +3973,52 @@ async function downloadReportsExport() {
   }
 }
 
+async function downloadReportsExportAll() {
+  if (!(reportsExportAllButton instanceof HTMLButtonElement) || reportsExportInProgress) {
+    return;
+  }
+
+  const idleLabel = reportsExportAllButton.dataset.idleLabel || "Exportar Tudo";
+  reportsExportInProgress = true;
+  reportsExportAllButton.disabled = true;
+  reportsExportAllButton.classList.add("is-loading");
+  reportsExportAllButton.setAttribute("aria-busy", "true");
+  reportsExportAllButton.textContent = "Exportando...";
+  updateReportsActionButtons();
+  setReportsStatus("");
+  try {
+    const { blob, fileName } = await fetchBlob("/api/admin/reports/events/export-all", "relatorio-todos.xlsx");
+    downloadBlob(blob, fileName);
+    setReportsStatus("Relatório completo exportado com sucesso.", "success");
+  } catch (error) {
+    setReportsStatus(error.message || "Não foi possível exportar o relatório completo.", "error");
+  } finally {
+    reportsExportInProgress = false;
+    reportsExportAllButton.classList.remove("is-loading");
+    reportsExportAllButton.setAttribute("aria-busy", "false");
+    reportsExportAllButton.textContent = idleLabel;
+    updateReportsActionButtons();
+  }
+}
+
 async function submitReportsSearch() {
   if (!(reportsSearchButton instanceof HTMLButtonElement)) {
     return;
   }
 
-  const normalizedChave = normalizeAdminChave(reportsSearchChaveInput ? reportsSearchChaveInput.value : "");
-  const normalizedNome = normalizeReportSearchName(reportsSearchNomeInput ? reportsSearchNomeInput.value : "");
-  if (reportsSearchChaveInput && normalizedChave !== reportsSearchChaveInput.value) {
-    reportsSearchChaveInput.value = normalizedChave;
-  }
-  if (reportsSearchNomeInput && normalizedNome !== reportsSearchNomeInput.value) {
-    reportsSearchNomeInput.value = normalizedNome;
-  }
+  const normalizedChave = getSelectedReportSearchKey();
+  syncReportsSearchInputs();
 
-  if (!normalizedChave && !normalizedNome) {
+  if (!normalizedChave) {
     setReportsStatus("Selecione a chave ou o nome para buscar o relatório.", "error");
     renderReportsState("Nenhuma busca realizada", "Selecione um critério antes de consultar o relatório.");
     syncReportsSearchInputs();
     return;
   }
 
-  if (normalizedChave && normalizedNome) {
-    setReportsStatus("Selecione apenas chave ou nome por busca.", "error");
-    renderReportsState("Busca não concluída", "Use apenas um critério por vez para consultar o relatório.");
-    syncReportsSearchInputs();
-    return;
-  }
-
   const idleLabel = reportsSearchButton.dataset.idleLabel || "Buscar";
   const query = new URLSearchParams();
-  if (normalizedChave) {
-    query.set("chave", normalizedChave);
-  } else {
-    query.set("nome", normalizedNome);
-  }
+  query.set("chave", normalizedChave);
 
   reportsSearchInProgress = true;
   reportsSearchButton.classList.add("is-loading");
@@ -3926,6 +4052,28 @@ function updateFormsClearButtonState() {
   clearButton.disabled = formsTotal === 0;
 }
 
+async function runFormsClear(button) {
+  if (!(button instanceof HTMLButtonElement) || button.disabled) {
+    return;
+  }
+
+  const idleLabel = String(button.dataset.idleLabel || button.textContent || "Limpar").trim() || "Limpar";
+  button.dataset.idleLabel = idleLabel;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Limpando...";
+
+  try {
+    await clearForms();
+  } finally {
+    updateFormsClearButtonState();
+    button.classList.remove("is-loading");
+    button.setAttribute("aria-busy", "false");
+    button.textContent = idleLabel;
+  }
+}
+
 async function refreshActiveTab() {
   if (activeTab === "checkin") {
     await loadCheckin();
@@ -3949,7 +4097,7 @@ async function refreshActiveTab() {
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await loadProjects();
-      await Promise.all([loadPending(), loadLocations()]);
+      await Promise.all([loadAdministrators(), loadPending(), loadLocations()]);
       markDashboardRefreshed();
     }
     return;
@@ -3978,7 +4126,7 @@ async function refreshAllTables() {
   if (isAdminTabAllowed("eventos")) {
     jobs.push(loadEvents());
   }
-  if (isAdminTabAllowed("cadastro")) {
+  if (isAdminTabAllowed("cadastro") && hasPendingEditInProgress()) {
     jobs.push(loadAdministrators());
   }
   if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
@@ -3986,6 +4134,7 @@ async function refreshAllTables() {
   }
   if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
     await loadProjects();
+    jobs.push(loadAdministrators());
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
     jobs.push(loadLocations());
@@ -4006,6 +4155,8 @@ async function refreshAutomaticTables() {
     jobs.push(loadDatabaseEvents());
   }
   if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
+    // Background refresh keeps the administrator grid stable. The grid depends on
+    // the current project catalog and should only rerender in the explicit loaders.
     await loadProjects();
     jobs.push(loadPending());
     jobs.push(loadLocations());
@@ -4369,7 +4520,11 @@ async function revokeAdministrator(id) {
 
 async function saveAdministratorProfile(id) {
   const profile = readAdministratorProfileValue(id);
-  const payload = await postJson(`/api/admin/administrators/${id}/profile`, { perfil: profile });
+  const monitoredProjects = readAdministratorMonitoredProjects(id);
+  const payload = await postJson(`/api/admin/administrators/${id}/profile`, {
+    perfil: profile,
+    monitored_projects: monitoredProjects,
+  });
   setStatus(payload.message, true);
   await loadAdministrators();
 }
@@ -4656,6 +4811,7 @@ function bindActions() {
 
   const changePasswordButton = document.getElementById("changePasswordButton");
   const refreshFormsButton = document.getElementById("refreshFormsButton");
+  const clearFormsButton = document.getElementById("clearFormsButton");
   const refreshInactiveButton = document.getElementById("refreshInactiveButton");
   const refreshAdministratorsButton = document.getElementById("refreshAdministratorsButton");
   const refreshUsersButton = document.getElementById("refreshUsersButton");
@@ -4664,8 +4820,15 @@ function bindActions() {
     changePasswordButton.addEventListener("click", openChangePasswordModal);
   }
   bindManualRefreshButton(refreshFormsButton, loadForms);
+  if (clearFormsButton instanceof HTMLButtonElement) {
+    clearFormsButton.dataset.idleLabel = String(clearFormsButton.textContent || "Limpar").trim() || "Limpar";
+    clearFormsButton.addEventListener("click", () => {
+      runFormsClear(clearFormsButton).catch((error) => setStatus(error.message, false));
+    });
+    updateFormsClearButtonState();
+  }
   bindManualRefreshButton(refreshInactiveButton, loadInactive);
-  bindManualRefreshButton(refreshAdministratorsButton, loadAdministrators);
+  bindManualRefreshButton(refreshAdministratorsButton, loadAdministratorsWithProjectCatalog);
   bindManualRefreshButton(refreshUsersButton, loadRegisteredUsers);
   bindManualRefreshButton(refreshEventsButton, loadEvents);
   if (reportsSearchButton) {
@@ -4685,10 +4848,16 @@ function bindActions() {
       downloadReportsExport();
     });
   }
+  if (reportsExportAllButton) {
+    reportsExportAllButton.dataset.idleLabel = String(reportsExportAllButton.textContent || "Exportar Tudo").trim() || "Exportar Tudo";
+    reportsExportAllButton.addEventListener("click", () => {
+      downloadReportsExportAll();
+    });
+  }
   [reportsSearchChaveInput, reportsSearchNomeInput].filter(Boolean).forEach((input) => {
     input.addEventListener("change", () => {
       setReportsStatus("");
-      syncReportsSearchInputs();
+      syncReportsSearchInputs(input === reportsSearchNomeInput ? "nome" : "chave");
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {

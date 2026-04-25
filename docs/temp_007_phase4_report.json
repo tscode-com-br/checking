@@ -1,0 +1,465 @@
+{
+  "generated_at": "2026-04-25T12:00:05Z",
+  "base_url": "http://127.0.0.1:8765",
+  "preview_db": "C:\\dev\\projetos\\checkcheck\\preview_phase4_homologation.db",
+  "location_threshold_meters": 30,
+  "location_local": "Homologacao Fase 4 P82",
+  "mode": "chromium_playwright_local_instrumentation",
+  "results": [
+    {
+      "scenario": "startup_initial_load",
+      "trigger": "startup",
+      "session": {
+        "session_id": "loc-1777118391970-1",
+        "strategy": "watch_window",
+        "trigger": "startup",
+        "interactive": false,
+        "force_refresh": false,
+        "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36",
+        "browser_language": "pt-BR",
+        "secure_context": true,
+        "started_at": "2026-04-25T11:59:51.970Z",
+        "started_at_ms": 1777118391970,
+        "finished_at": "2026-04-25T11:59:53.101Z",
+        "finished_at_ms": 1777118393101,
+        "duration_ms": 1131,
+        "time_to_first_sample_ms": 563,
+        "samples_received": 2,
+        "best_accuracy_meters": 18,
+        "time_to_best_sample_ms": 1102,
+        "final_accuracy_sent_meters": 18,
+        "threshold_meters": 30,
+        "final_status": "matched",
+        "termination_reason": "match_response",
+        "timed_out": false,
+        "cancelled": false,
+        "duplicate_post": false,
+        "match_post_count": 1,
+        "ui_stuck": false,
+        "events": [
+          {
+            "event": "session_started",
+            "at": "2026-04-25T11:59:51.970Z",
+            "elapsed_ms": 0,
+            "details": {
+              "trigger": "startup",
+              "interactive": false,
+              "force_refresh": false,
+              "strategy": "watch_window",
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_started",
+            "at": "2026-04-25T11:59:51.972Z",
+            "elapsed_ms": 2,
+            "details": {
+              "max_window_ms": 5000,
+              "minimum_window_ms": 0,
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_completed",
+            "at": "2026-04-25T11:59:53.073Z",
+            "elapsed_ms": 1103,
+            "details": {
+              "termination_reason": "target_accuracy_reached",
+              "best_accuracy_meters": 18
+            }
+          },
+          {
+            "event": "match_response_received",
+            "at": "2026-04-25T11:59:53.101Z",
+            "elapsed_ms": 1131,
+            "details": {
+              "http_status": 200,
+              "status": "matched",
+              "accuracy_threshold_meters": 30
+            }
+          },
+          {
+            "event": "session_finalized",
+            "at": "2026-04-25T11:59:53.101Z",
+            "elapsed_ms": 1131,
+            "details": {
+              "final_status": "matched",
+              "termination_reason": "match_response",
+              "threshold_meters": 30,
+              "final_accuracy_sent_meters": 18
+            }
+          }
+        ]
+      },
+      "progress_values": [
+        "Precisão atual 42 m / Limite 30 m",
+        "Precisão atual 18 m / Limite 30 m"
+      ],
+      "final_location_accuracy": "Precisão 18 m / Limite 30 m",
+      "final_location_value": "Homologacao Fase 4 P82"
+    },
+    {
+      "scenario": "browser_refresh",
+      "trigger": "startup",
+      "session": {
+        "session_id": "loc-1777118395549-1",
+        "strategy": "watch_window",
+        "trigger": "startup",
+        "interactive": false,
+        "force_refresh": false,
+        "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36",
+        "browser_language": "pt-BR",
+        "secure_context": true,
+        "started_at": "2026-04-25T11:59:55.549Z",
+        "started_at_ms": 1777118395549,
+        "finished_at": "2026-04-25T12:00:00.568Z",
+        "finished_at_ms": 1777118400568,
+        "duration_ms": 5019,
+        "time_to_first_sample_ms": 1402,
+        "samples_received": 3,
+        "best_accuracy_meters": 35,
+        "time_to_best_sample_ms": 4214,
+        "final_accuracy_sent_meters": 35,
+        "threshold_meters": 30,
+        "final_status": "accuracy_too_low",
+        "termination_reason": "match_response",
+        "timed_out": false,
+        "cancelled": false,
+        "duplicate_post": false,
+        "match_post_count": 1,
+        "ui_stuck": false,
+        "events": [
+          {
+            "event": "session_started",
+            "at": "2026-04-25T11:59:55.549Z",
+            "elapsed_ms": 0,
+            "details": {
+              "trigger": "startup",
+              "interactive": false,
+              "force_refresh": false,
+              "strategy": "watch_window",
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_started",
+            "at": "2026-04-25T11:59:55.550Z",
+            "elapsed_ms": 1,
+            "details": {
+              "max_window_ms": 5000,
+              "minimum_window_ms": 0,
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_completed",
+            "at": "2026-04-25T12:00:00.559Z",
+            "elapsed_ms": 5010,
+            "details": {
+              "termination_reason": "acquisition_window_elapsed",
+              "best_accuracy_meters": 35
+            }
+          },
+          {
+            "event": "match_response_received",
+            "at": "2026-04-25T12:00:00.567Z",
+            "elapsed_ms": 5018,
+            "details": {
+              "http_status": 200,
+              "status": "accuracy_too_low",
+              "accuracy_threshold_meters": 30
+            }
+          },
+          {
+            "event": "session_finalized",
+            "at": "2026-04-25T12:00:00.568Z",
+            "elapsed_ms": 5019,
+            "details": {
+              "final_status": "accuracy_too_low",
+              "termination_reason": "match_response",
+              "threshold_meters": 30,
+              "final_accuracy_sent_meters": 35
+            }
+          }
+        ]
+      },
+      "progress_values": [
+        "Precisão atual 42 m / Limite 30 m",
+        "Precisão atual 39 m / Limite 30 m",
+        "Precisão atual 35 m / Limite 30 m"
+      ],
+      "final_location_accuracy": "Precisão 35 m / Limite 30 m",
+      "final_location_value": "Precisao insuficiente"
+    },
+    {
+      "scenario": "visibility_lifecycle_event",
+      "trigger": "visibility",
+      "session": {
+        "session_id": "loc-1777118401943-2",
+        "strategy": "watch_window",
+        "trigger": "visibility",
+        "interactive": false,
+        "force_refresh": false,
+        "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36",
+        "browser_language": "pt-BR",
+        "secure_context": true,
+        "started_at": "2026-04-25T12:00:01.943Z",
+        "started_at_ms": 1777118401943,
+        "finished_at": "2026-04-25T12:00:02.135Z",
+        "finished_at_ms": 1777118402135,
+        "duration_ms": 192,
+        "time_to_first_sample_ms": 186,
+        "samples_received": 1,
+        "best_accuracy_meters": 15,
+        "time_to_best_sample_ms": 186,
+        "final_accuracy_sent_meters": 15,
+        "threshold_meters": 30,
+        "final_status": "matched",
+        "termination_reason": "match_response",
+        "timed_out": false,
+        "cancelled": false,
+        "duplicate_post": false,
+        "match_post_count": 1,
+        "ui_stuck": false,
+        "events": [
+          {
+            "event": "session_started",
+            "at": "2026-04-25T12:00:01.943Z",
+            "elapsed_ms": 0,
+            "details": {
+              "trigger": "visibility",
+              "interactive": false,
+              "force_refresh": false,
+              "strategy": "watch_window",
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_started",
+            "at": "2026-04-25T12:00:01.944Z",
+            "elapsed_ms": 2,
+            "details": {
+              "max_window_ms": 5000,
+              "minimum_window_ms": 0,
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_completed",
+            "at": "2026-04-25T12:00:02.129Z",
+            "elapsed_ms": 186,
+            "details": {
+              "termination_reason": "target_accuracy_reached",
+              "best_accuracy_meters": 15
+            }
+          },
+          {
+            "event": "match_response_received",
+            "at": "2026-04-25T12:00:02.135Z",
+            "elapsed_ms": 192,
+            "details": {
+              "http_status": 200,
+              "status": "matched",
+              "accuracy_threshold_meters": 30
+            }
+          },
+          {
+            "event": "session_finalized",
+            "at": "2026-04-25T12:00:02.135Z",
+            "elapsed_ms": 192,
+            "details": {
+              "final_status": "matched",
+              "termination_reason": "match_response",
+              "threshold_meters": 30,
+              "final_accuracy_sent_meters": 15
+            }
+          }
+        ]
+      },
+      "progress_values": [
+        "Precisão atual 15 m / Limite 30 m"
+      ],
+      "final_location_accuracy": "Precisão 15 m / Limite 30 m"
+    },
+    {
+      "scenario": "focus_lifecycle_event",
+      "trigger": "focus",
+      "session": {
+        "session_id": "loc-1777118403485-3",
+        "strategy": "watch_window",
+        "trigger": "focus",
+        "interactive": false,
+        "force_refresh": false,
+        "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36",
+        "browser_language": "pt-BR",
+        "secure_context": true,
+        "started_at": "2026-04-25T12:00:03.485Z",
+        "started_at_ms": 1777118403485,
+        "finished_at": "2026-04-25T12:00:03.681Z",
+        "finished_at_ms": 1777118403681,
+        "duration_ms": 196,
+        "time_to_first_sample_ms": 190,
+        "samples_received": 1,
+        "best_accuracy_meters": 15,
+        "time_to_best_sample_ms": 190,
+        "final_accuracy_sent_meters": 15,
+        "threshold_meters": 30,
+        "final_status": "matched",
+        "termination_reason": "match_response",
+        "timed_out": false,
+        "cancelled": false,
+        "duplicate_post": false,
+        "match_post_count": 1,
+        "ui_stuck": false,
+        "events": [
+          {
+            "event": "session_started",
+            "at": "2026-04-25T12:00:03.485Z",
+            "elapsed_ms": 0,
+            "details": {
+              "trigger": "focus",
+              "interactive": false,
+              "force_refresh": false,
+              "strategy": "watch_window",
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_started",
+            "at": "2026-04-25T12:00:03.486Z",
+            "elapsed_ms": 1,
+            "details": {
+              "max_window_ms": 5000,
+              "minimum_window_ms": 0,
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_completed",
+            "at": "2026-04-25T12:00:03.675Z",
+            "elapsed_ms": 190,
+            "details": {
+              "termination_reason": "target_accuracy_reached",
+              "best_accuracy_meters": 15
+            }
+          },
+          {
+            "event": "match_response_received",
+            "at": "2026-04-25T12:00:03.681Z",
+            "elapsed_ms": 196,
+            "details": {
+              "http_status": 200,
+              "status": "matched",
+              "accuracy_threshold_meters": 30
+            }
+          },
+          {
+            "event": "session_finalized",
+            "at": "2026-04-25T12:00:03.681Z",
+            "elapsed_ms": 196,
+            "details": {
+              "final_status": "matched",
+              "termination_reason": "match_response",
+              "threshold_meters": 30,
+              "final_accuracy_sent_meters": 15
+            }
+          }
+        ]
+      },
+      "progress_values": [
+        "Precisão atual 15 m / Limite 30 m"
+      ],
+      "final_location_accuracy": "Precisão 15 m / Limite 30 m"
+    },
+    {
+      "scenario": "pageshow_lifecycle_event",
+      "trigger": "pageshow",
+      "session": {
+        "session_id": "loc-1777118405024-4",
+        "strategy": "watch_window",
+        "trigger": "pageshow",
+        "interactive": false,
+        "force_refresh": false,
+        "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36",
+        "browser_language": "pt-BR",
+        "secure_context": true,
+        "started_at": "2026-04-25T12:00:05.024Z",
+        "started_at_ms": 1777118405024,
+        "finished_at": "2026-04-25T12:00:05.227Z",
+        "finished_at_ms": 1777118405227,
+        "duration_ms": 203,
+        "time_to_first_sample_ms": 191,
+        "samples_received": 1,
+        "best_accuracy_meters": 15,
+        "time_to_best_sample_ms": 191,
+        "final_accuracy_sent_meters": 15,
+        "threshold_meters": 30,
+        "final_status": "matched",
+        "termination_reason": "match_response",
+        "timed_out": false,
+        "cancelled": false,
+        "duplicate_post": false,
+        "match_post_count": 1,
+        "ui_stuck": false,
+        "events": [
+          {
+            "event": "session_started",
+            "at": "2026-04-25T12:00:05.024Z",
+            "elapsed_ms": 0,
+            "details": {
+              "trigger": "pageshow",
+              "interactive": false,
+              "force_refresh": false,
+              "strategy": "watch_window",
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_started",
+            "at": "2026-04-25T12:00:05.024Z",
+            "elapsed_ms": 0,
+            "details": {
+              "max_window_ms": 5000,
+              "minimum_window_ms": 0,
+              "target_accuracy_meters": 30
+            }
+          },
+          {
+            "event": "watch_window_completed",
+            "at": "2026-04-25T12:00:05.216Z",
+            "elapsed_ms": 192,
+            "details": {
+              "termination_reason": "target_accuracy_reached",
+              "best_accuracy_meters": 15
+            }
+          },
+          {
+            "event": "match_response_received",
+            "at": "2026-04-25T12:00:05.227Z",
+            "elapsed_ms": 203,
+            "details": {
+              "http_status": 200,
+              "status": "matched",
+              "accuracy_threshold_meters": 30
+            }
+          },
+          {
+            "event": "session_finalized",
+            "at": "2026-04-25T12:00:05.227Z",
+            "elapsed_ms": 203,
+            "details": {
+              "final_status": "matched",
+              "termination_reason": "match_response",
+              "threshold_meters": 30,
+              "final_accuracy_sent_meters": 15
+            }
+          }
+        ]
+      },
+      "progress_values": [
+        "Precisão atual 15 m / Limite 30 m"
+      ],
+      "final_location_accuracy": "Precisão 15 m / Limite 30 m"
+    }
+  ]
+}

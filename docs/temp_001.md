@@ -224,7 +224,7 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 
 - legenda com `Atividades Automáticas` acima de `Registro`;
 - opções `Check-In`, `Check-Out` e botão de transporte;
-- manter o rótulo `Em breve` se este for o texto atual da SPA para o botão principal no shell;
+- manter o rótulo `Em Teste`, que passa a refletir o texto atual da SPA para o botão principal no shell;
 - preservação de estados desabilitados quando a interface estiver ocupada.
 
 ### 5.9. Grupo `Informe`
@@ -1211,75 +1211,89 @@ Nota de execução 17.14 (2026-04-25): etapa concluída em `checking_kotlin_new/
 
 ### 17.15. Persistência local por `chave`
 
-- [ ] Implementar armazenamento seguro da senha por `chave`.
-- [ ] Implementar armazenamento da última `chave` usada.
-- [ ] Implementar armazenamento das preferências do usuário por `chave`.
-- [ ] Implementar armazenamento do estado local do transporte por `chave`.
-- [ ] Implementar armazenamento da flag de tentativa de permissão de localização.
-- [ ] Implementar armazenamento da flag de permissão de localização concedida.
-- [ ] Garantir que os dados persistidos sejam restaurados no momento equivalente ao webapp.
-- [ ] Garantir que o logout limpe o que a SPA considera estado protegido.
+- [x] Implementar armazenamento seguro da senha por `chave`.
+- [x] Implementar armazenamento da última `chave` usada.
+- [x] Implementar armazenamento das preferências do usuário por `chave`.
+- [x] Implementar armazenamento do estado local do transporte por `chave`.
+- [x] Implementar armazenamento da flag de tentativa de permissão de localização.
+- [x] Implementar armazenamento da flag de permissão de localização concedida.
+- [x] Garantir que os dados persistidos sejam restaurados no momento equivalente ao webapp.
+- [x] Garantir que o logout limpe o que a SPA considera estado protegido.
+
+Nota de execução 17.15 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-keyed-local-persistence.md`. A persistência local por `chave` foi centralizada no `WebSessionStore`: senha válida passou a usar armazenamento seguro em `EncryptedSharedPreferences`, enquanto `lastResolvedChave`, preferências do usuário (`project` e `automaticActivitiesEnabled`), estado local do transporte e flags de localização passaram a ser resolvidos por snapshot via `DataStore`. O `SessionGateViewModel` foi ajustado para reagir à restauração assíncrona desses dados, expondo o estado local da `chave` ativa sem reabrir automaticamente a sessão protegida. O logout continua limpando apenas cookie e `authenticatedChave`, preservando o cache local não protegido da mesma forma que a SPA. A etapa foi validada com testes focais do contrato em memória, do `SessionGateViewModel`, do shell e com a suíte `:app:testDebugUnitTest`.
 
 ### 17.16. Botão lateral de autenticação e estados assistidos
 
-- [ ] Implementar o rótulo `Alterar` quando a chave possuir senha.
-- [ ] Implementar o rótulo `Senha?` quando a chave existir sem senha.
-- [ ] Implementar o rótulo `Chave?` quando a chave não existir.
-- [ ] Implementar o rótulo `Aguarde` em estados de operação pendente.
-- [ ] Implementar estilo visual de atenção equivalente ao webapp.
-- [ ] Implementar estilo visual de estado pendente equivalente ao webapp.
-- [ ] Implementar travamento de outros botões enquanto o fluxo de autenticação estiver ocupado.
+- [x] Implementar o rótulo `Alterar` quando a chave possuir senha.
+- [x] Implementar o rótulo `Senha?` quando a chave existir sem senha.
+- [x] Implementar o rótulo `Chave?` quando a chave não existir.
+- [x] Implementar o rótulo `Aguarde` em estados de operação pendente.
+- [x] Implementar estilo visual de atenção equivalente ao webapp.
+- [x] Implementar estilo visual de estado pendente equivalente ao webapp.
+- [x] Implementar travamento de outros botões enquanto o fluxo de autenticação estiver ocupado.
+
+Nota de execução 17.16 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-auth-assisted-states.md`. O mapeamento do shell em `CheckShellScreen.kt` passou a espelhar `resolvePasswordActionButtonLabel()` e `isPasswordActionAssistanceModeActive()` da SPA: o botão lateral agora resolve corretamente `Chave?`, `Senha?`, `Alterar` e o estado pendente atual `Verificando...`, enquanto os campos `Chave` e `Senha` só recebem o destaque laranja quando a SPA realmente entra em modo assistido. O botão lateral ganhou disponibilidade própria separada dos campos de texto, e os demais controles do shell passaram a respeitar `authBusy` como travamento adicional de apresentação, preparando a tela para as próximas fases sem reabrir a semântica visual. A etapa foi validada por testes focais do estado do shell e pela suíte completa `:app:testDebugUnitTest`.
 
 ### 17.17. Restauração de campos de autenticação e ergonomia
 
-- [ ] Implementar restauração da senha previamente persistida quando a mesma `chave` for revisitada.
-- [ ] Implementar restauração da `chave` se o usuário a apagar e sair do campo sem intenção de mudança confirmada.
-- [ ] Implementar restauração da senha se o usuário a apagar e sair do campo sem intenção de mudança confirmada.
-- [ ] Implementar gatilho de verificação automática da senha restaurada.
-- [ ] Preservar o mesmo comportamento de travamento e desbloqueio observado na SPA.
+- [x] Implementar restauração da senha previamente persistida quando a mesma `chave` for revisitada.
+- [x] Implementar restauração da `chave` se o usuário a apagar e sair do campo sem intenção de mudança confirmada.
+- [x] Implementar restauração da senha se o usuário a apagar e sair do campo sem intenção de mudança confirmada.
+- [x] Implementar gatilho de verificação automática da senha restaurada.
+- [x] Preservar o mesmo comportamento de travamento e desbloqueio observado na SPA.
+
+Nota de execução 17.17 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-auth-field-restore.md`. `SessionGateViewModel` passou a restaurar a senha persistida quando a mesma `chave` volta a ficar ativa, a manter um estado pendente de restauração para `chave` e `senha` apagadas e a religar a verificação silenciosa com debounce via `POST /api/web/auth/login`, espelhando `restorePersistedPasswordForChave(...)`, `restorePendingAuthFieldValuesIfNeeded()` e `schedulePasswordVerification(...)` da SPA. O shell principal ganhou callback de blur do grupo de autenticação para devolver valores abandonados sem exigir mudança confirmada, e o desbloqueio protegido local voltou a depender de `markAuthenticatedChave(...)` sem reaproveitar o `authenticatedChave` persistido de sessões anteriores. A etapa foi validada com testes focais do `SessionGateViewModel` e segue pendente apenas da validação ampla do módulo.
 
 ### 17.18. Modal de senha
 
-- [ ] Criar diálogo equivalente ao `passwordDialog` da SPA.
-- [ ] Implementar o modo `Cadastrar Senha`.
-- [ ] Implementar o modo `Alterar Senha`.
-- [ ] Ocultar `Senha Antiga` no modo de cadastro, mantendo o comportamento visual equivalente.
-- [ ] Implementar validação de tamanho mínimo e máximo da senha.
-- [ ] Implementar validação de confirmação de senha.
-- [ ] Plugar `POST /api/web/auth/register-password`.
-- [ ] Plugar `POST /api/web/auth/change-password`.
-- [ ] Atualizar sessão local após sucesso.
-- [ ] Atualizar a UI principal após sucesso.
-- [ ] Exibir mensagens de erro e sucesso exatamente conforme o backend e a SPA orientam.
+- [x] Criar diálogo equivalente ao `passwordDialog` da SPA.
+- [x] Implementar o modo `Cadastrar Senha`.
+- [x] Implementar o modo `Alterar Senha`.
+- [x] Ocultar `Senha Antiga` no modo de cadastro, mantendo o comportamento visual equivalente.
+- [x] Implementar validação de tamanho mínimo e máximo da senha.
+- [x] Implementar validação de confirmação de senha.
+- [x] Plugar `POST /api/web/auth/register-password`.
+- [x] Plugar `POST /api/web/auth/change-password`.
+- [x] Atualizar sessão local após sucesso.
+- [x] Atualizar a UI principal após sucesso.
+- [x] Exibir mensagens de erro e sucesso exatamente conforme o backend e a SPA orientam.
+
+Nota de execução 17.18 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-password-dialog.md`. O `SessionGateViewModel` passou a controlar um estado explícito do modal de senha, com modos `register` e `change`, validações equivalentes à SPA para senha antiga, nova senha e confirmação, além da submissão real para `/api/web/auth/register-password` e `/api/web/auth/change-password`. O `CheckShellScreen.kt` ganhou um dialogo Compose com backdrop, título dinâmico, `Senha Antiga` riscada no modo de cadastro e botões `Voltar`/`Salvar`/`Alterar` equivalentes ao webapp. Após sucesso, a sessão protegida local é atualizada imediatamente, a senha segura por `chave` é persistida, o campo principal de senha recebe o novo valor e a UI volta ao estado autenticado. A etapa foi validada por testes focais do `SessionGateViewModel` e do mapper do shell, e pela suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.19. Modal de autocadastro
 
-- [ ] Criar diálogo equivalente ao `registrationDialog` da SPA.
-- [ ] Implementar os campos `Chave`, `Nome Completo`, `Projeto`, `E-Mail`, `Senha` e `Confirma Senha`.
-- [ ] Garantir que o campo `E-Mail` permaneça opcional.
-- [ ] Garantir que endereço e ZIP não sejam adicionados ao fluxo de autocadastro.
-- [ ] Plugar `POST /api/web/auth/register-user`.
-- [ ] Garantir autenticação automática após cadastro bem-sucedido.
-- [ ] Atualizar o estado principal do app após sucesso.
-- [ ] Exibir mensagens equivalentes às da SPA para sucesso e erro.
+- [x] Criar diálogo equivalente ao `registrationDialog` da SPA.
+- [x] Implementar os campos `Chave`, `Nome Completo`, `Projeto`, `E-Mail`, `Senha` e `Confirma Senha`.
+- [x] Garantir que o campo `E-Mail` permaneça opcional.
+- [x] Garantir que endereço e ZIP não sejam adicionados ao fluxo de autocadastro.
+- [x] Plugar `POST /api/web/auth/register-user`.
+- [x] Garantir autenticação automática após cadastro bem-sucedido.
+- [x] Atualizar o estado principal do app após sucesso.
+- [x] Exibir mensagens equivalentes às da SPA para sucesso e erro.
+
+Nota de execução 17.19 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-self-registration-dialog.md`. O `SessionGateViewModel` ganhou um estado dedicado para o `registrationDialog`, abriu o fluxo `Chave?` com pre-preenchimento de `chave`, senha e projeto conforme a SPA, carregou o catálogo real via `/api/web/projects` e passou a submeter o autocadastro em `/api/web/auth/register-user` com validações locais equivalentes para chave, nome completo, projeto, e-mail opcional, senha e confirmação. O `CheckShellScreen.kt` recebeu um modal Compose com nota explicativa do acesso ao Transport, seletor interativo de projeto dentro do proprio dialogo e botao `Enviar`/`Enviando...`. Após sucesso, o app atualiza `lastResolvedChave`, autentica `authenticatedChave`, persiste a senha por `chave`, grava o projeto selecionado e reflete imediatamente o estado autenticado no shell principal. A etapa foi validada por testes focais do `SessionGateViewModel` e do mapper do shell, e pela suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.20. Histórico de check e sugestão de atividade
 
-- [ ] Implementar carregamento de histórico via `GET /api/web/check/state`.
-- [ ] Renderizar `Último Check-In`.
-- [ ] Renderizar `Último Check-Out`.
-- [ ] Renderizar `--` quando o valor estiver ausente.
-- [ ] Implementar cálculo da atividade mais recente com a mesma lógica da SPA.
-- [ ] Destacar visualmente o item mais recente com moldura verde equivalente.
-- [ ] Aplicar a ação sugerida a partir do histórico, como a SPA faz.
-- [ ] Garantir atualização do histórico após check manual e após fluxos automáticos.
+- [x] Implementar carregamento de histórico via `GET /api/web/check/state`.
+- [x] Renderizar `Último Check-In`.
+- [x] Renderizar `Último Check-Out`.
+- [x] Renderizar `--` quando o valor estiver ausente.
+- [x] Implementar cálculo da atividade mais recente com a mesma lógica da SPA.
+- [x] Destacar visualmente o item mais recente com moldura verde equivalente.
+- [x] Aplicar a ação sugerida a partir do histórico, como a SPA faz.
+- [x] Garantir atualização do histórico após check manual e após fluxos automáticos.
+
+Nota de execução 17.20 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-check-history.md`. O `SessionGateViewModel` passou a consumir `GET /api/web/check/state` por meio de um datasource próprio, armazenando `checkHistory` e `checkHistoryLoading` no estado protegido e disparando refresh sempre que os fluxos atualmente implementados destravam a sessão (`restore` silencioso, cadastro de senha, troca de senha e autocadastro). O retorno de `check/state` agora também sincroniza o `projeto` persistido por `chave`, enquanto mudanças de `chave`, relock local ou perda do estado autenticado limpam o histórico protegido. No shell Compose, `CheckShellScreen.kt` passou a renderizar `Último Check-In` e `Último Check-Out` em `pt-BR`, manter `--` quando não houver valor, destacar a atividade mais recente e sugerir automaticamente a ação oposta ao último evento, espelhando a lógica da SPA. A etapa foi validada por testes focais do `SessionGateViewModel` e do mapper do shell, e pela suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.21. Card de notificação
 
-- [ ] Implementar quebra em linha primária e secundária equivalente à SPA.
-- [ ] Implementar tons de mensagem `success`, `error`, `info`, `warning` e `neutral`.
-- [ ] Garantir que textos longos quebrem de modo equivalente ao webapp.
-- [ ] Garantir que mensagens vindas do backend não percam informação relevante.
+- [x] Implementar quebra em linha primária e secundária equivalente à SPA.
+- [x] Implementar tons de mensagem `success`, `error`, `info`, `warning` e `neutral`.
+- [x] Garantir que textos longos quebrem de modo equivalente ao webapp.
+- [x] Garantir que mensagens vindas do backend não percam informação relevante.
+
+Nota de execução 17.21 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-notification-card.md`. O `SessionGateViewModel` passou a manter `messageTone` junto da mensagem protegida, preenchendo-o nos fluxos de validação, submissão, autenticação silenciosa e autocadastro. O `CheckShellScreen.kt` deixou de renderizar mensagens paralelas e passou a espelhar o webapp: uma única mensagem é dividida em linha primária e secundária com a mesma regra de `splitNotificationMessage(...)`, incluindo split responsivo (`34`, `40` e `52`) e preservação de múltiplas linhas vindas do backend. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.22. Catálogo de projetos
 

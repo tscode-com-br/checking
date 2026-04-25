@@ -23,6 +23,11 @@ test('transport routine request builder uses the shortened Solicitar label', () 
   assert.match(checkApp, /transportRequestInProgress \? 'Solicitando\.{3}' : 'Solicitar'/);
 });
 
+test('main transport entry button advertises Em Teste in the primary shell', () => {
+  assert.match(checkHtml, /id="transportButton"[\s\S]*>\s*<span>Em Teste<\/span>/);
+  assert.doesNotMatch(checkHtml, /id="transportButton"[\s\S]*Em breve/);
+});
+
 test('transport weekday selector is compact enough for mobile viewport height constraints', () => {
   assert.match(
     checkCss,

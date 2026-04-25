@@ -147,6 +147,7 @@ def ensure_default_admin(db: Session) -> User:
             perfil=bootstrap_profile,
             nome=settings.bootstrap_admin_name.strip(),
             projeto=default_project_name,
+            admin_monitored_projects_json=None,
             workplace=None,
             placa=None,
             end_rua=None,
@@ -171,6 +172,9 @@ def ensure_default_admin(db: Session) -> User:
             changed = True
         if not str(admin.nome or "").strip():
             admin.nome = settings.bootstrap_admin_name.strip()
+            changed = True
+        if admin.admin_monitored_projects_json is not None:
+            admin.admin_monitored_projects_json = None
             changed = True
 
     if changed:

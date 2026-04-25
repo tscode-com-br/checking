@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-04-25T10:55:43.848Z",
+  "source_of_truth": "sistema/app/static/check",
+  "artifact_set": "temp_006_homologation",
+  "browser": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "entries": [
+    {
+      "id": "01-portrait-mobile-main",
+      "title": "Retrato mobile com shell principal preenchida",
+      "file": "docs/temp_006_homologation/screenshots/01-portrait-mobile-main.png",
+      "viewport": {
+        "width": 412,
+        "height": 915
+      },
+      "layout": "mobile",
+      "note": null,
+      "sha256": "31BFCEB8E4E9652EB68A4B68A8764546BB211B099463742E1821C963F555AD4A",
+      "bytes": 68876
+    },
+    {
+      "id": "02-landscape-mobile-main",
+      "title": "Paisagem mobile com shell principal preenchida",
+      "file": "docs/temp_006_homologation/screenshots/02-landscape-mobile-main.png",
+      "viewport": {
+        "width": 915,
+        "height": 412
+      },
+      "layout": "mobile",
+      "note": null,
+      "sha256": "30EC239008505A2B823D0AA019776B3BFD2EB50D7D8D5B0559BCBB0CB8D3BBC0",
+      "bytes": 60990
+    },
+    {
+      "id": "03-landscape-mobile-auth-focus-proxy-keyboard",
+      "title": "Paisagem mobile com foco em autenticacao e viewport reduzido como proxy de teclado aberto",
+      "file": "docs/temp_006_homologation/screenshots/03-landscape-mobile-auth-focus-proxy-keyboard.png",
+      "viewport": {
+        "width": 915,
+        "height": 300
+      },
+      "layout": "mobile",
+      "note": "Proxy de teclado aberto: viewport reduzido em headless com foco no campo de senha.",
+      "sha256": "CB9B90F04B6CA9381CC38CB0FB7154F38BFEC3E9B5C54845AADFA3BBA422B422",
+      "bytes": 38266
+    },
+    {
+      "id": "04-tablet-landscape-main",
+      "title": "Viewport intermediaria em paisagem",
+      "file": "docs/temp_006_homologation/screenshots/04-tablet-landscape-main.png",
+      "viewport": {
+        "width": 1024,
+        "height": 768
+      },
+      "layout": "mobile",
+      "note": null,
+      "sha256": "7E6EE47F960AF9FB407DA35C02DBCAEE8A305E7A01077A7199A902D599B887BD",
+      "bytes": 85462
+    },
+    {
+      "id": "05-notebook-main",
+      "title": "Notebook comum com shell principal preenchida",
+      "file": "docs/temp_006_homologation/screenshots/05-notebook-main.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "CAD29572AAB04310D0F7178A48F85D7318AD3B87B8F3785F7707BD229E54BDA6",
+      "bytes": 122330
+    },
+    {
+      "id": "06-desktop-wide-main",
+      "title": "Desktop amplo com shell principal preenchida",
+      "file": "docs/temp_006_homologation/screenshots/06-desktop-wide-main.png",
+      "viewport": {
+        "width": 1600,
+        "height": 900
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "E10E115D4E90550D352F6295BFB1BF81244B819231B321B98B87EF06614B82A5",
+      "bytes": 167245
+    },
+    {
+      "id": "07-notebook-password-dialog",
+      "title": "Dialog de senha em notebook",
+      "file": "docs/temp_006_homologation/screenshots/07-notebook-password-dialog.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "B7470A6E98CD03BA2932399F559CBBF3BB9999AADF84CDAF39B2A8741FD6D10F",
+      "bytes": 130679
+    },
+    {
+      "id": "08-notebook-registration-dialog",
+      "title": "Dialog de cadastro em notebook",
+      "file": "docs/temp_006_homologation/screenshots/08-notebook-registration-dialog.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "FE9A2A88E0BDB019116E9079575D894513BE73E0ED4A2AF1739A15CC7519681F",
+      "bytes": 125662
+    },
+    {
+      "id": "09-notebook-transport-screen",
+      "title": "Tela de transporte em notebook",
+      "file": "docs/temp_006_homologation/screenshots/09-notebook-transport-screen.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "15B7985724046AD39E7CFEB983A32CB08B07C541537743A174336F2CB9F76AEF",
+      "bytes": 167851
+    },
+    {
+      "id": "10-notebook-transport-detail",
+      "title": "Detalhe de solicitacao de transporte em notebook",
+      "file": "docs/temp_006_homologation/screenshots/10-notebook-transport-detail.png",
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "desktop",
+      "note": null,
+      "sha256": "0FD08E162182CB1270C749745BAF507389439BF125AA7791993CB6FFA4354AFA",
+      "bytes": 162546
+    }
+  ]
+}

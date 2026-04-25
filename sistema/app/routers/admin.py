@@ -92,6 +92,11 @@ from ..services.admin_auth import (
     verify_password,
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
+from ..services.admin_project_scope import (
+    dump_admin_monitored_projects,
+    extract_admin_monitored_projects,
+    resolve_effective_admin_monitored_projects,
+)
 from ..services.event_archives import (
     build_event_archives_zip,
     create_event_archive,
@@ -155,13 +160,18 @@ DATABASE_EVENT_SORTABLE_FIELDS = frozenset((*DATABASE_EVENT_SQL_SORT_FIELDS.keys
 DATABASE_EVENT_SORT_DIRECTIONS = frozenset(("asc", "desc"))
 REPORT_EXPORT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 REPORT_EXPORT_COLUMNS = (
+    "Data",
     "Horário",
     "Ação",
     "Origem",
     "Local",
     "Projeto",
-    "Fuso horário",
+    "Fuso Horário",
     "Assiduidade",
+)
+REPORT_EXPORT_ALL_COLUMNS = (
+    "Nome",
+    *REPORT_EXPORT_COLUMNS,
 )
 REPORT_SOURCE_LABELS = {
     "web": "Aplicativo",
@@ -217,6 +227,10 @@ def build_report_export_file_name(*, user: User, timestamp: datetime) -> str:
     return f"Relatorio - {user.chave} - {timestamp:%Y%m%d - %H%M%S}.xlsx"
 
 
+def build_report_export_all_file_name(*, timestamp: datetime) -> str:
+    return f"Relatorio - Todos - {timestamp:%Y%m%d - %H%M%S}.xlsx"
+
+
 def build_report_export_metadata(*, report: ReportEventsResponse) -> str:
     person = report.person
     events_count = len(report.events)
@@ -224,6 +238,74 @@ def build_report_export_metadata(*, report: ReportEventsResponse) -> str:
     return (
         f"Projeto atual: {person.projeto or '-'} | RFID: {person.rfid or '-'} | "
         f"Fuso horário: {person.timezone_label or '-'} | {events_label}"
+    )
+
+
+def build_report_projects_by_name(db: Session, project_names: set[str]) -> dict[str, Project]:
+    normalized_project_names = sorted(
+        {
+            str(project_name or "").strip().upper()
+            for project_name in project_names
+            if str(project_name or "").strip()
+        }
+    )
+    if not normalized_project_names:
+        return {}
+
+    return {
+        project.name: project
+        for project in db.execute(select(Project).where(Project.name.in_(normalized_project_names))).scalars().all()
+    }
+
+
+def resolve_report_event_project_name(event: UserSyncEvent, *, user: User | None = None) -> str:
+    return str(event.projeto or (user.projeto if user is not None else None) or "").strip().upper() or "-"
+
+
+def build_report_event_row(
+    event: UserSyncEvent,
+    *,
+    user: User | None = None,
+    projects_by_name: dict[str, Project],
+) -> ReportEventRow:
+    project_name = resolve_report_event_project_name(event, user=user)
+    project = projects_by_name.get(project_name) if project_name != "-" else None
+    timezone_context = build_timezone_context(
+        project_name=project.name if project is not None else (None if project_name == "-" else project_name),
+        country_name=project.country_name if project is not None else None,
+        timezone_name=project.timezone_name if project is not None else None,
+        reference_time=event.event_time,
+    )
+    localized_event_time = event.event_time.astimezone(timezone_context.timezone)
+    return ReportEventRow(
+        id=event.id,
+        source=event.source,
+        source_label=format_report_source_label(event.source),
+        action=event.action,
+        action_label=format_report_action_label(event.action),
+        projeto=project_name,
+        local=event.local,
+        local_label=format_report_local_label(event.local),
+        ontime=event.ontime,
+        assiduidade=format_assiduidade_label(event.ontime),
+        event_time=event.event_time,
+        event_time_label=localized_event_time.strftime("%H:%M:%S"),
+        timezone_name=timezone_context.timezone_name,
+        timezone_label=timezone_context.timezone_label,
+        event_date=localized_event_time.strftime("%d/%m/%Y"),
+    )
+
+
+def build_report_event_export_values(row: ReportEventRow) -> tuple[str, str, str, str, str, str, str, str]:
+    return (
+        row.event_date or "-",
+        row.event_time_label or "-",
+        row.action_label or format_report_action_label(row.action),
+        row.source_label or format_report_source_label(row.source),
+        row.local_label or format_report_local_label(row.local),
+        row.projeto or "-",
+        row.timezone_label or "-",
+        row.assiduidade or "Normal",
     )
 
 
@@ -240,46 +322,55 @@ def build_report_events_export(*, user: User, report: ReportEventsResponse) -> t
     worksheet.append([build_report_export_metadata(report=report)])
     worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(REPORT_EXPORT_COLUMNS))
     worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(REPORT_EXPORT_COLUMNS))
+    worksheet.append([])
+    worksheet.append(list(REPORT_EXPORT_COLUMNS))
 
-    grouped_events: dict[str, list[ReportEventRow]] = {}
-    ordered_dates: list[str] = []
     for row in report.events:
-        group_key = row.event_date or "-"
-        if group_key not in grouped_events:
-            grouped_events[group_key] = []
-            ordered_dates.append(group_key)
-        grouped_events[group_key].append(row)
+        worksheet.append(list(build_report_event_export_values(row)))
 
-    if not ordered_dates:
-        worksheet.append([])
-        worksheet.append(["Nenhum evento encontrado para a pessoa informada."])
-        worksheet.merge_cells(start_row=4, start_column=1, end_row=4, end_column=len(REPORT_EXPORT_COLUMNS))
-    else:
-        current_row = 2
-        for group_date in ordered_dates:
-            worksheet.append([])
-            current_row += 1
-            worksheet.append([group_date])
-            current_row += 1
-            worksheet.merge_cells(
-                start_row=current_row,
-                start_column=1,
-                end_row=current_row,
-                end_column=len(REPORT_EXPORT_COLUMNS),
-            )
-            worksheet.append(list(REPORT_EXPORT_COLUMNS))
-            current_row += 1
-            for row in grouped_events[group_date]:
-                worksheet.append([
-                    row.event_time_label or "-",
-                    row.action_label or format_report_action_label(row.action),
-                    row.source_label or format_report_source_label(row.source),
-                    row.local_label or format_report_local_label(row.local),
-                    row.projeto or "-",
-                    row.timezone_label or "-",
-                    row.assiduidade or "Normal",
-                ])
-                current_row += 1
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    content = output.getvalue()
+    output.close()
+    return file_name, content
+
+
+def build_all_report_events_export(db: Session) -> tuple[str, bytes]:
+    from openpyxl import Workbook
+
+    rows = db.execute(
+        select(UserSyncEvent, User)
+        .join(User, User.id == UserSyncEvent.user_id, isouter=True)
+        .order_by(
+            asc(func.lower(func.coalesce(User.nome, ""))),
+            asc(func.lower(func.coalesce(User.chave, ""))),
+            desc(UserSyncEvent.event_time),
+            desc(UserSyncEvent.id),
+        )
+    ).all()
+
+    projects_by_name = build_report_projects_by_name(
+        db,
+        {
+            *(event.projeto for event, _ in rows),
+            *((user.projeto if user is not None else None) for _, user in rows),
+        },
+    )
+
+    timestamp = now_sgt()
+    file_name = build_report_export_all_file_name(timestamp=timestamp)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Relatório"
+    worksheet.append(list(REPORT_EXPORT_ALL_COLUMNS))
+
+    for event, user in rows:
+        report_row = build_report_event_row(event, user=user, projects_by_name=projects_by_name)
+        worksheet.append([
+            (user.nome if user is not None and user.nome else "-"),
+            *build_report_event_export_values(report_row),
+        ])
 
     output = BytesIO()
     workbook.save(output)
@@ -400,17 +491,7 @@ def build_report_events_response(db: Session, *, user: User) -> ReportEventsResp
         .order_by(desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
     ).scalars().all()
 
-    project_names = sorted(
-        {
-            str(project_name or "").strip().upper()
-            for project_name in [user.projeto, *(row.projeto for row in rows)]
-            if str(project_name or "").strip()
-        }
-    )
-    projects_by_name = {
-        project.name: project
-        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
-    } if project_names else {}
+    projects_by_name = build_report_projects_by_name(db, {user.projeto, *(row.projeto for row in rows)})
 
     person_project_name = str(user.projeto or "").strip().upper() or "-"
     person_project = projects_by_name.get(person_project_name) if person_project_name != "-" else None
@@ -424,34 +505,7 @@ def build_report_events_response(db: Session, *, user: User) -> ReportEventsResp
 
     payload: list[ReportEventRow] = []
     for row in rows:
-        project_name = str(row.projeto or user.projeto or "").strip().upper() or "-"
-        project = projects_by_name.get(project_name) if project_name != "-" else None
-        timezone_context = build_timezone_context(
-            project_name=project.name if project is not None else (None if project_name == "-" else project_name),
-            country_name=project.country_name if project is not None else None,
-            timezone_name=project.timezone_name if project is not None else None,
-            reference_time=row.event_time,
-        )
-        localized_event_time = row.event_time.astimezone(timezone_context.timezone)
-        payload.append(
-            ReportEventRow(
-                id=row.id,
-                source=row.source,
-                source_label=format_report_source_label(row.source),
-                action=row.action,
-                action_label=format_report_action_label(row.action),
-                projeto=project_name,
-                local=row.local,
-                local_label=format_report_local_label(row.local),
-                ontime=row.ontime,
-                assiduidade=format_assiduidade_label(row.ontime),
-                event_time=row.event_time,
-                event_time_label=localized_event_time.strftime("%H:%M:%S"),
-                timezone_name=timezone_context.timezone_name,
-                timezone_label=timezone_context.timezone_label,
-                event_date=localized_event_time.strftime("%d/%m/%Y"),
-            )
-        )
+        payload.append(build_report_event_row(row, user=user, projects_by_name=projects_by_name))
 
     return ReportEventsResponse(
         person=ReportPersonRow(
@@ -469,10 +523,9 @@ def build_report_events_response(db: Session, *, user: User) -> ReportEventsResp
 
 def delete_provider_forms_rows(db: Session) -> int:
     result = db.execute(
-        delete(CheckEvent).where(
-            CheckEvent.source == "provider",
-            CheckEvent.request_path == PROVIDER_FORMS_REQUEST_PATH,
-            CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
+        delete(UserSyncEvent).where(
+            UserSyncEvent.source == "provider",
+            UserSyncEvent.action.in_(DATABASE_EVENT_ACTIONS),
         )
     )
     return max(int(result.rowcount or 0), 0)
@@ -657,10 +710,23 @@ def build_location_settings_log_message(
     return "As configurações de localização foram salvas sem alterações."
 
 
-def build_presence_rows(db: Session, *, action: str, reference_time=None) -> list[UserRow]:
+def build_presence_rows(
+    db: Session,
+    *,
+    action: str,
+    current_admin: User | None = None,
+    reference_time=None,
+) -> list[UserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[UserRow] = []
     current_time = reference_time or now_sgt()
+    catalog_project_names = list_project_names(db)
+    effective_admin_projects = (
+        resolve_effective_admin_monitored_projects(current_admin, catalog_project_names)
+        if current_admin is not None
+        else None
+    )
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
     project_names = sorted({user.projeto for user in rows if user.projeto})
     projects_by_name = {
         project.name: project
@@ -668,6 +734,8 @@ def build_presence_rows(db: Session, *, action: str, reference_time=None) -> lis
     } if project_names else {}
 
     for user in rows:
+        if effective_admin_project_set is not None and user.projeto not in effective_admin_project_set:
+            continue
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None or latest_activity.action != action:
             continue
@@ -705,10 +773,22 @@ def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[Use
     return []
 
 
-def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUserRow]:
+def build_inactive_rows(
+    db: Session,
+    *,
+    current_admin: User | None = None,
+    reference_time=None,
+) -> list[InactiveUserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[InactiveUserRow] = []
     current_time = reference_time or now_sgt()
+    catalog_project_names = list_project_names(db)
+    effective_admin_projects = (
+        resolve_effective_admin_monitored_projects(current_admin, catalog_project_names)
+        if current_admin is not None
+        else None
+    )
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
     project_names = sorted({user.projeto for user in rows if user.projeto})
     projects_by_name = {
         project.name: project
@@ -716,6 +796,8 @@ def build_inactive_rows(db: Session, *, reference_time=None) -> list[InactiveUse
     } if project_names else {}
 
     for user in rows:
+        if effective_admin_project_set is not None and user.projeto not in effective_admin_project_set:
+            continue
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
             continue
@@ -963,6 +1045,7 @@ def merge_user_profile_values(base_value: int | str | None, extra_value: int | s
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
+    all_project_names = list_project_names(db)
     admin_candidates = db.execute(
         select(User)
         .where(User.perfil != 0)
@@ -975,6 +1058,7 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
     for admin in admins:
         status = "password_reset_requested" if admin.senha is None else "active"
         status_label = describe_user_profile(admin.perfil)
+        monitored_projects = resolve_effective_admin_monitored_projects(admin, all_project_names)
         if admin.senha is None:
             status_label = f"{status_label} | senha pendente"
         rows.append(
@@ -984,6 +1068,7 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
                 chave=admin.chave,
                 nome=admin.nome,
                 perfil=admin.perfil,
+                monitored_projects=all_project_names if monitored_projects is None else monitored_projects,
                 status=status,
                 status_label=status_label,
                 can_revoke=True,
@@ -1607,7 +1692,8 @@ def remove_admin_project(
     if len(all_projects) <= 1:
         raise HTTPException(status_code=409, detail="Nao e possivel remover o ultimo projeto cadastrado.")
 
-    fallback_project = next((row.name for row in all_projects if row.id != project.id), None)
+    remaining_project_names = sorted(row.name for row in all_projects if row.id != project.id)
+    fallback_project = next(iter(remaining_project_names), None)
     linked_users = db.execute(select(User).where(User.projeto == project.name).order_by(User.id)).scalars().all()
     blocked_users = [user for user in linked_users if not user_has_admin_access(user)]
     if blocked_users:
@@ -1634,6 +1720,22 @@ def remove_admin_project(
         linked_location.updated_at = now_sgt()
         reassigned_location_count += 1
 
+    updated_admin_scope_count = 0
+    for administrator in db.execute(select(User).order_by(User.id)).scalars().all():
+        if not user_has_admin_access(administrator):
+            continue
+
+        explicit_projects = extract_admin_monitored_projects(administrator)
+        if explicit_projects is None or project.name not in explicit_projects:
+            continue
+
+        next_projects = [project_name for project_name in explicit_projects if project_name != project.name]
+        if not next_projects or next_projects == remaining_project_names:
+            administrator.admin_monitored_projects_json = None
+        else:
+            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(next_projects)
+        updated_admin_scope_count += 1
+
     db.delete(project)
     log_event(
         db,
@@ -1645,7 +1747,8 @@ def remove_admin_project(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; project_name={project.name}; project_id={project_id}; "
-            f"reassigned_admin_users={len(linked_users)}; reassigned_locations={reassigned_location_count}"
+            f"reassigned_admin_users={len(linked_users)}; reassigned_locations={reassigned_location_count}; "
+            f"updated_admin_scopes={updated_admin_scope_count}"
         ),
     )
     db.commit()
@@ -1707,6 +1810,7 @@ def approve_administrator_request(
                 perfil=requested_profile,
                 nome=access_request.nome_completo,
                 projeto=default_project_name,
+                admin_monitored_projects_json=None,
                 workplace=None,
                 placa=None,
                 end_rua=None,
@@ -1725,6 +1829,7 @@ def approve_administrator_request(
         if requested_profile != TRANSPORT_ACCESS_DIGIT or existing_admin.senha is None:
             existing_admin.senha = access_request.password_hash
         existing_admin.perfil = merge_user_profile_values(existing_admin.perfil, requested_profile)
+        existing_admin.admin_monitored_projects_json = None
 
     log_event(
         db,
@@ -1752,6 +1857,15 @@ def update_administrator_profile(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
+    try:
+        payload = AdminProfileUpdateRequest.model_validate(
+            payload.model_dump(),
+            context={"allowed_project_names": list_project_names(db)},
+        )
+    except ValidationError as error:
+        request_validation_errors = build_request_validation_errors(error)
+        raise RequestValidationError(request_validation_errors) from error
+
     administrator = db.get(User, admin_id)
     if administrator is None or not user_has_admin_access(administrator):
         log_event(
@@ -1769,23 +1883,38 @@ def update_administrator_profile(
 
     previous_profile = normalize_user_profile(administrator.perfil)
     next_profile = normalize_administrator_profile(payload.perfil)
+    all_project_names = list_project_names(db)
+    previous_monitored_projects = resolve_effective_admin_monitored_projects(administrator, all_project_names)
+    next_monitored_projects = previous_monitored_projects
+
+    if payload.monitored_projects is not None:
+        if set(payload.monitored_projects) == set(all_project_names):
+            administrator.admin_monitored_projects_json = None
+            next_monitored_projects = None
+        else:
+            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(payload.monitored_projects)
+            next_monitored_projects = extract_admin_monitored_projects(administrator)
+
     administrator.perfil = next_profile
     log_event(
         db,
         source="admin",
         action="admin_access",
         status="updated",
-        message="Administrator profile updated",
+        message="Administrator configuration updated",
         request_path=f"/api/admin/administrators/{admin_id}/profile",
         http_status=200,
         details=(
             f"chave={administrator.chave}; old_profile={previous_profile}; "
-            f"new_profile={next_profile}; updated_by={current_admin.chave}"
+            f"new_profile={next_profile}; "
+            f"old_monitored_projects={json.dumps(previous_monitored_projects, ensure_ascii=True, separators=(",", ":")) if previous_monitored_projects is not None else 'ALL'}; "
+            f"new_monitored_projects={json.dumps(next_monitored_projects, ensure_ascii=True, separators=(",", ":")) if next_monitored_projects is not None else 'ALL'}; "
+            f"updated_by={current_admin.chave}"
         ),
     )
     db.commit()
     notify_admin_views("admin", "event")
-    return AdminActionResponse(ok=True, message="Perfil do administrador atualizado com sucesso.")
+    return AdminActionResponse(ok=True, message="Configuracoes do administrador atualizadas com sucesso.")
 
 
 @router.post(
@@ -1948,20 +2077,26 @@ def set_administrator_password(
     return AdminActionResponse(ok=True, message="Nova senha cadastrada com sucesso.")
 
 
-@router.get("/checkin", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
-def list_checkin(db: Session = Depends(get_db)) -> list[UserRow]:
+@router.get("/checkin", response_model=list[UserRow])
+def list_checkin(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> list[UserRow]:
     reference_time = now_sgt()
     if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-    return build_presence_rows(db, action="checkin", reference_time=reference_time)
+    return build_presence_rows(db, action="checkin", current_admin=current_admin, reference_time=reference_time)
 
 
-@router.get("/checkout", response_model=list[UserRow], dependencies=[Depends(require_admin_session)])
-def list_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
+@router.get("/checkout", response_model=list[UserRow])
+def list_checkout(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> list[UserRow]:
     reference_time = now_sgt()
     if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-    return build_presence_rows(db, action="checkout", reference_time=reference_time)
+    return build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
 
 
 @router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_full_admin_session)])
@@ -1995,12 +2130,26 @@ def export_report_events(
     )
 
 
-@router.delete("/forms", dependencies=[Depends(require_full_admin_session)])
-def clear_provider_forms() -> None:
-    raise HTTPException(
-        status_code=405,
-        detail="A aba Forms agora e somente leitura e usa o historico canonico de sincronizacao.",
+@router.get("/reports/events/export-all", dependencies=[Depends(require_full_admin_session)])
+def export_all_report_events(
+    db: Session = Depends(get_db),
+) -> Response:
+    file_name, content = build_all_report_events_export(db)
+    return Response(
+        content=content,
+        media_type=REPORT_EXPORT_CONTENT_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@router.delete("/forms", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
+def clear_provider_forms(db: Session = Depends(get_db)) -> AdminActionResponse:
+    cleared_count = delete_provider_forms_rows(db)
+    db.commit()
+    notify_admin_views("event")
+    if cleared_count == 0:
+        return AdminActionResponse(ok=True, message="Nao havia registros de Forms para remover.")
+    return AdminActionResponse(ok=True, message=f"{cleared_count} registro(s) de Forms removido(s) com sucesso.")
 
 
 @router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_full_admin_session)])
@@ -2011,12 +2160,15 @@ def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     return build_missing_checkout_rows(db, reference_time=reference_time)
 
 
-@router.get("/inactive", response_model=list[InactiveUserRow], dependencies=[Depends(require_full_admin_session)])
-def list_inactive(db: Session = Depends(get_db)) -> list[InactiveUserRow]:
+@router.get("/inactive", response_model=list[InactiveUserRow])
+def list_inactive(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[InactiveUserRow]:
     reference_time = now_sgt()
     if sync_user_inactivity(db, reference_time=reference_time):
         db.commit()
-    return build_inactive_rows(db, reference_time=reference_time)
+    return build_inactive_rows(db, current_admin=current_admin, reference_time=reference_time)
 
 
 @router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_full_admin_session)])

@@ -23,6 +23,21 @@ test('check-in and check-out tables share the same fixed-width class', () => {
 
 test('forms table assigns explicit widths to every visible column including Hora', () => {
   assert.match(adminHtml, /class="responsive-table forms-table"/);
+  assert.match(adminHtml, /id="refreshFormsButton"[\s\S]*id="clearFormsButton"/);
   assert.match(adminCss, /\.forms-table th:nth-child\(5\),[\s\S]*\.forms-table td:nth-child\(5\) \{[\s\S]*width:\s*136px;/);
   assert.match(adminCss, /\.forms-table th:nth-child\(9\),[\s\S]*\.forms-table td:nth-child\(9\) \{[\s\S]*width:\s*88px;/);
+});
+
+test('forms tab wires the clear button to delete only the Forms records and refresh the table state', () => {
+  const adminJs = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/admin/app.js'),
+    'utf8'
+  );
+
+  assert.match(adminJs, /async function clearForms\(\) \{/);
+  assert.match(adminJs, /window\.confirm\("Deseja remover todos os registros da tabela Forms\?"\)/);
+  assert.match(adminJs, /deleteJson\("\/api\/admin\/forms"\)/);
+  assert.match(adminJs, /const clearFormsButton = document\.getElementById\("clearFormsButton"\);/);
+  assert.match(adminJs, /runFormsClear\(clearFormsButton\)/);
+  assert.match(adminJs, /updateFormsClearButtonState\(\);/);
 });

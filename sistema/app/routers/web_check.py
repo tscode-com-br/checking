@@ -574,7 +574,10 @@ def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> 
         select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
     items = [row.local for row in filter_locations_for_project(rows, user.projeto)]
-    return WebLocationOptionsResponse(items=items)
+    return WebLocationOptionsResponse(
+        items=items,
+        location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+    )
 
 
 @router.post("/check/location", response_model=WebLocationMatchResponse)

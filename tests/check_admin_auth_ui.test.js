@@ -34,7 +34,7 @@ test('admin login page exposes the new utility buttons and change-password modal
   assert.match(adminHtml, /id="requestAdminRegistrationSenha"[\s\S]*maxlength="10"/);
   assert.match(adminHtml, /id="requestAdminRegistrationConfirm"[\s\S]*maxlength="10"/);
   assert.match(adminHtml, /id="changePasswordSaveButton"[\s\S]*disabled[\s\S]*>Salvar</);
-  assert.match(adminHtml, /<tr><th>Chave<\/th><th>Nome<\/th><th>Perfil<\/th><th>Acessos<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>Chave<\/th><th>Nome<\/th><th>Perfil<\/th><th>Projetos<\/th><th>Acessos<\/th><th>Ações<\/th><\/tr>/);
 });
 
 test('admin login utility buttons keep the requested black and white styling', () => {
@@ -61,10 +61,12 @@ test('admin change-password controller verifies the current password in real tim
 
 test('administrators table renders editable profiles and request approval actions', () => {
   assert.match(adminJs, /data-admin-profile-input="\$\{row\.id\}"/);
+  assert.match(adminJs, /data-admin-project-option="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-approve="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-reject="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-revoke="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-profile-save="\$\{row\.id\}"/);
   assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/requests\/\$\{id\}\/approve`, \{ perfil: profile \}\);/);
-  assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/\$\{id\}\/profile`, \{ perfil: profile \}\);/);
+  assert.match(adminJs, /const monitoredProjects = readAdministratorMonitoredProjects\(id\);/);
+  assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/\$\{id\}\/profile`, \{[\s\S]*perfil: profile,[\s\S]*monitored_projects: monitoredProjects,[\s\S]*\}\);/);
 });

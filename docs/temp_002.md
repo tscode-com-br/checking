@@ -739,7 +739,7 @@ Execucao registrada em 2026-04-25:
 
 - [ ] Diferenciar com clareza o modo silencioso do modo interativo apenas onde isso trouxer ganho real de compreensão para o usuário.
 - [ ] Atualizar os textos do refresh manual para explicar que o sistema está buscando uma leitura GPS mais precisa, e não apenas repetindo a consulta.
-- [ ] Exibir, no fluxo manual, a melhor precisão já obtida e o limite administrativo correspondente durante a captura, sem poluir os gatilhos silenciosos.
+- [x] Exibir, no fluxo manual, a melhor precisão já obtida e o limite administrativo correspondente durante a captura, sem poluir os gatilhos silenciosos.
 - [ ] Ajustar a mensagem final de sucesso técnico para informar quando a precisão suficiente for atingida antes do fim da janela.
 - [ ] Ajustar a mensagem final de falha para informar a melhor precisão obtida quando ela continuar acima do limite.
 - [ ] Garantir que o botão `Atualizar localização` mantenha estados corretos de `loading`, `aria-busy`, `aria-label` e `title` durante toda a sessão.
@@ -747,6 +747,12 @@ Execucao registrada em 2026-04-25:
 - [ ] Manter qualquer diagnóstico apenas no escopo local de homologação, com logs discretos e facilmente removíveis ou desativáveis.
 - [ ] Não introduzir telemetria nova de servidor, novo endpoint de diagnóstico nem alteração de payload nesta demanda.
 - [ ] Só abrir escopo em `index.html` ou `styles.css` se uma revisão visual controlada provar que a UX mínima aprovada não cabe no layout atual.
+
+Execucao registrada em 2026-04-25:
+
+1. O fluxo com `watch_window` passou a atualizar o card de localizacao em tempo real sempre que surgir uma amostra melhor, mantendo o label `Buscando melhor precisão...` e exibindo no proprio card a melhor `Precisão X m / Limite Y m` observada ate aquele instante.
+2. A atualizacao incremental foi limitada aos fluxos que ja exibem estado de deteccao (`showDetectingState = true`), evitando poluir os gatilhos silenciosos de ciclo de vida com mensagens intermediarias.
+3. O contrato HTTP permaneceu intacto: as coordenadas continuam sendo enviadas ao backend apenas uma vez, no encerramento da janela, mas a UX manual agora deixa claro que novas amostras GPS estao sendo recebidas durante a espera.
 
 ### Fase 5. Testes automatizados e proteção de contrato
 

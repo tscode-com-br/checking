@@ -2,9 +2,10 @@ import re
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from .models import ManagedLocation
+from .services.admin_project_scope import normalize_admin_monitored_project_names
 from .services.location_audit import audit_managed_location
 from .services.managed_locations import dump_location_coordinates
 from .services.project_catalog import (
@@ -227,6 +228,39 @@ def _validate_web_password(value: str, field_name: str) -> str:
 
 def _normalize_project_value(value: str) -> str:
     return normalize_project_name(value)
+
+
+def _normalize_admin_monitored_projects_value(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raise ValueError("Os projetos monitorados devem ser enviados como lista")
+    if not isinstance(value, (list, tuple, set)):
+        raise ValueError("Os projetos monitorados devem ser enviados como lista")
+
+    normalized = normalize_admin_monitored_project_names(value)
+    if not normalized:
+        raise ValueError("Selecione ao menos um projeto para o administrador.")
+    return normalized
+
+
+def _validate_monitored_projects_against_catalog(
+    monitored_projects: list[str] | None,
+    info: ValidationInfo,
+) -> list[str] | None:
+    if monitored_projects is None:
+        return None
+
+    context = info.context if isinstance(info.context, dict) else None
+    allowed_project_names = context.get("allowed_project_names") if context else None
+    if allowed_project_names is None:
+        return monitored_projects
+
+    allowed_projects = set(normalize_admin_monitored_project_names(allowed_project_names))
+    invalid_projects = [project_name for project_name in monitored_projects if project_name not in allowed_projects]
+    if invalid_projects:
+        raise ValueError("Um ou mais projetos monitorados nao existem no catalogo atual")
+    return monitored_projects
 
 
 class HealthResponse(BaseModel):
@@ -593,11 +627,26 @@ class AdminSelfAccessRequest(BaseModel):
 
 class AdminProfileUpdateRequest(BaseModel):
     perfil: int = Field(ge=0, le=999)
+    monitored_projects: list[str] | None = None
 
     @field_validator("perfil", mode="before")
     @classmethod
     def validate_admin_profile_value(cls, value: int | str | None) -> int:
         return max(0, int(value or 0))
+
+    @field_validator("monitored_projects", mode="before")
+    @classmethod
+    def validate_admin_monitored_projects(cls, value: object) -> list[str] | None:
+        return _normalize_admin_monitored_projects_value(value)
+
+    @field_validator("monitored_projects")
+    @classmethod
+    def validate_admin_monitored_projects_against_catalog(
+        cls,
+        value: list[str] | None,
+        info: ValidationInfo,
+    ) -> list[str] | None:
+        return _validate_monitored_projects_against_catalog(value, info)
 
 
 class AdminPasswordResetRequest(BaseModel):
@@ -703,12 +752,29 @@ class AdminManagementRow(BaseModel):
     chave: str
     nome: str
     perfil: int | None = None
+    monitored_projects: list[str] = Field(default_factory=list)
     status: Literal["active", "pending", "password_reset_requested"]
     status_label: str
     can_revoke: bool
     can_approve: bool
     can_reject: bool
     can_set_password: bool
+
+    @field_validator("monitored_projects", mode="before")
+    @classmethod
+    def validate_management_row_monitored_projects(cls, value: object) -> list[str]:
+        normalized = _normalize_admin_monitored_projects_value(value)
+        return normalized or []
+
+    @field_validator("monitored_projects")
+    @classmethod
+    def validate_management_row_monitored_projects_against_catalog(
+        cls,
+        value: list[str],
+        info: ValidationInfo,
+    ) -> list[str]:
+        validated = _validate_monitored_projects_against_catalog(value, info)
+        return validated or []
 
 
 class TransportIdentity(BaseModel):
@@ -1780,6 +1846,7 @@ class WebCheckHistoryResponse(BaseModel):
 
 class WebLocationOptionsResponse(BaseModel):
     items: list[str]
+    location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
 
 
 class WebProjectUpdateRequest(BaseModel):
