@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-	&& playwright install --with-deps chromium \
+	&& playwright install --with-deps --only-shell chromium \
 	&& rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 COPY alembic.ini ./

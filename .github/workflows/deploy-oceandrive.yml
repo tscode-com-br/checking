@@ -144,6 +144,26 @@ jobs:
           strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
           rsh: ${{ steps.ssh_verification.outputs.rsh }}
 
+      - name: Snapshot disk usage before restart
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            echo "[snapshot] before restart"
+            date -Is
+            df -h /
+            echo "[docker-system-df]"
+            docker system df
+            echo "[tmp]"
+            du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
+
       - name: Pull and restart services
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
@@ -174,6 +194,26 @@ jobs:
             CHECKCHECK_APP_IMAGE="$APP_IMAGE" docker compose pull app
             docker logout ghcr.io || true
             CHECKCHECK_APP_IMAGE="$APP_IMAGE" docker compose up -d --no-build --force-recreate --remove-orphans app
+
+      - name: Snapshot disk usage after restart
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            echo "[snapshot] after restart"
+            date -Is
+            df -h /
+            echo "[docker-system-df]"
+            docker system df
+            echo "[tmp]"
+            du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
       - name: Validate application health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
@@ -235,3 +275,23 @@ jobs:
           script: |
             set -e
             /usr/local/sbin/checkcheck-ssd-cleanup
+
+      - name: Snapshot disk usage after cleanup
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            echo "[snapshot] after cleanup"
+            date -Is
+            df -h /
+            echo "[docker-system-df]"
+            docker system df
+            echo "[tmp]"
+            du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
