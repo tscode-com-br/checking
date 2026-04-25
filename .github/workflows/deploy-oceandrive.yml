@@ -139,6 +139,7 @@ jobs:
             rm -rf checking_android_new checking_kotlin checking_kotlin_new
 
       - name: Sync project to server
+        id: sync_project
         uses: burnett01/rsync-deployments@dc0d5d44c4728aad3f02154a87309809e62a960f # 8.0.4
         with:
           switches: >-
@@ -297,7 +298,7 @@ jobs:
             exit 1
 
       - name: Install SSD cleanup automation
-        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.sync_project.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -319,7 +320,7 @@ jobs:
             systemctl enable --now checkcheck-ssd-cleanup.timer
 
       - name: Run SSD cleanup now
-        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.sync_project.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -334,7 +335,7 @@ jobs:
             /usr/local/sbin/checkcheck-ssd-cleanup
 
       - name: Snapshot disk usage after cleanup
-        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.sync_project.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -355,7 +356,7 @@ jobs:
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
       - name: Verify deploy residue guard
-        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.sync_project.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
