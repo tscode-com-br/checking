@@ -76,8 +76,9 @@ Esse workflow:
 10. executa `docker compose pull` da imagem publicada e `docker compose up -d --no-build --force-recreate`;
 11. registra snapshot de disco depois do restart;
 12. valida `http://127.0.0.1:8000/api/health` no servidor;
-13. instala ou atualiza a automação periódica de limpeza de SSD no droplet;
-14. faz prune de artefatos Docker não utilizados, remove temporários antigos e registra snapshot final de disco.
+13. instala ou atualiza a automação periódica de limpeza de SSD no droplet mesmo se a validação de health falhar depois do restart;
+14. faz prune de artefatos Docker não utilizados, remove temporários antigos e registra snapshot final de disco mesmo em falhas pós-restart, evitando lixo residual até o próximo deploy bem-sucedido;
+15. executa um `Deploy residue guard` no droplet para falhar o workflow se ainda restarem imagens dangling, containers parados, diretórios temporários de deploy ou imagens extras do app além da que está realmente em execução.
 
 Resumo: push em `main` do root publica o código, gera a imagem fora do droplet e envia o deploy para a DigitalOcean automaticamente com bem menos pressão de disco no servidor e com um bloqueio preventivo antes do `pull` se o espaço livre do root ficar insuficiente.
 
@@ -229,6 +230,7 @@ Impacto:
 - esse comando publica o código no GitHub e dispara o workflow global de deploy na DigitalOcean;
 - o build pesado da imagem deixa de acontecer no droplet principal e passa a ocorrer no GitHub Actions, reduzindo acúmulo recorrente em `/var/lib/containerd` e áreas afins;
 - o workflow agora executa uma limpeza preventiva e um `Preflight deploy disk guard` antes do `docker compose pull`, para falhar cedo quando o espaço livre do root ficar abaixo do piso configurado em vez de estourar SSD no meio da troca de imagem;
+- o workflow agora também executa a limpeza final e a verificação de resíduo mesmo quando o restart já ocorreu mas o health falha logo depois, evitando que uma tentativa malsucedida deixe imagem antiga ou diretório temporário sobrando até o deploy seguinte;
 - `main` continua sendo branch sensível, porque qualquer push nela provoca rollout de produção;
 - se a orientação for risco zero, não faça push em `main` sem aprovação explícita.
 

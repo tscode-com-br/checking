@@ -218,6 +218,7 @@ jobs:
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
       - name: Pull and restart services
+        id: restart_services
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -269,6 +270,7 @@ jobs:
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
       - name: Validate application health
+        id: validate_application_health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -295,6 +297,7 @@ jobs:
             exit 1
 
       - name: Install SSD cleanup automation
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -316,6 +319,7 @@ jobs:
             systemctl enable --now checkcheck-ssd-cleanup.timer
 
       - name: Run SSD cleanup now
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -330,6 +334,7 @@ jobs:
             /usr/local/sbin/checkcheck-ssd-cleanup
 
       - name: Snapshot disk usage after cleanup
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -348,3 +353,60 @@ jobs:
             docker system df
             echo "[tmp]"
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
+
+      - name: Verify deploy residue guard
+        if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.restart_services.conclusion == 'success' }}
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 3m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+
+            dangling_images="$(docker image ls --filter dangling=true -q | sed '/^$/d' | wc -l | tr -d ' ')"
+            exited_containers="$(docker ps -aq -f status=exited | sed '/^$/d' | wc -l | tr -d ' ')"
+            stale_temp_dirs="$(find /tmp /var/tmp -maxdepth 1 \( -name 'checkcheck-deploy-*' -o -name 'checkcheck-stage-*' -o -name 'checkcheck-rsync-*' \) -print 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' ')"
+            app_container_id="$(docker compose ps -q app | head -n 1)"
+
+            if [ -z "$app_container_id" ]; then
+              echo "App container not found while validating deploy residue guard."
+              docker compose ps || true
+              exit 1
+            fi
+
+            running_app_image_id="$(docker inspect -f '{{.Image}}' "$app_container_id")"
+            app_image_ids="$(docker image ls ghcr.io/tscode-com-br/checkcheck-app --no-trunc --format '{{.ID}}' | sed '/^$/d' | sort -u)"
+            app_image_count="$(printf '%s\n' "$app_image_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+            if [ "$dangling_images" -ne 0 ]; then
+              echo "Found dangling Docker images after deploy cleanup."
+              docker image ls --filter dangling=true || true
+              exit 1
+            fi
+
+            if [ "$exited_containers" -ne 0 ]; then
+              echo "Found exited containers after deploy cleanup."
+              docker ps -a -f status=exited || true
+              exit 1
+            fi
+
+            if [ "$stale_temp_dirs" -ne 0 ]; then
+              echo "Found stale deploy temp directories after cleanup."
+              find /tmp /var/tmp -maxdepth 1 \( -name 'checkcheck-deploy-*' -o -name 'checkcheck-stage-*' -o -name 'checkcheck-rsync-*' \) -print 2>/dev/null || true
+              exit 1
+            fi
+
+            if [ "$app_image_count" -ne 1 ] || ! printf '%s\n' "$app_image_ids" | grep -Fxq "$running_app_image_id"; then
+              echo "Found unexpected Checkcheck app images after cleanup."
+              echo "Running app image: $running_app_image_id"
+              docker image ls ghcr.io/tscode-com-br/checkcheck-app --no-trunc || true
+              exit 1
+            fi
+
+            echo "Deploy residue guard passed with only the active app image remaining on disk."
