@@ -676,7 +676,7 @@ test('check controller source parses as valid JavaScript', () => {
 
 test('check page keeps Projeto, Local and Informe controls addressable for toggle-driven visibility', () => {
   assert.doesNotMatch(checkHtml, /<title>\s*Checking Mobile Web\s*<\/title>/);
-  assert.match(checkHtml, /<span class="header-logo-text">\s*Checking Weblink\s*<\/span>/);
+  assert.match(checkHtml, /<span class="header-logo-text">\s*Checking Web\s*<\/span>/);
   assert.match(checkHtml, /id="automaticActivitiesToggle"/);
   assert.match(checkHtml, /id="projectField"/);
   assert.match(checkHtml, /id="locationSelectField"/);

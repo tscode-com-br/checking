@@ -558,7 +558,7 @@ async def run_accuracy_scenario(browser, scenario: dict[str, object]) -> dict[st
             chave=str(scenario["chave"]),
         )
         print(f"[temp_008_phase6] submit_ok {scenario['name']}", flush=True)
-        assert_condition(ui_state["headerTitle"] == "Checking Weblink", f"Unexpected header title: {ui_state['headerTitle']}")
+        assert_condition(ui_state["headerTitle"] == "Checking Web", f"Unexpected header title: {ui_state['headerTitle']}")
         return {
             "scenario": scenario["name"],
             "automatic_enabled": scenario["expected_automatic"],
@@ -591,7 +591,7 @@ async def run_no_permission_scenario(browser, scenario: dict[str, object]) -> di
             chave=str(scenario["chave"]),
         )
         print(f"[temp_008_phase6] submit_ok {scenario['name']}", flush=True)
-        assert_condition(ui_state["headerTitle"] == "Checking Weblink", f"Unexpected header title: {ui_state['headerTitle']}")
+        assert_condition(ui_state["headerTitle"] == "Checking Web", f"Unexpected header title: {ui_state['headerTitle']}")
         return {
             "scenario": scenario["name"],
             "automatic_enabled": scenario["expected_automatic"],

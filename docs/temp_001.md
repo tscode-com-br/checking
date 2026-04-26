@@ -1341,17 +1341,21 @@ Nota de execução 17.25 (2026-04-26): etapa concluída em `checking_kotlin_new/
 
 ### 17.26. Grupo `Registro`
 
-- [ ] Implementar os rádios `Check-In` e `Check-Out`.
-- [ ] Implementar o botão de transporte com o rótulo e a aparência equivalentes à SPA.
-- [ ] Manter a legenda com `Atividades Automáticas` acima de `Registro`.
-- [ ] Implementar desabilitação dos controles quando a SPA equivalente assim o fizer.
-- [ ] Garantir que o botão de transporte respeite os estados de bloqueio da tela principal.
+- [x] Implementar os rádios `Check-In` e `Check-Out`.
+- [x] Implementar o botão de transporte com o rótulo e a aparência equivalentes à SPA.
+- [x] Manter a legenda com `Atividades Automáticas` acima de `Registro`.
+- [x] Implementar desabilitação dos controles quando a SPA equivalente assim o fizer.
+- [x] Garantir que o botão de transporte respeite os estados de bloqueio da tela principal.
+
+Nota de execução 17.26 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-registration-group.md`. O grupo `Registro` deixou de ser estático no shell Kotlin novo: `Check-In` e `Check-Out` agora atualizam um `selectedAction` real no `SessionGateViewModel`, o shell passou a mapear o rótulo `Em Teste` e os bloqueios equivalentes da SPA, e os choice cards ficaram clicáveis sem depender de estado local descartável. A escolha manual de ação também é descartada quando o histórico é recarregado, em troca de `chave`, relock por senha ou falha de autenticação, preservando a mesma primazia da sugestão do histórico observada no webapp. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.27. Grupo `Informe`
 
-- [ ] Implementar os rádios `Normal` e `Retroativo`.
-- [ ] Garantir a mesma ordem visual e semântica da SPA.
-- [ ] Garantir desabilitação quando a UI estiver travada ou o fluxo equivalente exigir.
+- [x] Implementar os rádios `Normal` e `Retroativo`.
+- [x] Garantir a mesma ordem visual e semântica da SPA.
+- [x] Garantir desabilitação quando a UI estiver travada ou o fluxo equivalente exigir.
+
+Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-informe-group.md`. O grupo `Informe` deixou de ser estático no shell Kotlin novo: `Normal` e `Retroativo` agora vivem em `selectedInforme` no `SessionGateViewModel`, o mapper passou a controlar `informeVisible` e `informeGroupEnabled`, e a mesma regra da SPA que oculta o grupo sob `Atividades Automáticas` passou a forçar o valor de volta para `normal`. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.28. Fluxo manual de check-in/check-out
 
