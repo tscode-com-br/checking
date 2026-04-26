@@ -9587,6 +9587,46 @@ def test_web_check_updates_user_local_when_location_is_provided():
             assert user.local == "Web Match P80"
 
 
+def test_web_check_accepts_synthetic_accuracy_fallback_local():
+    client_event_id = f"web-check-local-fallback-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        auth_response = register_web_password(client, chave="WB15", senha="local2", projeto="P80")
+        assert auth_response.status_code == 200
+
+        response = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB15",
+                "projeto": "P80",
+                "action": "checkin",
+                "local": "Precisao Insuficiente",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        history = client.get("/api/web/check/state", params={"chave": "WB15"})
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert history.status_code == 200
+        assert history.json() == {
+            "found": True,
+            "chave": "WB15",
+            "projeto": "P80",
+            "current_action": "checkin",
+            "current_local": "Precisao Insuficiente",
+            "has_current_day_checkin": True,
+            "last_checkin_at": response.json()["state"]["last_checkin_at"],
+            "last_checkout_at": None,
+        }
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WB15")
+            assert user.local == "Precisao Insuficiente"
+
+
 def test_web_check_reuses_flutter_like_hidden_project_for_checkout():
     first_event_time = now_sgt()
     second_event_time = first_event_time + timedelta(minutes=4)

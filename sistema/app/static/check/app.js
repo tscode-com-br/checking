@@ -163,6 +163,7 @@
   const locationMeasurementConsoleLabel = '[checking.location.measurement]';
   const locationMeasurementSessionLimit = 120;
   const defaultManualLocationLabel = 'Escritório Principal';
+  const accuracyFallbackManualLocationLabel = 'Precisao Insuficiente';
   const transportAutoRefreshIntervalMs = 10000;
   const transportRealtimeRefreshDebounceMs = 220;
   let allowedProjectValues = Array.from(projectSelect.options)
@@ -1009,6 +1010,8 @@
     const dialogOpen = isAnyDialogOpen();
     const unlocked = isApplicationUnlocked();
     const automaticActivitiesEnabled = isAutomaticActivitiesEnabled();
+    const manualOverrideActive = isAccuracyTooLowManualFallbackActive();
+    const manualLocationOptions = resolveManualLocationOptions();
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
@@ -1027,7 +1030,7 @@
       || projectCatalogLoading
       || projectUpdateInProgress
       || allowedProjectValues.length === 0
-      || isAutomaticActivitiesEnabled();
+      || (automaticActivitiesEnabled && !manualOverrideActive);
 
     processControls.forEach((control) => {
       if (!control) {
@@ -1035,12 +1038,12 @@
       }
 
       if (actionInputs.includes(control)) {
-        control.disabled = dialogOpen || lockActive || !unlocked || automaticActivitiesEnabled;
+        control.disabled = dialogOpen || lockActive || !unlocked || (automaticActivitiesEnabled && !manualOverrideActive);
         return;
       }
 
       if (control === manualLocationSelect) {
-        control.disabled = dialogOpen || lockActive || !unlocked || gpsLocationPermissionGranted || availableLocations.length === 0;
+        control.disabled = dialogOpen || lockActive || !unlocked || !shouldAllowManualLocationSelection() || manualLocationOptions.length === 0;
         return;
       }
 
@@ -1050,7 +1053,7 @@
       }
 
       if (control === submitButton) {
-        control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress || automaticActivitiesEnabled;
+        control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress || (automaticActivitiesEnabled && !manualOverrideActive);
         return;
       }
 
@@ -4380,9 +4383,14 @@
   async function updateCurrentUserProjectSelection() {
     const normalizedChave = getActiveChave();
     const nextProject = normalizeKnownProjectValue(projectSelect.value, lastCommittedProjectValue || defaultProjectValue);
+    const manualOverrideActive = isAccuracyTooLowManualFallbackActive();
     syncProjectSelectOptions({ mainValue: nextProject });
 
-    if (normalizedChave.length !== 4 || !isApplicationUnlocked(normalizedChave) || isAutomaticActivitiesEnabled()) {
+    if (
+      normalizedChave.length !== 4
+      || !isApplicationUnlocked(normalizedChave)
+      || (isAutomaticActivitiesEnabled() && !manualOverrideActive)
+    ) {
       persistCurrentUserSettings();
       syncFormControlStates();
       return false;
@@ -4458,8 +4466,12 @@
     syncProjectVisibility();
   }
 
+  function isAccuracyTooLowManualFallbackActive() {
+    return gpsLocationPermissionGranted && currentLocationResolutionStatus === 'accuracy_too_low';
+  }
+
   function shouldAllowManualLocationSelection() {
-    return !gpsLocationPermissionGranted || currentLocationResolutionStatus === 'accuracy_too_low';
+    return !gpsLocationPermissionGranted || isAccuracyTooLowManualFallbackActive();
   }
 
   function setLocationWithoutPermission() {
@@ -4671,12 +4683,32 @@
     syncManualLocationControl();
   }
 
-  function getDefaultManualLocation() {
-    if (availableLocations.includes(defaultManualLocationLabel)) {
+  function resolveManualLocationOptions() {
+    const manualLocationOptions = Array.from(new Set(availableLocations));
+
+    if (!isAccuracyTooLowManualFallbackActive() || manualLocationOptions.includes(defaultManualLocationLabel)) {
+      return manualLocationOptions;
+    }
+
+    return [accuracyFallbackManualLocationLabel, ...manualLocationOptions];
+  }
+
+  function resolveManualLocationDefaultForCurrentProject() {
+    const manualLocationOptions = resolveManualLocationOptions();
+
+    if (manualLocationOptions.includes(defaultManualLocationLabel)) {
       return defaultManualLocationLabel;
     }
 
-    return availableLocations[0] || '';
+    if (isAccuracyTooLowManualFallbackActive() && manualLocationOptions.includes(accuracyFallbackManualLocationLabel)) {
+      return accuracyFallbackManualLocationLabel;
+    }
+
+    return manualLocationOptions[0] || '';
+  }
+
+  function getDefaultManualLocation() {
+    return resolveManualLocationDefaultForCurrentProject();
   }
 
   function setLocationSelectOptions(values, selectedValue, options) {
@@ -4715,6 +4747,7 @@
 
   function syncManualLocationControl() {
     const displayedLocation = (locationValue.textContent || '').trim();
+    const manualLocationOptions = resolveManualLocationOptions();
 
     if (!shouldAllowManualLocationSelection()) {
       setLocationSelectOptions(availableLocations, displayedLocation || getDefaultManualLocation(), {
@@ -4725,13 +4758,21 @@
       return;
     }
 
-    const nextManualValue = availableLocations.includes(manualLocationSelect.value)
+    const nextManualValue = manualLocationOptions.includes(manualLocationSelect.value)
       ? manualLocationSelect.value
       : getDefaultManualLocation();
-    setLocationSelectOptions(availableLocations, nextManualValue, {
+    setLocationSelectOptions(manualLocationOptions, nextManualValue, {
       placeholder: 'Sem localizações cadastradas',
     });
     syncFormControlStates();
+  }
+
+  function resolveSubmittedLocationValue() {
+    if (shouldAllowManualLocationSelection()) {
+      return manualLocationSelect.value || null;
+    }
+
+    return currentLocationMatch ? currentLocationMatch.resolved_local : null;
   }
 
   async function loadManualLocations() {
@@ -5470,8 +5511,10 @@
   }
 
   function syncProjectVisibility() {
-    const hideProjectField = isAutomaticActivitiesEnabled();
-    const hideLocationField = isAutomaticActivitiesEnabled() || !shouldAllowManualLocationSelection();
+    const automaticActivitiesEnabled = isAutomaticActivitiesEnabled();
+    const manualOverrideActive = isAccuracyTooLowManualFallbackActive();
+    const hideProjectField = automaticActivitiesEnabled && !manualOverrideActive;
+    const hideLocationField = !shouldAllowManualLocationSelection() || (automaticActivitiesEnabled && !manualOverrideActive);
 
     projectField.classList.toggle('is-hidden', hideProjectField);
     projectField.setAttribute('aria-hidden', String(hideProjectField));
@@ -5854,6 +5897,7 @@
     automaticActivitiesToggle.addEventListener('change', () => {
       persistCurrentUserSettings();
       syncProjectVisibility();
+      syncManualLocationControl();
       if (automaticActivitiesToggle.checked) {
         void runAutomaticActivitiesEnableSequence();
         return;
@@ -5919,7 +5963,7 @@
     const selectedAction = getSelectedValue('action');
     chaveInput.value = chave;
 
-    if (isAutomaticActivitiesEnabled()) {
+    if (isAutomaticActivitiesEnabled() && !isAccuracyTooLowManualFallbackActive()) {
       setStatus('Desative Atividades Automáticas para registrar manualmente.', 'error');
       return;
     }
@@ -5957,9 +6001,7 @@
           chave,
           projeto: projectSelect.value,
           action: selectedAction,
-          local: shouldAllowManualLocationSelection()
-            ? manualLocationSelect.value
-            : (currentLocationMatch ? currentLocationMatch.resolved_local : null),
+          local: resolveSubmittedLocationValue(),
           informe: getSelectedInformeValue(),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),

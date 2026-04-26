@@ -97,7 +97,8 @@ header {
 
 .header-logo-text {
   font-size: clamp(1.1rem, 4.3vw, 1.8rem);
-  font-style: italic;
+  color: #ffffff;
+  font-style: normal;
   font-weight: 800;
   letter-spacing: -0.03em;
 }

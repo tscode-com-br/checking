@@ -280,9 +280,11 @@ function createManualLocationFallbackHarness() {
     'let gpsLocationPermissionGranted = false;',
     'let currentLocationMatch = null;',
     'let currentLocationResolutionStatus = null;',
+    extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
     extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
     extractFunctionSource(checkScript, 'setResolvedLocation'),
     `globalThis.__manualLocationFallbackTestExports = {
+      isAccuracyTooLowManualFallbackActive,
       shouldAllowManualLocationSelection,
       setGpsLocationPermissionGranted(value) {
         gpsLocationPermissionGranted = Boolean(value);
@@ -305,6 +307,363 @@ function createManualLocationFallbackHarness() {
   };
 }
 
+function createManualOverrideUiHarness() {
+  function createElement() {
+    const classes = new Set();
+    return {
+      disabled: false,
+      textContent: '',
+      value: '',
+      attributes: {},
+      classList: {
+        toggle(name, force) {
+          const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+          if (shouldAdd) {
+            classes.add(name);
+            return;
+          }
+          classes.delete(name);
+        },
+        contains(name) {
+          return classes.has(name);
+        },
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = String(value);
+      },
+      getAttribute(name) {
+        return this.attributes[name];
+      },
+    };
+  }
+
+  const context = {
+    Array,
+    Boolean,
+    Object,
+    __createElement: createElement,
+    __selectedValues: [],
+    isUserInteractionLocked: () => false,
+    syncAuthenticationFieldHighlights: () => {},
+    isPasswordActionBusy: () => false,
+    isAnyDialogOpen: () => false,
+    isApplicationUnlocked: () => true,
+    resolvePasswordActionButtonLabel: () => 'Senha',
+    isPasswordActionAssistanceModeActive: () => false,
+    getActiveChave: () => 'AB12',
+    isMissingUserRegistrationState: () => false,
+    isMissingPasswordRegistrationState: () => false,
+    canSubmitPasswordDialog: () => false,
+    isPasswordRegistrationDialogMode: () => false,
+    setSelectedValue(name, value) {
+      context.__selectedValues.push({ name, value });
+    },
+  };
+
+  const moduleSource = [
+    'let gpsLocationPermissionGranted = false;',
+    'let currentLocationResolutionStatus = null;',
+    'let transportStateLoading = false;',
+    'let transportAddressSaveInProgress = false;',
+    'let transportRequestInProgress = false;',
+    'let transportCancelInProgress = false;',
+    'let transportAcknowledgeInProgress = false;',
+    'let submitInProgress = false;',
+    'let passwordRegisterInProgress = false;',
+    'let passwordChangeInProgress = false;',
+    'let userSelfRegistrationInProgress = false;',
+    'let projectCatalogLoading = false;',
+    'let projectUpdateInProgress = false;',
+    'let locationRefreshLoading = false;',
+    'let passwordLoginInProgress = false;',
+    'let availableLocations = ["Portaria"];',
+    'let allowedProjectValues = ["Projeto A"];',
+    'const automaticActivitiesToggle = { checked: false };',
+    'const projectSelect = globalThis.__createElement();',
+    'const manualLocationSelect = globalThis.__createElement();',
+    'const refreshLocationButton = globalThis.__createElement();',
+    'const submitButton = globalThis.__createElement();',
+    'const projectField = globalThis.__createElement();',
+    'const locationSelectField = globalThis.__createElement();',
+    'const informeField = globalThis.__createElement();',
+    'const form = globalThis.__createElement();',
+    'const actionInputs = [globalThis.__createElement(), globalThis.__createElement()];',
+    'const processControls = [actionInputs[0], actionInputs[1], manualLocationSelect, refreshLocationButton, submitButton];',
+    'const authControls = [];',
+    'const passwordDialogControls = [];',
+    'const registrationDialogControls = [];',
+    'const transportScreenControls = [];',
+    'const transportUiState = { acknowledgementChecked: false };',
+    'const transportButton = null;',
+    'const transportScreen = null;',
+    'const passwordDialog = null;',
+    'const registrationDialog = null;',
+    extractConstSource(checkScript, 'defaultManualLocationLabel'),
+    extractConstSource(checkScript, 'accuracyFallbackManualLocationLabel'),
+    extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
+    extractFunctionSource(checkScript, 'resolveManualLocationOptions'),
+    extractFunctionSource(checkScript, 'isAutomaticActivitiesEnabled'),
+    extractFunctionSource(checkScript, 'syncFormControlStates'),
+    extractFunctionSource(checkScript, 'syncProjectVisibility'),
+    `globalThis.__manualOverrideUiTestExports = {
+      syncFormControlStates,
+      syncProjectVisibility,
+      setAutomaticActivitiesEnabled(value) {
+        automaticActivitiesToggle.checked = Boolean(value);
+      },
+      setGpsLocationPermissionGranted(value) {
+        gpsLocationPermissionGranted = Boolean(value);
+      },
+      setCurrentLocationResolutionStatus(value) {
+        currentLocationResolutionStatus = value;
+      },
+      setAvailableLocations(values) {
+        availableLocations = Array.from(values || []);
+      },
+      getSnapshot() {
+        return {
+          projectHidden: projectField.classList.contains('is-hidden'),
+          locationHidden: locationSelectField.classList.contains('is-hidden'),
+          informeHidden: informeField.classList.contains('is-hidden'),
+          projectDisabled: projectSelect.disabled,
+          manualLocationDisabled: manualLocationSelect.disabled,
+          actionDisabled: actionInputs.map((control) => control.disabled),
+          submitDisabled: submitButton.disabled,
+          selectedValues: globalThis.__selectedValues.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-manual-override-ui.vm.js' });
+  return {
+    helpers: context.__manualOverrideUiTestExports,
+    context,
+  };
+}
+
+function createManualLocationSelectHarness() {
+  function createSelectElement() {
+    return {
+      value: '',
+      options: [],
+      replaceChildren() {
+        this.options = [];
+      },
+      append(option) {
+        this.options.push({
+          value: option.value,
+          textContent: option.textContent,
+        });
+      },
+    };
+  }
+
+  const context = {
+    Array,
+    Boolean,
+    Object,
+    __createSelectElement: createSelectElement,
+    document: {
+      createElement() {
+        return {
+          value: '',
+          textContent: '',
+        };
+      },
+    },
+    syncFormControlStates: () => {},
+  };
+
+  const moduleSource = [
+    'let gpsLocationPermissionGranted = false;',
+    'let currentLocationResolutionStatus = null;',
+    'let availableLocations = [];',
+    'const manualLocationSelect = globalThis.__createSelectElement();',
+    'const locationValue = { textContent: "" };',
+    extractConstSource(checkScript, 'defaultManualLocationLabel'),
+    extractConstSource(checkScript, 'accuracyFallbackManualLocationLabel'),
+    extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
+    extractFunctionSource(checkScript, 'resolveManualLocationOptions'),
+    extractFunctionSource(checkScript, 'resolveManualLocationDefaultForCurrentProject'),
+    extractFunctionSource(checkScript, 'getDefaultManualLocation'),
+    extractFunctionSource(checkScript, 'setLocationSelectOptions'),
+    extractFunctionSource(checkScript, 'syncManualLocationControl'),
+    `globalThis.__manualLocationSelectTestExports = {
+      syncManualLocationControl,
+      resolveManualLocationOptions,
+      resolveManualLocationDefaultForCurrentProject,
+      setGpsLocationPermissionGranted(value) {
+        gpsLocationPermissionGranted = Boolean(value);
+      },
+      setCurrentLocationResolutionStatus(value) {
+        currentLocationResolutionStatus = value;
+      },
+      setAvailableLocations(values) {
+        availableLocations = Array.from(values || []);
+      },
+      setDisplayedLocation(value) {
+        locationValue.textContent = String(value || '');
+      },
+      setManualLocationValue(value) {
+        manualLocationSelect.value = String(value || '');
+      },
+      getSnapshot() {
+        return {
+          options: manualLocationSelect.options.map((option) => option.value),
+          selectedValue: manualLocationSelect.value,
+          resolvedDefault: resolveManualLocationDefaultForCurrentProject(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-manual-location-select.vm.js' });
+  return {
+    helpers: context.__manualLocationSelectTestExports,
+    context,
+  };
+}
+
+function createSubmittedLocationHarness() {
+  const context = {
+    Boolean,
+  };
+
+  const moduleSource = [
+    'let gpsLocationPermissionGranted = false;',
+    'let currentLocationResolutionStatus = null;',
+    'let currentLocationMatch = null;',
+    'const manualLocationSelect = { value: "" };',
+    extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
+    extractFunctionSource(checkScript, 'resolveSubmittedLocationValue'),
+    `globalThis.__submittedLocationTestExports = {
+      resolveSubmittedLocationValue,
+      setGpsLocationPermissionGranted(value) {
+        gpsLocationPermissionGranted = Boolean(value);
+      },
+      setCurrentLocationResolutionStatus(value) {
+        currentLocationResolutionStatus = value;
+      },
+      setCurrentLocationMatch(value) {
+        currentLocationMatch = value;
+      },
+      setManualLocationValue(value) {
+        manualLocationSelect.value = String(value || '');
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-submitted-location.vm.js' });
+  return {
+    helpers: context.__submittedLocationTestExports,
+    context,
+  };
+}
+
+function createProjectSelectionHarness() {
+  const context = {
+    Boolean,
+    Promise,
+    Error,
+    JSON,
+    __calls: {
+      fetches: [],
+      loadManualLocations: 0,
+      persistCurrentUserSettings: 0,
+      syncFormControlStates: 0,
+      syncProjectSelectOptions: [],
+      statuses: [],
+    },
+    fetch: async (url, options) => {
+      context.__calls.fetches.push({
+        url,
+        body: JSON.parse(options.body),
+      });
+      return {
+        ok: true,
+        json: async () => ({
+          project: JSON.parse(options.body).projeto,
+          message: 'Projeto atualizado com sucesso.',
+        }),
+      };
+    },
+    getActiveChave: () => 'AB12',
+    normalizeKnownProjectValue: (value, fallback) => String(value || fallback || ''),
+    syncProjectSelectOptions: (settings) => {
+      context.__calls.syncProjectSelectOptions.push(settings);
+    },
+    isApplicationUnlocked: () => true,
+    persistCurrentUserSettings: () => {
+      context.__calls.persistCurrentUserSettings += 1;
+    },
+    syncFormControlStates: () => {
+      context.__calls.syncFormControlStates += 1;
+    },
+    buildProtectedRequestError: () => new Error('request failed'),
+    loadManualLocations: async () => {
+      context.__calls.loadManualLocations += 1;
+    },
+    setStatus: (message, tone) => {
+      context.__calls.statuses.push({ message, tone });
+    },
+  };
+
+  const moduleSource = [
+    'let gpsLocationPermissionGranted = false;',
+    'let currentLocationResolutionStatus = null;',
+    'let projectUpdateInProgress = false;',
+    'let lastCommittedProjectValue = "Projeto A";',
+    'let latestHistoryState = { projeto: "Projeto A" };',
+    'const defaultProjectValue = "Projeto A";',
+    'const projectUpdateEndpoint = "/api/web/project";',
+    'const projectSelect = { value: "Projeto B" };',
+    'const automaticActivitiesToggle = { checked: false };',
+    extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'isAutomaticActivitiesEnabled'),
+    `async ${extractFunctionSource(checkScript, 'updateCurrentUserProjectSelection')}`,
+    `globalThis.__projectSelectionTestExports = {
+      async updateCurrentUserProjectSelection() {
+        return updateCurrentUserProjectSelection();
+      },
+      setAutomaticActivitiesEnabled(value) {
+        automaticActivitiesToggle.checked = Boolean(value);
+      },
+      setGpsLocationPermissionGranted(value) {
+        gpsLocationPermissionGranted = Boolean(value);
+      },
+      setCurrentLocationResolutionStatus(value) {
+        currentLocationResolutionStatus = value;
+      },
+      setProjectValue(value) {
+        projectSelect.value = String(value || '');
+      },
+      getSnapshot() {
+        return {
+          fetches: globalThis.__calls.fetches.slice(),
+          loadManualLocations: globalThis.__calls.loadManualLocations,
+          persistCurrentUserSettings: globalThis.__calls.persistCurrentUserSettings,
+          syncFormControlStates: globalThis.__calls.syncFormControlStates,
+          syncProjectSelectOptions: globalThis.__calls.syncProjectSelectOptions.slice(),
+          statuses: globalThis.__calls.statuses.slice(),
+          lastCommittedProjectValue,
+          latestHistoryProject: latestHistoryState ? latestHistoryState.projeto : null,
+          projectUpdateInProgress,
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-project-selection.vm.js' });
+  return {
+    helpers: context.__projectSelectionTestExports,
+    context,
+  };
+}
+
 function toPlainValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -317,7 +676,7 @@ test('check controller source parses as valid JavaScript', () => {
 
 test('check page keeps Projeto, Local and Informe controls addressable for toggle-driven visibility', () => {
   assert.doesNotMatch(checkHtml, /<title>\s*Checking Mobile Web\s*<\/title>/);
-  assert.doesNotMatch(checkHtml, /<span class="header-logo-text">\s*Checking\s*<\/span>/);
+  assert.match(checkHtml, /<span class="header-logo-text">\s*Checking Weblink\s*<\/span>/);
   assert.match(checkHtml, /id="automaticActivitiesToggle"/);
   assert.match(checkHtml, /id="projectField"/);
   assert.match(checkHtml, /id="locationSelectField"/);
@@ -325,22 +684,232 @@ test('check page keeps Projeto, Local and Informe controls addressable for toggl
   assert.match(checkHtml, /id="submitButton"[\s\S]*>Registrar</);
 });
 
-test('check controller hides manual controls during automatic mode and reruns lifecycle updates when GPS is available', () => {
-  assert.match(checkScript, /if \(actionInputs\.includes\(control\)\) \{[\s\S]*automaticActivitiesEnabled/);
-  assert.match(checkScript, /control === submitButton[\s\S]*automaticActivitiesEnabled/);
-  assert.match(checkScript, /const hideProjectField = isAutomaticActivitiesEnabled\(\);/);
-  assert.match(checkScript, /const hideLocationField = isAutomaticActivitiesEnabled\(\) \|\| !shouldAllowManualLocationSelection\(\);/);
+test('check controller keeps automatic mode blocked outside the accuracy fallback override and reruns lifecycle updates when GPS is available', () => {
+  const { helpers } = createManualOverrideUiHarness();
+
+  helpers.setAutomaticActivitiesEnabled(true);
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('matched');
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+
+  const matchedSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(matchedSnapshot.projectHidden, true);
+  assert.equal(matchedSnapshot.locationHidden, true);
+  assert.equal(matchedSnapshot.informeHidden, true);
+  assert.equal(matchedSnapshot.projectDisabled, true);
+  assert.equal(matchedSnapshot.manualLocationDisabled, true);
+  assert.deepStrictEqual(matchedSnapshot.actionDisabled, [true, true]);
+  assert.equal(matchedSnapshot.submitDisabled, true);
+
+  helpers.setGpsLocationPermissionGranted(false);
+  helpers.setCurrentLocationResolutionStatus(null);
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+
+  const noPermissionSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(noPermissionSnapshot.projectHidden, true);
+  assert.equal(noPermissionSnapshot.locationHidden, true);
+  assert.equal(noPermissionSnapshot.projectDisabled, true);
+  assert.equal(noPermissionSnapshot.submitDisabled, true);
+
   assert.match(checkScript, /control === manualLocationSelect[\s\S]*!shouldAllowManualLocationSelection\(\)/);
   assert.match(checkScript, /if \(shouldAllowManualLocationSelection\(\) && !manualLocationSelect\.value\) \{/);
-  assert.match(checkScript, /local: shouldAllowManualLocationSelection\(\)[\s\S]*manualLocationSelect\.value[\s\S]*currentLocationMatch \? currentLocationMatch\.resolved_local : null/);
+  assert.match(checkScript, /function resolveSubmittedLocationValue\(\) \{[\s\S]*shouldAllowManualLocationSelection\(\)[\s\S]*manualLocationSelect\.value \|\| null[\s\S]*currentLocationMatch \? currentLocationMatch\.resolved_local : null/);
+  assert.match(checkScript, /local: resolveSubmittedLocationValue\(\)/);
   assert.match(checkScript, /setGpsLocationPermissionGranted\(value\) \{[\s\S]*syncProjectVisibility\(\);/);
+  assert.match(checkScript, /automaticActivitiesToggle\.addEventListener\('change', \(\) => \{[\s\S]*syncProjectVisibility\(\);[\s\S]*syncManualLocationControl\(\);/);
   assert.match(checkScript, /if \(gpsLocationPermissionGranted && isApplicationUnlocked\(\)\) \{[\s\S]*runLifecycleUpdateSequence\(\{[\s\S]*ignoreCooldown: true,[\s\S]*triggerSource: 'automatic_activities_disable',[\s\S]*\}\);/);
-  assert.match(checkScript, /if \(isAutomaticActivitiesEnabled\(\)\) \{[\s\S]*Desative Atividades Automáticas para registrar manualmente\./);
+  assert.match(checkScript, /if \(isAutomaticActivitiesEnabled\(\) && !isAccuracyTooLowManualFallbackActive\(\)\) \{[\s\S]*Desative Atividades Automáticas para registrar manualmente\./);
+});
+
+test('check controller preserves manual override across automatic toggle changes only while accuracy_too_low remains active', () => {
+  const { helpers } = createManualOverrideUiHarness();
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setAvailableLocations(['Portaria']);
+
+  helpers.setAutomaticActivitiesEnabled(false);
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+  const manualModeSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(manualModeSnapshot.projectHidden, false);
+  assert.equal(manualModeSnapshot.projectDisabled, false);
+  assert.equal(manualModeSnapshot.manualLocationDisabled, false);
+
+  helpers.setAutomaticActivitiesEnabled(true);
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+  const automaticModeSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(automaticModeSnapshot.projectHidden, false);
+  assert.equal(automaticModeSnapshot.projectDisabled, false);
+  assert.equal(automaticModeSnapshot.manualLocationDisabled, false);
+
+  helpers.setCurrentLocationResolutionStatus('matched');
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+  const recoveredSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(recoveredSnapshot.projectHidden, true);
+  assert.equal(recoveredSnapshot.projectDisabled, true);
+  assert.equal(recoveredSnapshot.manualLocationDisabled, true);
+});
+
+test('check controller unlocks manual override controls during accuracy_too_low even with automatic mode enabled', () => {
+  const { helpers } = createManualOverrideUiHarness();
+
+  helpers.setAutomaticActivitiesEnabled(true);
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setAvailableLocations(['Portaria']);
+  helpers.syncProjectVisibility();
+  helpers.syncFormControlStates();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.projectHidden, false);
+  assert.equal(snapshot.locationHidden, false);
+  assert.equal(snapshot.informeHidden, true);
+  assert.equal(snapshot.projectDisabled, false);
+  assert.equal(snapshot.manualLocationDisabled, false);
+  assert.deepStrictEqual(snapshot.actionDisabled, [false, false]);
+  assert.equal(snapshot.submitDisabled, false);
+
+  helpers.setAvailableLocations([]);
+  helpers.syncFormControlStates();
+  const syntheticOnlySnapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(syntheticOnlySnapshot.manualLocationDisabled, false);
+});
+
+test('check controller prefers Escritório Principal and falls back to Precisao Insuficiente only during accuracy_too_low', () => {
+  const { helpers } = createManualLocationSelectHarness();
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setAvailableLocations(['Portaria', 'Escritório Principal']);
+  helpers.syncManualLocationControl();
+
+  const preferredDefaultSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(preferredDefaultSnapshot.options, ['Portaria', 'Escritório Principal']);
+  assert.equal(preferredDefaultSnapshot.selectedValue, 'Escritório Principal');
+  assert.equal(preferredDefaultSnapshot.resolvedDefault, 'Escritório Principal');
+
+  helpers.setAvailableLocations(['Portaria']);
+  helpers.setManualLocationValue('');
+  helpers.syncManualLocationControl();
+
+  const syntheticFallbackSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(syntheticFallbackSnapshot.options, ['Precisao Insuficiente', 'Portaria']);
+  assert.equal(syntheticFallbackSnapshot.selectedValue, 'Precisao Insuficiente');
+  assert.equal(syntheticFallbackSnapshot.resolvedDefault, 'Precisao Insuficiente');
+});
+
+test('check controller keeps the no-permission manual flow limited to API-provided locations', () => {
+  const { helpers } = createManualLocationSelectHarness();
+
+  helpers.setGpsLocationPermissionGranted(false);
+  helpers.setCurrentLocationResolutionStatus(null);
+  helpers.setAvailableLocations(['Portaria']);
+  helpers.syncManualLocationControl();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.options, ['Portaria']);
+  assert.equal(snapshot.selectedValue, 'Portaria');
+  assert.equal(snapshot.resolvedDefault, 'Portaria');
+});
+
+test('check controller recalculates manual location defaults when project options change during accuracy_too_low', () => {
+  const { helpers } = createManualLocationSelectHarness();
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setAvailableLocations(['Portaria']);
+  helpers.syncManualLocationControl();
+
+  const firstProjectSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(firstProjectSnapshot.options, ['Precisao Insuficiente', 'Portaria']);
+  assert.equal(firstProjectSnapshot.selectedValue, 'Precisao Insuficiente');
+
+  helpers.setAvailableLocations(['Escritório Principal', 'Almoxarifado']);
+  helpers.setManualLocationValue('Precisao Insuficiente');
+  helpers.syncManualLocationControl();
+
+  const secondProjectSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(secondProjectSnapshot.options, ['Escritório Principal', 'Almoxarifado']);
+  assert.equal(secondProjectSnapshot.selectedValue, 'Escritório Principal');
+  assert.equal(secondProjectSnapshot.resolvedDefault, 'Escritório Principal');
+});
+
+test('check controller removes the synthetic fallback option after leaving accuracy_too_low', () => {
+  const { helpers } = createManualLocationSelectHarness();
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setAvailableLocations(['Portaria']);
+  helpers.syncManualLocationControl();
+  assert.deepStrictEqual(toPlainValue(helpers.getSnapshot()).options, ['Precisao Insuficiente', 'Portaria']);
+
+  helpers.setCurrentLocationResolutionStatus('matched');
+  helpers.syncManualLocationControl();
+
+  const recoveredSnapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(recoveredSnapshot.options, ['Portaria']);
+  assert.equal(recoveredSnapshot.selectedValue, 'Portaria');
+  assert.equal(recoveredSnapshot.resolvedDefault, 'Portaria');
+});
+
+test('check controller resolves the submitted local from manual fallback and matched GPS states', () => {
+  const { helpers } = createSubmittedLocationHarness();
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  helpers.setManualLocationValue('Precisao Insuficiente');
+  helpers.setCurrentLocationMatch(null);
+  assert.equal(helpers.resolveSubmittedLocationValue(), 'Precisao Insuficiente');
+
+  helpers.setGpsLocationPermissionGranted(false);
+  helpers.setCurrentLocationResolutionStatus(null);
+  helpers.setManualLocationValue('Portaria');
+  assert.equal(helpers.resolveSubmittedLocationValue(), 'Portaria');
+
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('matched');
+  helpers.setCurrentLocationMatch({ resolved_local: 'Guarita' });
+  helpers.setManualLocationValue('Ignorado');
+  assert.equal(helpers.resolveSubmittedLocationValue(), 'Guarita');
+});
+
+test('check controller reloads project locations during accuracy_too_low even when automatic mode is enabled', async () => {
+  const { helpers } = createProjectSelectionHarness();
+
+  helpers.setAutomaticActivitiesEnabled(true);
+  helpers.setGpsLocationPermissionGranted(true);
+  helpers.setCurrentLocationResolutionStatus('matched');
+  let result = await helpers.updateCurrentUserProjectSelection();
+  let snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.equal(result, false);
+  assert.equal(snapshot.fetches.length, 0);
+  assert.equal(snapshot.loadManualLocations, 0);
+
+  helpers.setCurrentLocationResolutionStatus('accuracy_too_low');
+  result = await helpers.updateCurrentUserProjectSelection();
+  snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.equal(result, true);
+  assert.equal(snapshot.fetches.length, 1);
+  assert.deepStrictEqual(snapshot.fetches[0].body, {
+    chave: 'AB12',
+    projeto: 'Projeto B',
+  });
+  assert.equal(snapshot.loadManualLocations, 1);
+  assert.equal(snapshot.lastCommittedProjectValue, 'Projeto B');
+  assert.equal(snapshot.latestHistoryProject, 'Projeto B');
 });
 
 test('check controller re-enables manual local fallback when GPS ends below the required accuracy', () => {
   const { helpers } = createManualLocationFallbackHarness();
 
+  assert.equal(helpers.isAccuracyTooLowManualFallbackActive(), false);
   assert.equal(helpers.shouldAllowManualLocationSelection(), true);
 
   helpers.setGpsLocationPermissionGranted(true);
@@ -349,6 +918,7 @@ test('check controller re-enables manual local fallback when GPS ends below the 
     status: 'matched',
     resolved_local: 'Portaria',
   });
+  assert.equal(helpers.isAccuracyTooLowManualFallbackActive(), false);
   assert.equal(helpers.shouldAllowManualLocationSelection(), false);
 
   helpers.setResolvedLocation({
@@ -357,6 +927,7 @@ test('check controller re-enables manual local fallback when GPS ends below the 
     label: 'Precisao insuficiente',
     resolved_local: null,
   });
+  assert.equal(helpers.isAccuracyTooLowManualFallbackActive(), true);
   assert.equal(helpers.shouldAllowManualLocationSelection(), true);
   assert.deepStrictEqual(toPlainValue(helpers.getState()), {
     gpsLocationPermissionGranted: true,
@@ -369,6 +940,7 @@ test('check controller re-enables manual local fallback when GPS ends below the 
     status: 'outside_workplace',
     resolved_local: null,
   });
+  assert.equal(helpers.isAccuracyTooLowManualFallbackActive(), false);
   assert.equal(helpers.shouldAllowManualLocationSelection(), false);
 });
 
