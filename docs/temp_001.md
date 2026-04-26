@@ -1297,39 +1297,47 @@ Nota de execução 17.21 (2026-04-25): etapa concluída em `checking_kotlin_new/
 
 ### 17.22. Catálogo de projetos
 
-- [ ] Implementar carregamento de projetos via `GET /api/web/projects`.
-- [ ] Popular o seletor de projeto com a mesma ordem e os mesmos valores da SPA.
-- [ ] Persistir o projeto selecionado por `chave`.
-- [ ] Restaurar o projeto persistido ao revisitar a mesma `chave`.
-- [ ] Atualizar o projeto remoto via `PUT /api/web/project` quando o usuário trocar a seleção.
-- [ ] Garantir tratamento coerente de carregamento, erro e fallback do catálogo.
+- [x] Implementar carregamento de projetos via `GET /api/web/projects`.
+- [x] Popular o seletor de projeto com a mesma ordem e os mesmos valores da SPA.
+- [x] Persistir o projeto selecionado por `chave`.
+- [x] Restaurar o projeto persistido ao revisitar a mesma `chave`.
+- [x] Atualizar o projeto remoto via `PUT /api/web/project` quando o usuário trocar a seleção.
+- [x] Garantir tratamento coerente de carregamento, erro e fallback do catálogo.
+
+Nota de execução 17.22 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-project-catalog.md`. O `SessionGateViewModel` passou a controlar o catálogo principal de projetos por meio do novo `SessionGateProjectCatalogDataSource`, carregando `GET /api/web/projects`, restaurando a seleção persistida por `chave`, reaproveitando o mesmo catálogo nos diálogos de senha/autocadastro e aplicando `PUT /api/web/project` apenas quando a sessão protegida já está destravada. O `CheckShellScreen.kt` passou a renderizar o campo principal de projeto como seletor, com placeholders e bloqueios equivalentes à SPA. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.23. Catálogo de locais e seleção manual
 
-- [ ] Implementar carregamento de locais via `GET /api/web/check/locations`.
-- [ ] Filtrar o catálogo conforme o backend retornar para o projeto do usuário.
-- [ ] Popular o seletor de local manual.
-- [ ] Desabilitar o seletor enquanto estiver carregando ou quando a UI equivalente assim exigir.
-- [ ] Ocultar o campo de local manual quando a lógica da SPA assim exigir.
+- [x] Implementar carregamento de locais via `GET /api/web/check/locations`.
+- [x] Filtrar o catálogo conforme o backend retornar para o projeto do usuário.
+- [x] Popular o seletor de local manual.
+- [x] Desabilitar o seletor enquanto estiver carregando ou quando a UI equivalente assim exigir.
+- [x] Ocultar o campo de local manual quando a lógica da SPA assim exigir.
+
+Nota de execução 17.23 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-manual-location-catalog.md`. O `SessionGateViewModel` passou a controlar o catálogo de local manual por meio do novo `SessionGateLocationCatalogDataSource`, carregando `GET /api/web/check/locations` apenas com sessão protegida destravada e recarregando o catálogo após mudanças remotas de projeto. O `CheckShellScreen.kt` passou a renderizar o campo `Local` como seletor real, com placeholders equivalentes, estado disabled durante carga e ocultação coerente com a lógica já conhecida da SPA quando a permissão GPS está concedida sem fallback manual ou quando `Atividades Automáticas` está ativa. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.24. Localização sob demanda
 
-- [ ] Implementar captura de localização sob demanda equivalente ao `getCurrentPosition` da SPA.
-- [ ] Implementar o botão de refresh de localização.
-- [ ] Plugar `POST /api/web/check/location`.
-- [ ] Atualizar o valor textual da localização na UI.
-- [ ] Atualizar a precisão exibida na UI.
-- [ ] Implementar os estados `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations`.
-- [ ] Garantir que as mensagens equivalentes da SPA sejam exibidas corretamente.
-- [ ] Reexecutar a atualização de localização nos eventos de ciclo de vida equivalentes ao webapp.
+- [x] Implementar captura de localização sob demanda equivalente ao `getCurrentPosition` da SPA.
+- [x] Implementar o botão de refresh de localização.
+- [x] Plugar `POST /api/web/check/location`.
+- [x] Atualizar o valor textual da localização na UI.
+- [x] Atualizar a precisão exibida na UI.
+- [x] Implementar os estados `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations`.
+- [x] Garantir que as mensagens equivalentes da SPA sejam exibidas corretamente.
+- [x] Reexecutar a atualização de localização nos eventos de ciclo de vida equivalentes ao webapp.
+
+Nota de execução 17.24 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-on-demand-location.md`. O app Kotlin novo passou a capturar a posição do aparelho via `FusedLocationProviderClient`, resolver o local com `POST /api/web/check/location` no `SessionGateViewModel`, atualizar o card principal com rótulo, precisão, tom visual e mensagens equivalentes aos estados do backend, religar o botão manual `Atualizar` e repetir o refresh silencioso em unlock e `ON_RESUME` quando a sessão protegida está destravada. O fallback manual de `accuracy_too_low` também voltou a ficar visível mesmo com permissão GPS concedida, sem usar o texto do card como valor manual. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.25. Regras de visibilidade dos campos
 
-- [ ] Ocultar o campo de projeto quando `Atividades Automáticas` estiver ligada, conforme a SPA.
-- [ ] Ocultar o campo de local manual quando a permissão GPS estiver ativa, conforme a SPA.
-- [ ] Reavaliar a visibilidade desses campos quando a permissão GPS mudar.
-- [ ] Reavaliar a visibilidade desses campos quando as preferências persistidas forem restauradas.
-- [ ] Garantir coerência visual e funcional entre controles visíveis e invisíveis.
+- [x] Ocultar o campo de projeto quando `Atividades Automáticas` estiver ligada, conforme a SPA.
+- [x] Ocultar o campo de local manual quando a permissão GPS estiver ativa, conforme a SPA.
+- [x] Reavaliar a visibilidade desses campos quando a permissão GPS mudar.
+- [x] Reavaliar a visibilidade desses campos quando as preferências persistidas forem restauradas.
+- [x] Garantir coerência visual e funcional entre controles visíveis e invisíveis.
+
+Nota de execução 17.25 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-field-visibility-rules.md`. O mapper de `CheckShellUiState` passou a espelhar a regra efetiva da SPA para `Projeto` e `Local`: `Projeto` some quando `Atividades Automáticas` está realmente ativa com GPS concedido, `Local` some quando a localização GPS está utilizável, e o override manual de `accuracy_too_low` reabre ambos mesmo com a preferência automática restaurada. A reavaliação também ficou coerente quando a permissão GPS cai ou volta, porque a preferência persistida só conta como ativa quando a permissão está disponível. A etapa foi validada pelo teste focal de `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.26. Grupo `Registro`
 
