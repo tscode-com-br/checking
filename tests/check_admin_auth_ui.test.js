@@ -20,6 +20,7 @@ const adminJs = fs.readFileSync(
 
 test('admin login page exposes the new utility buttons and change-password modal', () => {
   assert.match(adminHtml, /Perfil 0 acessa apenas Check-In e Check-Out;/);
+  assert.match(adminHtml, /A visualização dos horários das atividades é restrita ao perfil 9\./);
   assert.match(adminHtml, /id="changePasswordButton"[\s\S]*>Alterar Senha</);
   assert.match(adminHtml, /id="requestAdminButton"[\s\S]*>Solicitar Administração</);
   assert.match(adminHtml, />Administradores</);

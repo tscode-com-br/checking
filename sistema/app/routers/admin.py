@@ -88,6 +88,7 @@ from ..services.admin_auth import (
     require_admin_stream_session,
     user_has_admin_access,
     user_can_access_admin_panel,
+    user_can_view_activity_time,
     user_profile_has_access,
     verify_password,
 )
@@ -159,7 +160,7 @@ DATABASE_EVENT_SQL_SORT_FIELDS = {
 DATABASE_EVENT_SORTABLE_FIELDS = frozenset((*DATABASE_EVENT_SQL_SORT_FIELDS.keys(), "chave"))
 DATABASE_EVENT_SORT_DIRECTIONS = frozenset(("asc", "desc"))
 REPORT_EXPORT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-REPORT_EXPORT_COLUMNS = (
+REPORT_EXPORT_COLUMNS_WITH_TIME = (
     "Data",
     "Horário",
     "Ação",
@@ -169,9 +170,22 @@ REPORT_EXPORT_COLUMNS = (
     "Fuso Horário",
     "Assiduidade",
 )
-REPORT_EXPORT_ALL_COLUMNS = (
+REPORT_EXPORT_COLUMNS_WITHOUT_TIME = (
+    "Data",
+    "Ação",
+    "Origem",
+    "Local",
+    "Projeto",
+    "Fuso Horário",
+    "Assiduidade",
+)
+REPORT_EXPORT_ALL_COLUMNS_WITH_TIME = (
     "Nome",
-    *REPORT_EXPORT_COLUMNS,
+    *REPORT_EXPORT_COLUMNS_WITH_TIME,
+)
+REPORT_EXPORT_ALL_COLUMNS_WITHOUT_TIME = (
+    "Nome",
+    *REPORT_EXPORT_COLUMNS_WITHOUT_TIME,
 )
 REPORT_SOURCE_LABELS = {
     "web": "Aplicativo",
@@ -196,6 +210,49 @@ REPORT_LOCAL_LABELS = {
 
 def format_assiduidade_label(ontime: bool | None) -> str:
     return "Retroativo" if ontime is False else "Normal"
+
+
+def build_presence_activity_fields(
+    *,
+    event_time: datetime,
+    timezone_context,
+    can_view_activity_time: bool,
+) -> tuple[datetime | None, str, str | None, str]:
+    localized_event_time = event_time.astimezone(timezone_context.timezone)
+    return (
+        event_time if can_view_activity_time else None,
+        localized_event_time.strftime("%d/%m/%Y"),
+        localized_event_time.strftime("%H:%M:%S") if can_view_activity_time else None,
+        localized_event_time.strftime("%Y-%m-%d"),
+    )
+
+
+def build_report_event_time_fields(
+    *,
+    event_time: datetime,
+    timezone_context,
+    can_view_activity_time: bool,
+) -> tuple[datetime | None, str | None, str]:
+    localized_event_time = event_time.astimezone(timezone_context.timezone)
+    return (
+        event_time if can_view_activity_time else None,
+        localized_event_time.strftime("%H:%M:%S") if can_view_activity_time else None,
+        localized_event_time.strftime("%d/%m/%Y"),
+    )
+
+
+def build_database_event_time_fields(
+    *,
+    event_time: datetime,
+    timezone_context,
+    can_view_activity_time: bool,
+) -> tuple[datetime | None, str, str | None]:
+    localized_event_time = event_time.astimezone(timezone_context.timezone)
+    return (
+        event_time if can_view_activity_time else None,
+        localized_event_time.strftime("%d/%m/%Y"),
+        localized_event_time.strftime("%H:%M:%S") if can_view_activity_time else None,
+    )
 
 
 def format_quantity(value: int, singular: str, plural: str) -> str:
@@ -241,6 +298,14 @@ def build_report_export_metadata(*, report: ReportEventsResponse) -> str:
     )
 
 
+def build_report_export_columns(*, can_view_activity_time: bool) -> tuple[str, ...]:
+    return REPORT_EXPORT_COLUMNS_WITH_TIME if can_view_activity_time else REPORT_EXPORT_COLUMNS_WITHOUT_TIME
+
+
+def build_report_export_all_columns(*, can_view_activity_time: bool) -> tuple[str, ...]:
+    return REPORT_EXPORT_ALL_COLUMNS_WITH_TIME if can_view_activity_time else REPORT_EXPORT_ALL_COLUMNS_WITHOUT_TIME
+
+
 def build_report_projects_by_name(db: Session, project_names: set[str]) -> dict[str, Project]:
     normalized_project_names = sorted(
         {
@@ -267,6 +332,7 @@ def build_report_event_row(
     *,
     user: User | None = None,
     projects_by_name: dict[str, Project],
+    can_view_activity_time: bool = True,
 ) -> ReportEventRow:
     project_name = resolve_report_event_project_name(event, user=user)
     project = projects_by_name.get(project_name) if project_name != "-" else None
@@ -276,7 +342,11 @@ def build_report_event_row(
         timezone_name=project.timezone_name if project is not None else None,
         reference_time=event.event_time,
     )
-    localized_event_time = event.event_time.astimezone(timezone_context.timezone)
+    raw_event_time, event_time_label, event_date = build_report_event_time_fields(
+        event_time=event.event_time,
+        timezone_context=timezone_context,
+        can_view_activity_time=can_view_activity_time,
+    )
     return ReportEventRow(
         id=event.id,
         source=event.source,
@@ -288,45 +358,59 @@ def build_report_event_row(
         local_label=format_report_local_label(event.local),
         ontime=event.ontime,
         assiduidade=format_assiduidade_label(event.ontime),
-        event_time=event.event_time,
-        event_time_label=localized_event_time.strftime("%H:%M:%S"),
+        event_time=raw_event_time,
+        event_time_label=event_time_label,
         timezone_name=timezone_context.timezone_name,
         timezone_label=timezone_context.timezone_label,
-        event_date=localized_event_time.strftime("%d/%m/%Y"),
+        event_date=event_date,
     )
 
 
-def build_report_event_export_values(row: ReportEventRow) -> tuple[str, str, str, str, str, str, str, str]:
-    return (
-        row.event_date or "-",
-        row.event_time_label or "-",
-        row.action_label or format_report_action_label(row.action),
-        row.source_label or format_report_source_label(row.source),
-        row.local_label or format_report_local_label(row.local),
-        row.projeto or "-",
-        row.timezone_label or "-",
-        row.assiduidade or "Normal",
+def build_report_event_export_values(
+    row: ReportEventRow,
+    *,
+    can_view_activity_time: bool,
+) -> tuple[str, ...]:
+    values = [row.event_date or "-"]
+    if can_view_activity_time:
+        values.append(row.event_time_label or "-")
+    values.extend(
+        [
+            row.action_label or format_report_action_label(row.action),
+            row.source_label or format_report_source_label(row.source),
+            row.local_label or format_report_local_label(row.local),
+            row.projeto or "-",
+            row.timezone_label or "-",
+            row.assiduidade or "Normal",
+        ]
     )
+    return tuple(values)
 
 
-def build_report_events_export(*, user: User, report: ReportEventsResponse) -> tuple[str, bytes]:
+def build_report_events_export(
+    *,
+    user: User,
+    report: ReportEventsResponse,
+    can_view_activity_time: bool,
+) -> tuple[str, bytes]:
     from openpyxl import Workbook
 
     timestamp = now_sgt()
     file_name = build_report_export_file_name(user=user, timestamp=timestamp)
+    columns = build_report_export_columns(can_view_activity_time=can_view_activity_time)
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Relatório"
 
     worksheet.append([f"{report.person.nome or '-'} ({report.person.chave or '-'})"])
     worksheet.append([build_report_export_metadata(report=report)])
-    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(REPORT_EXPORT_COLUMNS))
-    worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(REPORT_EXPORT_COLUMNS))
+    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+    worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(columns))
     worksheet.append([])
-    worksheet.append(list(REPORT_EXPORT_COLUMNS))
+    worksheet.append(list(columns))
 
     for row in report.events:
-        worksheet.append(list(build_report_event_export_values(row)))
+        worksheet.append(list(build_report_event_export_values(row, can_view_activity_time=can_view_activity_time)))
 
     output = BytesIO()
     workbook.save(output)
@@ -336,7 +420,7 @@ def build_report_events_export(*, user: User, report: ReportEventsResponse) -> t
     return file_name, content
 
 
-def build_all_report_events_export(db: Session) -> tuple[str, bytes]:
+def build_all_report_events_export(db: Session, *, can_view_activity_time: bool) -> tuple[str, bytes]:
     from openpyxl import Workbook
 
     rows = db.execute(
@@ -360,16 +444,22 @@ def build_all_report_events_export(db: Session) -> tuple[str, bytes]:
 
     timestamp = now_sgt()
     file_name = build_report_export_all_file_name(timestamp=timestamp)
+    columns = build_report_export_all_columns(can_view_activity_time=can_view_activity_time)
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Relatório"
-    worksheet.append(list(REPORT_EXPORT_ALL_COLUMNS))
+    worksheet.append(list(columns))
 
     for event, user in rows:
-        report_row = build_report_event_row(event, user=user, projects_by_name=projects_by_name)
+        report_row = build_report_event_row(
+            event,
+            user=user,
+            projects_by_name=projects_by_name,
+            can_view_activity_time=can_view_activity_time,
+        )
         worksheet.append([
             (user.nome if user is not None and user.nome else "-"),
-            *build_report_event_export_values(report_row),
+            *build_report_event_export_values(report_row, can_view_activity_time=can_view_activity_time),
         ])
 
     output = BytesIO()
@@ -396,7 +486,11 @@ def parse_event_details(details: str | None) -> dict[str, str]:
     return parsed
 
 
-def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
+def build_provider_forms_rows(
+    db: Session,
+    *,
+    current_admin: User | None = None,
+) -> list[ProviderFormRow]:
     rows = db.execute(
         select(UserSyncEvent, User)
         .join(User, User.id == UserSyncEvent.user_id, isouter=True)
@@ -419,6 +513,7 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
         for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
     } if project_names else {}
 
+    can_view_activity_time = True if current_admin is None else user_can_view_activity_time(current_admin)
     payload: list[ProviderFormRow] = []
     for event, user in rows:
         project_name = (event.projeto or (user.projeto if user is not None else None) or "-").strip().upper()
@@ -432,7 +527,9 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
         localized_event_time = event.event_time.astimezone(timezone_context.timezone)
         payload.append(
             ProviderFormRow(
-                recebimento=event.event_time,
+                recebimento=event.event_time if can_view_activity_time else None,
+                recebimento_date_label=localized_event_time.strftime("%d/%m/%Y"),
+                recebimento_time_label=localized_event_time.strftime("%H:%M:%S") if can_view_activity_time else None,
                 chave=(event.chave or "-").upper(),
                 nome=((user.nome if user is not None else "-") or "-").upper(),
                 projeto=project_name,
@@ -441,7 +538,7 @@ def build_provider_forms_rows(db: Session) -> list[ProviderFormRow]:
                 atividade="check-in" if event.action == "checkin" else "check-out",
                 informe="retroativo" if event.ontime is False else "normal",
                 data=localized_event_time.strftime("%d/%m/%Y"),
-                hora=localized_event_time.strftime("%H:%M:%S"),
+                hora=localized_event_time.strftime("%H:%M:%S") if can_view_activity_time else None,
             )
         )
 
@@ -484,7 +581,7 @@ def resolve_report_user(db: Session, *, chave: str | None, nome: str | None) -> 
     return matches[0]
 
 
-def build_report_events_response(db: Session, *, user: User) -> ReportEventsResponse:
+def build_report_events_response(db: Session, *, user: User, can_view_activity_time: bool = True) -> ReportEventsResponse:
     rows = db.execute(
         select(UserSyncEvent)
         .where(UserSyncEvent.user_id == user.id)
@@ -505,7 +602,14 @@ def build_report_events_response(db: Session, *, user: User) -> ReportEventsResp
 
     payload: list[ReportEventRow] = []
     for row in rows:
-        payload.append(build_report_event_row(row, user=user, projects_by_name=projects_by_name))
+        payload.append(
+            build_report_event_row(
+                row,
+                user=user,
+                projects_by_name=projects_by_name,
+                can_view_activity_time=can_view_activity_time,
+            )
+        )
 
     return ReportEventsResponse(
         person=ReportPersonRow(
@@ -542,7 +646,12 @@ def resolve_event_key(event: CheckEvent, *, user_keys_by_rfid: dict[str, str]) -
     return None
 
 
-def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRow]:
+def build_event_row_payload(
+    rows: list[CheckEvent],
+    db: Session,
+    *,
+    can_view_activity_time: bool = True,
+) -> list[EventRow]:
     rfids = sorted({row.rfid for row in rows if row.rfid})
     project_names = sorted({row.project for row in rows if row.project})
     user_keys_by_rfid: dict[str, str] = {}
@@ -568,6 +677,11 @@ def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRo
             timezone_name=project.timezone_name if project is not None else None,
             reference_time=row.event_time,
         )
+        raw_event_time, event_date_label, event_time_label = build_database_event_time_fields(
+            event_time=row.event_time,
+            timezone_context=timezone_context,
+            can_view_activity_time=can_view_activity_time,
+        )
         payload.append(
             EventRow(
                 id=row.id,
@@ -585,7 +699,9 @@ def build_event_row_payload(rows: list[CheckEvent], db: Session) -> list[EventRo
                 request_path=row.request_path,
                 http_status=row.http_status,
                 retry_count=row.retry_count,
-                event_time=row.event_time,
+                event_time=raw_event_time,
+                event_date_label=event_date_label,
+                event_time_label=event_time_label,
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
             )
@@ -718,7 +834,7 @@ def build_presence_rows(
     reference_time=None,
 ) -> list[UserRow]:
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
-    payload: list[UserRow] = []
+    payload: list[tuple[datetime, UserRow]] = []
     current_time = reference_time or now_sgt()
     catalog_project_names = list_project_names(db)
     effective_admin_projects = (
@@ -726,6 +842,7 @@ def build_presence_rows(
         if current_admin is not None
         else None
     )
+    can_view_activity_time = True if current_admin is None else user_can_view_activity_time(current_admin)
     effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
     project_names = sorted({user.projeto for user in rows if user.projeto})
     projects_by_name = {
@@ -748,9 +865,16 @@ def build_presence_rows(
             timezone_name=project.timezone_name if project is not None else None,
             reference_time=latest_activity.event_time,
         )
+        raw_time, activity_date_label, activity_time_label, activity_day_key = build_presence_activity_fields(
+            event_time=latest_activity.event_time,
+            timezone_context=timezone_context,
+            can_view_activity_time=can_view_activity_time,
+        )
 
         payload.append(
-            UserRow(
+            (
+                latest_activity.event_time,
+                UserRow(
                 id=user.id,
                 rfid=user.rfid,
                 nome=user.nome,
@@ -760,13 +884,17 @@ def build_presence_rows(
                 timezone_label=timezone_context.timezone_label,
                 local=latest_activity.local if latest_activity.local is not None else user.local,
                 checkin=action == "checkin",
-                time=latest_activity.event_time,
+                time=raw_time,
+                activity_date_label=activity_date_label,
+                activity_time_label=activity_time_label,
+                activity_day_key=activity_day_key,
                 assiduidade=format_assiduidade_label(latest_activity.ontime),
+                ),
             )
         )
 
-    payload.sort(key=lambda row: row.time, reverse=True)
-    return payload
+    payload.sort(key=lambda item: item[0], reverse=True)
+    return [row for _, row in payload]
 
 
 def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[UserRow]:
@@ -852,6 +980,7 @@ def build_admin_identity(admin: User) -> AdminIdentity:
         chave=admin.chave,
         nome_completo=admin.nome,
         perfil=admin.perfil,
+        can_view_activity_time=user_can_view_activity_time(admin),
         access_scope=access_scope,
         allowed_tabs=list(get_admin_allowed_tabs(admin)),
     )
@@ -2099,30 +2228,44 @@ def list_checkout(
     return build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
 
 
-@router.get("/forms", response_model=list[ProviderFormRow], dependencies=[Depends(require_full_admin_session)])
-def list_provider_forms(db: Session = Depends(get_db)) -> list[ProviderFormRow]:
-    return build_provider_forms_rows(db)
+@router.get("/forms", response_model=list[ProviderFormRow])
+def list_provider_forms(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[ProviderFormRow]:
+    return build_provider_forms_rows(db, current_admin=current_admin)
 
 
-@router.get("/reports/events", response_model=ReportEventsResponse, dependencies=[Depends(require_full_admin_session)])
+@router.get("/reports/events", response_model=ReportEventsResponse)
 def get_report_events(
     chave: str | None = Query(default=None),
     nome: str | None = Query(default=None),
+    current_admin: User = Depends(require_full_admin_session),
     db: Session = Depends(get_db),
 ) -> ReportEventsResponse:
     user = resolve_report_user(db, chave=chave, nome=nome)
-    return build_report_events_response(db, user=user)
+    return build_report_events_response(
+        db,
+        user=user,
+        can_view_activity_time=user_can_view_activity_time(current_admin),
+    )
 
 
-@router.get("/reports/events/export", dependencies=[Depends(require_full_admin_session)])
+@router.get("/reports/events/export")
 def export_report_events(
     chave: str | None = Query(default=None),
     nome: str | None = Query(default=None),
+    current_admin: User = Depends(require_full_admin_session),
     db: Session = Depends(get_db),
 ) -> Response:
+    can_view_activity_time = user_can_view_activity_time(current_admin)
     user = resolve_report_user(db, chave=chave, nome=nome)
-    report = build_report_events_response(db, user=user)
-    file_name, content = build_report_events_export(user=user, report=report)
+    report = build_report_events_response(db, user=user, can_view_activity_time=can_view_activity_time)
+    file_name, content = build_report_events_export(
+        user=user,
+        report=report,
+        can_view_activity_time=can_view_activity_time,
+    )
     return Response(
         content=content,
         media_type=REPORT_EXPORT_CONTENT_TYPE,
@@ -2130,11 +2273,15 @@ def export_report_events(
     )
 
 
-@router.get("/reports/events/export-all", dependencies=[Depends(require_full_admin_session)])
+@router.get("/reports/events/export-all")
 def export_all_report_events(
+    current_admin: User = Depends(require_full_admin_session),
     db: Session = Depends(get_db),
 ) -> Response:
-    file_name, content = build_all_report_events_export(db)
+    file_name, content = build_all_report_events_export(
+        db,
+        can_view_activity_time=user_can_view_activity_time(current_admin),
+    )
     return Response(
         content=content,
         media_type=REPORT_EXPORT_CONTENT_TYPE,
@@ -2785,15 +2932,22 @@ def reset_user_password(
     )
 
 
-@router.get("/events", response_model=list[EventRow], dependencies=[Depends(require_full_admin_session)])
-def list_events(db: Session = Depends(get_db)) -> list[EventRow]:
+@router.get("/events", response_model=list[EventRow])
+def list_events(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[EventRow]:
     rows = db.execute(
         select(CheckEvent)
         .where(CheckEvent.action != "event_archive")
         .order_by(desc(CheckEvent.id))
         .limit(200)
     ).scalars().all()
-    return build_event_row_payload(rows, db)
+    return build_event_row_payload(
+        rows,
+        db,
+        can_view_activity_time=user_can_view_activity_time(current_admin),
+    )
 
 
 @router.get(

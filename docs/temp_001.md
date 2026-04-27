@@ -2,9 +2,13 @@
 
 Data: 2026-04-25
 
+Atualização de alinhamento com a SPA: 2026-04-26. Após a criação inicial deste guia, a aplicação web em `sistema/app/static/check` recebeu alterações específicas no tratamento de coordenadas GPS e precisão. A partir desta revisão, o plano passa a tratar como fonte de verdade o comportamento atual da SPA, incluindo captura por janela curta com seleção da melhor amostra, uso explícito do limite de precisão retornado por `/api/web/check/locations`, fallback manual especial para `accuracy_too_low` e homologação dos cenários de `Precisao Insuficiente`.
+
 ## Introdução
 
 Este documento foi elaborado para funcionar como guia completo, fechado e rastreável da conversão da web application `sistema/app/static/check` para um aplicativo Android nativo em Kotlin, sem alterar a aplicação web original e sem desviar dos contratos já existentes no backend. O plano não se limita a descrever a ideia geral da migração: ele define a fonte de verdade funcional e visual, fixa as premissas que não podem ser violadas, identifica os arquivos e contratos que precisam ser respeitados, descreve os riscos técnicos relevantes, estabelece a estratégia de implementação e organiza a execução em fases sucessivas até que o aplicativo esteja efetivamente pronto para rodar.
+
+Esta revisão também corrige uma premissa anterior: a localização da SPA não deve mais ser entendida como uma leitura única e simples de GPS. O webapp atual usa planos de captura por gatilho, observa amostras de localização durante uma janela limitada e envia ao backend a melhor amostra disponível, mantendo o usuário informado quando ainda está buscando precisão suficiente. O app Kotlin deve acompanhar esse comportamento antes de avançar para as fases de transporte.
 
 Ao longo do texto, o plano faz, de forma integrada, todas as seguintes funções:
 
@@ -12,7 +16,7 @@ Ao longo do texto, o plano faz, de forma integrada, todas as seguintes funções
 - determina que a SPA atual é a única referência de comportamento e de layout;
 - identifica os endpoints `/api/web/*` que o app Kotlin deverá reutilizar sem criar contratos paralelos;
 - consolida as regras de autenticação, histórico, localização, check-in/check-out automático, transporte, SSE, persistência local e ciclo de vida da interface;
-- aponta o que pode ser reaproveitado da base existente em `checking_kotlin` e o que deve ser reconstruído;
+- aponta o que pode ser reaproveitado da base técnica auditada e o que deve ser reconstruído no app alvo `checking_kotlin_new`;
 - define critérios objetivos de paridade visual e funcional;
 - organiza a implementação em fases, com objetivo, atividades e critério de conclusão em cada etapa;
 - transforma a migração em processo auditável, e não em uma sequência informal de alterações.
@@ -41,7 +45,7 @@ Este plano parte das seguintes constatações verificadas no repositório:
 
 - a aplicação web alvo está concentrada em `index.html`, `styles.css`, `app.js`, `automatic-activities.js` e `web-client-state.js` dentro de `sistema/app/static/check`;
 - a fonte de verdade dos contratos web está em `sistema/app/routers/web_check.py` e `sistema/app/schemas.py`;
-- existe um aplicativo Android nativo já iniciado em `checking_kotlin`, com arquitetura Kotlin/Compose/Hilt/Room/DataStore, que deve ser tratado como base preferencial de reaproveitamento técnico, mas não como fonte de verdade funcional;
+- existe um aplicativo Android nativo em execução na pasta `checking_kotlin_new`, criado a partir do reaproveitamento seletivo da base Kotlin auditada, que deve ser tratado como alvo da implementação, mas não como fonte de verdade funcional;
 - a fonte de verdade funcional e visual desta conversão é exclusivamente a SPA em `sistema/app/static/check`.
 
 ## 2. Premissas Imutáveis
@@ -53,9 +57,10 @@ As regras abaixo não devem ser flexibilizadas durante a execução:
 - o app Kotlin deve consumir os mesmos endpoints `/api/web/*` usados pela SPA;
 - o app Kotlin não deve substituir esses contratos por `/api/mobile/*`, `/api/scan`, `/api/provider/*` ou qualquer contrato alternativo;
 - o app Kotlin não deve depender do código Flutter como fonte de verdade de regra de negócio;
-- qualquer funcionalidade existente hoje em `checking_kotlin` que extrapole a SPA deve ser ocultada, desativada por flag ou removida da entrega inicial de paridade;
+- qualquer funcionalidade existente hoje no app Kotlin que extrapole a SPA deve ser ocultada, desativada por flag ou removida da entrega inicial de paridade;
 - a entrega inicial deve buscar paridade funcional e visual com a SPA antes de qualquer expansão nativa;
 - o comportamento de sessão por cookie, hoje usado pela SPA, deve ser mantido no app Kotlin;
+- a captura de coordenadas GPS deve seguir a estratégia atual da SPA: janela curta por gatilho, melhor amostra por precisão, limite de precisão vindo do backend e fallback manual especial quando a resposta for `accuracy_too_low`;
 - os textos visíveis ao usuário devem seguir exatamente a mesma redação da SPA, salvo correções ortográficas previamente aprovadas;
 - a navegação principal deve permanecer orientada ao modo retrato, reproduzindo o comportamento da aplicação web.
 
@@ -84,7 +89,18 @@ Os arquivos abaixo foram verificados e devem fundamentar a implementação:
   - `tests/check_responsive_layout.test.js`
   - `tests/check_transport_layout.test.js`
   - `tests/check_transport_request_history.test.js`
-- Base Kotlin existente para reaproveitamento técnico:
+  - `tests/test_api_flow.py`
+- Homologação específica de fallback GPS/precisão:
+  - `scripts/homologate_temp_008_phase6.py`
+- App Kotlin alvo e base técnica de reaproveitamento:
+  - `checking_kotlin_new/README.md`
+  - `checking_kotlin_new/app/build.gradle.kts`
+  - `checking_kotlin_new/app/src/main/AndroidManifest.xml`
+  - `checking_kotlin_new/app/src/main/java/com/br/checkingnative/MainActivity.kt`
+  - `checking_kotlin_new/app/src/main/java/com/br/checkingnative/data/remote/WebCheckApiService.kt`
+  - `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/session/*`
+  - `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/check/*`
+- Base Kotlin antiga já auditada para reaproveitamento técnico:
   - `checking_kotlin/README.md`
   - `checking_kotlin/app/build.gradle.kts`
   - `checking_kotlin/app/src/main/AndroidManifest.xml`
@@ -102,7 +118,9 @@ A SPA não é apenas um formulário de check-in/check-out. Ela já implementa um
 - bloqueio de uso em paisagem com overlay específico e tentativa de trava em retrato;
 - histórico resumido com destaque visual para a atividade mais recente;
 - área de notificações em duas linhas, com tonalidades distintas por estado;
-- captura de geolocalização sob demanda com atualização manual e atualização em eventos de ciclo de vida;
+- captura de geolocalização sob demanda por janela curta, com atualização manual e atualização em eventos de ciclo de vida;
+- seleção da melhor amostra GPS por precisão antes do envio de latitude, longitude e `accuracy_meters` ao backend;
+- apresentação de progresso durante a aquisição quando a precisão ainda está sendo refinada;
 - autenticação por chave e senha com três estados distintos:
   - chave inexistente;
   - chave existente sem senha;
@@ -113,6 +131,7 @@ A SPA não é apenas um formulário de check-in/check-out. Ela já implementa um
 - seleção de informe;
 - seleção de projeto;
 - seleção manual de local quando aplicável;
+- fallback manual especial quando a localização termina em `accuracy_too_low`, inclusive com opção sintética `Precisao Insuficiente` quando o projeto não possui `Escritório Principal`;
 - modo de atividades automáticas condicionado à disponibilidade de permissão de localização;
 - chamadas de atualização de projeto;
 - módulo completo de transporte com tela dedicada, editor de endereço, construtor de solicitação, histórico, detalhe e atualização em tempo real por SSE;
@@ -123,29 +142,29 @@ A SPA não é apenas um formulário de check-in/check-out. Ela já implementa um
 
 Com base na leitura direta do código da SPA, não fazem parte da fonte de verdade desta migração:
 
-- rastreamento contínuo por `watchPosition`;
+- rastreamento contínuo e indefinido por `watchPosition`;
 - serviço de localização em segundo plano como comportamento obrigatório;
 - configuração de OEM auto-start, bateria ou foreground service como parte da UX principal;
 - fluxos móveis baseados em `/api/mobile/*`;
 - comportamentos herdados exclusivamente do app Flutter.
 
-Isso significa que o app Kotlin pode até possuir infraestrutura nativa mais poderosa, mas a entrega inicial deve se limitar ao que a SPA faz hoje.
+Isso significa que o app Kotlin pode até possuir infraestrutura nativa mais poderosa, mas a entrega inicial deve se limitar ao que a SPA faz hoje. A janela curta de aquisição GPS usada pela SPA não deve ser confundida com monitoramento contínuo, background location ou automação nativa permanente.
 
-### 4.3. Estado relevante do `checking_kotlin`
+### 4.3. Estado relevante do app Kotlin
 
-O projeto `checking_kotlin` já oferece base técnica útil:
+O projeto alvo `checking_kotlin_new`, derivado da auditoria da base Kotlin anterior, já oferece base técnica útil:
 
 - aplicativo Android com `applicationId = "com.br.checkingnative"`;
 - stack com Kotlin, Jetpack Compose, Hilt, Room e DataStore;
 - `WebCheckApiService` já apontando para contratos `/api/web/*`;
-- `MainActivity.kt` e `ui/checking/*` já estruturados com ViewModel e callbacks;
+- `MainActivity.kt`, `ui/session/*` e `ui/check/*` já estruturados com ViewModel, datasources e callbacks no app alvo;
 - manifesto Android com permissões sensíveis já declaradas;
 - comandos de build já definidos no Gradle.
 
 Contudo, também há sinais claros de divergência em relação à SPA:
 
-- a base Kotlin atual carrega comportamentos de app móvel mais amplo, oriundos da migração a partir do Flutter;
-- `MainActivity.kt` já expõe fluxos de permissões, monitoramento e automação nativa que não existem na SPA;
+- a base Kotlin antiga carregava comportamentos de app móvel mais amplo, oriundos da migração a partir do Flutter, e o app alvo deve continuar filtrando esse reaproveitamento;
+- qualquer fluxo nativo de permissões, monitoramento ou automação que extrapole a SPA deve permanecer fora da entrega inicial ou protegido por decisão explícita de governança;
 - a UI atual do app Kotlin não pode ser tratada como referência visual;
 - o objetivo aqui não é aproveitar a UI existente “como está”, mas aproveitar a infraestrutura e reconstruir a interface a partir da SPA.
 
@@ -155,7 +174,7 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 
 ### 5.1. Estrutura visual principal
 
-- cabeçalho verde com logotipo e texto `Checking`;
+- cabeçalho verde com logotipo e texto `Checking Web`, conforme o HTML atual da SPA;
 - fundo com gradiente claro e marca d’água da Petrobras ao centro;
 - card principal centralizado com largura responsiva;
 - comportamento mobile-first;
@@ -183,6 +202,9 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 - mostrar valor textual da localização capturada;
 - mostrar precisão;
 - botão de atualização manual com estado de carregamento;
+- usar o limite de precisão retornado por `/api/web/check/locations` para compor o texto `Precisão X m / Limite Y m`;
+- durante a janela de aquisição, mostrar progresso equivalente a `Buscando precisão suficiente...` e `Precisão atual X m / Limite Y m`;
+- enviar ao backend a melhor amostra disponível de latitude, longitude e precisão, não necessariamente a primeira amostra recebida;
 - estados de localização compatíveis com a SPA:
   - `matched`;
   - `accuracy_too_low`;
@@ -239,8 +261,11 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 - seletor de projeto carregado por `/api/web/projects`;
 - atualização do projeto por `/api/web/project`;
 - seletor de local carregado por `/api/web/check/locations`;
-- ocultação do campo de local manual quando a permissão GPS estiver ativa, conforme a SPA;
-- ocultação do projeto quando `Atividades Automáticas` estiver ligada, conforme a SPA.
+- ocultação do campo de local manual quando a permissão GPS estiver ativa e a localização estiver utilizável, conforme a SPA;
+- reabertura de `Projeto` e `Local` durante `accuracy_too_low`, mesmo com GPS concedido e mesmo com `Atividades Automáticas` marcada;
+- preferência por `Escritório Principal` como local manual default durante o fallback por precisão;
+- injeção temporária de `Precisao Insuficiente` apenas durante `accuracy_too_low` quando `Escritório Principal` não existir no catálogo do projeto;
+- ocultação do projeto quando `Atividades Automáticas` estiver ligada sem override manual por precisão.
 
 ### 5.11. Botão principal `Registrar`
 
@@ -253,6 +278,8 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 - só podem aparecer quando a permissão de localização estiver disponível ou já houver flag persistida equivalente;
 - devem ser desmarcadas e ocultadas quando a permissão não estiver disponível;
 - devem executar apenas as regras presentes na SPA e em `docs/regras_checkin_checkout_webapp.txt`;
+- devem permitir override manual quando a última resolução GPS estiver em `accuracy_too_low`;
+- não devem registrar automaticamente `Precisao Insuficiente` sem ação explícita do usuário;
 - não devem introduzir automações extras oriundas do Flutter ou do app Kotlin atual.
 
 ### 5.13. Tela de transporte
@@ -312,6 +339,7 @@ As cinco situações descritas em `docs/regras_checkin_checkout_webapp.txt` deve
 - se a última ação foi `checkout` e o usuário estiver em local conhecido de trabalho ou próximo do trabalho, deve ocorrer `checkin` automático;
 - se a última ação foi `checkin` e o usuário mudou de local conhecido de trabalho, deve ocorrer novo `checkin` para atualizar o local;
 - se a última ação foi `checkin` e o usuário estiver próximo do trabalho, mas sem correspondência exata de local, nenhuma ação deve ser feita, apenas atualização visual para `Localização não Cadastrada`.
+- se a última resolução de localização retornar `accuracy_too_low`, a tela deve entrar no modo excepcional de override manual e a automação não deve criar atividade automática com `Precisao Insuficiente`.
 
 ### 6.3. Regras de transporte que não podem ser regredidas
 
@@ -348,8 +376,8 @@ Os contratos abaixo foram confirmados em `sistema/app/routers/web_check.py` e de
 | `/api/web/transport/cancel` | `POST` | obrigatório | cancela solicitação ativa do usuário |
 | `/api/web/transport/acknowledge` | `POST` | obrigatório | registra ciência da confirmação |
 | `/api/web/check/state?chave=...` | `GET` | obrigatório | histórico resumido e estado atual |
-| `/api/web/check/locations` | `GET` | obrigatório | lista de locais filtrada por projeto do usuário |
-| `/api/web/check/location` | `POST` | obrigatório | resolve local a partir de latitude/longitude/precisão |
+| `/api/web/check/locations` | `GET` | obrigatório | lista de locais filtrada por projeto do usuário e `location_accuracy_threshold_meters` |
+| `/api/web/check/location` | `POST` | obrigatório | resolve local a partir de latitude/longitude/precisão e devolve status, precisão recebida e limite aplicado |
 | `/api/web/check` | `POST` | obrigatório | submissão manual de check-in/check-out |
 
 ### 7.1. Regras de consumo desses endpoints no app Kotlin
@@ -359,15 +387,17 @@ Os contratos abaixo foram confirmados em `sistema/app/routers/web_check.py` e de
 - tratar `401` como sessão inválida ou expirada e retornar a UI ao estado bloqueado;
 - não introduzir autenticação paralela por token;
 - manter `Content-Type: application/json` e corpo JSON compatível com os schemas existentes;
+- mapear `location_accuracy_threshold_meters` em `GET /api/web/check/locations` e usar esse valor como alvo visual/operacional da aquisição GPS;
+- preservar `accuracy_meters` como campo nullable em `POST /api/web/check/location`, mas preferir enviar a precisão real da melhor amostra sempre que o Android a fornecer;
 - utilizar a base URL configurada em `CheckingPresetConfig`, sem hardcode espalhado pela UI.
 
 ## 8. Estratégia Técnica Recomendada
 
 ### 8.1. Estratégia-base
 
-A estratégia mais eficiente não é iniciar um novo app do zero. O caminho recomendado é:
+A estratégia mais eficiente não é reiniciar o app alvo do zero. O caminho recomendado é:
 
-- usar `checking_kotlin` como base de implementação;
+- usar `checking_kotlin_new` como linha ativa de implementação;
 - criar uma linha de trabalho focada em paridade web, preferencialmente em branch dedicada;
 - tratar a infraestrutura de rede, DI, persistência e build já existentes como reaproveitáveis;
 - reconstruir a interface e a orquestração a partir da SPA;
@@ -420,14 +450,15 @@ Critério de conclusão:
 
 - nenhuma equipe envolvida pode alegar dúvida sobre o que copiar.
 
-## Fase 1. Auditoria de Lacunas entre SPA e `checking_kotlin`
+## Fase 1. Auditoria de Lacunas entre SPA e app Kotlin
 
 Objetivo: transformar o app Kotlin atual em mapa de reaproveitamento, não em fonte de improviso.
 
 Atividades:
 
 - auditar `WebCheckApiService.kt` endpoint por endpoint, método por método;
-- auditar `MainActivity.kt`, `CheckingApp.kt`, `CheckingController.kt`, `CheckingUiState.kt` e `CheckingViewModel.kt` para identificar o que já é útil;
+- auditar a base antiga (`CheckingApp.kt`, `CheckingController.kt`, `CheckingUiState.kt` e `CheckingViewModel.kt`) apenas como fonte de reaproveitamento seletivo;
+- auditar o app alvo (`MainActivity.kt`, `SessionGateViewModel.kt`, `SessionGateScreen.kt` e `CheckShellScreen.kt`) para identificar o que precisa ser ajustado após as fases já concluídas;
 - separar o que já existe em três grupos:
   - reaproveitar sem alteração estrutural;
   - reaproveitar com adaptação;
@@ -462,10 +493,10 @@ Atividades:
 
 Arquivos preferenciais de trabalho:
 
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/core/config/CheckingPresetConfig.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/data/remote/WebCheckApiService.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/data/preferences/*`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/core/*`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/core/config/CheckingPresetConfig.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/data/remote/WebCheckApiService.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/data/preferences/*`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/core/*`
 
 Critério de conclusão:
 
@@ -496,7 +527,7 @@ Atividades:
 
 Arquivos recomendados para criação ou ajuste:
 
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/ui/theme/*`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/theme/*`
 - novos composables específicos para shell, cards e modais da SPA
 
 Critério de conclusão:
@@ -596,26 +627,38 @@ Critério de conclusão:
 
 ## Fase 8. Geolocalização Sob Demanda e Lógica de Visibilidade dos Campos
 
-Objetivo: reproduzir a lógica web de geolocalização e visibilidade condicional dos controles.
+Objetivo: reproduzir a lógica web atual de geolocalização, precisão e visibilidade condicional dos controles.
 
 Atividades:
 
-- usar captura de localização sob demanda, equivalente ao `getCurrentPosition` da SPA;
+- implementar captura de localização por janela limitada, equivalente ao `watch_window` atual da SPA;
+- diferenciar plano de ciclo de vida, com janela de `0` a `5000 ms`, de plano forçado, com janela mínima de `3000 ms` e máxima de `7000 ms`;
+- aplicar o plano de ciclo de vida nos gatilhos equivalentes a startup, retorno de visibilidade, foco e pageshow;
+- aplicar o plano forçado nos gatilhos equivalentes a refresh manual, proteção antes de submit e ligar/desligar `Atividades Automáticas`;
+- selecionar a melhor amostra GPS pela menor precisão e, em empate, pela amostra mais recente;
+- encerrar cedo a janela quando a precisão alvo for atingida depois da janela mínima;
+- ao expirar a janela, enviar a melhor amostra disponível ao backend, mesmo que ela ainda resulte em `accuracy_too_low`;
+- mapear `location_accuracy_threshold_meters` vindo de `GET /api/web/check/locations` e usá-lo como alvo de captura e texto de limite;
 - acionar atualização de localização nos momentos equivalentes ao ciclo de vida do webapp;
-- esconder o campo de local manual quando a permissão GPS estiver ativa, como a SPA faz;
-- esconder o campo de projeto quando `Atividades Automáticas` estiver ligado, como a SPA faz;
+- exibir progresso durante a captura com texto equivalente a `Buscando precisão suficiente...` e `Precisão atual X m / Limite Y m`;
+- esconder o campo de local manual quando a permissão GPS estiver ativa e a localização estiver utilizável, como a SPA faz;
+- reabrir `Projeto`, `Local`, rádios e `Registrar` quando a última resolução terminar em `accuracy_too_low`, inclusive se `Atividades Automáticas` estiver marcada;
+- esconder o campo de projeto quando `Atividades Automáticas` estiver ligado sem override manual por precisão, como a SPA faz;
 - atualizar os estados visuais de localização:
   - aguardando localização;
   - precisão insuficiente;
   - local identificado;
   - fora do local de trabalho;
   - localização não cadastrada;
+- preservar o fluxo de GPS sem permissão sem injetar `Precisao Insuficiente` como opção manual;
+- preferir `Escritório Principal` como default no fallback por precisão;
+- injetar temporariamente `Precisao Insuficiente` no seletor manual apenas durante `accuracy_too_low` quando o projeto não tiver `Escritório Principal`;
 - atualizar texto e precisão conforme a mesma lógica da SPA;
 - manter a ação do botão de refresh exatamente equivalente ao webapp.
 
 Critério de conclusão:
 
-- o comportamento de captura, resolução e apresentação de localização é indistinguível do comportamento atual da SPA.
+- o comportamento de captura, resolução, fallback manual e apresentação de localização é indistinguível do comportamento atual da SPA.
 
 ## Fase 9. Atividades Automáticas com Regra Estritamente Equivalente à SPA
 
@@ -629,8 +672,10 @@ Atividades:
 - implementar as cinco situações obrigatórias de `docs/regras_checkin_checkout_webapp.txt`;
 - preservar o rótulo `Desative Atividades Automáticas para registrar manualmente.` quando aplicável;
 - impedir submissão manual enquanto a SPA equivalente impedir;
+- liberar submissão manual quando `accuracy_too_low` estiver ativo, mesmo que a preferência de atividades automáticas permaneça marcada;
+- garantir que a automação nunca submeta automaticamente `Precisao Insuficiente`;
 - não ativar, nesta fase, serviço contínuo de segundo plano se ele causar divergência com a SPA;
-- se a base Kotlin atual já possuir automação em segundo plano, encapsular esse comportamento atrás de flag desativada no modo de paridade web.
+- se o app alvo ainda herdar ou reintroduzir automação em segundo plano, encapsular esse comportamento atrás de flag desativada no modo de paridade web.
 
 Critério de conclusão:
 
@@ -744,6 +789,13 @@ Atividades:
   - troca de senha;
   - histórico com destaque da atividade mais recente;
   - visibilidade correta de projeto e local;
+  - aquisição GPS por janela de ciclo de vida e por janela forçada;
+  - escolha da melhor amostra de localização antes do POST;
+  - texto de progresso de precisão atual durante a captura;
+  - uso de `location_accuracy_threshold_meters` retornado pelo backend;
+  - fallback manual de `accuracy_too_low` com toggle automática ligada e desligada;
+  - ausência da opção sintética `Precisao Insuficiente` no fluxo sem permissão GPS;
+  - submit manual usando `Escritório Principal` ou `Precisao Insuficiente` apenas no fallback por precisão;
   - atividades automáticas disponíveis e indisponíveis;
   - fluxo manual de check-in;
   - fluxo manual de check-out;
@@ -774,6 +826,7 @@ Atividades:
 - montar build debug estável;
 - instalar no emulador e em pelo menos um dispositivo físico;
 - validar autenticação, localização, check manual, automação equivalente à SPA e transporte;
+- validar em dispositivo real a aquisição GPS por janela, incluindo cenário de precisão insuficiente;
 - revisar logs, erros de rede, perda de sessão e restauração de estado;
 - registrar um roteiro de execução local para desenvolvedor e homologador.
 
@@ -787,12 +840,12 @@ Para evitar acoplamento desnecessário, recomenda-se o seguinte desenho de respo
 
 ### 10.1. Arquivos que devem permanecer como pontos centrais
 
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/core/config/CheckingPresetConfig.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/data/remote/WebCheckApiService.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/ui/checking/CheckingController.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/ui/checking/CheckingUiState.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/ui/checking/CheckingViewModel.kt`
-- `checking_kotlin/app/src/main/java/com/br/checkingnative/MainActivity.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/core/config/CheckingPresetConfig.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/data/remote/WebCheckApiService.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/session/SessionGateViewModel.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/session/SessionGateScreen.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/ui/check/CheckShellScreen.kt`
+- `checking_kotlin_new/app/src/main/java/com/br/checkingnative/MainActivity.kt`
 
 ### 10.2. Estrutura recomendada de novos componentes de UI
 
@@ -819,6 +872,7 @@ Sugestão de decomposição para manter a fidelidade e evitar um `CheckingApp.kt
 
 - helper para equivalentes de `web-client-state.js`;
 - helper para equivalentes de `automatic-activities.js`;
+- helper ou datasource para plano de aquisição GPS por gatilho, melhor amostra, limite de precisão e timeout;
 - repositório de persistência por `chave` para senha, preferências e estado local de transporte;
 - cliente SSE dedicado ao transporte;
 - utilitários de mapeamento de mensagens e tons;
@@ -831,6 +885,8 @@ Sugestão de decomposição para manter a fidelidade e evitar um `CheckingApp.kt
 - reestilizar a interface para “ficar melhor”;
 - trocar a ordem dos elementos para se adequar a convenções Android;
 - substituir o comportamento de sessão por autenticação diferente;
+- substituir a janela de captura GPS da SPA por uma leitura única sem justificativa formal;
+- tratar `accuracy_too_low` como erro terminal sem fallback manual;
 - remover o overlay de paisagem só porque o app é nativo;
 - simplificar o transporte eliminando SSE, histórico local ou widget de detalhe;
 - remover a persistência por `chave` sob o argumento de segurança sem entregar UX equivalente;
@@ -865,8 +921,16 @@ Antes de declarar o app pronto para rodar, executar no mínimo os cenários abai
 
 - negar permissão de localização e confirmar ocultação de `Atividades Automáticas`;
 - conceder permissão e confirmar reaparecimento do toggle;
+- executar refresh manual com sequência de amostras GPS e confirmar que o app envia a melhor precisão disponível;
+- confirmar progresso `Buscando precisão suficiente...` durante a janela de captura;
+- validar que o limite exibido vem de `location_accuracy_threshold_meters`;
+- validar `accuracy_too_low` com `Atividades Automáticas` desligada e projeto com `Escritório Principal`;
+- validar `accuracy_too_low` com `Atividades Automáticas` desligada e projeto sem `Escritório Principal`, usando `Precisao Insuficiente`;
+- validar `accuracy_too_low` com `Atividades Automáticas` ligada e confirmar override manual sem desligar a toggle;
+- validar que, sem permissão GPS, o campo `Local` usa apenas locais reais da API e não injeta `Precisao Insuficiente`;
 - testar cada uma das cinco situações de `docs/regras_checkin_checkout_webapp.txt`;
 - confirmar que nenhuma automação extra ocorre fora desses cenários;
+- confirmar que nenhuma automação envia `Precisao Insuficiente` sem clique manual em `Registrar`;
 - validar textos `Precisão insuficiente`, `Sem localização cadastrada`, `Localização não Cadastrada` e equivalentes.
 
 ### 12.4. Transporte
@@ -905,6 +969,8 @@ O app poderá ser considerado pronto para rodar quando todos os itens abaixo for
 - executa cadastro de senha, autocadastro e troca de senha;
 - executa check-in/check-out manual;
 - resolve localização e atualiza o histórico;
+- usa a janela de aquisição GPS e o limite de precisão da SPA atual;
+- oferece fallback manual correto para `accuracy_too_low`;
 - executa as regras automáticas da SPA sem adicionar comportamento extra;
 - executa o fluxo de transporte completo;
 - conecta ao SSE de transporte enquanto a tela estiver aberta;
@@ -917,7 +983,7 @@ O app poderá ser considerado pronto para rodar quando todos os itens abaixo for
 No estado final da implementação, o fluxo mínimo de execução local deverá estar validado com comandos equivalentes a:
 
 ```powershell
-Set-Location .\checking_kotlin
+Set-Location .\checking_kotlin_new
 .\gradlew.bat :app:assembleDebug
 .\gradlew.bat :app:installDebug
 ```
@@ -931,7 +997,7 @@ adb shell am start -n com.br.checkingnative/.MainActivity
 Validações automatizadas mínimas recomendadas antes de homologar o build debug:
 
 ```powershell
-Set-Location .\checking_kotlin
+Set-Location .\checking_kotlin_new
 .\gradlew.bat :app:testDebugUnitTest
 .\gradlew.bat :app:assembleDebugAndroidTest
 .\gradlew.bat :app:lintDebug
@@ -942,21 +1008,22 @@ Set-Location .\checking_kotlin
 Para evitar retrabalho, a ordem recomendada é:
 
 1. congelar baseline e aceite visual;
-2. auditar lacunas entre SPA e `checking_kotlin`;
+2. auditar lacunas entre SPA e o app Kotlin;
 3. estabilizar contratos HTTP, cookies e SSE;
 4. montar shell visual fiel;
 5. fechar autenticação, senha e autocadastro;
 6. fechar check manual, histórico, projeto e localização;
-7. fechar atividades automáticas estritamente equivalentes à SPA;
-8. fechar tela de transporte e histórico local;
-9. fechar SSE e polling de fallback;
-10. ajustar responsividade e detalhes finos;
-11. executar a suite de testes e a validação manual;
-12. gerar o build debug final e validar instalação/execução.
+7. reconciliar GPS/precisão com a SPA atual, incluindo janela de captura e fallback `accuracy_too_low`;
+8. fechar atividades automáticas estritamente equivalentes à SPA;
+9. fechar tela de transporte e histórico local;
+10. fechar SSE e polling de fallback;
+11. ajustar responsividade e detalhes finos;
+12. executar a suite de testes e a validação manual;
+13. gerar o build debug final e validar instalação/execução.
 
 ## 16. Conclusão Executiva
 
-O caminho tecnicamente mais sólido é aproveitar `checking_kotlin` como base de infraestrutura, mas tratar `sistema/app/static/check` como única fonte de verdade de produto. A execução correta desta conversão não é um “port” visual superficial: ela exige congelamento do baseline, paridade rigorosa de endpoints, preservação de sessão por cookie, reconstrução fiel da interface, respeito integral às regras de check-in/check-out e migração completa do módulo de transporte, inclusive SSE e estado local por `chave`.
+O caminho tecnicamente mais sólido é seguir com `checking_kotlin_new` como app alvo, reaproveitando seletivamente a infraestrutura Kotlin auditada, mas tratar `sistema/app/static/check` como única fonte de verdade de produto. A execução correta desta conversão não é um “port” visual superficial: ela exige congelamento do baseline, paridade rigorosa de endpoints, preservação de sessão por cookie, reconstrução fiel da interface, respeito integral às regras de check-in/check-out, reconciliação precisa do fluxo GPS atual e migração completa do módulo de transporte, inclusive SSE e estado local por `chave`.
 
 Se esse plano for seguido na ordem proposta, o resultado esperado é um aplicativo Android nativo em Kotlin capaz de rodar localmente, com os mesmos contratos e a mesma experiência central hoje entregue pela SPA, sem alterar a aplicação web original.
 
@@ -974,7 +1041,7 @@ Esta lista deve ser tratada como checklist operacional integral do plano. Nenhum
 - [x] Formalizar que a entrega inicial buscará paridade com a SPA antes de qualquer expansão nativa extra.
 - [x] Formalizar que qualquer funcionalidade herdada do Flutter e ausente na SPA ficará fora do escopo inicial.
 - [x] Registrar a data e o commit de referência da SPA que servirão de baseline da migração.
-- [x] Registrar a data e o commit de referência do repositório `checking_kotlin` que servirão de baseline técnico.
+- [x] Registrar a data e o commit de referência do repositório Kotlin que servirão de baseline técnico.
 - [x] Criar branch dedicada para a linha de trabalho de paridade web no repositório `checking_kotlin_new`.
 - [x] Confirmar que o repositório raiz `checkcheck` e o repositório `checking_kotlin_new` serão tratados separadamente no versionamento.
 - [x] Confirmar que nenhuma alteração necessária à migração será feita dentro de `sistema/app/static/check`.
@@ -1084,7 +1151,7 @@ Nota de execução 17.4 (2026-04-25): etapa concluída em `checking_kotlin_new/d
 
 Nota de execução 17.5 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/backend-contracts/backend-contracts.md`, com inventário rastreável em `checking_kotlin_new/docs/backend-contracts/backend-contract-inventory.json` gerado por `checking_kotlin_new/scripts/audit-backend-contracts.mjs`. A auditoria confirma 19 endpoints reais em `/api/web` (incluindo o alias `/api/web/transport/request`), 24 schemas relevantes, obrigatoriedade de `GET /api/web/auth/status` como chamada pública inicial, uso de sessão HTTP/cookie por `web_user_chave`, contratos de entrada/saída, códigos 200/201/401/404/409/422 e mensagens de UX que precisam ser preservadas. A etapa não editou arquivos de backend; alterações locais pré-existentes fora do escopo foram preservadas.
 
-### 17.6. Auditoria da base técnica existente em `checking_kotlin`
+### 17.6. Auditoria da base técnica antiga `checking_kotlin`
 
 - [x] Revisar `checking_kotlin/README.md` para inventariar o estado atual do projeto.
 - [x] Revisar `checking_kotlin/app/build.gradle.kts` para confirmar versão, dependências e fluxo de build.
@@ -1184,6 +1251,8 @@ Nota de execução 17.11 (2026-04-25): etapa concluída em `checking_kotlin_new/
 - [x] Garantir que os estados disabled e busy de todos os controles estejam implementados.
 
 Nota de execução 17.12 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/main-shell/main-shell-structure.md`. A UI provisoria deixou de ser uma card de gate e passou a renderizar um shell Compose equivalente ao HTML principal da SPA, com header real (`site_icon.png` + texto `Checking`) encaixado no `CheckingAppFrame`, card central, historico, notificacao, localizacao, linha de autenticacao, grupos `Registro` e `Informe`, linha `Projeto` + `Local` e botao `Registrar`. Os controles ficaram preparados com estados `disabled` e `busy` no nivel de apresentacao, mas sem handlers reais ainda, preservando o recorte das fases 17.13+ e 17.14+. A etapa foi validada com teste focal do estado do shell e compilacao da nova UI.
+
+Nota de revisão pós-alteração da SPA (2026-04-26): a etapa 17.12 registrou o título visual vigente quando foi executada. O HTML atual da SPA usa `Checking Web` no cabeçalho, portanto a conferência textual da etapa 17.40 deve ajustar o app Kotlin para esse rótulo sem reabrir a fundação estrutural do shell.
 
 ### 17.13. Overlay de paisagem e comportamento de orientação
 
@@ -1318,7 +1387,7 @@ Nota de execução 17.23 (2026-04-26): etapa concluída em `checking_kotlin_new/
 
 ### 17.24. Localização sob demanda
 
-- [x] Implementar captura de localização sob demanda equivalente ao `getCurrentPosition` da SPA.
+- [x] Implementar a primeira captura de localização sob demanda, conforme a premissa vigente antes da revisão de GPS por janela.
 - [x] Implementar o botão de refresh de localização.
 - [x] Plugar `POST /api/web/check/location`.
 - [x] Atualizar o valor textual da localização na UI.
@@ -1328,6 +1397,8 @@ Nota de execução 17.23 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [x] Reexecutar a atualização de localização nos eventos de ciclo de vida equivalentes ao webapp.
 
 Nota de execução 17.24 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-on-demand-location.md`. O app Kotlin novo passou a capturar a posição do aparelho via `FusedLocationProviderClient`, resolver o local com `POST /api/web/check/location` no `SessionGateViewModel`, atualizar o card principal com rótulo, precisão, tom visual e mensagens equivalentes aos estados do backend, religar o botão manual `Atualizar` e repetir o refresh silencioso em unlock e `ON_RESUME` quando a sessão protegida está destravada. O fallback manual de `accuracy_too_low` também voltou a ficar visível mesmo com permissão GPS concedida, sem usar o texto do card como valor manual. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
+
+Nota de revisão pós-alteração da SPA (2026-04-26): a conclusão 17.24 permanece válida como primeira entrega funcional de localização, mas não encerra mais a paridade com a SPA atual. Depois dessa implementação, o webapp passou a usar captura GPS por janela, seleção da melhor amostra e progresso de precisão. A reconciliação obrigatória desse comportamento foi inserida na etapa 17.31 e deve ser executada antes da retomada do módulo de transporte.
 
 ### 17.25. Regras de visibilidade dos campos
 
@@ -1359,57 +1430,112 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 
 ### 17.28. Fluxo manual de check-in/check-out
 
-- [ ] Montar o payload equivalente ao usado pela SPA em `POST /api/web/check`.
-- [ ] Garantir envio de `chave`, `projeto`, `action`, `informe`, `local`, `event_time` e `client_event_id` conforme o contrato usado pelo webapp.
-- [ ] Implementar botão `Registrar` com estado de carregamento.
-- [ ] Bloquear nova submissão enquanto houver submissão em andamento.
-- [ ] Atualizar histórico após sucesso.
-- [ ] Atualizar notificações após sucesso ou erro.
-- [ ] Garantir que o fluxo manual respeite as mesmas regras de bloqueio do webapp quando `Atividades Automáticas` estiverem ativas.
+- [x] Montar o payload equivalente ao usado pela SPA em `POST /api/web/check`.
+- [x] Garantir envio de `chave`, `projeto`, `action`, `informe`, `local`, `event_time` e `client_event_id` conforme o contrato usado pelo webapp.
+- [x] Implementar botão `Registrar` com estado de carregamento.
+- [x] Bloquear nova submissão enquanto houver submissão em andamento.
+- [x] Atualizar histórico após sucesso.
+- [x] Atualizar notificações após sucesso ou erro.
+- [x] Garantir que o fluxo manual respeite as mesmas regras de bloqueio do webapp quando `Atividades Automáticas` estiverem ativas.
+
+Nota de execução 17.28 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-manual-check-submit.md`. O botão `Registrar` deixou de ser decorativo no shell Kotlin novo: o owner passou a montar o payload de `POST /api/web/check` com `chave`, `projeto`, `action`, `informe`, `local`, `event_time` e `client_event_id`, aplicar `isSubmitting` para bloquear reentrancia imediata, atualizar o histórico a partir de `payload.state` e refletir mensagens de sucesso/erro equivalentes às da SPA. O bloqueio `Desative Atividades Automáticas para registrar manualmente.` também passou a existir no fluxo manual quando o automático está efetivamente ativo sem override por `accuracy_too_low`. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.29. Atividades automáticas
 
-- [ ] Implementar o toggle `Atividades Automáticas`.
-- [ ] Exibir o toggle apenas quando a condição de disponibilidade equivalente à SPA for satisfeita.
-- [ ] Ocultar o toggle e limpar seu estado quando a condição deixar de ser satisfeita.
-- [ ] Restaurar a preferência persistida por `chave` para atividades automáticas.
-- [ ] Reexecutar a sequência de atualização quando a aplicação entrar em primeiro plano e estiver autenticada.
-- [ ] Implementar a Situação 1 de `docs/regras_checkin_checkout_webapp.txt`.
-- [ ] Implementar a Situação 2 de `docs/regras_checkin_checkout_webapp.txt`.
-- [ ] Implementar a Situação 3 de `docs/regras_checkin_checkout_webapp.txt`.
-- [ ] Implementar a Situação 4 de `docs/regras_checkin_checkout_webapp.txt`.
-- [ ] Implementar a Situação 5 de `docs/regras_checkin_checkout_webapp.txt`.
-- [ ] Garantir que nenhuma automação adicional herdada do Flutter seja disparada na entrega inicial.
-- [ ] Garantir que a mensagem `Desative Atividades Automáticas para registrar manualmente.` apareça quando aplicável.
+- [x] Implementar o toggle `Atividades Automáticas`.
+- [x] Exibir o toggle apenas quando a condição de disponibilidade equivalente à SPA for satisfeita.
+- [x] Ocultar o toggle e limpar seu estado quando a condição deixar de ser satisfeita.
+- [x] Restaurar a preferência persistida por `chave` para atividades automáticas.
+- [x] Reexecutar a sequência de atualização quando a aplicação entrar em primeiro plano e estiver autenticada.
+- [x] Implementar a Situação 1 de `docs/regras_checkin_checkout_webapp.txt`.
+- [x] Implementar a Situação 2 de `docs/regras_checkin_checkout_webapp.txt`.
+- [x] Implementar a Situação 3 de `docs/regras_checkin_checkout_webapp.txt`.
+- [x] Implementar a Situação 4 de `docs/regras_checkin_checkout_webapp.txt`.
+- [x] Implementar a Situação 5 de `docs/regras_checkin_checkout_webapp.txt`.
+- [x] Garantir que nenhuma automação adicional herdada do Flutter seja disparada na entrega inicial.
+- [x] Garantir que a mensagem `Desative Atividades Automáticas para registrar manualmente.` apareça quando aplicável.
+
+Nota de execução 17.29 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-automatic-activities.md`. O toggle `Atividades Automáticas` deixou de ser passivo e passou a viver no owner `SessionGateViewModel`, com persistência por `chave`, visibilidade condicionada à mesma disponibilidade de GPS usada pela SPA e execução automática restrita aos gatilhos equivalentes do webapp: ativação do toggle, desbloqueio da sessão protegida e reentrada em primeiro plano. O owner passou a portar a lógica de `automatic-activities.js`, consultando `GET /api/web/check/state` antes de decidir `POST /api/web/check` para checkout em `Zona de Checkout` ou fora do local de trabalho, check-in automático em local conhecido ou `Localização não Cadastrada`, e ausência de ação nas situações 2 e 5. O refresh manual continuou sem automação, preservando a entrega inicial sem comportamento adicional herdado do Flutter. A etapa foi validada pelos testes focais de `SessionGateViewModel` e `CheckShellUiState`, além da suíte ampla `:app:testDebugUnitTest`.
 
 ### 17.30. Decisão operacional sobre background nativo na entrega inicial
 
-- [ ] Decidir formalmente se o background service existente no Kotlin ficará desabilitado na entrega de paridade com a SPA.
-- [ ] Se ficar desabilitado, garantir que nenhuma UI exponha esse comportamento como ativo.
-- [ ] Se algum trecho técnico de background permanecer no app, encapsular por flag para não alterar a experiência exigida pela SPA.
-- [ ] Validar que a entrega inicial não dependa de monitoramento contínuo para funcionar como a SPA.
+- [x] Decidir formalmente se o background service existente no Kotlin ficará desabilitado na entrega de paridade com a SPA.
+- [x] Se ficar desabilitado, garantir que nenhuma UI exponha esse comportamento como ativo.
+- [x] Se algum trecho técnico de background permanecer no app, encapsular por flag para não alterar a experiência exigida pela SPA.
+- [x] Validar que a entrega inicial não dependa de monitoramento contínuo para funcionar como a SPA.
 
-### 17.31. Tela de transporte
+Nota de execução 17.30 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/governance/background-parity-decision.md`. A entrega inicial do app Kotlin novo foi formalmente travada em modo foreground-only: o projeto passou a expor `CHECKING_WEB_PARITY_BACKGROUND_AUTOMATION_ENABLED = false` em `BuildConfig`, `CheckingPresetConfig` ganhou a leitura central dessa flag e um teste de governança passou a garantir que o `AndroidManifest.xml` do app novo permaneça sem permissões e componentes herdados do background da base antiga, como `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`, `RECEIVE_BOOT_COMPLETED`, `<service>` e `BootCompletedReceiver`. Como o shell novo nao portou UI de background/OEM/autostart e os fluxos atuais continuam baseados apenas em refresh manual, unlock e `ON_RESUME`, a entrega inicial ficou explicitamente independente de monitoramento contínuo, em linha com a SPA. A etapa foi validada pelos testes focais de configuração/governança e pela suíte ampla `:app:testDebugUnitTest`.
 
-- [ ] Criar a tela ou diálogo de transporte com altura útil equivalente à SPA.
-- [ ] Criar o cabeçalho da tela de transporte com botão de voltar.
-- [ ] Criar a linha de resumo de endereço.
-- [ ] Criar o editor de endereço.
-- [ ] Criar o painel de opções `regular`, `weekend` e `extra`.
-- [ ] Criar o construtor de solicitação com o mesmo texto e semântica da SPA.
-- [ ] Criar a seção de histórico de solicitações ocupando o espaço restante da tela.
-- [ ] Criar o widget de detalhe da solicitação.
-- [ ] Implementar estados vazios, de carregamento e de erro da tela de transporte.
+### 17.31. Reconciliação GPS/precisão após alteração da SPA
 
-### 17.32. Endereço do transporte
+- [x] Registrar no próprio material de execução que a SPA mudou após a criação do guia, com referência aos commits `115349f`, `0ab8518`, `8fd20c4` e `fe448cd`.
+- [x] Reauditar `sistema/app/static/check/app.js` nas funções de plano de captura, progresso, seleção de melhor amostra, fallback manual e submit de local.
+- [x] Atualizar os modelos Kotlin de `WebLocationOptionsResponse` para mapear `location_accuracy_threshold_meters`.
+- [x] Expor o limite de precisão atual no estado do gate Kotlin, zerando-o quando a sessão protegida for limpa ou quando o catálogo de locais deixar de estar disponível.
+- [x] Substituir a captura única de `SessionGateDeviceLocationDataSource.captureCurrentLocation()` por uma API capaz de executar captura por plano de aquisição.
+- [x] Criar representação Kotlin equivalente aos gatilhos da SPA: `startup`, `visibility`, `focus`, `pageshow`, `manual_refresh`, `submit_guard`, `automatic_activities_enable` e `automatic_activities_disable`.
+- [x] Mapear gatilhos de ciclo de vida para janela `watch_window` com mínimo `0 ms` e máximo `5000 ms`.
+- [x] Mapear refresh manual, guarda antes de submit e toggle automático para janela `watch_window` com mínimo `3000 ms` e máximo `7000 ms`.
+- [x] Implementar seleção da melhor amostra GPS pela menor precisão e desempate pela amostra mais recente.
+- [x] Encerrar a janela antecipadamente somente quando a precisão alvo for atingida depois da janela mínima.
+- [x] Ao esgotar a janela, usar a melhor amostra já recebida como fallback de envio.
+- [x] Manter timeout e erro equivalentes quando nenhuma amostra válida for recebida.
+- [x] Garantir que latitude e longitude enviadas em `POST /api/web/check/location` pertençam à melhor amostra selecionada.
+- [x] Garantir que `accuracy_meters` enviado ao backend seja a precisão real dessa melhor amostra, ou `null` somente quando o Android não fornecer precisão.
+- [x] Renderizar progresso de captura no card de localização com `Buscando precisão suficiente...`.
+- [x] Renderizar texto de progresso `Precisão atual X m / Limite Y m` enquanto a janela ainda está aberta e houver amostra válida.
+- [x] Preservar os textos finais `Precisão X m / Limite Y m` após a resposta de `/api/web/check/location`.
+- [x] Preservar `accuracy_too_low` como modo de override manual, não como falha terminal.
+- [x] Manter `Projeto`, `Local`, rádios de registro e `Registrar` habilitados durante `accuracy_too_low`, mesmo com `Atividades Automáticas` marcada.
+- [x] Garantir que `Atividades Automáticas` permaneça marcada como preferência durante o override manual, mas sem disparar submit automático com `Precisao Insuficiente`.
+- [x] Preferir `Escritório Principal` como valor default do seletor `Local` quando o projeto o possuir.
+- [x] Injetar `Precisao Insuficiente` como opção sintética apenas durante `accuracy_too_low` e apenas quando `Escritório Principal` não existir no catálogo do projeto.
+- [x] Remover a opção sintética imediatamente quando uma nova resolução sair de `accuracy_too_low` ou quando o fluxo for `sem permissão`.
+- [x] Garantir que o fluxo sem permissão GPS continue usando apenas locais reais retornados por `/api/web/check/locations`.
+- [x] Garantir que o submit manual durante `accuracy_too_low` use o valor atual do seletor manual em `local`, mesmo com permissão GPS concedida.
+- [x] Garantir que o submit em localização GPS utilizável continue usando `currentLocationResolvedLocal`.
+- [x] Garantir que a troca de projeto durante `accuracy_too_low` recarregue locais e recalcule `Escritório Principal` versus `Precisao Insuficiente`.
+- [x] Garantir que refresh manual continue sem automação automática, conforme a entrega 17.29 e a SPA.
+- [x] Atualizar a documentação de execução em `checking_kotlin_new/docs/session-gate/` para descrever a captura por janela e o fallback manual revisado.
+- [x] Criar testes unitários para plano de captura por gatilho, melhor amostra, encerramento antecipado, timeout sem amostra e uso do limite de precisão.
+- [x] Criar testes unitários para progresso visual de precisão atual.
+- [x] Criar testes unitários para `accuracy_too_low` com toggle ligada, toggle desligada, projeto com `Escritório Principal`, projeto sem `Escritório Principal` e fluxo sem permissão.
+- [x] Criar teste de contrato para confirmar leitura de `location_accuracy_threshold_meters` em `GET /api/web/check/locations`.
+- [x] Criar teste de contrato para garantir que `POST /api/web/check/location` recebe a melhor latitude, longitude e precisão selecionadas.
+- [x] Reproduzir no Kotlin os cinco cenários cobertos por `scripts/homologate_temp_008_phase6.py`.
+- [x] Rodar testes focais de `SessionGateViewModel`, `CheckShellUiState`, modelos de API e datasource de localização.
+- [x] Rodar `:app:testDebugUnitTest` após a reconciliação.
+- [x] Registrar nota de execução da etapa com arquivos alterados, testes executados e divergências residuais.
 
-- [ ] Implementar carregamento do endereço atual a partir de `GET /api/web/transport/state`.
-- [ ] Implementar edição de endereço com os mesmos campos da SPA.
-- [ ] Plugar `POST /api/web/transport/address`.
-- [ ] Atualizar o estado da tela de transporte após salvar o endereço.
-- [ ] Atualizar o resumo do endereço após salvar.
+Critério de conclusão específico: antes de iniciar a tela de transporte, o app Kotlin deve demonstrar, por testes e documentação, que a captura GPS, o limite de precisão, o fallback `accuracy_too_low` e o submit manual com `Precisao Insuficiente` se comportam como a SPA atual.
 
-### 17.33. Construtor de solicitação regular, weekend e extra
+Nota de execução 17.31 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-gps-precision-reconciliation.md`. A implementação atualizou o contrato de locais para ler `location_accuracy_threshold_meters`, substituiu a leitura única de GPS por captura `watch_window` no datasource Android, criou planos por gatilho equivalentes à SPA, passou a escolher a melhor amostra por precisão/timestamp, exibiu progresso `Buscando precisão suficiente...`, adicionou captura forçada `submit_guard` antes do registro manual e fechou o fallback `accuracy_too_low` com `Escritório Principal` ou `Precisao Insuficiente` sem automação indevida. A validação focal foi executada com `.\gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateDeviceLocationDataSourceTest" --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.ui.check.CheckShellUiStateTest" --tests "com.br.checkingnative.domain.model.WebApiModelsTest" --tests "com.br.checkingnative.data.remote.WebCheckApiServiceTest"`. A suíte completa também foi validada com `.\gradlew.bat :app:testDebugUnitTest`.
+
+### 17.32. Tela de transporte
+
+- [x] Criar a tela ou diálogo de transporte com altura útil equivalente à SPA.
+- [x] Criar o cabeçalho da tela de transporte com botão de voltar.
+- [x] Criar a linha de resumo de endereço.
+- [x] Criar o editor de endereço.
+- [x] Criar o painel de opções `regular`, `weekend` e `extra`.
+- [x] Criar o construtor de solicitação com o mesmo texto e semântica da SPA.
+- [x] Criar a seção de histórico de solicitações ocupando o espaço restante da tela.
+- [x] Criar o widget de detalhe da solicitação.
+- [x] Implementar estados vazios, de carregamento e de erro da tela de transporte.
+
+Nota de execução 17.32 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/transport/transport-screen-structure.md`. A implementação criou a casca visual da tela de transporte no app Kotlin novo com cabeçalho `Agendamento de Transporte`, resumo de endereço, editor, painel `regular/weekend/extra`, construtor com textos equivalentes à SPA, seção de histórico ocupando o restante da altura útil e widget de detalhe preparado para overlay local. O `SessionGateViewModel` passou a controlar apenas o estado local de abertura/fechamento, editor, builder e placeholders `empty/loading/error`, mantendo por cautela fora desta etapa qualquer chamada a `GET /api/web/transport/state`, `POST /api/web/transport/address`, `POST /api/web/transport/vehicle-request`, SSE ou polling, que seguem reservados para 17.33+ conforme a revisão do plano. A validação focal foi executada com `.\\gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.ui.transport.TransportScreenStateTest"`.
+
+### 17.33. Endereço do transporte
+
+- [x] Implementar carregamento do endereço atual a partir de `GET /api/web/transport/state`.
+- [x] Implementar edição de endereço com os mesmos campos da SPA.
+- [x] Plugar `POST /api/web/transport/address`.
+- [x] Atualizar o estado da tela de transporte após salvar o endereço.
+- [x] Atualizar o resumo do endereço após salvar.
+
+Nota de execução 17.33 (2026-04-26): etapa concluída em `checking_kotlin_new/docs/transport/transport-address-state.md`. O app Kotlin novo passou a abrir a tela de transporte já consultando `GET /api/web/transport/state?chave=...`, hidratar `end_rua` e `zip` no resumo e no editor, exibir erro inline local quando a leitura falha e enviar o formulário para `POST /api/web/transport/address`. O `SessionGateViewModel` agora reaplica `payload.state` após salvar o endereço, fecha o editor com os valores confirmados pelo backend e reseta o estado de transporte quando a sessão protegida é relockada ou quando a `chave` muda, evitando vazamento de endereço entre usuários. A validação focal foi executada com `.\gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.ui.transport.TransportScreenStateTest" --tests "com.br.checkingnative.data.remote.WebCheckApiServiceTest"`.
+
+### 17.34. Construtor de solicitação regular, weekend e extra
 
 - [ ] Implementar o modo `regular` com os dias úteis permitidos.
 - [ ] Implementar o modo `weekend` com os dias de fim de semana permitidos.
@@ -1421,7 +1547,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Tratar `/api/web/transport/request` apenas como alias de compatibilidade, se necessário.
 - [ ] Recarregar o estado do transporte após criação ou reaproveitamento de solicitação ativa.
 
-### 17.34. Histórico de solicitações de transporte
+### 17.35. Histórico de solicitações de transporte
 
 - [ ] Renderizar lista completa de solicitações retornadas pelo backend, e não apenas a ativa.
 - [ ] Garantir ordenação visual coerente com o estado retornado pela API.
@@ -1434,7 +1560,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Garantir que o estado local não seja limpo prematuramente.
 - [ ] Garantir que o estado local seja limpo quando o reset protegido da sessão realmente ocorrer.
 
-### 17.35. Normalizações de status de transporte
+### 17.36. Normalizações de status de transporte
 
 - [ ] Implementar normalização de `realized` da API para `confirmed` no fluxo local, como a SPA faz.
 - [ ] Implementar normalização de solicitações inativas para `cancelled`, salvo override local de `realized`.
@@ -1442,7 +1568,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Garantir que `pending` e `confirmed` permaneçam visíveis.
 - [ ] Garantir que cartões `cancelled` e `realized` possam ser ocultados localmente.
 
-### 17.36. Ações do histórico de transporte
+### 17.37. Ações do histórico de transporte
 
 - [ ] Implementar cancelamento via `POST /api/web/transport/cancel`.
 - [ ] Implementar ciência via `POST /api/web/transport/acknowledge`.
@@ -1450,7 +1576,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Implementar o pop-up ou diálogo de detalhe da solicitação.
 - [ ] Garantir que o detalhe exponha veículo, placa, cor, horários e demais campos equivalentes ao webapp.
 
-### 17.37. SSE de transporte e fallback de polling
+### 17.38. SSE de transporte e fallback de polling
 
 - [ ] Escolher a biblioteca ou abordagem de SSE para Android compatível com o restante da stack.
 - [ ] Implementar o cliente SSE de `GET /api/web/transport/stream?chave=...`.
@@ -1462,7 +1588,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Implementar debounce de refresh em tempo real equivalente ao webapp.
 - [ ] Garantir que SSE e polling não gerem duplicidade de atualização ou regressão visual.
 
-### 17.38. Responsividade e precisão visual fina
+### 17.39. Responsividade e precisão visual fina
 
 - [ ] Ajustar largura máxima do card em telas pequenas, médias e grandes.
 - [ ] Ajustar gaps verticais entre seções.
@@ -1479,15 +1605,17 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Ajustar estados de foco e de teclado aberto em telas pequenas.
 - [ ] Ajustar as opacidades, cores e bordas dos estados de atenção e pending.
 
-### 17.39. Textos, ortografia e consistência de linguagem
+### 17.40. Textos, ortografia e consistência de linguagem
 
 - [ ] Conferir que todos os textos visíveis reproduzem os textos atuais da SPA.
 - [ ] Conferir capitalização consistente em `Último Check-In`, `Último Check-Out`, `Projeto`, `Local`, `Registro`, `Informe`, `Alterar`, `Voltar`, `Enviar` e `Registrar`.
 - [ ] Conferir acentuação correta em `Solicitação`, `Ciência`, `Precisão`, `Localização` e demais termos exibidos ao usuário.
+- [ ] Conferir textos específicos do fluxo GPS revisado: `Buscando precisão suficiente...`, `Precisão atual`, `Precisao insuficiente`, `Precisao Insuficiente` e `Limite`.
+- [ ] Conferir que o título atual da SPA, `Checking Web`, esteja refletido onde o app Kotlin reproduzir a marca do shell.
 - [ ] Conferir que as mensagens de erro e ajuda não perderam o sentido original do webapp.
 - [ ] Conferir que o overlay de paisagem use o mesmo texto da SPA.
 
-### 17.40. Testes unitários de lógica
+### 17.41. Testes unitários de lógica
 
 - [ ] Criar testes para sanitização de `chave`.
 - [ ] Criar testes para quebra de notificação em linha primária/secundária.
@@ -1498,8 +1626,16 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Criar testes para elegibilidade de `Realizado` local.
 - [ ] Criar testes para elegibilidade de dismiss do cartão de transporte.
 - [ ] Criar testes para as regras de atividades automáticas derivadas de `automatic-activities.js`.
+- [ ] Criar testes para planos de captura GPS por gatilho, incluindo janela `0-5000 ms` e janela `3000-7000 ms`.
+- [ ] Criar testes para seleção da melhor amostra por menor precisão e desempate por timestamp.
+- [ ] Criar testes para encerramento antecipado da janela quando a precisão alvo for atingida.
+- [ ] Criar testes para timeout sem amostras válidas.
+- [ ] Criar testes para montagem de texto `Precisão atual X m / Limite Y m`.
+- [ ] Criar testes para fallback manual `accuracy_too_low` com e sem `Atividades Automáticas`.
+- [ ] Criar testes para a opção sintética `Precisao Insuficiente`, garantindo que ela nunca apareça no fluxo sem permissão GPS.
+- [ ] Criar testes para submit manual usando o local manual durante `accuracy_too_low` e o local resolvido quando a localização GPS estiver utilizável.
 
-### 17.41. Testes de integração e contrato HTTP
+### 17.42. Testes de integração e contrato HTTP
 
 - [ ] Testar `GET /api/web/auth/status` a partir do app Kotlin.
 - [ ] Testar `POST /api/web/auth/register-password` a partir do app Kotlin.
@@ -1511,8 +1647,12 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Testar `PUT /api/web/project` a partir do app Kotlin.
 - [ ] Testar `GET /api/web/check/state` a partir do app Kotlin.
 - [ ] Testar `GET /api/web/check/locations` a partir do app Kotlin.
+- [ ] Testar que `GET /api/web/check/locations` mapeia `location_accuracy_threshold_meters`.
 - [ ] Testar `POST /api/web/check/location` a partir do app Kotlin.
+- [ ] Testar que `POST /api/web/check/location` envia latitude, longitude e `accuracy_meters` da melhor amostra selecionada.
+- [ ] Testar as respostas `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations` mantendo `accuracy_threshold_meters`.
 - [ ] Testar `POST /api/web/check` a partir do app Kotlin.
+- [ ] Testar que `POST /api/web/check` aceita `local = "Precisao Insuficiente"` no fluxo manual de fallback por precisão.
 - [ ] Testar `GET /api/web/transport/state` a partir do app Kotlin.
 - [ ] Testar `POST /api/web/transport/address` a partir do app Kotlin.
 - [ ] Testar `POST /api/web/transport/vehicle-request` a partir do app Kotlin.
@@ -1524,7 +1664,7 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Testar tratamento de `409` nos fluxos que o backend usa para conflito.
 - [ ] Testar tratamento de `422` para validações de payload.
 
-### 17.42. Testes instrumentados de UI e screenshot
+### 17.43. Testes instrumentados de UI e screenshot
 
 - [ ] Criar teste instrumentado do estado inicial bloqueado.
 - [ ] Criar teste instrumentado do estado de chave inexistente.
@@ -1536,6 +1676,10 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Criar teste instrumentado do card de histórico com destaque em `checkin`.
 - [ ] Criar teste instrumentado do card de histórico com destaque em `checkout`.
 - [ ] Criar teste instrumentado do card de localização em cada estado principal.
+- [ ] Criar teste instrumentado do card de localização durante progresso `Buscando precisão suficiente...`.
+- [ ] Criar teste instrumentado do seletor `Local` durante `accuracy_too_low` com `Escritório Principal`.
+- [ ] Criar teste instrumentado do seletor `Local` durante `accuracy_too_low` com opção sintética `Precisao Insuficiente`.
+- [ ] Criar teste instrumentado de `accuracy_too_low` com `Atividades Automáticas` marcada e controles manuais liberados.
 - [ ] Criar teste instrumentado da tela de transporte.
 - [ ] Criar teste instrumentado do construtor regular.
 - [ ] Criar teste instrumentado do construtor weekend.
@@ -1544,44 +1688,49 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Criar teste instrumentado do overlay de paisagem.
 - [ ] Criar testes de screenshot comparáveis com as capturas baseline da SPA.
 
-### 17.43. Testes manuais obrigatórios
+### 17.44. Testes manuais obrigatórios
 
 - [ ] Executar manualmente os cenários de entrada e autenticação listados na Seção 12.1.
 - [ ] Executar manualmente os cenários de histórico e registro manual listados na Seção 12.2.
 - [ ] Executar manualmente os cenários de localização e automação listados na Seção 12.3.
+- [ ] Executar manualmente os cinco cenários equivalentes a `scripts/homologate_temp_008_phase6.py`.
 - [ ] Executar manualmente os cenários de transporte listados na Seção 12.4.
 - [ ] Executar manualmente os cenários de layout e viewport listados na Seção 12.5.
 - [ ] Registrar evidência de cada cenário manual executado.
 - [ ] Registrar qualquer divergência residual, por menor que seja.
 
-### 17.44. Validação de não regressão da aplicação web
+### 17.45. Validação de não regressão da aplicação web
 
 - [ ] Confirmar que nenhum arquivo em `sistema/app/static/check` foi alterado ao final do trabalho.
 - [ ] Confirmar que nenhum endpoint do backend precisou ser alterado para a entrega inicial do app Kotlin.
 - [ ] Confirmar que a SPA continua funcionando normalmente após a conclusão da implementação no app Kotlin.
+- [ ] Confirmar que nenhuma adaptação Kotlin exigiu reverter ou simplificar a captura GPS atual da SPA.
 - [ ] Confirmar que a implantação do app Kotlin não introduziu dependências de runtime que quebrem o webapp.
 
-### 17.45. Build, instalação e execução local
+### 17.46. Build, instalação e execução local
 
-- [ ] Garantir que `checking_kotlin` compile com `:app:assembleDebug`.
+- [ ] Garantir que `checking_kotlin_new` compile com `:app:assembleDebug`.
 - [ ] Garantir que `:app:installDebug` instale o app no emulador ou dispositivo.
 - [ ] Garantir que a `MainActivity` abra corretamente após a instalação.
 - [ ] Garantir que o app inicialize sem crash no primeiro start.
 - [ ] Garantir que o app inicialize sem crash após rotação, background/foreground e reabertura.
 - [ ] Garantir que o app consiga se autenticar contra a API real do ambiente configurado.
+- [ ] Garantir que o app execute refresh GPS manual em dispositivo real com amostras sucessivas e sem travar a UI.
 
-### 17.46. Logs, observabilidade e depuração de falhas
+### 17.47. Logs, observabilidade e depuração de falhas
 
 - [ ] Revisar logs do app para autenticação.
 - [ ] Revisar logs do app para localização.
+- [ ] Revisar logs ou eventos de depuração para janela GPS, melhor amostra, precisão final enviada e motivo de encerramento da captura.
 - [ ] Revisar logs do app para transporte.
 - [ ] Revisar logs do app para SSE e reconexão.
 - [ ] Garantir que erros críticos fiquem rastreáveis para depuração.
 - [ ] Garantir que logs não exponham senha em texto puro.
 
-### 17.47. Documentação final da entrega
+### 17.48. Documentação final da entrega
 
-- [ ] Atualizar a documentação do `checking_kotlin` para descrever o fluxo equivalente à SPA.
+- [ ] Atualizar a documentação do `checking_kotlin_new` para descrever o fluxo equivalente à SPA.
+- [ ] Documentar a reconciliação GPS/precisão da etapa 17.31, incluindo limites de janela, gatilhos e fallback manual.
 - [ ] Documentar como configurar a base URL da API no app Kotlin.
 - [ ] Documentar como compilar e instalar o build debug.
 - [ ] Documentar como executar os testes relevantes.
@@ -1589,9 +1738,10 @@ Nota de execução 17.27 (2026-04-26): etapa concluída em `checking_kotlin_new/
 - [ ] Documentar a decisão final sobre tipografia.
 - [ ] Documentar a decisão final sobre background nativo na entrega inicial.
 
-### 17.48. Critério final de fechamento
+### 17.49. Critério final de fechamento
 
 - [ ] Confirmar que todos os itens desta checklist foram executados ou formalmente dispensados com justificativa.
+- [ ] Confirmar que a etapa 17.31 foi concluída antes de aceitar o transporte como próximo bloco funcional.
 - [ ] Confirmar que os critérios da Seção 13 foram atendidos integralmente.
 - [ ] Confirmar que o app Kotlin reproduz a mesma experiência central hoje entregue pela SPA.
 - [ ] Confirmar que o aplicativo está efetivamente pronto para rodar localmente em build debug.

@@ -1,0 +1,124 @@
+{
+  "generated_at": "2026-04-27T04:36:51Z",
+  "base_url": "http://127.0.0.1:8767",
+  "preview_db": "C:\\dev\\projetos\\checkcheck\\preview_phase5_manual_refresh.db",
+  "location_threshold_meters": 25,
+  "results": [
+    {
+      "scenario": "manual_refresh_changed_location_triggers_new_checkin",
+      "initial_state": {
+        "found": true,
+        "chave": "T9A1",
+        "projeto": "H95",
+        "current_action": "checkin",
+        "current_local": "Phase5 Sit6 Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:21.582818",
+        "last_checkout_at": null
+      },
+      "final_state": {
+        "found": true,
+        "chave": "T9A1",
+        "projeto": "H95",
+        "current_action": "checkin",
+        "current_local": "Phase5 Sit6 Portaria",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:30.490000",
+        "last_checkout_at": null
+      },
+      "ui_state": {
+        "locationValue": "Phase5 Sit6 Portaria",
+        "automaticChecked": true,
+        "statusPrimary": "Check-In automático concluído.",
+        "statusSecondary": ""
+      }
+    },
+    {
+      "scenario": "manual_refresh_same_location_does_not_duplicate_checkin",
+      "initial_state": {
+        "found": true,
+        "chave": "T9B2",
+        "projeto": "H95",
+        "current_action": "checkin",
+        "current_local": "Phase5 Sit6 Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:22.300438",
+        "last_checkout_at": null
+      },
+      "final_state": {
+        "found": true,
+        "chave": "T9B2",
+        "projeto": "H95",
+        "current_action": "checkin",
+        "current_local": "Phase5 Sit6 Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:22.300438",
+        "last_checkout_at": null
+      },
+      "ui_state": {
+        "locationValue": "Phase5 Sit6 Base",
+        "automaticChecked": true,
+        "statusPrimary": "Atualização da localização concluída. Localizacao",
+        "statusSecondary": "identificada em Phase5 Sit6 Base."
+      }
+    },
+    {
+      "scenario": "manual_refresh_checkout_zone_triggers_checkout",
+      "initial_state": {
+        "found": true,
+        "chave": "T9C3",
+        "projeto": "H97",
+        "current_action": "checkin",
+        "current_local": "Phase5 Checkout Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:22.980375",
+        "last_checkout_at": null
+      },
+      "final_state": {
+        "found": true,
+        "chave": "T9C3",
+        "projeto": "H97",
+        "current_action": "checkout",
+        "current_local": "Zona de CheckOut",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:22.980375",
+        "last_checkout_at": "2026-04-27T12:36:43.846000"
+      },
+      "ui_state": {
+        "locationValue": "Zona de Check-Out",
+        "automaticChecked": true,
+        "statusPrimary": "Check-Out automático concluído.",
+        "statusSecondary": ""
+      }
+    },
+    {
+      "scenario": "manual_refresh_nearby_unregistered_keeps_existing_checkin",
+      "initial_state": {
+        "found": true,
+        "chave": "T9D4",
+        "projeto": "H98",
+        "current_action": "checkin",
+        "current_local": "Phase5 Nearby Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:23.678150",
+        "last_checkout_at": null
+      },
+      "final_state": {
+        "found": true,
+        "chave": "T9D4",
+        "projeto": "H98",
+        "current_action": "checkin",
+        "current_local": "Phase5 Nearby Base",
+        "has_current_day_checkin": true,
+        "last_checkin_at": "2026-04-27T12:36:23.678150",
+        "last_checkout_at": null
+      },
+      "ui_state": {
+        "locationValue": "Localização não Cadastrada",
+        "automaticChecked": true,
+        "statusPrimary": "Atualização da localização concluída.",
+        "statusSecondary": ""
+      }
+    }
+  ]
+}

@@ -37,7 +37,7 @@
     <section id="authShell" class="auth-shell">
       <div class="auth-card">
         <h1>Acesso Administrativo</h1>
-        <p class="auth-copy">Entre com sua chave de usuário e senha. Perfil 0 acessa apenas Check-In e Check-Out; perfis com 1 ou 9 mantêm acesso completo ao painel.</p>
+        <p class="auth-copy">Entre com sua chave de usuário e senha. Perfil 0 acessa apenas Check-In e Check-Out; perfis com 1 ou 9 mantêm acesso completo ao painel. A visualização dos horários das atividades é restrita ao perfil 9.</p>
         <label class="auth-field-label" for="loginChave">Chave</label>
         <input id="loginChave" class="auth-input" type="text" maxlength="4" autocomplete="username" />
         <label class="auth-field-label" for="loginSenha">Senha</label>
@@ -132,7 +132,7 @@
         <div class="presence-controls" data-presence-table="checkin">
           <div class="presence-controls-grid">
             <label class="presence-control-field">
-              <span>Filtrar Horário</span>
+              <span data-presence-primary-filter-label="checkin">Filtrar Horário</span>
               <select data-presence-filter="time">
                 <option value="">Todos</option>
               </select>
@@ -176,7 +176,7 @@
           <table class="responsive-table presence-users-table">
             <thead>
               <tr>
-                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="time"><span data-presence-primary-header-label="checkin">Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -197,7 +197,7 @@
         <div class="presence-controls" data-presence-table="checkout">
           <div class="presence-controls-grid">
             <label class="presence-control-field">
-              <span>Filtrar Horário</span>
+              <span data-presence-primary-filter-label="checkout">Filtrar Horário</span>
               <select data-presence-filter="time">
                 <option value="">Todos</option>
               </select>
@@ -241,7 +241,7 @@
           <table class="responsive-table presence-users-table">
             <thead>
               <tr>
-                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="time"><span>Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="time"><span data-presence-primary-header-label="checkout">Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -264,9 +264,9 @@
           </div>
         </div>
         <div class="table-wrap forms-wrap">
-          <table class="responsive-table forms-table">
+          <table id="formsTable" class="responsive-table forms-table">
             <thead>
-              <tr><th>Recebimento</th><th>Chave</th><th>Nome</th><th>Projeto</th><th>Fuso horário</th><th>Atividade</th><th>Informe</th><th>Data</th><th>Hora</th></tr>
+              <tr><th>Recebimento</th><th>Chave</th><th>Nome</th><th>Projeto</th><th>Fuso horário</th><th>Atividade</th><th>Informe</th><th>Data</th><th data-forms-time-column-header>Hora</th></tr>
             </thead>
             <tbody id="formsBody"></tbody>
           </table>
@@ -520,7 +520,7 @@
         <div class="table-wrap events-wrap">
           <table class="responsive-table events-table">
             <thead>
-              <tr><th>ID</th><th>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Fuso horário</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
+              <tr><th>ID</th><th data-events-primary-header-label>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Fuso horário</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
             </thead>
             <tbody id="eventsBody"></tbody>
           </table>

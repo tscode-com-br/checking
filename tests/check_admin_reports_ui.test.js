@@ -50,8 +50,16 @@ test('admin reports controller keeps the tab full-admin only and wires the mutua
   assert.match(adminJs, /reportsClearButton\.addEventListener\("click", \(\) => \{\s*resetReportsView\(\{ focusPrimary: true \}\);\s*\}\);/);
   assert.match(adminJs, /reportsExportButton\.addEventListener\("click", \(\) => \{\s*downloadReportsExport\(\);\s*\}\);/);
   assert.match(adminJs, /reportsExportAllButton\.addEventListener\("click", \(\) => \{\s*downloadReportsExportAll\(\);\s*\}\);/);
+  assert.match(adminJs, /const groupKey = row\.event_date \|\| formatDateTimeLines\(row\.event_time, row\.timezone_name\)\.date;/);
+  assert.match(adminJs, /function getReportEventTimeLine\(row\) \{[\s\S]*row\.event_time_label[\s\S]*formatDateTimeLines\(row\.event_time, row\.timezone_name\)\.time[\s\S]*formatDateTime\(row\.event_time, row\.timezone_name\)[\s\S]*\}/);
+  assert.match(adminJs, /function getReportsResultTableColumns\(includeTime = canCurrentAdminViewActivityTime\(\)\) \{/);
+  assert.match(adminJs, /if \(includeTime\) \{[\s\S]*header: "Horário"[\s\S]*colClass: "reports-col-time"[\s\S]*\}/);
   assert.match(adminJs, /row\.source_label \|\| row\.source \|\| "-"/);
-  assert.match(adminJs, /class="responsive-table reports-results-table"/);
+  assert.match(adminJs, /function buildReportsResultTableMarkup\(tbodyId, rows, options = \{\}\) \{/);
+  assert.match(adminJs, /const tableClasses = \["responsive-table", "reports-results-table"\];/);
+  assert.match(adminJs, /if \(!includeTime\) \{[\s\S]*tableClasses\.push\("reports-results-table--without-time"\);[\s\S]*\}/);
+  assert.match(adminJs, /const canViewTime = canCurrentAdminViewActivityTime\(\);/);
+  assert.match(adminJs, /buildReportsResultTableMarkup\(tbodyId, group\.rows, \{ includeTime: canViewTime \}\)/);
   assert.match(adminJs, /if \(focusPrimary && reportsSearchChaveInput\) \{\s*reportsSearchChaveInput\.focus\(\);\s*\}/);
   assert.match(adminJs, /if \(activeTab === "relatorios"\) \{\s*return;\s*\}/);
   assert.match(adminJs, /reportsSearchButton\.addEventListener\("click", \(\) => \{\s*submitReportsSearch\(\);\s*\}\);/);
@@ -65,7 +73,10 @@ test('admin reports styles keep tabs uniform and align the new report search lay
   assert.match(adminCss, /\.reports-search-actions \{[\s\S]*gap:\s*10px;[\s\S]*justify-content:\s*flex-end;/);
   assert.match(adminCss, /\.reports-results-header \{[\s\S]*align-items:\s*flex-start;/);
   assert.match(adminCss, /\.reports-results-table \{[\s\S]*table-layout:\s*fixed;/);
+  assert.match(adminCss, /\.reports-results-table--without-time \{[\s\S]*min-width:\s*860px;/);
   assert.match(adminCss, /\.reports-results-table col\.reports-col-timezone \{[\s\S]*width:\s*20%;/);
+  assert.match(adminCss, /\.reports-results-table--without-time col\.reports-col-timezone \{[\s\S]*width:\s*22%;/);
+  assert.doesNotMatch(adminCss, /\.reports-results-table--without-time col\.reports-col-time\b/);
   assert.match(adminCss, /\.reports-results-body \{[\s\S]*display:\s*grid;[\s\S]*gap:\s*16px;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.tabs \{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[\s\S]*\.reports-search-grid \{[\s\S]*grid-template-columns:\s*1fr;[\s\S]*\.reports-results-header \{[\s\S]*flex-direction:\s*column;/);
 });

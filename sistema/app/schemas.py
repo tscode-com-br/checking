@@ -736,6 +736,7 @@ class AdminIdentity(BaseModel):
     chave: str
     nome_completo: str
     perfil: int
+    can_view_activity_time: bool
     access_scope: Literal["limited", "full"]
     allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]] = Field(default_factory=list)
 
@@ -927,12 +928,17 @@ class UserRow(BaseModel):
     timezone_label: str
     local: Optional[str]
     checkin: bool
-    time: datetime
+    time: datetime | None = None
+    activity_date_label: str
+    activity_time_label: str | None = None
+    activity_day_key: str
     assiduidade: Literal["Normal", "Retroativo"]
 
 
 class ProviderFormRow(BaseModel):
-    recebimento: datetime
+    recebimento: datetime | None = None
+    recebimento_date_label: str
+    recebimento_time_label: str | None = None
     chave: str
     nome: str
     projeto: str
@@ -941,7 +947,7 @@ class ProviderFormRow(BaseModel):
     atividade: Literal["check-in", "check-out"]
     informe: Literal["normal", "retroativo"]
     data: str
-    hora: str
+    hora: str | None = None
 
 
 class ReportPersonRow(BaseModel):
@@ -965,8 +971,8 @@ class ReportEventRow(BaseModel):
     local_label: str
     ontime: bool
     assiduidade: Literal["Normal", "Retroativo"]
-    event_time: datetime
-    event_time_label: str
+    event_time: datetime | None = None
+    event_time_label: str | None = None
     timezone_name: str
     timezone_label: str
     event_date: str
@@ -1360,7 +1366,9 @@ class EventRow(BaseModel):
     request_path: Optional[str]
     http_status: Optional[int]
     retry_count: int
-    event_time: datetime
+    event_time: datetime | None = None
+    event_date_label: str
+    event_time_label: str | None = None
     timezone_name: str
     timezone_label: str
 

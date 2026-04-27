@@ -122,6 +122,14 @@ def user_has_transport_access(user: User | None) -> bool:
     return user is not None and user_profile_has_access(user.perfil, TRANSPORT_ACCESS_DIGIT)
 
 
+def profile_can_view_activity_time(value: int | str | None) -> bool:
+    return normalize_user_profile(value) == 9
+
+
+def user_can_view_activity_time(user: User | None) -> bool:
+    return user is not None and profile_can_view_activity_time(user.perfil)
+
+
 def clear_admin_session(request: Request) -> None:
     request.session.pop("admin_user_id", None)
 

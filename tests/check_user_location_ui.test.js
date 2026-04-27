@@ -664,6 +664,58 @@ function createProjectSelectionHarness() {
   };
 }
 
+function createManualRefreshSequenceHarness(overrides = {}) {
+  const context = {
+    Boolean,
+    Promise,
+    __calls: {
+      runWithLockedUserInteraction: 0,
+      resolveCurrentLocation: [],
+      runAutomaticActivitiesIfNeeded: [],
+    },
+    __locationPayload: null,
+    isUserInteractionLocked: overrides.isUserInteractionLocked || (() => false),
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    runWithLockedUserInteraction: overrides.runWithLockedUserInteraction || (async (callback) => {
+      context.__calls.runWithLockedUserInteraction += 1;
+      return callback();
+    }),
+    resolveCurrentLocation: overrides.resolveCurrentLocation || (async (options) => {
+      context.__calls.resolveCurrentLocation.push(options);
+      return context.__locationPayload;
+    }),
+    runAutomaticActivitiesIfNeeded: overrides.runAutomaticActivitiesIfNeeded || (async (locationPayload, options) => {
+      context.__calls.runAutomaticActivitiesIfNeeded.push({ locationPayload, options });
+      return { performed: false, action: null, local: null };
+    }),
+  };
+
+  const moduleSource = [
+    `async ${extractFunctionSource(checkScript, 'runManualLocationRefreshSequence')}`,
+    `globalThis.__manualRefreshSequenceTestExports = {
+      async runManualLocationRefreshSequence() {
+        return runManualLocationRefreshSequence();
+      },
+      setLocationPayload(value) {
+        globalThis.__locationPayload = value;
+      },
+      getSnapshot() {
+        return {
+          runWithLockedUserInteraction: globalThis.__calls.runWithLockedUserInteraction,
+          resolveCurrentLocation: globalThis.__calls.resolveCurrentLocation.slice(),
+          runAutomaticActivitiesIfNeeded: globalThis.__calls.runAutomaticActivitiesIfNeeded.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-manual-refresh-sequence.vm.js' });
+  return {
+    helpers: context.__manualRefreshSequenceTestExports,
+    context,
+  };
+}
+
 function toPlainValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -1192,4 +1244,34 @@ test('check controller keeps lifecycle GPS acquisition wired through the expecte
   assert.match(checkScript, /async function updateLocationForLifecycleSequence\(options\) \{[\s\S]*showDetectingState: settings\.showDetectingState !== false,[\s\S]*\}/);
   assert.match(checkScript, /const locationPayload = await updateLocationForLifecycleSequence\(settings\);/);
   assert.match(checkScript, /const position = await requestCurrentPositionForPlan\(capturePlan, measurementSession, \{[\s\S]*showDetectingState: settings\.showDetectingState,[\s\S]*\}\);/);
+});
+
+test('manual refresh should evaluate automatic activities after a changed location during an active check-in', async () => {
+  const { helpers } = createManualRefreshSequenceHarness();
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Almoxarifado',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.resolveCurrentLocation, [{
+    interactive: true,
+    forceRefresh: true,
+    measurementTrigger: 'manual_refresh',
+    showDetectingState: true,
+    showCompletionStatus: true,
+    suppressNotification: false,
+  }]);
+  assert.deepStrictEqual(snapshot.runAutomaticActivitiesIfNeeded, [{
+    locationPayload: {
+      matched: true,
+      resolved_local: 'Almoxarifado',
+      status: 'matched',
+    },
+  }]);
 });

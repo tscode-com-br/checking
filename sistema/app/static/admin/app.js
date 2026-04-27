@@ -67,6 +67,7 @@ let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
 let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"];
+let adminCanViewActivityTime = true;
 let registeredUsersTotal = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
@@ -585,16 +586,84 @@ function applyAdminTabVisibility() {
 function setAdminAccessState(admin) {
   adminAccessScope = admin?.access_scope === "limited" ? "limited" : "full";
   allowedAdminTabs = normalizeAllowedAdminTabs(admin?.allowed_tabs, adminAccessScope);
+  adminCanViewActivityTime = Boolean(admin?.can_view_activity_time);
   if (!allowedAdminTabs.length) {
     allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
   }
   applyAdminTabVisibility();
+  syncPresenceTimeLabels();
+  syncFormsTimeColumnVisibility();
+  syncEventsPrimaryColumnLabel();
 }
 
 function resetAdminAccessState() {
   adminAccessScope = "full";
   allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
+  adminCanViewActivityTime = true;
   applyAdminTabVisibility();
+  syncPresenceTimeLabels();
+  syncFormsTimeColumnVisibility();
+  syncEventsPrimaryColumnLabel();
+}
+
+function canCurrentAdminViewActivityTime() {
+  return adminCanViewActivityTime;
+}
+
+function getFormsColumnCount(includeTime = canCurrentAdminViewActivityTime()) {
+  return includeTime ? 9 : 8;
+}
+
+function syncFormsTimeColumnVisibility() {
+  const formsTable = document.getElementById("formsTable");
+  const formsTimeHeader = document.querySelector("[data-forms-time-column-header]");
+  const canViewTime = canCurrentAdminViewActivityTime();
+
+  if (formsTable) {
+    formsTable.classList.toggle("forms-table--without-time", !canViewTime);
+  }
+  if (formsTimeHeader) {
+    formsTimeHeader.hidden = !canViewTime;
+  }
+
+  return canViewTime;
+}
+
+function getEventsPrimaryColumnLabel() {
+  return canCurrentAdminViewActivityTime() ? "Horário" : "Data";
+}
+
+function syncEventsPrimaryColumnLabel() {
+  const eventsHeader = document.querySelector("[data-events-primary-header-label]");
+  const canViewTime = canCurrentAdminViewActivityTime();
+
+  if (eventsHeader) {
+    eventsHeader.textContent = getEventsPrimaryColumnLabel();
+  }
+
+  return canViewTime;
+}
+
+function getPresencePrimaryColumnLabel() {
+  return canCurrentAdminViewActivityTime() ? "Horário" : "Data";
+}
+
+function getPresencePrimaryFilterLabel() {
+  return canCurrentAdminViewActivityTime() ? "Filtrar Horário" : "Filtrar Data";
+}
+
+function syncPresenceTimeLabels() {
+  ["checkin", "checkout"].forEach((tableKey) => {
+    const headerLabel = document.querySelector(`[data-presence-primary-header-label="${tableKey}"]`);
+    if (headerLabel) {
+      headerLabel.textContent = getPresencePrimaryColumnLabel();
+    }
+
+    const filterLabel = document.querySelector(`[data-presence-primary-filter-label="${tableKey}"]`);
+    if (filterLabel) {
+      filterLabel.textContent = getPresencePrimaryFilterLabel();
+    }
+  });
 }
 
 function createPresenceFilterState(filterColumns) {
@@ -1382,10 +1451,16 @@ function makeEventCell(value, extraClass = "") {
 
 function makeEventDateTimeCell(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
   const { date, time } = formatDateTimeLines(value, timezoneName);
+  return makeEventDateTimeCellFromParts(date, time);
+}
+
+function makeEventDateTimeCellFromParts(dateLabel, timeLabel) {
+  const normalizedDate = String(dateLabel ?? "").trim() || "-";
+  const normalizedTime = String(timeLabel ?? "").trim();
   return `
     <span class="event-cell event-datetime-cell">
-      <span class="event-datetime-line">${escapeHtml(date)}</span>
-      ${time ? `<span class="event-datetime-line">${escapeHtml(time)}</span>` : ""}
+      <span class="event-datetime-line">${escapeHtml(normalizedDate)}</span>
+      ${normalizedTime ? `<span class="event-datetime-line">${escapeHtml(normalizedTime)}</span>` : ""}
     </span>
   `;
 }
@@ -2098,12 +2173,17 @@ function syncUserTitles() {
 
 function getCalendarDayDiff(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
   const eventDayKey = getDayKey(value, timezoneName);
+  return getCalendarDayDiffFromDayKey(eventDayKey, timezoneName);
+}
+
+function getCalendarDayDiffFromDayKey(dayKey, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+  const normalizedDayKey = String(dayKey ?? "").trim();
   const todayKey = getDayKey(undefined, timezoneName);
-  if (!eventDayKey || !todayKey) {
+  if (!normalizedDayKey || !todayKey) {
     return 0;
   }
 
-  const eventMidnightUtcMs = Date.parse(`${eventDayKey}T00:00:00Z`);
+  const eventMidnightUtcMs = Date.parse(`${normalizedDayKey}T00:00:00Z`);
   const todayMidnightUtcMs = Date.parse(`${todayKey}T00:00:00Z`);
   if (Number.isNaN(eventMidnightUtcMs) || Number.isNaN(todayMidnightUtcMs)) {
     return 0;
@@ -2135,19 +2215,90 @@ function formatTimeZoneLabel(timezoneLabel) {
   return resolveDisplayTimeZoneLabel(timezoneLabel);
 }
 
+function getPresenceActivityDateLabel(row) {
+  const normalizedLabel = String(row?.activity_date_label || "").trim();
+  if (normalizedLabel) {
+    return normalizedLabel;
+  }
+
+  const formatted = formatDateTimeLines(row?.time, row?.timezone_name);
+  return formatted.date || "-";
+}
+
+function getPresenceActivityTimeLabel(row) {
+  const normalizedLabel = String(row?.activity_time_label || "").trim();
+  if (normalizedLabel) {
+    return normalizedLabel;
+  }
+
+  const formatted = formatDateTimeLines(row?.time, row?.timezone_name);
+  return formatted.time || "";
+}
+
+function getPresenceActivityDayKey(row) {
+  const normalizedDayKey = String(row?.activity_day_key || "").trim();
+  if (normalizedDayKey) {
+    return normalizedDayKey;
+  }
+  return getDayKey(row?.time, row?.timezone_name) || "";
+}
+
+function buildPresencePrimaryDisplayParts(row, options = {}) {
+  const { includeElapsedDays = false } = options;
+  const baseDateLabel = getPresenceActivityDateLabel(row) || "-";
+  const timeLabel = getPresenceActivityTimeLabel(row);
+  const elapsedDays = includeElapsedDays
+    ? getCalendarDayDiffFromDayKey(getPresenceActivityDayKey(row), row?.timezone_name)
+    : 0;
+  const dateLabel = elapsedDays
+    ? `${baseDateLabel} (${formatElapsedDays(elapsedDays)})`
+    : baseDateLabel;
+
+  return {
+    dateLabel,
+    timeLabel,
+    elapsedDays,
+    isStale: elapsedDays > 0,
+  };
+}
+
+function buildPresencePrimaryDisplay(row, options = {}) {
+  const displayParts = buildPresencePrimaryDisplayParts(row, options);
+  const baseValue = displayParts.timeLabel
+    ? `${displayParts.dateLabel} ${displayParts.timeLabel}`
+    : displayParts.dateLabel;
+
+  if (!displayParts.elapsedDays) {
+    return { formatted: baseValue || "-", elapsedDays: 0, isStale: false };
+  }
+
+  return {
+    formatted: baseValue || "-",
+    elapsedDays: displayParts.elapsedDays,
+    isStale: displayParts.isStale,
+  };
+}
+
+function buildPresencePrimaryCell(row, options = {}) {
+  const displayParts = buildPresencePrimaryDisplayParts(row, options);
+  return {
+    html: makeEventDateTimeCellFromParts(displayParts.dateLabel, displayParts.timeLabel),
+    elapsedDays: displayParts.elapsedDays,
+    isStale: displayParts.isStale,
+  };
+}
+
 function buildPresenceRow(row, options = {}) {
   const { highlightMissingCheckout = false, includeElapsedDays = false } = options;
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
-  const timeDisplay = includeElapsedDays
-    ? formatUserTableTime(row.time, row.timezone_name)
-    : { formatted: formatDateTime(row.time, row.timezone_name), isStale: false };
-  const staleCheckin = getCalendarDayDiff(row.time, row.timezone_name) > 0;
+  const timeCell = buildPresencePrimaryCell(row, { includeElapsedDays });
+  const staleCheckin = timeCell.elapsedDays > 0;
   if (highlightMissingCheckout && staleCheckin) {
     tr.classList.add("attention-user-row");
   }
 
-  tr.innerHTML = `<td>${escapeHtml(includeElapsedDays ? timeDisplay.formatted : formatDateTime(row.time, row.timezone_name))}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+  tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -2206,7 +2357,7 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
   }
 
   if (key === "time") {
-    return formatDateTime(row.time, row.timezone_name);
+    return buildPresencePrimaryDisplay(row, { includeElapsedDays: tableKey === "checkin" }).formatted;
   }
   if (key === "nome") {
     return row.nome || "";
@@ -2240,7 +2391,13 @@ function getPresenceRowSortValue(tableKey, row, key) {
 
   if (key === "time") {
     const parsedTime = Date.parse(row.time || "");
-    return Number.isNaN(parsedTime) ? 0 : parsedTime;
+    if (!Number.isNaN(parsedTime)) {
+      return parsedTime;
+    }
+
+    const activityDayKey = getPresenceActivityDayKey(row);
+    const parsedDay = Date.parse(activityDayKey ? `${activityDayKey}T00:00:00Z` : "");
+    return Number.isNaN(parsedDay) ? 0 : parsedDay;
   }
   return getPresenceRowDisplayValue(tableKey, row, key);
 }
@@ -3760,6 +3917,7 @@ async function removeProject(projectId) {
 }
 
 async function loadEvents() {
+  const canViewTime = syncEventsPrimaryColumnLabel();
   const rows = await fetchJson("/api/admin/events");
   eventsTotal = Array.isArray(rows) ? rows.length : 0;
   const body = document.getElementById("eventsBody");
@@ -3770,7 +3928,10 @@ async function loadEvents() {
       message: row.message ?? "-",
       details: formatEventDetails(row.details),
     };
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time, row.timezone_name)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
+    const eventDateTime = formatDateTimeLines(row.event_time, row.timezone_name);
+    const eventDateLabel = row.event_date_label || eventDateTime.date;
+    const eventTimeLabel = canViewTime ? (row.event_time_label || eventDateTime.time) : "";
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCellFromParts(eventDateLabel, eventTimeLabel)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
     body.appendChild(tr);
   });
@@ -3779,6 +3940,7 @@ async function loadEvents() {
 }
 
 async function loadForms() {
+  const canViewTime = syncFormsTimeColumnVisibility();
   const body = document.getElementById("formsBody");
   if (!body) {
     formsTotal = 0;
@@ -3793,14 +3955,27 @@ async function loadForms() {
   updateFormsClearButtonState();
   body.innerHTML = "";
   if (formsTotal === 0) {
-    renderEmptyStateRow("formsBody", 9, "Nenhum evento do provider encontrado no historico sincronizado.");
+    renderEmptyStateRow("formsBody", getFormsColumnCount(canViewTime), "Nenhum evento do provider encontrado no historico sincronizado.");
     updateDashboardSummary();
     return;
   }
 
   rows.forEach((row) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${makeEventDateTimeCell(row.recebimento, row.timezone_name)}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.projeto ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(row.atividade ?? "-")}</td><td>${makeEventCell(row.informe ?? "-")}</td><td>${makeEventCell(row.data ?? "-")}</td><td>${makeEventCell(row.hora ?? "-")}</td>`;
+    const cells = [
+      `<td>${makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label)}</td>`,
+      `<td>${makeEventCell(row.chave ?? "-")}</td>`,
+      `<td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td>`,
+      `<td>${makeEventCell(row.projeto ?? "-")}</td>`,
+      `<td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td>`,
+      `<td>${makeEventCell(row.atividade ?? "-")}</td>`,
+      `<td>${makeEventCell(row.informe ?? "-")}</td>`,
+      `<td>${makeEventCell(row.data ?? "-")}</td>`,
+    ];
+    if (canViewTime) {
+      cells.push(`<td>${makeEventCell(row.hora ?? "-")}</td>`);
+    }
+    tr.innerHTML = cells.join("");
     body.appendChild(tr);
   });
   applyResponsiveLabels("formsBody");
@@ -3894,6 +4069,78 @@ function renderReportsState(title, message) {
   updateReportsActionButtons();
 }
 
+function getReportEventTimeLine(row) {
+  return row.event_time_label
+    || formatDateTimeLines(row.event_time, row.timezone_name).time
+    || formatDateTime(row.event_time, row.timezone_name)
+    || "-";
+}
+
+function getReportsResultTableColumns(includeTime = canCurrentAdminViewActivityTime()) {
+  const columns = [];
+  if (includeTime) {
+    columns.push({
+      header: "Horário",
+      colClass: "reports-col-time",
+      getValue: (row) => getReportEventTimeLine(row),
+    });
+  }
+
+  columns.push(
+    {
+      header: "Ação",
+      colClass: "reports-col-action",
+      getValue: (row) => row.action_label || formatAction(row.action),
+    },
+    {
+      header: "Origem",
+      colClass: "reports-col-source",
+      getValue: (row) => row.source_label || row.source || "-",
+    },
+    {
+      header: "Local",
+      colClass: "reports-col-local",
+      getValue: (row) => row.local_label || formatLocal(row.local),
+    },
+    {
+      header: "Projeto",
+      colClass: "reports-col-project",
+      getValue: (row) => row.projeto ?? "-",
+    },
+    {
+      header: "Fuso horário",
+      colClass: "reports-col-timezone",
+      getValue: (row) => formatTimeZoneLabel(row.timezone_label),
+    },
+    {
+      header: "Assiduidade",
+      colClass: "reports-col-assiduidade",
+      getValue: (row) => row.assiduidade ?? "Normal",
+    },
+  );
+
+  return columns;
+}
+
+function buildReportsResultRowMarkup(row, columns) {
+  return `<tr>${columns.map((column) => `<td>${escapeHtml(column.getValue(row))}</td>`).join("")}</tr>`;
+}
+
+function buildReportsResultTableMarkup(tbodyId, rows, options = {}) {
+  const includeTime = options.includeTime ?? canCurrentAdminViewActivityTime();
+  const columns = getReportsResultTableColumns(includeTime);
+  const tableClasses = ["responsive-table", "reports-results-table"];
+  if (!includeTime) {
+    tableClasses.push("reports-results-table--without-time");
+  }
+
+  const colgroupMarkup = columns.map((column) => `<col class="${column.colClass}">`).join("");
+  const headerMarkup = columns.map((column) => `<th>${escapeHtml(column.header)}</th>`).join("");
+  const rowsMarkup = rows.map((row) => buildReportsResultRowMarkup(row, columns)).join("");
+
+  return `<div class="table-wrap"><table class="${tableClasses.join(" ")}"><colgroup>${colgroupMarkup}</colgroup><thead><tr>${headerMarkup}</tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div>`;
+}
+
 function renderReportsResults(payload) {
   const body = document.getElementById("reportsResultsBody");
   if (!body) {
@@ -3916,6 +4163,7 @@ function renderReportsResults(payload) {
 
   const groups = [];
   const groupsByDate = new Map();
+  const canViewTime = canCurrentAdminViewActivityTime();
   events.forEach((row) => {
     const groupKey = row.event_date || formatDateTimeLines(row.event_time, row.timezone_name).date;
     if (!groupsByDate.has(groupKey)) {
@@ -3929,14 +4177,7 @@ function renderReportsResults(payload) {
   body.innerHTML = groups.map((group, groupIndex) => {
     const tbodyId = `reportsGroupBody${groupIndex}`;
     const groupLabel = group.rows.length === 1 ? "1 evento" : `${group.rows.length} eventos`;
-    const rowsMarkup = group.rows.map((row) => {
-      const timeLine = row.event_time_label || formatDateTimeLines(row.event_time, row.timezone_name).time || formatDateTime(row.event_time, row.timezone_name);
-      const actionLabel = row.action_label || formatAction(row.action);
-      const sourceLabel = row.source_label || row.source || "-";
-      const localLabel = row.local_label || formatLocal(row.local);
-      return `<tr><td>${escapeHtml(timeLine)}</td><td>${escapeHtml(actionLabel)}</td><td>${escapeHtml(sourceLabel)}</td><td>${escapeHtml(localLabel)}</td><td>${escapeHtml(row.projeto ?? "-")}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td></tr>`;
-    }).join("");
-    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div><div class="table-wrap"><table class="responsive-table reports-results-table"><colgroup><col class="reports-col-time"><col class="reports-col-action"><col class="reports-col-source"><col class="reports-col-local"><col class="reports-col-project"><col class="reports-col-timezone"><col class="reports-col-assiduidade"></colgroup><thead><tr><th>Horário</th><th>Ação</th><th>Origem</th><th>Local</th><th>Projeto</th><th>Fuso horário</th><th>Assiduidade</th></tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div></section>`;
+    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div>${buildReportsResultTableMarkup(tbodyId, group.rows, { includeTime: canViewTime })}</section>`;
   }).join("");
 
   groups.forEach((_, groupIndex) => {

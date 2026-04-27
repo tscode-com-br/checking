@@ -5449,7 +5449,7 @@
     }
 
     await runWithLockedUserInteraction(async () => {
-      await resolveCurrentLocation({
+      const locationPayload = await resolveCurrentLocation({
         interactive: true,
         forceRefresh: true,
         measurementTrigger: 'manual_refresh',
@@ -5457,6 +5457,10 @@
         showCompletionStatus: true,
         suppressNotification: false,
       });
+
+      if (locationPayload) {
+        await runAutomaticActivitiesIfNeeded(locationPayload);
+      }
     });
   }
 

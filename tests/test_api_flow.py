@@ -81,7 +81,7 @@ from sistema.app.services.admin_project_scope import (
     resolve_effective_admin_monitored_projects,
 )
 from sistema.app.schemas import AdminManagementRow, AdminProfileUpdateRequest
-from sistema.app.services.admin_auth import ensure_default_admin
+from sistema.app.services.admin_auth import ensure_default_admin, profile_can_view_activity_time, user_can_view_activity_time
 from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import build_project_fields_for_country, seed_default_projects
@@ -319,6 +319,22 @@ def test_admin_management_row_normalizes_monitored_projects_when_provided():
         can_set_password=False,
     )
     assert row.monitored_projects == ["P80", "P83"]
+
+
+def test_profile_can_view_activity_time_requires_exact_profile_nine():
+    assert profile_can_view_activity_time(9) is True
+    assert profile_can_view_activity_time("9") is True
+    assert profile_can_view_activity_time(1) is False
+    assert profile_can_view_activity_time(0) is False
+    assert profile_can_view_activity_time(999) is False
+    assert profile_can_view_activity_time(None) is False
+
+
+def test_user_can_view_activity_time_requires_exact_profile_nine():
+    assert user_can_view_activity_time(SimpleNamespace(perfil=9)) is True
+    assert user_can_view_activity_time(SimpleNamespace(perfil=999)) is False
+    assert user_can_view_activity_time(SimpleNamespace(perfil=1)) is False
+    assert user_can_view_activity_time(None) is False
 
 
 def test_admin_update_profile_route_accepts_valid_monitored_projects_payload_shape():
@@ -1874,6 +1890,10 @@ def test_admin_provider_forms_rows_include_timezone_metadata_for_non_singapore_p
         assert form_row["projeto"] == "P98"
         assert form_row["timezone_name"] == "Asia/Tokyo"
         assert form_row["timezone_label"] == "Japão (+9)"
+        assert form_row["recebimento"] is not None
+        assert form_row["recebimento_date_label"] == "17/04/2026"
+        assert form_row["recebimento_time_label"] == "08:26:00"
+        assert form_row["hora"] == "08:26:00"
 
     with SessionLocal() as db:
         user = get_user_by_chave(db, "PV98")
@@ -2087,7 +2107,75 @@ def test_provider_current_state_uses_forms_as_local_when_provider_event_wins(mon
         assert forms_row["nome"] == "USUARIO PROVIDER LOCAL"
         assert forms_row["atividade"] == "check-out"
         assert forms_row["informe"] == "retroativo"
+        assert forms_row["recebimento"] is not None
+        assert forms_row["recebimento_date_label"] == "21/04/2026"
+        assert forms_row["recebimento_time_label"] == "18:05:00"
         assert forms_row["hora"] == "18:05:00"
+
+
+def test_admin_provider_forms_hide_sensitive_time_for_profile_one():
+    with SessionLocal() as db:
+        admin = find_user_by_chave(db, "P101")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Um Forms",
+                chave="P101",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Um Forms"
+            admin.projeto = "P80"
+            admin.senha = hash_password("adm123")
+            admin.perfil = 1
+            admin.last_active_at = now_sgt()
+            admin.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PF41",
+                "nome": "USUARIO FORMS PERFIL UM",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "22/04/2026",
+                "hora": "14:32:10",
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        login_response = login_admin(client, chave="P101", senha="adm123")
+        assert login_response.status_code == 200, login_response.text
+
+        forms_response = client.get("/api/admin/forms")
+        assert forms_response.status_code == 200, forms_response.text
+        form_row = next(row for row in forms_response.json() if row["chave"] == "PF41")
+        assert form_row["nome"] == "USUARIO FORMS PERFIL UM"
+        assert form_row["atividade"] == "check-in"
+        assert form_row["informe"] == "normal"
+        assert form_row["data"] == "22/04/2026"
+        assert form_row["recebimento"] is None
+        assert form_row["recebimento_date_label"] == "22/04/2026"
+        assert form_row["recebimento_time_label"] is None
+        assert form_row["hora"] is None
 
 
 def test_web_check_ignores_provider_checkout_when_deciding_same_day_submission():
@@ -2347,6 +2435,7 @@ def test_admin_reports_events_returns_history_by_chave_in_desc_order():
     assert payload["events"][0]["timezone_name"] == "Asia/Tokyo"
     assert payload["events"][0]["timezone_label"] == "Japão (+9)"
     assert payload["events"][0]["event_date"] == "25/04/2026"
+    assert payload["events"][0]["event_time"].startswith("2026-04-25T09:30:00")
     assert payload["events"][0]["event_time_label"] == "10:30:00"
     assert payload["events"][0]["action_label"] == "Check-Out"
     assert payload["events"][0]["local_label"] == "Forms"
@@ -2354,6 +2443,7 @@ def test_admin_reports_events_returns_history_by_chave_in_desc_order():
     assert payload["events"][1]["assiduidade"] == "Retroativo"
     assert payload["events"][2]["source"] == "web"
     assert payload["events"][2]["source_label"] == "Aplicativo"
+    assert payload["events"][2]["event_time"].startswith("2026-04-24T18:00:00")
 
 
 def test_admin_reports_events_returns_history_by_unique_nome():
@@ -2402,6 +2492,95 @@ def test_admin_reports_events_returns_history_by_unique_nome():
     assert payload["events"][0]["source_label"] == "android"
     assert payload["events"][0]["local"] == "App"
     assert payload["events"][0]["local_label"] == "App"
+
+
+def test_admin_reports_events_hide_sensitive_time_for_profile_one():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P98")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P98", **build_project_fields_for_country("JP")))
+            db.flush()
+
+        admin = find_user_by_chave(db, "P100")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Um",
+                chave="P100",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Um"
+            admin.projeto = "P80"
+            admin.senha = hash_password("adm123")
+            admin.perfil = 1
+            admin.last_active_at = now_sgt()
+            admin.inactivity_days = 0
+
+        user = User(
+            rfid="RPT1002",
+            chave="RP48",
+            nome="Usuario Relatorio Restrito",
+            projeto="P98",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="provider",
+                action="checkout",
+                projeto="P98",
+                local="Forms",
+                ontime=False,
+                event_time=datetime(2026, 4, 25, 9, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+                created_at=now_sgt(),
+                source_request_id=f"report-provider-hidden-{uuid.uuid4().hex}",
+                device_id="provider",
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="P100", senha="adm123")
+        assert login_response.status_code == 200
+
+        response = client.get("/api/admin/reports/events", params={"chave": "RP48"})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    assert payload["person"]["chave"] == "RP48"
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["timezone_name"] == "Asia/Tokyo"
+    assert payload["events"][0]["timezone_label"] == "Japão (+9)"
+    assert payload["events"][0]["event_date"] == "25/04/2026"
+    assert payload["events"][0]["event_time"] is None
+    assert payload["events"][0]["event_time_label"] is None
+    assert payload["events"][0]["source_label"] == "Forms"
+    assert payload["events"][0]["action_label"] == "Check-Out"
+    assert payload["events"][0]["assiduidade"] == "Retroativo"
 
 
 def test_admin_reports_events_export_builds_xlsx_download_with_display_labels():
@@ -2463,6 +2642,7 @@ def test_admin_reports_events_export_builds_xlsx_download_with_display_labels():
     assert worksheet.title == "Relatório"
     assert worksheet["A1"].value == "Usuario Relatorio Export (RP49)"
     assert worksheet["A2"].value == "Projeto atual: P80 | RFID: RPT1003 | Fuso horário: Singapura (+8) | 1 evento"
+    assert {str(cell_range) for cell_range in worksheet.merged_cells.ranges} == {"A1:H1", "A2:H2"}
     assert [worksheet["A4"].value, worksheet["B4"].value, worksheet["C4"].value, worksheet["D4"].value, worksheet["E4"].value, worksheet["F4"].value, worksheet["G4"].value, worksheet["H4"].value] == [
         "Data",
         "Horário",
@@ -2483,6 +2663,122 @@ def test_admin_reports_events_export_builds_xlsx_download_with_display_labels():
         "Singapura (+8)",
         "Retroativo",
     ]
+    workbook.close()
+
+
+def test_admin_reports_events_export_hides_time_column_for_profile_one():
+    fixed_now = datetime(2026, 4, 22, 15, 40, 45, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P80")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P80", **build_project_fields_for_country("SG")))
+            db.flush()
+
+        admin = find_user_by_chave(db, "P100")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Um",
+                chave="P100",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Um"
+            admin.projeto = "P80"
+            admin.senha = hash_password("adm123")
+            admin.perfil = 1
+            admin.last_active_at = now_sgt()
+            admin.inactivity_days = 0
+
+        user = User(
+            rfid="RPT1004",
+            chave="RP50",
+            nome="Usuario Relatorio Export Restrito",
+            projeto="P80",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="device",
+                action="checkout",
+                projeto="P80",
+                local="main",
+                ontime=False,
+                event_time=datetime(2026, 4, 25, 7, 8, 9, tzinfo=ZoneInfo(settings.tz_name)),
+                created_at=now_sgt(),
+                source_request_id=f"report-device-export-hidden-{uuid.uuid4().hex}",
+                device_id="esp32-box-0001",
+            )
+        )
+        db.commit()
+
+    with patch("sistema.app.routers.admin.now_sgt", return_value=fixed_now):
+        with TestClient(app) as client:
+            login_response = login_admin(client, chave="P100", senha="adm123")
+            assert login_response.status_code == 200
+
+            exported = client.get("/api/admin/reports/events/export", params={"chave": "RP50"})
+
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Relatorio - RP50 - 20260422 - 154045.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    worksheet = workbook.active
+    assert worksheet.title == "Relatório"
+    assert worksheet["A1"].value == "Usuario Relatorio Export Restrito (RP50)"
+    assert worksheet["A2"].value == "Projeto atual: P80 | RFID: RPT1004 | Fuso horário: Singapura (+8) | 1 evento"
+    assert {str(cell_range) for cell_range in worksheet.merged_cells.ranges} == {"A1:G1", "A2:G2"}
+    assert [worksheet["A4"].value, worksheet["B4"].value, worksheet["C4"].value, worksheet["D4"].value, worksheet["E4"].value, worksheet["F4"].value, worksheet["G4"].value] == [
+        "Data",
+        "Ação",
+        "Origem",
+        "Local",
+        "Projeto",
+        "Fuso Horário",
+        "Assiduidade",
+    ]
+    assert worksheet["H4"].value is None
+    assert [worksheet["A5"].value, worksheet["B5"].value, worksheet["C5"].value, worksheet["D5"].value, worksheet["E5"].value, worksheet["F5"].value, worksheet["G5"].value] == [
+        "25/04/2026",
+        "Check-Out",
+        "Box ESP32-0001",
+        "Escritório Principal",
+        "P80",
+        "Singapura (+8)",
+        "Retroativo",
+    ]
+    assert worksheet["H5"].value is None
+    assert not any(cell.value == "07:08:09" for row in worksheet.iter_rows() for cell in row)
     workbook.close()
 
 
@@ -2586,7 +2882,12 @@ def test_admin_reports_events_export_all_builds_xlsx_download_for_all_users():
         "Fuso Horário",
         "Assiduidade",
     ]
-    assert [worksheet["A2"].value, worksheet["B2"].value, worksheet["C2"].value, worksheet["D2"].value, worksheet["E2"].value, worksheet["F2"].value, worksheet["G2"].value, worksheet["H2"].value, worksheet["I2"].value] == [
+    rows_by_name = {
+        row[0]: row
+        for row in worksheet.iter_rows(min_row=2, max_col=9, values_only=True)
+        if row[0] in {"Ana Relatorio", "Bruno Relatorio"}
+    }
+    assert rows_by_name["Ana Relatorio"] == (
         "Ana Relatorio",
         "25/04/2026",
         "07:15:00",
@@ -2596,8 +2897,8 @@ def test_admin_reports_events_export_all_builds_xlsx_download_for_all_users():
         project_name_a,
         "Singapura (+8)",
         "Normal",
-    ]
-    assert [worksheet["A3"].value, worksheet["B3"].value, worksheet["C3"].value, worksheet["D3"].value, worksheet["E3"].value, worksheet["F3"].value, worksheet["G3"].value, worksheet["H3"].value, worksheet["I3"].value] == [
+    )
+    assert rows_by_name["Bruno Relatorio"] == (
         "Bruno Relatorio",
         "24/04/2026",
         "21:30:00",
@@ -2607,7 +2908,171 @@ def test_admin_reports_events_export_all_builds_xlsx_download_for_all_users():
         project_name_b,
         "Brasil (-3)",
         "Retroativo",
+    )
+    workbook.close()
+
+
+def test_admin_reports_events_export_all_hides_time_column_for_profile_one():
+    fixed_now = datetime(2026, 4, 22, 16, 55, 30, tzinfo=ZoneInfo(settings.tz_name))
+    project_name_a = "P912"
+    project_name_b = "P913"
+
+    with SessionLocal() as db:
+        project_a = db.execute(select(Project).where(Project.name == project_name_a)).scalar_one_or_none()
+        if project_a is None:
+            db.add(Project(name=project_name_a, **build_project_fields_for_country("SG")))
+        project_b = db.execute(select(Project).where(Project.name == project_name_b)).scalar_one_or_none()
+        if project_b is None:
+            db.add(Project(name=project_name_b, **build_project_fields_for_country("BR")))
+
+        admin = find_user_by_chave(db, "P100")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Um",
+                chave="P100",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Um"
+            admin.projeto = "P80"
+            admin.senha = hash_password("adm123")
+            admin.perfil = 1
+            admin.last_active_at = now_sgt()
+            admin.inactivity_days = 0
+
+        db.flush()
+
+        user_a = User(
+            rfid="RPT3001",
+            chave="RC11",
+            nome="Carla Relatorio",
+            projeto=project_name_a,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        user_b = User(
+            rfid="RPT3002",
+            chave="RD22",
+            nome="Daniel Relatorio",
+            projeto=project_name_b,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([user_a, user_b])
+        db.flush()
+        db.add_all(
+            [
+                UserSyncEvent(
+                    user_id=user_a.id,
+                    chave=user_a.chave,
+                    rfid=user_a.rfid,
+                    source="web",
+                    action="checkin",
+                    projeto=project_name_a,
+                    local="main",
+                    ontime=True,
+                    event_time=datetime(2026, 4, 25, 7, 15, 0, tzinfo=ZoneInfo(settings.tz_name)),
+                    created_at=now_sgt(),
+                    source_request_id=f"report-export-all-hidden-a-{uuid.uuid4().hex}",
+                    device_id=None,
+                ),
+                UserSyncEvent(
+                    user_id=user_b.id,
+                    chave=user_b.chave,
+                    rfid=user_b.rfid,
+                    source="provider",
+                    action="checkout",
+                    projeto=project_name_b,
+                    local="Forms",
+                    ontime=False,
+                    event_time=datetime(2026, 4, 25, 8, 30, 0, tzinfo=ZoneInfo(settings.tz_name)),
+                    created_at=now_sgt(),
+                    source_request_id=f"report-export-all-hidden-b-{uuid.uuid4().hex}",
+                    device_id="provider",
+                ),
+            ]
+        )
+        db.commit()
+
+    with patch("sistema.app.routers.admin.now_sgt", return_value=fixed_now):
+        with TestClient(app) as client:
+            login_response = login_admin(client, chave="P100", senha="adm123")
+            assert login_response.status_code == 200
+
+            exported = client.get("/api/admin/reports/events/export-all")
+
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Relatorio - Todos - 20260422 - 165530.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    worksheet = workbook.active
+    assert worksheet.title == "Relatório"
+    assert [worksheet["A1"].value, worksheet["B1"].value, worksheet["C1"].value, worksheet["D1"].value, worksheet["E1"].value, worksheet["F1"].value, worksheet["G1"].value, worksheet["H1"].value] == [
+        "Nome",
+        "Data",
+        "Ação",
+        "Origem",
+        "Local",
+        "Projeto",
+        "Fuso Horário",
+        "Assiduidade",
     ]
+    assert worksheet["I1"].value is None
+    rows_by_name = {
+        row[0]: row
+        for row in worksheet.iter_rows(min_row=2, max_col=9, values_only=True)
+        if row[0] in {"Carla Relatorio", "Daniel Relatorio"}
+    }
+    assert rows_by_name["Carla Relatorio"] == (
+        "Carla Relatorio",
+        "25/04/2026",
+        "Check-In",
+        "Aplicativo",
+        "Escritório Principal",
+        project_name_a,
+        "Singapura (+8)",
+        "Normal",
+        None,
+    )
+    assert rows_by_name["Daniel Relatorio"] == (
+        "Daniel Relatorio",
+        "24/04/2026",
+        "Check-Out",
+        "Forms",
+        "Forms",
+        project_name_b,
+        "Brasil (-3)",
+        "Retroativo",
+        None,
+    )
+    assert not any(cell.value in {"07:15:00", "21:30:00"} for row in worksheet.iter_rows() for cell in row)
     workbook.close()
 
 
@@ -2703,6 +3168,162 @@ def test_admin_reports_events_route_is_restricted_to_full_admin():
         denied = client.get("/api/admin/reports/events", params={"chave": "RP41"})
         assert denied.status_code == 403, denied.text
         assert denied.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
+
+
+def test_admin_events_keep_raw_and_safe_activity_time_for_profile_nine():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P98")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P98", **build_project_fields_for_country("JP")))
+            db.flush()
+
+        user = User(
+            rfid="EVT9001",
+            chave="EV91",
+            nome="Usuario Evento Perfil Nove",
+            projeto="P98",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        event_time = datetime(2026, 4, 25, 9, 30, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        event = CheckEvent(
+            idempotency_key=f"event-profile-nine-{uuid.uuid4().hex}",
+            source="device",
+            rfid=user.rfid,
+            action="checkin",
+            status="success",
+            message="Entrada registrada",
+            details="reader=tokyo-gate",
+            project="P98",
+            device_id="ESP-TOKYO-01",
+            local="Portaria",
+            request_path="/api/scan",
+            http_status=200,
+            ontime=True,
+            event_time=event_time,
+            submitted_at=event_time,
+            retry_count=0,
+        )
+        db.add(event)
+        db.commit()
+        event_id = event.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        response = client.get("/api/admin/events")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    row = next(item for item in payload if item["id"] == event_id)
+    assert row["source"] == "device"
+    assert row["chave"] == "EV91"
+    assert row["timezone_name"] == "Asia/Tokyo"
+    assert row["timezone_label"] == "Japão (+9)"
+    assert row["event_time"].startswith("2026-04-25T09:30:00")
+    assert row["event_date_label"] == "25/04/2026"
+    assert row["event_time_label"] == "10:30:00"
+    assert row["request_path"] == "/api/scan"
+
+
+def test_admin_events_hide_sensitive_time_for_profile_one():
+    with SessionLocal() as db:
+        project = db.execute(select(Project).where(Project.name == "P911")).scalar_one_or_none()
+        if project is None:
+            db.add(Project(name="P911", **build_project_fields_for_country("BR")))
+            db.flush()
+
+        admin = find_user_by_chave(db, "P100")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Um",
+                chave="P100",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Um"
+            admin.projeto = "P80"
+            admin.senha = hash_password("adm123")
+            admin.perfil = 1
+            admin.last_active_at = now_sgt()
+            admin.inactivity_days = 0
+
+        user = User(
+            rfid="EVT1001",
+            chave="EV11",
+            nome="Usuario Evento Perfil Um",
+            projeto="P911",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        event_time = datetime(2026, 4, 25, 0, 30, 0, tzinfo=ZoneInfo(settings.tz_name))
+        event = CheckEvent(
+            idempotency_key=f"event-profile-one-{uuid.uuid4().hex}",
+            source="provider",
+            rfid=user.rfid,
+            action="checkout",
+            status="success",
+            message="Saída Forms registrada",
+            details="source=forms",
+            project="P911",
+            device_id="FORMS-BR-01",
+            local="Forms",
+            request_path="/api/provider/updaterecords",
+            http_status=200,
+            ontime=False,
+            event_time=event_time,
+            submitted_at=event_time,
+            retry_count=1,
+        )
+        db.add(event)
+        db.commit()
+        event_id = event.id
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="P100", senha="adm123")
+        assert login_response.status_code == 200
+
+        response = client.get("/api/admin/events")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+    row = next(item for item in payload if item["id"] == event_id)
+    assert row["source"] == "provider"
+    assert row["chave"] == "EV11"
+    assert row["timezone_name"] == "America/Sao_Paulo"
+    assert row["timezone_label"] == "Brasil (-3)"
+    assert row["event_time"] is None
+    assert row["event_date_label"] == "24/04/2026"
+    assert row["event_time_label"] is None
+    assert row["request_path"] == "/api/provider/updaterecords"
+    assert row["retry_count"] == 1
 
 
 def test_admin_stream_requires_valid_session():
@@ -10065,6 +10686,7 @@ def test_admin_login_session_and_logout_flow():
         assert session_after.status_code == 200
         assert session_after.json()["authenticated"] is True
         assert session_after.json()["admin"]["chave"] == "HR70"
+        assert session_after.json()["admin"]["can_view_activity_time"] is True
         assert session_after.json()["admin"]["access_scope"] == "full"
         assert session_after.json()["admin"]["allowed_tabs"] == [
             "checkin",
@@ -10137,6 +10759,7 @@ def test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout():
         assert payload["authenticated"] is True
         assert payload["admin"]["chave"] == "PZ00"
         assert payload["admin"]["perfil"] == 0
+        assert payload["admin"]["can_view_activity_time"] is False
         assert payload["admin"]["access_scope"] == "limited"
         assert payload["admin"]["allowed_tabs"] == ["checkin", "checkout"]
 
@@ -10168,6 +10791,211 @@ def test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout():
         denied_reports_export_all = client.get("/api/admin/reports/events/export-all")
         assert denied_reports_export_all.status_code == 403, denied_reports_export_all.text
         assert denied_reports_export_all.json()["detail"] == "Este usuario nao possui permissao para esta area do Admin."
+
+
+def test_admin_checkin_and_checkout_keep_raw_and_safe_activity_time_for_profile_nine(monkeypatch):
+    fixed_now = datetime(2026, 4, 26, 16, 30, 45, tzinfo=ZoneInfo(settings.tz_name))
+    checkin_time = fixed_now - timedelta(hours=1, minutes=10, seconds=12)
+    checkout_time = fixed_now - timedelta(minutes=25, seconds=3)
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        for chave, nome, local, is_checkin, event_time in [
+            ("P39C", "Perfil Nove Checkin", "Porta 9", True, checkin_time),
+            ("P39O", "Perfil Nove Checkout", "Saida 9", False, checkout_time),
+        ]:
+            user = find_user_by_chave(db, chave)
+            if user is None:
+                user = User(
+                    rfid=None,
+                    nome=nome,
+                    chave=chave,
+                    projeto="P80",
+                    local=local,
+                    checkin=is_checkin,
+                    time=event_time,
+                    last_active_at=event_time,
+                    inactivity_days=0,
+                )
+                db.add(user)
+            else:
+                user.nome = nome
+                user.projeto = "P80"
+                user.local = local
+                user.checkin = is_checkin
+                user.time = event_time
+                user.last_active_at = event_time
+                user.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        checkin_response = client.get("/api/admin/checkin")
+        checkout_response = client.get("/api/admin/checkout")
+
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert checkout_response.status_code == 200, checkout_response.text
+
+    timezone = ZoneInfo(settings.tz_name)
+    checkin_row = next(row for row in checkin_response.json() if row["chave"] == "P39C")
+    assert normalize_event_time(datetime.fromisoformat(checkin_row["time"])) == checkin_time
+    assert checkin_row["activity_date_label"] == checkin_time.astimezone(timezone).strftime("%d/%m/%Y")
+    assert checkin_row["activity_time_label"] == checkin_time.astimezone(timezone).strftime("%H:%M:%S")
+    assert checkin_row["activity_day_key"] == checkin_time.astimezone(timezone).strftime("%Y-%m-%d")
+
+    checkout_row = next(row for row in checkout_response.json() if row["chave"] == "P39O")
+    assert normalize_event_time(datetime.fromisoformat(checkout_row["time"])) == checkout_time
+    assert checkout_row["activity_date_label"] == checkout_time.astimezone(timezone).strftime("%d/%m/%Y")
+    assert checkout_row["activity_time_label"] == checkout_time.astimezone(timezone).strftime("%H:%M:%S")
+    assert checkout_row["activity_day_key"] == checkout_time.astimezone(timezone).strftime("%Y-%m-%d")
+
+
+def test_admin_checkin_and_checkout_hide_raw_activity_time_for_profile_zero(monkeypatch):
+    fixed_now = datetime(2026, 4, 26, 16, 30, 45, tzinfo=ZoneInfo(settings.tz_name))
+    checkin_time = fixed_now - timedelta(hours=2, minutes=5)
+    checkout_time = fixed_now - timedelta(minutes=40)
+    monkeypatch.setattr(admin_router, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        admin = find_user_by_chave(db, "P3L0")
+        if admin is None:
+            admin = User(
+                rfid=None,
+                nome="Perfil Zero Fase 3",
+                chave="P3L0",
+                projeto="P80",
+                senha=hash_password("lim123"),
+                perfil=0,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=fixed_now,
+                inactivity_days=0,
+            )
+            db.add(admin)
+        else:
+            admin.nome = "Perfil Zero Fase 3"
+            admin.projeto = "P80"
+            admin.senha = hash_password("lim123")
+            admin.perfil = 0
+            admin.last_active_at = fixed_now
+            admin.inactivity_days = 0
+
+        for chave, nome, local, is_checkin, event_time in [
+            ("P30C", "Perfil Zero Checkin", "Porta 0", True, checkin_time),
+            ("P30O", "Perfil Zero Checkout", "Saida 0", False, checkout_time),
+        ]:
+            user = find_user_by_chave(db, chave)
+            if user is None:
+                user = User(
+                    rfid=None,
+                    nome=nome,
+                    chave=chave,
+                    projeto="P80",
+                    local=local,
+                    checkin=is_checkin,
+                    time=event_time,
+                    last_active_at=event_time,
+                    inactivity_days=0,
+                )
+                db.add(user)
+            else:
+                user.nome = nome
+                user.projeto = "P80"
+                user.local = local
+                user.checkin = is_checkin
+                user.time = event_time
+                user.last_active_at = event_time
+                user.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="P3L0", senha="lim123")
+        assert login_response.status_code == 200, login_response.text
+
+        checkin_response = client.get("/api/admin/checkin")
+        checkout_response = client.get("/api/admin/checkout")
+
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert checkout_response.status_code == 200, checkout_response.text
+
+    timezone = ZoneInfo(settings.tz_name)
+    checkin_row = next(row for row in checkin_response.json() if row["chave"] == "P30C")
+    assert checkin_row["time"] is None
+    assert checkin_row["activity_date_label"] == checkin_time.astimezone(timezone).strftime("%d/%m/%Y")
+    assert checkin_row["activity_time_label"] is None
+    assert checkin_row["activity_day_key"] == checkin_time.astimezone(timezone).strftime("%Y-%m-%d")
+
+    checkout_row = next(row for row in checkout_response.json() if row["chave"] == "P30O")
+    assert checkout_row["time"] is None
+    assert checkout_row["activity_date_label"] == checkout_time.astimezone(timezone).strftime("%d/%m/%Y")
+    assert checkout_row["activity_time_label"] is None
+    assert checkout_row["activity_day_key"] == checkout_time.astimezone(timezone).strftime("%Y-%m-%d")
+
+
+def test_admin_perfil_one_session_keeps_full_scope_without_activity_time_visibility():
+    with SessionLocal() as db:
+        user = find_user_by_chave(db, "P100")
+        if user is None:
+            user = User(
+                rfid=None,
+                nome="Perfil Um",
+                chave="P100",
+                projeto="P80",
+                senha=hash_password("adm123"),
+                perfil=1,
+                workplace=None,
+                placa=None,
+                end_rua=None,
+                zip=None,
+                cargo=None,
+                email=None,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(user)
+        else:
+            user.nome = "Perfil Um"
+            user.projeto = "P80"
+            user.senha = hash_password("adm123")
+            user.perfil = 1
+            user.last_active_at = now_sgt()
+            user.inactivity_days = 0
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="P100", senha="adm123")
+        assert login_response.status_code == 200
+        assert login_response.json()["ok"] is True
+
+        session_after = client.get("/api/admin/auth/session")
+        assert session_after.status_code == 200
+        payload = session_after.json()
+        assert payload["authenticated"] is True
+        assert payload["admin"]["chave"] == "P100"
+        assert payload["admin"]["perfil"] == 1
+        assert payload["admin"]["can_view_activity_time"] is False
+        assert payload["admin"]["access_scope"] == "full"
+        assert payload["admin"]["allowed_tabs"] == [
+            "checkin",
+            "checkout",
+            "forms",
+            "inactive",
+            "cadastro",
+            "relatorios",
+            "eventos",
+            "banco-dados",
+        ]
 
 
 def test_admin_request_access_and_approval_flow():

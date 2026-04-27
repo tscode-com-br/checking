@@ -1,48 +1,70 @@
-FUNCIONAMENTO DE CHECK-IN e CHECK-OUT:
+REGRAS PARA REALIZAÇÃO DE CHECK-IN E CHECK-OUT:
 
 Confirme que as regras estão funcionando exatamente como as situações abaixo.
 
 Situação 1:
-- O usuário abre o webapp ou traz o webapp para primeiro plano.
-- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com o webapp.
+- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-in;
-- O webapp atualiza a localização (isto sempre deve ocorrer);
-- O webapp percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
-- O webapp, então, realiza o check-out do usuário, pois a última atividade foi um check-in;
+- a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
+- a aplicação web 'Checking Web' percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
+- a aplicação web 'Checking Web', então, realiza o check-out do usuário, pois a última atividade foi um check-in;
 
 Situação 2:
-- O usuário abre o webapp ou traz o webapp para primeiro plano.
-- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com o webapp.
+- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-out;
-- O webapp atualiza a localização (isto sempre deve ocorrer);
-- O webapp percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
-- O webapp não toma nenhuma ação, mesmo que tenha havido troca de localização, pois o check-out não precisa ser repetido em função da alteração de localização.
+- a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
+- a aplicação web 'Checking Web' percebe que o usuário está na localização 'Zona de CheckOut' ou está a mais de 2 km distante de qualquer local cadastrado, exceto da Zona de CheckOut';
+- a aplicação web 'Checking Web' não toma nenhuma ação, mesmo que tenha havido troca de localização, pois o check-out não precisa ser repetido em função da alteração de localização.
 
 Situação 3:
-- O usuário abre o webapp ou traz o webapp para primeiro plano.
-- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com o webapp.
+- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-out;
-- O webapp atualiza a localização (isto sempre deve ocorrer);
-- O webapp percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut' ou que ele não está em nenhuma localização cadastrada, mas está a menos de 2 km de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação;
+- a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
+- a aplicação web 'Checking Web' percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut' ou que ele não está em nenhuma localização cadastrada, mas está a menos de 2 km de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação;
 - Nesta situação, o usuário está no ambiente de trabalho ou em seus arredores, inclusive no primeiro check-in ao sair de casa e chegar ao trabalho;
-- O webapp, então, realiza o check-in do usuário, pois a última atividade foi um check-out;
-- Ao realizar esse check-in, o webapp atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
+- a aplicação web 'Checking Web', então, realiza o check-in do usuário, pois a última atividade foi um check-out;
+- Ao realizar esse check-in, a aplicação web 'Checking Web' atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
 
 Situação 4:
-- O usuário abre o webapp ou traz o webapp para primeiro plano.
-- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com o webapp.
+- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-in;
-- O webapp atualiza a localização (isto sempre deve ocorrer);
-- O webapp percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut';
-- O webapp também percebe que a localização do usuário foi alterada em relação à localização anterior à atualização das coordenadas.
-- O webapp, então, realiza o check-in do usuário, para que a localização do usuário seja atualizada na API.
+- a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
+- a aplicação web 'Checking Web' percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut';
+- a aplicação web 'Checking Web' também percebe que a localização do usuário foi alterada em relação à localização anterior à atualização das coordenadas.
+- a aplicação web 'Checking Web', então, realiza o check-in do usuário, para que a localização do usuário seja atualizada na API.
 
 Situação 5:
-- O usuário abre o webapp ou traz o webapp para primeiro plano.
-- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com o webapp.
+- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-in;
-- O webapp atualiza a localização (isto sempre deve ocorrer);
-- O webapp percebe que o usuário não está em nenhuma localização cadastrada na API e também não está a mais de 2 km distante de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação. Ou seja, o usuário está próximo do local de trabalho.
-- O webapp, então, não toma nenhuma ação, pois o usuário não está distante o suficiente para realizar um check-out e nem está na zona de checkout. O webapp apenas atualiza a exibição da localização como 'Localização não Cadastrada'.
+- a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
+- a aplicação web 'Checking Web' percebe que o usuário não está em nenhuma localização cadastrada na API e também não está a mais de 2 km distante de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação. Ou seja, o usuário está próximo do local de trabalho.
+- a aplicação web 'Checking Web', então, não toma nenhuma ação, pois o usuário não está distante o suficiente para realizar um check-out e nem está na zona de checkout. a aplicação web 'Checking Web' apenas atualiza a exibição da localização como 'Localização não Cadastrada'.
+
+Situação 6:
+- A aplicação web 'Checking Web' já está em primeiro plano;
+- A última atividade do usuário foi um check-in;
+- A checkbox 'Atividades Automáticas está marcada;
+- O usuário pressiona o botão 'Atualizar' para atualizar a sua localização;
+- A aplicação web 'Checking Web' atualiza a localização do usuário para uma localização diferente da que foi registrada no check-in imediatamente anterior.
+- Nesta situação, a aplicação web 'Checking Web' deve realizar um novo check-in do usuário, apenas para atualizar sua localização.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
