@@ -20,6 +20,8 @@ from .services.user_profiles import normalize_person_name
 
 PLATE_MAX_LENGTH = 15
 PLATE_ALLOWED_PATTERN = re.compile(r"^[A-Z0-9.-]+$")
+TRANSPORT_CURRENCY_CODE_PATTERN = re.compile(r"^[A-Z0-9]{2,12}$")
+TRANSPORT_PRICE_RATE_UNITS = {"hour", "day", "week", "month"}
 
 
 def _normalize_optional_local(value: str | None) -> str | None:
@@ -49,6 +51,15 @@ def _normalize_required_label(value: str, field_name: str, *, max_length: int = 
     if len(normalized) > max_length:
         raise ValueError(f"{field_name} deve ter no maximo {max_length} caracteres")
     return normalized
+
+
+def _normalize_optional_label(value: str | None, field_name: str, *, max_length: int = 80) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(str(value).strip().split())
+    if not normalized:
+        return None
+    return _normalize_required_label(normalized, field_name, max_length=max_length)
 
 
 def _normalize_optional_text(value: str | None, field_name: str, *, max_length: int) -> str | None:
@@ -168,6 +179,41 @@ def _normalize_transport_time(value: str) -> str:
     except ValueError as exc:
         raise ValueError("O horario deve estar no formato hh:mm") from exc
     return parsed.strftime("%H:%M")
+
+
+def _normalize_transport_currency_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = re.sub(r"\s+", "", str(value).upper())
+    if not normalized:
+        return None
+    if not TRANSPORT_CURRENCY_CODE_PATTERN.fullmatch(normalized):
+        raise ValueError("Currency code must contain 2 to 12 uppercase letters or digits.")
+    return normalized
+
+
+def _normalize_transport_price_rate_unit(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in TRANSPORT_PRICE_RATE_UNITS:
+        raise ValueError("Billing unit must be one of: hour, day, week, month.")
+    return normalized
+
+
+def _normalize_optional_transport_time(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    return _normalize_transport_time(normalized)
+
+
+def _normalize_optional_integer_input(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 def _normalize_transport_weekday_list(value: object) -> list[int] | None:
@@ -296,6 +342,7 @@ class AdminUserUpsert(BaseModel):
     perfil: int = Field(default=0, ge=0, le=999)
     projeto: str = Field(min_length=2, max_length=120)
     workplace: str | None = Field(default=None, max_length=120)
+    vehicle_id: int | None = Field(default=None, ge=1)
     placa: str | None = Field(default=None, max_length=PLATE_MAX_LENGTH)
     end_rua: str | None = Field(default=None, max_length=255)
     zip: str | None = Field(default=None, max_length=10)
@@ -990,6 +1037,7 @@ class AdminUserListRow(BaseModel):
     chave: str
     perfil: int = 0
     projeto: str
+    vehicle_id: Optional[int] = None
     workplace: Optional[str] = None
     placa: Optional[str] = None
     end_rua: Optional[str] = None
@@ -998,16 +1046,16 @@ class AdminUserListRow(BaseModel):
     email: Optional[str] = None
 
 
-class TransportWorkplaceUpsert(BaseModel):
-    workplace: str = Field(min_length=2, max_length=120)
+class TransportWorkplaceOperationalData(BaseModel):
     address: str = Field(min_length=3, max_length=255)
     zip: str = Field(min_length=1, max_length=10)
     country: str = Field(min_length=2, max_length=80)
-
-    @field_validator("workplace", mode="before")
-    @classmethod
-    def validate_workplace_name(cls, value: str) -> str:
-        return _normalize_required_label(value, "O workplace", max_length=120)
+    transport_group: str | None = Field(default=None, max_length=80)
+    boarding_point: str | None = Field(default=None, max_length=255)
+    transport_window_start: str | None = Field(default=None, min_length=5, max_length=5)
+    transport_window_end: str | None = Field(default=None, min_length=5, max_length=5)
+    service_restrictions: str | None = Field(default=None, max_length=500)
+    transport_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
 
     @field_validator("address", mode="before")
     @classmethod
@@ -1024,21 +1072,101 @@ class TransportWorkplaceUpsert(BaseModel):
     def validate_workplace_country(cls, value: str) -> str:
         return _normalize_required_label(value, "O pais", max_length=80)
 
+    @field_validator("transport_group", mode="before")
+    @classmethod
+    def validate_transport_group(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "O grupo de transporte", max_length=80)
 
-class WorkplaceRow(BaseModel):
+    @field_validator("boarding_point", mode="before")
+    @classmethod
+    def validate_boarding_point(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "O ponto operacional", max_length=255)
+
+    @field_validator("transport_window_start", mode="before")
+    @classmethod
+    def validate_transport_window_start(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("transport_window_end", mode="before")
+    @classmethod
+    def validate_transport_window_end(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("service_restrictions", mode="before")
+    @classmethod
+    def validate_service_restrictions(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "As restricoes de atendimento", max_length=500)
+
+    @field_validator("transport_work_to_home_time", mode="before")
+    @classmethod
+    def validate_transport_work_to_home_time(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @model_validator(mode="after")
+    def validate_transport_window(self):
+        if (self.transport_window_start is None) != (self.transport_window_end is None):
+            raise ValueError("transport_window_start and transport_window_end must be provided together")
+        if (
+            self.transport_window_start is not None
+            and self.transport_window_end is not None
+            and self.transport_window_end <= self.transport_window_start
+        ):
+            raise ValueError("transport_window_end must be later than transport_window_start")
+        return self
+
+
+class TransportWorkplaceUpsert(TransportWorkplaceOperationalData):
+    workplace: str = Field(min_length=2, max_length=120)
+
+    @field_validator("workplace", mode="before")
+    @classmethod
+    def validate_workplace_name(cls, value: str) -> str:
+        return _normalize_required_label(value, "O workplace", max_length=120)
+
+
+class TransportWorkplaceUpdate(TransportWorkplaceOperationalData):
+    pass
+
+
+class WorkplaceRow(TransportWorkplaceOperationalData):
     id: int
     workplace: str
-    address: str
-    zip: str
-    country: str
 
 
-class TransportVehicleCreate(BaseModel):
-    placa: str = Field(max_length=PLATE_MAX_LENGTH)
-    tipo: Literal["carro", "minivan", "van", "onibus"]
-    color: str = Field(min_length=2, max_length=40)
-    lugares: int = Field(ge=1, le=99)
-    tolerance: int = Field(ge=0, le=240)
+class TransportVehicleBaseData(BaseModel):
+    placa: str | None = Field(default=None, max_length=PLATE_MAX_LENGTH)
+    tipo: Literal["carro", "minivan", "van", "onibus"] | None = None
+    color: str | None = Field(default=None, max_length=40)
+    lugares: int | None = Field(default=None, ge=1, le=99)
+    tolerance: int | None = Field(default=None, ge=0, le=240)
+
+    @field_validator("placa", mode="before")
+    @classmethod
+    def validate_vehicle_plate(cls, value: str | None) -> str | None:
+        return _normalize_optional_plate(value)
+
+    @field_validator("tipo", mode="before")
+    @classmethod
+    def validate_vehicle_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        return normalized
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def validate_vehicle_color(cls, value: str | None) -> str | None:
+        return _normalize_optional_label(value, "A cor", max_length=40)
+
+    @field_validator("lugares", "tolerance", mode="before")
+    @classmethod
+    def normalize_optional_vehicle_integer_fields(cls, value: object) -> object:
+        return _normalize_optional_integer_input(value)
+
+
+class TransportVehicleCreate(TransportVehicleBaseData):
     service_scope: Literal["regular", "weekend", "extra"]
     service_date: date
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
@@ -1106,19 +1234,6 @@ class TransportVehicleCreate(BaseModel):
             raise ValueError("Regular vehicles must be persistent. Select at least one weekday")
         return self
 
-    @field_validator("placa", mode="before")
-    @classmethod
-    def validate_vehicle_plate(cls, value: str) -> str:
-        normalized = _normalize_optional_plate(value)
-        if normalized is None:
-            raise ValueError("A placa e obrigatoria")
-        return normalized
-
-    @field_validator("color", mode="before")
-    @classmethod
-    def validate_vehicle_color(cls, value: str) -> str:
-        return _normalize_required_label(value, "A cor", max_length=40)
-
     @field_validator("departure_time", mode="before")
     @classmethod
     def validate_vehicle_departure_time(cls, value: str | None) -> str | None:
@@ -1129,14 +1244,70 @@ class TransportVehicleCreate(BaseModel):
         return _normalize_transport_time(value)
 
 
-class TransportVehicleRow(BaseModel):
+class TransportVehicleUpdate(TransportVehicleBaseData):
+    pass
+
+
+class TransportVehicleScheduleDefinition(BaseModel):
+    service_scope: Literal["regular", "weekend", "extra"]
+    route_kind: Literal["home_to_work", "work_to_home"]
+    recurrence_kind: Literal["weekday", "matching_weekday", "single_date"]
+    service_date: date | None = None
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    departure_time: str | None = None
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_schedule_definition(self):
+        if self.recurrence_kind == "single_date":
+            if self.service_date is None:
+                raise ValueError("service_date is required for single-date schedules")
+            if self.weekday is not None:
+                raise ValueError("weekday is not allowed for single-date schedules")
+        elif self.recurrence_kind == "matching_weekday":
+            if self.weekday is None:
+                raise ValueError("weekday is required for matching-weekday schedules")
+        elif self.weekday is not None:
+            raise ValueError("weekday is only allowed for matching-weekday schedules")
+
+        if self.service_scope == "extra":
+            if self.recurrence_kind != "single_date":
+                raise ValueError("extra schedules must use single_date recurrence")
+            if self.departure_time is None:
+                raise ValueError("departure_time is required for extra schedules")
+            return self
+
+        if self.departure_time is not None:
+            raise ValueError("departure_time is only allowed for extra schedules")
+        return self
+
+    @field_validator("departure_time", mode="before")
+    @classmethod
+    def validate_schedule_departure_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not str(value).strip():
+            return None
+        return _normalize_transport_time(value)
+
+
+class TransportVehicleScheduleUpdate(TransportVehicleScheduleDefinition):
+    pass
+
+
+class TransportVehicleBaseRow(BaseModel):
     id: int
-    schedule_id: int | None = None
-    placa: str
-    tipo: str
+    placa: str | None = None
+    tipo: str | None = None
     color: str | None = None
-    lugares: int
-    tolerance: int
+    lugares: int | None = None
+    tolerance: int | None = None
+    pending_fields: list[str] = Field(default_factory=list)
+    is_ready_for_allocation: bool
+
+
+class TransportVehicleRow(TransportVehicleBaseRow):
+    schedule_id: int | None = None
     service_scope: str
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
     departure_time: str | None = None
@@ -1145,13 +1316,15 @@ class TransportVehicleRow(BaseModel):
 class TransportVehicleManagementRow(BaseModel):
     vehicle_id: int
     schedule_id: int | None = None
-    placa: str
-    tipo: str
-    lugares: int
+    placa: str | None = None
+    tipo: str | None = None
+    lugares: int | None = None
     assigned_count: int = Field(ge=0)
     service_date: date | None = None
     route_kind: Literal["home_to_work", "work_to_home"] | None = None
     departure_time: str | None = None
+    pending_fields: list[str] = Field(default_factory=list)
+    is_ready_for_allocation: bool
 
 
 class TransportRequestCreate(BaseModel):
@@ -1282,6 +1455,251 @@ class TransportDashboardResponse(BaseModel):
     workplaces: list[WorkplaceRow]
 
 
+class TransportOperationalSnapshot(BaseModel):
+    snapshot_key: str = Field(min_length=1, max_length=180)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    captured_at: datetime
+    work_to_home_departure_time: str = Field(min_length=5, max_length=5)
+    projects: list[ProjectRow]
+    regular_requests: list[TransportRequestRow]
+    weekend_requests: list[TransportRequestRow]
+    extra_requests: list[TransportRequestRow]
+    regular_vehicles: list[TransportVehicleRow]
+    weekend_vehicles: list[TransportVehicleRow]
+    extra_vehicles: list[TransportVehicleRow]
+    regular_vehicle_registry: list[TransportVehicleManagementRow]
+    weekend_vehicle_registry: list[TransportVehicleManagementRow]
+    extra_vehicle_registry: list[TransportVehicleManagementRow]
+    workplaces: list[WorkplaceRow]
+
+
+class TransportProposalDecision(BaseModel):
+    request_id: int = Field(ge=1)
+    request_kind: Literal["regular", "weekend", "extra"]
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    suggested_status: Literal["confirmed", "rejected", "pending"]
+    vehicle_id: int | None = Field(default=None, ge=1)
+    response_message: str | None = Field(default=None, max_length=255)
+    rationale: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_decision(self):
+        if self.suggested_status == "confirmed" and self.vehicle_id is None:
+            raise ValueError("vehicle_id is required when suggested_status is confirmed")
+        if self.suggested_status != "confirmed" and self.vehicle_id is not None:
+            raise ValueError("vehicle_id is only allowed when suggested_status is confirmed")
+        return self
+
+    @field_validator("response_message", mode="before")
+    @classmethod
+    def validate_proposal_response_message(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A resposta", max_length=255)
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def validate_proposal_rationale(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A justificativa", max_length=500)
+
+
+class TransportProposalValidationIssue(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=500)
+    blocking: bool = True
+    request_id: int | None = Field(default=None, ge=1)
+    vehicle_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("code")
+    @classmethod
+    def validate_issue_code(cls, value: str) -> str:
+        normalized = value.strip().lower().replace(" ", "_")
+        if not normalized:
+            raise ValueError("Issue code is required")
+        return normalized
+
+
+class TransportProposalAuditContext(BaseModel):
+    proposal_key: str = Field(min_length=1, max_length=120)
+    proposal_origin: Literal["manual", "system", "agent"]
+    proposal_snapshot_key: str = Field(min_length=1, max_length=180)
+    evaluation_snapshot_key: str = Field(min_length=1, max_length=180)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    total_decisions: int = Field(ge=0)
+    confirmed_decisions: int = Field(ge=0)
+    rejected_decisions: int = Field(ge=0)
+    pending_decisions: int = Field(ge=0)
+    decision_request_ids: list[int] = Field(default_factory=list)
+    decision_vehicle_ids: list[int] = Field(default_factory=list)
+    replaces_proposal_key: str | None = Field(default=None, max_length=120)
+
+
+class TransportProposalAuditResult(BaseModel):
+    proposal_status: Literal["draft", "approved", "rejected", "applied", "expired"]
+    validation_issue_count: int = Field(ge=0)
+    validation_issue_codes: list[str] = Field(default_factory=list)
+    applied_assignment_count: int = Field(ge=0)
+    applied_assignment_ids: list[int] = Field(default_factory=list)
+
+
+class TransportProposalAuditEntry(BaseModel):
+    audit_entry_key: str = Field(min_length=1, max_length=120)
+    action: Literal["generated", "validated", "approved", "rejected", "applied"]
+    outcome: Literal["generated", "passed", "blocked", "approved", "rejected", "applied"]
+    actor: TransportIdentity
+    occurred_at: datetime
+    message: str | None = Field(default=None, max_length=255)
+    context: TransportProposalAuditContext
+    result: TransportProposalAuditResult
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_audit_message(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A mensagem", max_length=255)
+
+
+class TransportOperationalProposalSummary(BaseModel):
+    total_snapshot_requests: int = Field(ge=0)
+    total_snapshot_vehicles: int = Field(ge=0)
+    total_decisions: int = Field(ge=0)
+    confirmed_decisions: int = Field(ge=0)
+    rejected_decisions: int = Field(ge=0)
+    pending_decisions: int = Field(ge=0)
+
+
+class TransportOperationalProposal(BaseModel):
+    proposal_key: str = Field(min_length=1, max_length=120)
+    proposal_status: Literal["draft", "approved", "rejected", "applied", "expired"]
+    origin: Literal["manual", "system", "agent"]
+    replaces_proposal_key: str | None = Field(default=None, max_length=120)
+    created_at: datetime
+    expires_at: datetime | None = None
+    snapshot: TransportOperationalSnapshot
+    decisions: list[TransportProposalDecision] = Field(default_factory=list)
+    summary: TransportOperationalProposalSummary
+    validation_issues: list[TransportProposalValidationIssue] = Field(default_factory=list)
+    audit_trail: list[TransportProposalAuditEntry] = Field(default_factory=list)
+
+
+class TransportOperationalProposalCommandResult(BaseModel):
+    ok: bool
+    message: str
+    proposal: TransportOperationalProposal
+
+
+class TransportOperationalProposalRejectRequest(BaseModel):
+    proposal: TransportOperationalProposal
+    message: str | None = Field(default=None, max_length=255)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_reject_message(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, "A mensagem", max_length=255)
+
+
+class TransportOperationalProposalBuildRequest(BaseModel):
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    origin: Literal["manual", "system", "agent"] = "manual"
+    replaces_proposal_key: str | None = Field(default=None, max_length=120)
+    decisions: list[TransportProposalDecision] = Field(default_factory=list)
+    captured_at: datetime | None = None
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class TransportOperationalAppliedAssignment(BaseModel):
+    assignment_id: int = Field(ge=1)
+    request_id: int = Field(ge=1)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    status: Literal["confirmed", "rejected", "cancelled", "pending"]
+    vehicle_id: int | None = Field(default=None, ge=1)
+    was_update: bool
+
+
+class TransportOperationalProposalApplyRequest(BaseModel):
+    proposal: TransportOperationalProposal
+
+
+class TransportOperationalProposalApplyResult(BaseModel):
+    ok: bool
+    message: str
+    proposal: TransportOperationalProposal
+    applied_assignments: list[TransportOperationalAppliedAssignment] = Field(default_factory=list)
+
+
+class TransportReevaluationCatalogEntry(BaseModel):
+    event_type: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=500)
+    downstream_actions: list[
+        Literal[
+            "refresh_snapshot",
+            "revalidate_constraints",
+            "rebuild_proposal",
+            "regenerate_export",
+            "refresh_transport_state",
+        ]
+    ] = Field(default_factory=list)
+
+
+class TransportReevaluationEvent(BaseModel):
+    event_id: str = Field(min_length=1, max_length=120)
+    event_type: str = Field(min_length=1, max_length=80)
+    reason: str = Field(min_length=1, max_length=40)
+    source: Literal["transport_admin", "web_transport", "transport_proposal"]
+    message: str = Field(min_length=1, max_length=255)
+    emitted_at: datetime
+    service_date: date | None = None
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    request_id: int | None = Field(default=None, ge=1)
+    vehicle_id: int | None = Field(default=None, ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    workplace_id: int | None = Field(default=None, ge=1)
+    proposal_key: str | None = Field(default=None, max_length=120)
+    downstream_actions: list[
+        Literal[
+            "refresh_snapshot",
+            "revalidate_constraints",
+            "rebuild_proposal",
+            "regenerate_export",
+            "refresh_transport_state",
+        ]
+    ] = Field(default_factory=list)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_reevaluation_message(cls, value: str) -> str:
+        return _normalize_required_label(value, "A mensagem do evento", max_length=255)
+
+
+class TransportReevaluationCatalogResponse(BaseModel):
+    catalog: list[TransportReevaluationCatalogEntry] = Field(default_factory=list)
+    recent_events: list[TransportReevaluationEvent] = Field(default_factory=list)
+
+
+class TransportCurrencyOptionRow(BaseModel):
+    code: str = Field(min_length=2, max_length=12)
+    display_label: str | None = Field(default=None, max_length=80)
+
+    @field_validator("code")
+    @classmethod
+    def validate_currency_code(cls, value: str) -> str:
+        normalized = _normalize_transport_currency_code(value)
+        if normalized is None:
+            raise ValueError("Currency code is required.")
+        return normalized
+
+    @field_validator("display_label")
+    @classmethod
+    def validate_display_label(cls, value: str | None) -> str | None:
+        return _normalize_optional_label(value, "O rótulo da moeda", max_length=80)
+
+
+TransportPriceRateUnit = Literal["hour", "day", "week", "month"]
+
+
 class TransportSettingsResponse(BaseModel):
     work_to_home_time: str = Field(min_length=5, max_length=5)
     last_update_time: str = Field(min_length=5, max_length=5)
@@ -1290,6 +1708,13 @@ class TransportSettingsResponse(BaseModel):
     default_van_seats: int = Field(ge=1, le=99)
     default_bus_seats: int = Field(ge=1, le=99)
     default_tolerance_minutes: int = Field(ge=0, le=240)
+    price_currency_code: str | None = Field(default=None, min_length=2, max_length=12)
+    price_rate_unit: TransportPriceRateUnit
+    default_car_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_minivan_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_van_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_bus_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    available_currencies: list[TransportCurrencyOptionRow] = Field(default_factory=list)
 
     @field_validator("work_to_home_time")
     @classmethod
@@ -1300,6 +1725,16 @@ class TransportSettingsResponse(BaseModel):
     @classmethod
     def validate_last_update_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
+
+    @field_validator("price_currency_code")
+    @classmethod
+    def validate_price_currency_code(cls, value: str | None) -> str | None:
+        return _normalize_transport_currency_code(value)
+
+    @field_validator("price_rate_unit")
+    @classmethod
+    def validate_price_rate_unit(cls, value: str) -> str:
+        return _normalize_transport_price_rate_unit(value)
 
 
 class TransportSettingsUpdateRequest(BaseModel):
@@ -1310,6 +1745,12 @@ class TransportSettingsUpdateRequest(BaseModel):
     default_van_seats: int = Field(ge=1, le=99)
     default_bus_seats: int = Field(ge=1, le=99)
     default_tolerance_minutes: int = Field(ge=0, le=240)
+    price_currency_code: str | None = Field(default=None, min_length=2, max_length=12)
+    price_rate_unit: TransportPriceRateUnit
+    default_car_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_minivan_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_van_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
+    default_bus_price: float | None = Field(default=None, ge=0, le=9999999999.99, multiple_of=0.01)
 
     @field_validator("work_to_home_time")
     @classmethod
@@ -1320,6 +1761,34 @@ class TransportSettingsUpdateRequest(BaseModel):
     @classmethod
     def validate_last_update_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
+
+    @field_validator("price_currency_code")
+    @classmethod
+    def validate_price_currency_code(cls, value: str | None) -> str | None:
+        return _normalize_transport_currency_code(value)
+
+    @field_validator("price_rate_unit")
+    @classmethod
+    def validate_price_rate_unit(cls, value: str) -> str:
+        return _normalize_transport_price_rate_unit(value)
+
+
+class TransportCurrencyCreateRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=12)
+    display_label: str | None = Field(default=None, max_length=80)
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        normalized = _normalize_transport_currency_code(value)
+        if normalized is None:
+            raise ValueError("Currency code is required.")
+        return normalized
+
+    @field_validator("display_label")
+    @classmethod
+    def validate_display_label(cls, value: str | None) -> str | None:
+        return _normalize_optional_label(value, "O rótulo da moeda", max_length=80)
 
 
 class TransportDateSettingsResponse(BaseModel):
@@ -1340,6 +1809,51 @@ class TransportDateSettingsUpdateRequest(BaseModel):
     @classmethod
     def validate_work_to_home_time(cls, value: str) -> str:
         return _normalize_transport_time(value)
+
+
+class TransportWorkToHomeTimePolicyResponse(BaseModel):
+    service_date: date
+    workplace: str | None = None
+    resolved_work_to_home_time: str = Field(min_length=5, max_length=5)
+    source: Literal["global", "workplace_context", "date_override"]
+    global_work_to_home_time: str = Field(min_length=5, max_length=5)
+    date_override_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
+    workplace_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
+    transport_group: str | None = None
+    boarding_point: str | None = None
+    transport_window_start: str | None = Field(default=None, min_length=5, max_length=5)
+    transport_window_end: str | None = Field(default=None, min_length=5, max_length=5)
+    service_restrictions: str | None = None
+
+    @field_validator("resolved_work_to_home_time")
+    @classmethod
+    def validate_resolved_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("global_work_to_home_time")
+    @classmethod
+    def validate_global_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("date_override_work_to_home_time", mode="before")
+    @classmethod
+    def validate_date_override_work_to_home_time(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("workplace_work_to_home_time", mode="before")
+    @classmethod
+    def validate_workplace_work_to_home_time(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("transport_window_start", mode="before")
+    @classmethod
+    def validate_policy_transport_window_start(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("transport_window_end", mode="before")
+    @classmethod
+    def validate_policy_transport_window_end(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
 
 
 class PendingRow(BaseModel):

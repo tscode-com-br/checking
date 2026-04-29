@@ -16,13 +16,15 @@ class AdminUpdatesBroker:
     def unsubscribe(self, subscriber_id: str) -> None:
         self._subscribers.pop(subscriber_id, None)
 
-    def publish(self, reason: str = "refresh") -> None:
-        payload = json.dumps(
-            {
-                "reason": reason,
-                "emitted_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+    def publish(self, reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
+        payload_dict: dict[str, object] = {
+            "reason": reason,
+            "emitted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if metadata:
+            payload_dict.update({key: value for key, value in metadata.items() if value is not None})
+
+        payload = json.dumps(payload_dict)
 
         for queue in list(self._subscribers.values()):
             if queue.full():
@@ -41,9 +43,9 @@ admin_updates_broker = AdminUpdatesBroker()
 transport_updates_broker = AdminUpdatesBroker()
 
 
-def notify_admin_data_changed(reason: str = "refresh") -> None:
-    admin_updates_broker.publish(reason=reason)
+def notify_admin_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
+    admin_updates_broker.publish(reason=reason, metadata=metadata)
 
 
-def notify_transport_data_changed(reason: str = "refresh") -> None:
-    transport_updates_broker.publish(reason=reason)
+def notify_transport_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
+    transport_updates_broker.publish(reason=reason, metadata=metadata)

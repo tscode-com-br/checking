@@ -1,866 +1,555 @@
-# Plano detalhado para restringir a visualizacao do horario das atividades no Admin
+# Plano detalhado para flexibilizacao segura do cadastro de veiculos e extensao de Dashboard Settings
 
-## 1. Objetivo
+## 1. Escopo deste plano
 
-Implementar uma restricao de visualizacao de horario no Website do Administrador para que apenas usuarios com perfil `9` possam ver a informacao de horario exata das atividades de check-in e check-out.
+Este documento descreve um plano minucioso para implementar, com seguranca, tres grupos de mudancas no dashboard `Transport`:
 
-Os demais perfis que consigam acessar alguma parte do Admin devem continuar usando o painel normalmente, mas sem acesso ao horario preciso das atividades.
+1. Permitir criacao de veiculos incompletos na `EXTRA TRANSPORT LIST`, exigindo apenas `Departure Date`, `Departure Time` e `Route`.
+2. Permitir criacao de veiculos incompletos na `WEEKEND TRANSPORT LIST` e `REGULAR TRANSPORT LIST`, exigindo ao menos uma checkbox de persistencia marcada.
+3. Estender `Dashboard Settings` para suportar variaveis de preco, moeda e custo padrao por tipo de veiculo.
 
-## 2. Regra funcional consolidada
+O objetivo nao e apenas "fazer funcionar". O objetivo e executar as mudancas sem quebrar:
 
-Regra central:
+- criacao e edicao de veiculos ja existentes;
+- regras atuais de persistencia `extra`, `weekend` e `regular`;
+- renderizacao do dashboard;
+- fluxo de `Dashboard Settings` e autosave atual;
+- compatibilidade entre frontend, API, banco e testes.
 
-- Apenas perfil `9` pode visualizar horario exato de atividade.
-- Perfis `0`, `1`, `2` e quaisquer outros diferentes de `9` nao podem visualizar horario exato.
-- A regra passa a ser global por perfil: qualquer usuario cujo perfil nao seja `9` nao deve visualizar horario exato nas superficies que exponham esse dado.
-- Nesta entrega, as superficies confirmadas, mapeadas e priorizadas continuam sendo as do Website do Administrador.
-- O acesso as abas, rotas e demais funcionalidades do Admin deve permanecer como esta hoje; a mudanca e apenas de exposicao de dado sensivel.
+## 2. Estado atual confirmado
 
-Aplicacao da regra por area:
+### 2.1 Frontend do modal de veiculo
 
-1. `Check-In` e `Check-Out`
-   - Perfil `9`: continua vendo data + horario na coluna inicial.
-   - Demais perfis: veem apenas a data, sem horario.
+O formulario em `sistema/app/static/transport/index.html` hoje marca como obrigatorios:
 
-2. `Forms`
-   - Perfil `9`: continua vendo a coluna `Hora`.
-   - Demais perfis com acesso a aba: nao veem a coluna `Hora`.
+- `Type`
+- `Plate`
+- `Color`
+- `Places`
+- `Tolerance`
 
-3. `Relatorios`
-   - Perfil `9`: continua vendo a coluna `Horario` nas tabelas de resultado.
-   - Demais perfis com acesso a aba: nao veem a coluna `Horario`.
+Ja os campos especificos de `extra` (`Departure Date`, `Departure Time`, `Route`) sao exibidos condicionalmente.
 
-4. `Exportar` e `Exportar Tudo` em `Relatorios`
-   - Perfil `9`: continua recebendo a planilha com a coluna `Horario`.
-   - Demais perfis com acesso a aba: recebem a planilha sem essa coluna.
+As checkboxes de persistencia existem para `weekend` e `regular`.
 
-5. `Eventos`
-   - Perfil `9`: continua vendo data + horario na coluna `Horario`.
-   - Demais perfis com acesso a aba: veem apenas a data, sem horario.
+### 2.2 Frontend de payload e validacao
 
-Observacao importante:
+Em `sistema/app/static/transport/app.js`:
 
-- O requisito de `Relatorios` foi listado duas vezes no pedido. Considerar como uma unica frente funcional, cobrindo a visualizacao na tela e os dois tipos de exportacao.
+- `buildVehicleCreatePayload(...)` sempre envia `tipo`, `placa`, `color`, `lugares` e `tolerance`.
+- `resolveVehicleCreateValidationError(...)` hoje ja bloqueia:
+  - `extra` sem `service_date`;
+  - `extra` sem `departure_time`;
+  - `weekend` sem `every_saturday` e `every_sunday`;
+  - `regular` sem nenhum dia util selecionado.
 
-## 3. Estado atual do sistema e pontos impactados
+Ou seja: a regra de persistencia minima ja existe, mas o restante do stack ainda pressupoe veiculo completo.
 
-### 3.1. Frontend Admin
+### 2.3 Backend de contrato
 
-O Admin e uma SPA estatica em:
+Em `sistema/app/schemas.py`:
 
-- `sistema/app/static/admin/index.html`
-- `sistema/app/static/admin/app.js`
-- `sistema/app/static/admin/styles.css`
+- `TransportVehicleBaseData` exige:
+  - `placa`
+  - `tipo`
+  - `color`
+  - `lugares`
+  - `tolerance`
+- `TransportVehicleCreate` herda essa obrigatoriedade.
+- `TransportVehicleUpdate` tambem herda essa obrigatoriedade.
 
-Pontos ja identificados:
+Consequencia direta: mesmo que o frontend pare de exigir os campos, a API continuara recusando payloads incompletos.
 
-- `index.html` define cabecalhos fixos para as tabelas `Check-In`, `Check-Out`, `Forms` e `Eventos`.
-- `app.js` busca os dados nas rotas `/api/admin/*` e monta as linhas das tabelas.
-- `app.js` recebe a sessao em `/api/admin/auth/session` e ja conhece `perfil`, `access_scope` e `allowed_tabs`.
-- `Check-In` e `Check-Out` agora consomem campos seguros de exibicao (`activity_date_label`, `activity_time_label`, `activity_day_key`), ajustam o label da coluna principal conforme `admin.can_view_activity_time`, renderizam a primeira celula em duas linhas apenas quando o horario sensivel esta disponivel e mantem filtros/sort com fallback seguro por `activity_day_key` quando `time = null`.
-- `Forms` agora consome campos seguros de exibicao para `Recebimento` (`recebimento_date_label`, `recebimento_time_label`), oculta estruturalmente a coluna `Hora` para perfis sem acesso ao horario sensivel, usa variante `forms-table--without-time` e ajusta o `colspan` do empty state para 8 ou 9 colunas conforme a permissao.
-- `Relatorios` agora monta a tabela de resultados com coluna `Horario` apenas para perfil `9`, usa variante `reports-results-table--without-time` para os demais e preserva agrupamento por `event_date`, `reportsHasLoadedResult` e `reportsExportQueryString` sem alteracao funcional.
-- `Eventos` agora ancora o cabecalho sensivel da primeira coluna, troca o label visual entre `Horario` e `Data` conforme `admin.can_view_activity_time` e usa `event_date_label`/`event_time_label` sem depender do horario bruto para perfis nao `9`, preservando detalhes, totais e `updateDashboardSummary()`.
+### 2.4 Backend de persistencia
 
-### 3.2. Backend Admin
+Em `sistema/app/models.py`, a tabela `vehicles` hoje exige:
 
-Os principais pontos no backend estao em:
+- `placa` nao nula e unica;
+- `tipo` nao nulo;
+- `lugares` nao nulo com `1 <= lugares <= 99`;
+- `tolerance` nao nulo com `0 <= tolerance <= 240`;
+- `color` ja e nullable no banco.
 
-- `sistema/app/routers/admin.py`
-- `sistema/app/services/admin_auth.py`
-- `sistema/app/schemas.py`
+Em `sistema/app/services/transport_vehicle_operations.py`:
 
-Pontos ja confirmados:
+- a criacao tenta reutilizar ou bloquear por `placa`;
+- a identidade operacional ainda depende fortemente de `placa` quando presente.
 
-- `/api/admin/auth/session` devolve `admin.perfil`.
-- `/api/admin/auth/session` agora tambem devolve `admin.can_view_activity_time`.
-- `build_admin_identity()` monta a identidade da sessao.
-- `require_admin_session` protege `checkin` e `checkout`.
-- `require_full_admin_session` protege `forms`, `relatorios` e `eventos`.
-- `build_presence_rows()` agora devolve `UserRow.activity_date_label`, `UserRow.activity_time_label` e `UserRow.activity_day_key` para `Check-In` e `Check-Out`, mantendo `UserRow.time` apenas para perfis autorizados a ver horario sensivel.
-- `build_provider_forms_rows()` agora devolve `ProviderFormRow.recebimento_date_label`, `ProviderFormRow.recebimento_time_label`, `ProviderFormRow.data` e `ProviderFormRow.hora`, mantendo `recebimento` bruto e `hora` apenas para perfis autorizados a ver horario sensivel.
-- `build_report_events_response()` devolve `ReportEventRow.event_date` e `ReportEventRow.event_time_label`.
-- `build_report_events_export()` e `build_all_report_events_export()` agora montam o XLSX com estrutura condicional: perfil `9` mantem a coluna `Horario`; demais perfis recebem a planilha sem essa coluna.
-- `build_event_row_payload()` agora devolve `EventRow.event_date_label` e `EventRow.event_time_label`, mantendo `EventRow.event_time` bruto apenas para perfis autorizados a ver horario sensivel na aba `Eventos`.
+Consequencia direta: permitir `placa` em branco sem redesenho controlado quebra unicidade, reuso e conflitos de cadastro.
 
-### 3.3. Testes existentes afetados
+### 2.5 Renderizacao atual de veiculos
 
-Ja existem testes que assumem a presenca fixa de colunas de horario e hora, principalmente em:
+Em `sistema/app/static/transport/app.js`:
 
-- `tests/check_admin_presence_forms_layout.test.js`
-- `tests/check_admin_project_timezone_ui.test.js`
-- `tests/check_admin_reports_ui.test.js`
-- `tests/test_api_flow.py`
+- `createVehicleTile(...)` usa `vehicle.placa` diretamente no tile;
+- `createVehicleManagementTable(...)` usa `rowData.placa` diretamente na tabela de gerenciamento;
+- nao existe helper central para exibir placeholders localizados como `Waiting`.
 
-Esses testes ja foram atualizados para refletir comportamento condicional por perfil, preservando cobertura para perfil `9`, para pelo menos um perfil nao `9` em cada superficie sensivel e para os fluxos nao relacionados que nao deveriam sofrer relaxamento.
+### 2.6 Dashboard Settings atual
 
-## 4. Principio tecnico recomendado
+Hoje o contrato `/api/transport/settings` cobre apenas:
 
-Para evitar vazamento de horario por inspecao de rede, DevTools ou consumo direto da API, a implementacao nao deve depender apenas de esconder coluna no frontend.
+- `work_to_home_time`
+- `last_update_time`
+- `default_*_seats`
+- `default_tolerance_minutes`
 
-A regra precisa ser aplicada em duas camadas:
-
-1. Backend
-   - Sanitiza a resposta e a exportacao conforme o perfil da sessao.
-
-2. Frontend
-   - Ajusta colunas, labels, colgroup, `colspan`, filtros e renderizacao conforme a permissao.
-
-Principio de seguranca:
-
-- Se um usuario nao pode ver o horario, a API tambem nao deve devolver o horario exato para aquele usuario.
-
-## 5. Decisao de autorizacao que precisa ficar centralizada
-
-Hoje o projeto usa semantica de digitos de perfil para acessos amplos (`1`, `2`, `9`).
-
-Para este requisito especifico, a recomendacao e criar uma capacidade explicita, centralizada e unica, por exemplo:
-
-- `can_admin_view_activity_time(user)`
-
-Implementacao recomendada dessa capacidade:
-
-- Basear na regra funcional definida pelo produto para horario sensivel.
-- Como o pedido foi explicito sobre `apenas perfil 9`, a recomendacao e tratar `9` como a referencia oficial para esta visualizacao sensivel.
-
-Ponto de atencao obrigatorio antes de subir a implementacao:
-
-- Auditar se existem registros legados com perfis como `19`, `29`, `99` ou `999` que hoje sejam tratados como acesso total.
-- Se existirem, decidir formalmente se eles tambem devem ver horario por representarem acesso total legado, ou se sera necessario normalizar esses perfis antes da entrega.
-
-Status atual de implementacao:
-
-- A base do codigo agora possui um helper dedicado para esta regra sensivel: `profile_can_view_activity_time()` em `sistema/app/services/admin_auth.py`.
-- Neste momento, o helper considera autorizado apenas o perfil normalizado exatamente igual a `9`.
-- Perfis legados como `999` permanecem com acesso total amplo nas regras antigas, mas nao foram incluidos automaticamente na nova regra sensivel.
-- Essa separacao foi introduzida de forma isolada para permitir evolucao segura da implementacao sem alterar o modelo atual de acesso geral do Admin.
-
-Decisoes formais consolidadas na Fase 0:
-
-- Apenas perfil normalizado exatamente igual a `9` pode visualizar todas as informacoes de horario das atividades.
-- Perfis legados como `19`, `29`, `99` e `999` nao herdam a visualizacao de horario.
-- A regra deixa de ser uma excecao apenas do shell do Admin e passa a ser uma politica global por perfil para qualquer superficie que exponha esse dado sensivel.
-- Para esta entrega, as superficies confirmadas e mapeadas permanecem: `Check-In`, `Check-Out`, `Forms`, `Relatorios`, `Exportar`, `Exportar Tudo` e `Eventos` no Admin.
-
-### 5.1. Mapeamento minucioso atual de perfil e sessao
-
-Base central de semantica de perfil em `sistema/app/services/admin_auth.py`:
-
-- `normalize_user_profile()` normaliza o valor bruto de `perfil` para inteiro nao negativo.
-- `get_user_profile_digits()` e `user_profile_has_access()` sustentam a regra antiga de acesso amplo por digito (`1`, `2`, `9`).
-- `user_has_admin_access()` decide se um usuario tem acesso administrativo amplo.
-- `user_can_access_admin_panel()` decide se o usuario pode entrar no shell do Admin; hoje permite perfis com acesso admin amplo e tambem `perfil = 0` em modo limitado.
-- `get_admin_access_scope()` deriva `limited` ou `full`.
-- `get_admin_allowed_tabs()` deriva as abas autorizadas a partir do escopo.
-- `profile_can_view_activity_time()` e `user_can_view_activity_time()` formam a nova base isolada da regra sensivel de horario e nao reutilizam a semantica antiga por digito.
-- `get_authenticated_admin_from_session()`, `require_admin_session()`, `require_full_admin_session()` e `require_admin_stream_session()` recompõem a permissao a partir de `request.session["admin_user_id"]`.
-
-Contrato de sessao do Admin em `sistema/app/routers/admin.py`:
-
-- `build_admin_identity()` serializa `perfil`, `can_view_activity_time`, `access_scope` e `allowed_tabs` para o frontend.
-- `/api/admin/auth/login` usa `user_can_access_admin_panel()` para aceitar ou bloquear a entrada no painel e grava `request.session["admin_user_id"]`.
-- `/api/admin/auth/session` reconstroi a sessao via `get_authenticated_admin_from_session()` e `build_admin_identity()`.
-
-Pontos de backend que derivam permissao a partir de perfil no fluxo administrativo:
-
-- `get_admin_request_access_status()` usa `user_has_admin_access()` para decidir se uma chave ja pertence a um administrador.
-- `request_admin_access_self_service()` impede nova solicitacao quando a chave ja estiver ligada a um admin.
-- `list_admin_rows()` filtra `User.perfil != 0`, reaplica `user_has_admin_access()` e monta `status_label` com `describe_user_profile()`.
-- `approve_administrator_request()` usa `normalize_administrator_profile()` e `merge_user_profile_values()` para compor o `perfil` final aprovado.
-- `update_administrator_profile()` le `administrator.perfil`, calcula `previous_profile` e grava `next_profile`.
-- `revoke_administrator()` remove o digito admin com `remove_profile_access()` e protege contra remocao do ultimo admin ativo.
-- `remove_admin_project()` reaproveita `user_has_admin_access()` ao recalcular escopos de projetos monitorados de administradores.
-
-Pontos de backend que expõem ou mutam `perfil` de usuarios no cadastro geral:
-
-- `/api/admin/users` lista `perfil` bruto para toda a grade de usuarios via `AdminUserListRow`.
-- `upsert_user()` le `payload.perfil`, normaliza com `normalize_user_profile()` e usa `user_has_admin_access()` mais `user_profile_has_access()` para evitar remover o ultimo admin ativo por edicao indireta.
-- Esses fluxos sao hotspots importantes porque continuam editando perfis numericos gerais e nao devem receber a nova regra sensivel de horario por duplicacao local.
-
-Pontos de frontend que derivam permissao da sessao do Admin em `sistema/app/static/admin/app.js`:
-
-- `DEFAULT_ADMIN_ALLOWED_TABS` e `LIMITED_ADMIN_ALLOWED_TABS` codificam as abas permitidas por escopo.
-- `normalizeAllowedAdminTabs()` e `setAdminAccessState()` transformam `access_scope`, `allowed_tabs` e `can_view_activity_time` da sessao em visibilidade real de abas e variantes seguras de renderizacao.
-- O bootstrap em `fetchJson("/api/admin/auth/session")` e `showAdminShell(session.admin)` e o ponto unico de entrada do contrato de sessao no frontend.
-- O frontend ja consome `can_view_activity_time` via `adminCanViewActivityTime`; `showAdminShell()` alimenta esse estado, `showAuthShell()` o reseta, e `canCurrentAdminViewActivityTime()` centraliza a consulta para os pontos que ja adotaram variantes seguras.
-
-Pontos de frontend que leem ou editam perfis numericos no Admin:
-
-- `makeRegisteredUserRow()` renderiza o campo `user-perfil` na tabela de usuarios.
-- `makeAdministratorRow()` renderiza o campo `admin-profile-input` na tabela de administradores.
-- `readAdministratorProfileValue()` valida o numero digitado para administradores.
-- `saveRegisteredUser()`, `approveAdministrator()` e `saveAdministratorProfile()` enviam `perfil` explicitamente para o backend.
-- Esses pontos devem continuar tratando `perfil` como dado administrativo bruto, sem recriar a regra sensivel de horario na camada de UI.
-
-Pontos de frontend estatico adjacentes ao shell do Admin:
-
-- `sistema/app/static/admin/index.html` ainda comunica a regra antiga de acesso amplo ao painel na copy da tela de login (`perfil 0` limitado; `1` ou `9` com acesso completo).
-- Essa copy nao deve ser usada como fonte da nova regra sensivel; quando a Fase 2 expor a capacidade na sessao, a comunicacao visual precisara separar acesso ao painel de visibilidade de horario.
-
-Pontos adjacentes fora do Admin mapeados cautelosamente:
-
-- `sistema/app/routers/transport.py` possui sessao propria em `/api/transport/auth/session` e expõe `perfil` em `TransportIdentity`.
-- `sistema/app/static/transport/app.js` consome essa sessao separada.
-- Nenhum desses pontos deve ser alterado agora por inferencia; so entram no escopo se tambem passarem a expor o mesmo dado sensivel de horario abrangido por esta regra global.
-
-Hotspots de teste ja identificados:
-
-- `tests/test_api_flow.py` possui construcao recorrente de usuarios com perfis `0`, `1`, `2`, `9`, `12`, `999` e testes que dependem da semantica antiga de acesso amplo.
-- Os testes novos `test_profile_can_view_activity_time_requires_exact_profile_nine()` e `test_user_can_view_activity_time_requires_exact_profile_nine()` documentam a nova regra sensivel estrita.
-- O teste `test_admin_perfil_zero_session_is_limited_to_checkin_and_checkout()` continua sendo referencia importante para garantir que a nova regra nao altere o escopo atual do painel.
-
-A validacao funcional inicial desta fase foi concluida. Qualquer excecao futura deve ser introduzida explicitamente sobre a nova capacidade sensivel, sem reaproveitar implicitamente a semantica antiga de acesso por digitos.
-
-## 6. Plano detalhado de implementacao
-
-### Etapa 1. Criar a capacidade de visualizacao sensivel no backend
-
-Arquivos principais:
-
-- `sistema/app/services/admin_auth.py`
-- `sistema/app/schemas.py`
-- `sistema/app/routers/admin.py`
-
-Passos:
-
-1. Criar um helper unico para decidir se a sessao atual pode ver horario sensivel.
-2. Evitar espalhar comparacoes diretas de perfil pelo codigo.
-3. Expor essa capacidade na sessao do Admin, preferencialmente adicionando um campo booleano em `AdminIdentity`, por exemplo:
-   - `can_view_activity_time: bool`
-4. Preencher esse campo em `build_admin_identity()`.
-5. Manter `access_scope` e `allowed_tabs` exatamente como ja funcionam hoje.
-
-Motivo:
-
-- O perfil continua definindo acesso ao painel, mas a exposicao do horario passa a usar uma capacidade especifica e reutilizavel.
-
-### Etapa 2. Ajustar o contrato de dados para `Check-In` e `Check-Out`
-
-Arquivos principais:
+Isso esta distribuido entre:
 
 - `sistema/app/schemas.py`
-- `sistema/app/routers/admin.py`
-- `sistema/app/static/admin/app.js`
-- `sistema/app/static/admin/index.html`
-
-Situacao atual:
-
-- A rota devolve `UserRow.time` como `datetime` bruto.
-- O frontend usa `formatDateTime(row.time, row.timezone_name)` e renderiza data + horario.
-- Os filtros e a ordenacao da coluna inicial tambem dependem desse valor.
-
-Risco atual:
-
-- Mesmo escondendo o horario na tela, o timestamp bruto continuaria disponivel na API para perfis nao autorizados.
-
-Plano recomendado:
-
-1. Refatorar o contrato da linha de presenca para usar campos de exibicao seguros.
-2. Evitar depender do `datetime` bruto no frontend para mostrar a primeira coluna.
-3. Introduzir campos especificos de exibicao, por exemplo:
-   - `activity_date_label`
-   - `activity_time_label` ou `null`
-4. Para perfil `9`:
-   - preencher data e horario.
-5. Para demais perfis:
-   - preencher somente a data.
-   - deixar o horario nulo ou ausente no contrato de exibicao.
-6. Manter a ordenacao do backend pelo timestamp real antes da sanitizacao.
-7. No frontend, fazer a coluna inicial usar apenas os campos seguros.
-8. Atualizar a primeira coluna para exibir:
-   - perfil `9`: duas linhas, data e horario.
-   - demais perfis: apenas a linha de data.
-9. Tornar dinamicos os labels ligados a essa coluna:
-   - cabecalho `Horario` para perfil `9`
-   - cabecalho `Data` para demais perfis
-   - filtro `Filtrar Horario` para perfil `9`
-   - filtro `Filtrar Data` para demais perfis
-10. Atualizar `getPresenceRowDisplayValue()` e `getPresenceFilterOptions()` para usar a versao segura do valor exibido.
-11. Atualizar a logica de ordenacao do frontend para nao depender de horario oculto em perfis nao autorizados.
-
-Observacao importante:
-
-- Se for necessario manter ordenacao de precisao por horario apenas para perfil `9`, nao enviar horario escondido para perfis nao `9` apenas para sustentar o `sort` do navegador.
-- Para perfis nao autorizados, a ordenacao da coluna inicial deve ser feita com base em data ou na ordem ja entregue pelo backend.
-
-### Etapa 3. Ajustar a aba `Forms`
-
-Arquivos principais:
-
-- `sistema/app/routers/admin.py`
-- `sistema/app/schemas.py`
-- `sistema/app/static/admin/index.html`
-- `sistema/app/static/admin/app.js`
-- `sistema/app/static/admin/styles.css`
-
-Situacao atual:
-
-- A rota `/api/admin/forms` usa `dependencies=[Depends(require_full_admin_session)]`.
-- O handler nao recebe o usuario atual explicitamente.
-- O payload devolve `data` e `hora`.
-- O HTML tem 9 colunas fixas.
-- O JS sempre monta a celula `Hora`.
-
-Plano recomendado:
-
-1. Alterar a assinatura da rota para receber `current_admin: User = Depends(require_full_admin_session)` em vez de usar apenas a dependencia na lista.
-2. Passar a capacidade de visualizacao sensivel para `build_provider_forms_rows()`.
-3. Tornar `ProviderFormRow.hora` anulavel no schema, ou criar um schema seguro equivalente.
-4. Para perfil `9`:
-   - manter `hora` preenchida.
-5. Para demais perfis:
-   - devolver `hora = null` ou omitir a informacao equivalente.
-6. No frontend, esconder completamente a coluna `Hora` para quem nao puder ve-la.
-7. Tornar dinamicos:
-   - o cabecalho da tabela
-   - a criacao das linhas
-   - o `colspan` do empty state
-   - as larguras CSS da tabela
-8. Criar uma classe especifica para a tabela sem hora, por exemplo:
-   - `forms-table--without-time`
-9. Adicionar regras CSS proprias para a tabela com 8 colunas, sem alterar o layout dos demais casos.
-
-Objetivo dessa etapa:
-
-- O usuario com perfil `1` continua acessando `Forms`, mas sem ver a coluna `Hora` e sem receber horario pela API.
-
-### Etapa 4. Ajustar a aba `Relatorios` na tela
-
-Arquivos principais:
-
-- `sistema/app/routers/admin.py`
-- `sistema/app/schemas.py`
-- `sistema/app/static/admin/app.js`
-- `sistema/app/static/admin/styles.css`
-
-Situacao atual:
-
-- `build_report_events_response()` devolve `event_date` e `event_time_label`.
-- `renderReportsResults()` sempre monta a coluna `Horario`.
-- O `colgroup` da tabela presume a coluna de horario.
-
-Plano recomendado:
-
-1. Alterar a rota `/api/admin/reports/events` para receber o `current_admin` explicitamente.
-2. Passar a capacidade de visualizacao para `build_report_events_response()`.
-3. Tornar `event_time_label` anulavel, ou criar um schema de exibicao seguro equivalente.
-4. Para perfil `9`:
-   - manter `event_time_label` preenchido.
-5. Para demais perfis:
-   - devolver `event_time_label = null`.
-6. Manter `event_date` sempre preenchido, porque ele continuara sendo usado para agrupamento por data.
-7. No frontend, fazer `renderReportsResults()` montar duas variantes de tabela:
-   - com coluna `Horario` para perfil `9`
-   - sem coluna `Horario` para os demais
-8. Ajustar o `colgroup` e as classes CSS para ambas as variantes.
-9. Garantir que os grupos por data continuem identicos ao comportamento atual.
-10. Garantir que `Origem`, `Local`, `Projeto`, `Fuso horario` e `Assiduidade` permaneçam inalterados.
+- `sistema/app/routers/transport.py`
+- `sistema/app/services/location_settings.py`
+- `MobileAppSettings` em `sistema/app/models.py`
+- markup e autosave em `sistema/app/static/transport/index.html` e `app.js`
 
-### Etapa 5. Ajustar `Exportar` e `Exportar Tudo` em `Relatorios`
+Hoje nao existe qualquer suporte a:
 
-Arquivos principais:
+- moeda selecionada;
+- unidade de cobranca (`hour`, `day`, `week`, `month`);
+- custo por tipo de veiculo;
+- catalogo dinamico de moedas.
 
-- `sistema/app/routers/admin.py`
-- `tests/test_api_flow.py`
+## 3. Principios de seguranca obrigatorios
 
-Situacao atual:
+1. Nao persistir a string localizada `Waiting` no banco.
+2. Nao usar "gambiarras" como salvar `WAITING` em `placa`, `color` ou `tipo` como se fossem dados reais.
+3. Nao permitir que um veiculo com dados operacionais incompletos seja alocavel sem uma regra explicita.
+4. Fazer rollout em ordem compativel: banco e backend primeiro, frontend permissivo depois.
+5. Manter validacao server-side mesmo que o frontend valide antes.
+6. Tratar `Waiting` como representacao de exibicao, nao como valor de dominio.
 
-- A exportacao individual usa `REPORT_EXPORT_COLUMNS` fixo com `Horario`.
-- A exportacao completa herda essa estrutura e hoje coloca `Horario` na coluna `C`.
+## 4. Decisao de desenho recomendada
+
+### 4.1 Estrategia recomendada
+
+Para suportar cadastro incompleto com seguranca, a recomendacao e:
+
+- permitir campos de base nulos ou ausentes no dominio do veiculo;
+- derivar o estado "pendente" a partir desses campos nulos;
+- renderizar `Waiting` somente na UI;
+- bloquear a alocacao de veiculos incompletos ate que os dados minimos operacionais sejam preenchidos.
+
+### 4.2 Estrategias que nao devem ser adotadas
+
+Nao adotar estas abordagens:
+
+- salvar `Waiting` literalmente no banco;
+- gerar `placa = WAITING-123` como dado definitivo;
+- manter `lugares = 1` ou `tolerance = 0` apenas para satisfazer constraint e fingir que o valor existe;
+- traduzir `Waiting` no backend e persistir a traducao.
+
+Essas solucoes parecem simples, mas criam ambiguidade, risco operacional e regressao em validacoes futuras.
+
+### 4.3 Regra operacional recomendada para veiculos incompletos
+
+Recomendacao de seguranca:
+
+- o veiculo pode ser cadastrado e editado mesmo incompleto;
+- o veiculo aparece na lista com `Waiting` nos campos ausentes;
+- o veiculo nao pode receber alocacoes enquanto faltar qualquer dado operacional critico.
+
+Definicao recomendada de "pronto para alocacao":
+
+- `tipo` preenchido;
+- `placa` preenchida;
+- `lugares` preenchido;
+- `tolerance` preenchido;
+- para `extra`, os campos especificos de agenda (`service_date`, `departure_time`, `route_kind`) ja continuarao obrigatorios.
+
+`color` pode ser tratada como dado visual nao bloqueante, se o produto quiser permitir alocacao mesmo com cor pendente. Se a operacao exigir cor, entao ela tambem deve entrar no gate de prontidao.
+
+## 5. Plano de execucao detalhado
+
+## 5.1 Fase 0 - Baseline e congelamento de comportamento atual
+
+Resumo do que foi executado na fase 0:
+
+1. Foi feito o mapeamento dos pontos de controle reais do dashboard no codigo atual:
+   - autenticacao e sessao em `/api/transport/auth/session` e `/api/transport/auth/verify`;
+   - criacao de veiculo via `POST /api/transport/vehicles`;
+   - leitura e autosave de configuracoes via `GET /api/transport/settings` e `PUT /api/transport/settings`;
+   - alternancia entre tiles e management table no frontend de `/transport`.
+
+2. O preview local foi validado com a stack atual em SQLite de homologacao local, sem alteracoes de codigo:
+   - o dashboard abriu corretamente em `/transport`;
+   - a autenticacao de transporte foi confirmada com o usuario bootstrap presente no ambiente local;
+   - apos autenticar, o campo inline `Work to Home Time` foi habilitado e o dashboard carregou sem erro.
+
+3. O fluxo atual de `Dashboard Settings` foi validado manualmente no browser:
+   - o modal carrega `Languages`, `Work to Home Time`, `Last Update Time`, `Car/Minivan/Van/Bus default places` e `Standard Tolerance`;
+   - o `GET /api/transport/settings` retornou o shape atual sem campos de moeda ou preco;
+   - o autosave em `change` foi confirmado alterando `Last Update Time` de `16:00` para `16:05` e depois revertendo para `16:00`.
+
+4. Os payloads reais de `PUT /api/transport/settings` foram capturados no browser. O shape observado hoje e:
+
+```json
+{
+  "work_to_home_time": "16:45",
+  "last_update_time": "16:00",
+  "default_car_seats": 3,
+  "default_minivan_seats": 6,
+  "default_van_seats": 10,
+  "default_bus_seats": 40,
+  "default_tolerance_minutes": 5
+}
+```
+
+5. O fluxo atual de criacao completa de veiculos foi validado manualmente nos tres escopos, com captura de payload real no browser:
+   - `extra` abre com `tipo=carro`, `lugares=3`, `tolerance=5`, `service_date` predefinida para a data selecionada, `route_kind=home_to_work` e `departure_time` vazio;
+   - `weekend` abre com `tipo=carro`, `lugares=3`, `tolerance=5` e ambas as checkboxes de persistencia desmarcadas;
+   - `regular` abre com `tipo=carro`, `lugares=3`, `tolerance=5` e segunda a sexta marcados por padrao.
+
+6. Os payloads reais atuais de `POST /api/transport/vehicles` foram capturados e congelados como baseline:
+
+```json
+{
+  "service_scope": "extra",
+  "service_date": "2026-04-29",
+  "tipo": "carro",
+  "placa": "PH0EX1",
+  "color": "Black",
+  "lugares": 3,
+  "tolerance": 5,
+  "route_kind": "home_to_work",
+  "departure_time": "17:20"
+}
+```
+
+```json
+{
+  "service_scope": "weekend",
+  "service_date": "2026-04-29",
+  "tipo": "carro",
+  "placa": "PH0WE1",
+  "color": "Blue",
+  "lugares": 3,
+  "tolerance": 5,
+  "every_saturday": true,
+  "every_sunday": false
+}
+```
+
+```json
+{
+  "service_scope": "regular",
+  "service_date": "2026-04-29",
+  "tipo": "carro",
+  "placa": "PH0RG1",
+  "color": "White",
+  "lugares": 3,
+  "tolerance": 5,
+  "every_monday": true,
+  "every_tuesday": true,
+  "every_wednesday": true,
+  "every_thursday": true,
+  "every_friday": true
+}
+```
+
+7. A renderizacao baseline foi confirmada no dashboard atual:
+   - em modo tile, `extra` mostra placa, ocupacao, horario de saida e rota;
+   - em modo tile, `regular` mostra placa, ocupacao e o horario efetivo derivado de `Work to Home Time`;
+   - a management table e aberta clicando no titulo da lista, e hoje mostra:
+     - para `extra`: tipo, placa, horario, ocupacao, `service_date`, rota e acao de excluir;
+     - para `regular`: tipo, placa, horario, ocupacao e acao de excluir.
+
+8. Foi confirmada uma nuance importante do comportamento atual: um veiculo `weekend` criado com sucesso em uma quarta-feira entra no registry retornado por `/api/transport/dashboard`, mas nao aparece na lista visual de `Weekend Transport List` para a data selecionada de quarta-feira. Esse comportamento foi observado e deve ser tratado como baseline de regressao.
+
+9. Ao final da validacao, o estado temporario de homologacao foi restaurado:
+   - os veiculos de teste criados para capturar os payloads foram removidos via `DELETE /api/transport/vehicles/{schedule_id}`;
+   - `Last Update Time` foi revertido para `16:00`;
+   - o dashboard foi recarregado e voltou ao estado limpo, sem veiculos de teste residuais.
+
+10. Invariantes congelados para as proximas fases:
+   - hoje o frontend envia todos os campos base de veiculo sempre preenchidos;
+   - hoje a API exige todos os campos base de veiculo;
+   - `extra` exige `service_date`, `departure_time` e `route_kind`;
+   - `weekend` exige pelo menos uma checkbox de fim de semana;
+   - `regular` abre com segunda a sexta marcados por padrao;
+   - `Dashboard Settings` usa autosave por `change` e ainda nao conhece moeda, unidade nem preco.
+
+## 5.2 Fase 1 - Tornar o dominio do veiculo compativel com cadastro parcial
+
+Resumo do que foi executado na fase 1:
+
+1. Banco e ORM:
+   - `Vehicle` passou a aceitar `placa`, `tipo`, `lugares` e `tolerance` nulos em `sistema/app/models.py`.
+   - Foi criada a migration `0043_allow_partial_transport_vehicle_base.py` para alinhar o banco real com o novo dominio.
+   - A unicidade de `placa` deixou de ser global e passou a valer apenas quando a placa estiver preenchida, usando indice parcial.
+   - Os `CHECK CONSTRAINTS` de `tipo`, `lugares` e `tolerance` foram ajustados para aceitar `NULL` e validar faixa apenas quando houver valor.
+
+2. Contratos Pydantic:
+   - `TransportVehicleBaseData`, `TransportVehicleCreate` e `TransportVehicleUpdate` passaram a aceitar base parcial.
+   - Os rows retornados pela API agora aceitam campos nulos em `placa`, `tipo`, `lugares` e `tolerance`.
+   - Foram adicionados os campos derivados `pending_fields` e `is_ready_for_allocation` em `TransportVehicleBaseRow`, `TransportVehicleRow` e `TransportVehicleManagementRow`.
+   - `color` passou a entrar em `pending_fields`, mas a regra de prontidao operacional ficou restrita a `tipo`, `placa`, `lugares` e `tolerance`.
+
+3. Servicos de veiculo:
+   - O backend passou a normalizar campos vazios para `None` no fluxo de base do veiculo.
+   - `create_transport_vehicle_registration(...)` so tenta localizar/reutilizar veiculo por placa quando `placa` vier preenchida.
+   - Cadastros sem placa agora sempre geram um novo `Vehicle`, em vez de correr risco de reaproveitamento indevido.
+   - `list_users_linked_to_vehicle(...)` deixou de casar usuarios por `placa = NULL`, evitando links falsos entre veiculos incompletos.
+   - `update_transport_vehicle_base(...)` so verifica conflito de unicidade quando a nova placa vier preenchida.
+   - O update agora bloqueia a degradacao de um veiculo pronto para um estado incompleto quando existirem assignments futuros confirmados.
+   - A trava anterior de reducao de capacidade com assignments futuros confirmados foi preservada.
+
+4. Consumers do dashboard, export e proposal:
+   - Os builders de dashboard e management registry passaram a expor `pending_fields` e `is_ready_for_allocation`.
+   - As ordenacoes Python do dashboard foram ajustadas para tolerar `placa = None`.
+   - O export passou a calcular `remaining` como `None` quando `lugares` estiver ausente, em vez de quebrar em aritmetica.
+   - A validacao de proposals agora rejeita veiculos que ainda nao estao prontos para alocacao.
+
+5. Validacao executada:
+   - Foram adicionados testes focados para cadastro parcial em `regular`, para garantir que cadastros sem placa nao reaproveitam veiculos existentes e para bloquear degradacao de veiculo pronto com assignments futuros.
+   - O corte de regressao `pytest tests/test_api_flow.py -k 'transport_vehicle and (registration or update or dashboard or proposal)'` foi executado apos as mudancas, com `13 passed`.
+
+## 5.3 Fase 2 - Regras de criacao para `EXTRA TRANSPORT LIST`
+
+Resumo do que foi executado na fase 2:
+
+1. Modal e markup:
+   - Em `sistema/app/static/transport/index.html`, `Type`, `Plate`, `Color`, `Places` e `Tolerance` deixaram de ser campos HTML obrigatorios no formulario de criacao de veiculo.
+   - O `select` de `Type` passou a incluir uma opcao vazia real, permitindo cadastro parcial sem reintroduzir automaticamente `carro`.
+   - Os valores padrao visuais de `lugares=3` e `tolerance=5` foram preservados para manter o fluxo atual de preenchimento rapido quando o usuario quiser completar o cadastro.
+
+2. Serializacao e comportamento do frontend:
+   - Em `sistema/app/static/transport/app.js`, `buildVehicleCreatePayload(...)` passou a serializar campos base vazios como `null`, em vez de forcar `"carro"`, `""` ou `0`.
+   - `syncVehicleTypeDependentDefaults(...)` deixou de converter tipo vazio para `carro`, o que permite ao usuario limpar o campo e mantê-lo realmente em branco.
+   - A validacao de frontend para `extra` continuou restrita aos campos especificos do escopo (`service_date`, `departure_time` e `route_kind`), sem voltar a bloquear base parcial.
+
+3. Traducao da nova opcao vazia:
+   - Em `sistema/app/static/transport/i18n.js`, foi adicionada a chave `modal.options.blankType` nos idiomas ja suportados.
+   - Em `applyStaticTranslations(...)`, a traducao das opcoes de tipo deixou de depender da posicao fixa no `select` e passou a usar o `value` de cada opcao, evitando quebra por causa da nova opcao vazia.
+
+4. Backend e regressao:
+   - O backend nao precisou de nova mudanca estrutural nesta fase porque a compatibilidade de dominio e contrato ja havia sido entregue na fase 1.
+   - Foi adicionado teste de API em `tests/test_api_flow.py` cobrindo `POST /api/transport/vehicles` com `service_scope=extra` e base parcial, validando persistencia com campos nulos e retorno no dashboard com `pending_fields` e `is_ready_for_allocation = false`.
+
+5. Validacao executada:
+   - `node --test tests/transport_page_date.test.js` executado com sucesso (`50 passed`).
+   - `pytest tests/test_api_flow.py -k "transport_extra_vehicle_registration"` executado com sucesso (`2 passed`).
+
+## 5.4 Fase 3 - Regras de criacao para `WEEKEND` e `REGULAR`
+
+Resumo do que foi executado na fase 3:
+
+1. Confirmacao de compatibilidade no runtime:
+   - Nao foi necessaria nova mudanca estrutural no modal ou no serializer, porque a flexibilizacao aplicada na fase 2 ja passou a valer tambem para `weekend` e `regular`.
+   - Em `sistema/app/static/transport/app.js`, `buildVehicleCreatePayload(...)` ja estava serializando campos base vazios como `null` para todos os escopos, preservando apenas as checkboxes de persistencia de `weekend` e `regular`.
+   - Em `resolveVehicleCreateValidationError(...)`, as regras de frontend permaneceram restritas a persistencia minima: `weekend` exige `every_saturday` e/ou `every_sunday`; `regular` exige ao menos um dia util marcado.
+
+2. Backend validado sem reabrir dominio:
+   - O backend ja estava compativel com base parcial desde a fase 1, entao nao houve nova alteracao em modelos, schemas ou services para esta fase.
+   - A regra server-side de `weekend` continuou exigindo ao menos uma checkbox de fim de semana.
+   - A regra server-side de `regular` continuou exigindo persistencia quando os campos de weekday sao enviados explicitamente pelo frontend, preservando a protecao atual sem remover o autofill legado para payloads que omitem esses campos.
+
+3. Cobertura automatizada adicionada:
+   - Em `tests/transport_page_date.test.js`, foram adicionados testes para garantir que `weekend` e `regular` tambem serializam base vazia como `null` sem perder as checkboxes selecionadas.
+   - Na mesma suite frontend, foi adicionada cobertura para `resolveVehicleCreateValidationError(...)` confirmar que `weekend` e `regular` bloqueiam apenas ausencia de persistencia, e nao campos base vazios.
+   - Em `tests/test_api_flow.py`, foi adicionado teste para cadastro parcial de veiculo `weekend` com retorno de `pending_fields` e `is_ready_for_allocation = false`.
+   - Em `tests/test_api_flow.py`, foi adicionada cobertura para garantir que `regular` continua rejeitando payload com todos os weekdays explicitamente desmarcados.
+
+4. Validacao executada:
+   - `node --test tests/transport_page_date.test.js` executado com sucesso (`52 passed`).
+   - `pytest tests/test_api_flow.py -k "partial_regular_vehicle or partial_weekend_vehicle or explicit_weekday_selection"` executado com sucesso (`3 passed`).
+
+## 5.5 Fase 4 - Exibicao localizada de `Waiting`
+
+Resumo do que foi executado na fase 4:
+
+1. Helper central de placeholder no frontend:
+   - Em `sistema/app/static/transport/app.js`, foram adicionados os helpers `isPendingVehicleField(...)`, `formatPendingVehicleField(...)` e `createWaitingNode(...)` para centralizar a deteccao e a exibicao de campos ausentes.
+   - O helper passou a resolver `Waiting` no proprio frontend em tempo de renderizacao, com fallback seguro para o ambiente de testes em Node quando o dicionario de i18n nao estiver carregado.
+
+2. Superficies atualizadas:
+   - No tile principal do veiculo, `placa` ausente agora aparece como `Waiting` em vermelho, e a ocupacao deixa de cair em `0/0` quando `lugares` estiver ausente, passando a mostrar `assigned/Waiting`.
+   - Na management table, `tipo`, `placa` e ocupacao tambem passaram a usar o placeholder localizado, com destaque visual dedicado para campos pendentes.
+   - Em titulos e meta linhas montados com dados ausentes, o frontend deixou de concatenar valores nulos crus e passou a usar o mesmo helper, inclusive em `Assigned to {plate}` e no `vehicleButtonTitle`.
+   - O painel de detalhes atual nao exibe hoje campos base de veiculo como `tipo`, `placa`, `color`, `lugares` ou `tolerance`; por isso, nesta fase nao houve nova regra visual especifica a aplicar dentro dele.
+
+3. I18n e estilo:
+   - Em `sistema/app/static/transport/i18n.js`, foram adicionadas as chaves `misc.waiting` e `misc.waitingAria` para todos os idiomas suportados.
+   - Em `sistema/app/static/transport/styles.css`, foi criada a classe `.transport-pending-value`, usando `var(--transport-danger)` para destacar o placeholder em vermelho sem alterar o layout existente.
+
+4. Cobertura e validacao:
+   - Em `tests/transport_page_date.test.js`, foram adicionados testes para os helpers de campo pendente, para `formatVehicleOccupancyLabel(...)` e `formatVehicleOccupancyCount(...)` com `lugares` ausente, e para a presenca das novas chaves/estilo de placeholder.
+   - `node --test tests/transport_page_date.test.js` executado com sucesso apos a implementacao (`54 passed`).
+
+## 5.6 Fase 5 - Gate de seguranca para alocacao de veiculos pendentes
+
+Fase 5 concluida. A alocacao operacional de veiculos pendentes passou a ser bloqueada no frontend e no backend usando a prontidao `is_ready_for_allocation` como fonte de verdade.
+
+- `sistema/app/static/transport/app.js` ganhou os helpers `isVehicleReadyForAllocation(...)` e `getVehiclePendingAllocationMessage(...)`, passou a impedir drag and drop para veiculos incompletos, adicionou aviso no tooltip do tile e desabilitou a confirmacao manual no painel de detalhes quando houver pendencias.
+- `sistema/app/static/transport/i18n.js` recebeu a mensagem `warnings.vehiclePendingAllocation` para os idiomas suportados, e o frontend tambem passou a localizar a resposta do backend `The selected vehicle is not ready for allocation.`.
+- `sistema/app/services/transport_assignment_operations.py` passou a rejeitar alocacoes `confirmed` para veiculos sem os campos obrigatorios, reutilizando `is_transport_vehicle_ready_for_allocation(...)`; `sistema/app/routers/transport.py` converte essa rejeicao em HTTP 409 no endpoint `POST /api/transport/assignments`.
+- Foram adicionadas regressoes em `tests/transport_page_date.test.js` e `tests/test_api_flow.py`, ambas aprovadas, cobrindo o bloqueio no helper de drop e a rejeicao da alocacao direta pela API.
+
+## 5.7 Fase 6 - Extensao de `Dashboard Settings` para preco e moeda
+
+Fase 6 concluida. `Dashboard Settings` passou a suportar moeda, unidade de cobranca e precos padrao por tipo de veiculo no backend e no frontend, preservando o autosave existente para o endpoint principal e isolando o cadastro de moeda em um endpoint proprio.
+
+- Banco e modelos: `sistema/app/models.py` recebeu os campos `transport_price_currency_code`, `transport_price_rate_unit`, `transport_default_*_price` em `MobileAppSettings`, foi criado o modelo `TransportCurrencyOption`, e a migration `0044_add_transport_pricing_settings_and_currency_options.py` alinhou o schema real com essa estrutura.
+- Contratos e services: `sistema/app/schemas.py` passou a expor `price_currency_code`, `price_rate_unit`, `default_*_price` e `available_currencies` em `TransportSettingsResponse` e `TransportSettingsUpdateRequest`, e ganhou `TransportCurrencyCreateRequest`/`TransportCurrencyOptionRow`; em `sistema/app/services/location_settings.py` foram adicionados helpers separados para leitura do snapshot completo, gravacao dos precos/unidade/moeda e criacao do catalogo de moedas com bloqueio de duplicidade.
+- API: `sistema/app/routers/transport.py` manteve `GET /api/transport/settings` e `PUT /api/transport/settings` como contrato principal de autosave, agora com os novos campos de preco/moeda, e adicionou `POST /api/transport/settings/currencies` para cadastro dedicado de moeda; selecao de moeda inexistente e moeda duplicada passam a retornar HTTP 409 com mensagens controladas.
+- Frontend: `sistema/app/static/transport/index.html` ganhou a linha `Price Variables`, select de moeda, select de unidade, botao sutil de adicionar moeda, painel inline para cadastro do codigo/rotulo e uma segunda coluna de inputs de preco ao lado dos campos de lugares; `sistema/app/static/transport/styles.css` recebeu o layout e responsividade desses novos controles.
+- Comportamento no browser: `sistema/app/static/transport/app.js` passou a manter no estado local a moeda selecionada, a unidade de cobranca, os precos padrao e o catalogo carregado pela API; `syncSettingsControls()`, `readTransportSettingsDraft()`, `loadTransportSettings()` e `saveTransportSettings()` foram estendidos para o novo payload, e foi criado um fluxo dedicado para adicionar moeda e em seguida persistir a selecao no autosave normal.
+- I18n e erros: `sistema/app/static/transport/i18n.js` recebeu labels novas para `Price Variables`, `Currency`, `Billing Unit`, `Per hour/day/week/month`, `Add currency`, `Save currency` e mensagens de erro para moeda invalida, duplicada ou indisponivel; `app.js` passou a localizar as respostas controladas do backend para esse fluxo.
+- Validacao executada: `pytest tests/test_api_flow.py -k "transport_settings_endpoint_updates_work_to_home_boarding_time"` passou com o novo contrato de settings e com o endpoint de moedas; `node --test tests/transport_page_date.test.js` passou com os novos testes estaticos e de helper do modal; a checagem de erros dos arquivos alterados nao apontou problemas.
+
+## 5.8 Fase 7 - Ajustes de UX e compatibilidade
+
+Fase 7 concluida. Os ajustes finais de UX e compatibilidade passaram a separar o fluxo de criacao do fluxo de reabertura/edicao de veiculo pendente, mantendo os defaults apenas onde fazem sentido e acomodando melhor o modal de settings em larguras intermediarias e mobile.
+
+- Modal de veiculo: `sistema/app/static/transport/app.js` passou a manter contexto explicito de `create` vs `edit`, com `vehicleModalMode` e `vehicleModalVehicleId`; o submit do modal agora usa `POST /api/transport/vehicles` para criacao e `PUT /api/transport/vehicles/{id}` para edicao de campos base, sem misturar agenda/persistencia nessa reabertura.
+- Defaults do formulario: o prefill inicial de `Places` e `Tolerance` foi preservado apenas para o fluxo de criacao de veiculo novo; na reabertura de veiculo pendente, `tipo`, `placa`, `color`, `lugares` e `tolerance` passam a ser preenchidos exatamente com o snapshot salvo, mantendo vazios reais quando o dado ainda esta ausente. A troca de tipo continua podendo aplicar defaults, mas agora isso acontece apenas no `change` final do select, evitando reintroducao ruidosa durante digitacao/input intermediario.
+- Reabertura de pendente: o painel de detalhes do veiculo ganhou um botao `Edit` apenas para veiculos com `pending_fields`; ao abrir esse fluxo, o modal mostra somente a edicao dos campos base, foca no primeiro campo pendente relevante e deixa regras de agenda/persistencia inalteradas para nao gerar expectativa de update parcial fora do contrato existente.
+- Compatibilidade visual: `sistema/app/static/transport/styles.css` ampliou o `transport-settings-modal` para desktop, adicionou quebra antecipada em `@media (max-width: 960px)` para as linhas duplas de lugares/precos e para os controles inline de moeda, e fez o botao de adicionar moeda ocupar a largura disponivel nas larguras menores para evitar overflow lateral.
+- I18n e copy: `sistema/app/static/transport/i18n.js` recebeu textos novos para `Edit Vehicle`, `Save Changes`, nota de edicao do modal, status de atualizacao e uma descricao mais precisa de `Vehicle Form Defaults`, esclarecendo que o prefill vale para novos veiculos e que a edicao preserva campos ausentes em branco.
+- Validacao executada: `node --test tests/transport_page_date.test.js` passou com `60 passed`, incluindo novas regressoes para `buildVehicleBasePayload(...)`, `resolveVehicleEditFocusField(...)`, acao de `Edit` para veiculo pendente e colapso responsivo antecipado do modal de settings.
+
+## 5.9 Fase 8 - Compatibilidade de UX, reabertura e defaults
+
+Fase 8 concluida. O comportamento planejado para compatibilidade de UX e reabertura de veiculo pendente ja estava entregue pela implementacao da fase 7; nesta fase foi feito o fechamento dedicado com validacao automatizada e passada manual no preview isolado.
+
+- Confirmacao de defaults: o fluxo de criacao de veiculo novo continua abrindo com `Type=Car`, `Places=3` e `Tolerance=5`, preservando o preenchimento rapido esperado para novos cadastros.
+- Confirmacao de base parcial real: no preview manual, um veiculo `regular` foi criado com `Type`, `Plate`, `Places` e `Tolerance` vazios; o frontend persistiu esse estado sem reintroduzir defaults no payload salvo e o tile voltou a renderizar `Waiting` no dashboard como esperado.
+- Confirmacao de reabertura: o painel de detalhes do veiculo pendente expôs a acao `Edit`, e a reabertura ocorreu em modo de edicao, com titulo/copy corretos e todos os campos base ainda ausentes preservados em branco no modal, sem voltar para os defaults de criacao.
+- Confirmacao de responsividade/compatibilidade: a suite estatica de frontend foi reexecutada sem regressao, cobrindo `buildVehicleBasePayload(...)`, `resolveVehicleEditFocusField(...)`, a exposicao do botao `Edit` para pendentes e o comportamento responsivo do modal de settings.
+- Validacao executada: `node --test tests/transport_page_date.test.js` passou novamente com `60 passed`; no preview local em `http://127.0.0.1:8010/transport`, o dashboard foi desbloqueado com o admin seedado e o fluxo de criar/reabrir um veiculo regular pendente foi confirmado manualmente.
+
+## 5.10 Fase 9 - Testes, regressao e fechamento seguro
+
+Fase 9 concluida. O fechamento final ganhou as regressoes backend que ainda faltavam para o contrato atual e uma rodada dedicada de validacao cobrindo cadastro parcial, bloqueios operacionais, settings e regressao de veiculos completos.
+
+- Regressoes backend adicionadas: `tests/test_api_flow.py` recebeu `test_transport_vehicle_update_can_complete_pending_vehicle_and_expose_readiness_metadata`, cobrindo a edicao de um veiculo pendente ate o estado pronto sem recriar agendas, e `test_transport_settings_currency_endpoint_rejects_duplicate_currency_code`, cobrindo o `409` do endpoint dedicado de moedas em caso de duplicidade.
+- Matriz automatizada executada: foi rodado um corte focado de `pytest` cobrindo cadastro parcial `extra`/`regular`/`weekend`, bloqueio de alocacao para veiculo nao pronto, update de campos base, conclusao de veiculo pendente, `Dashboard Settings`, cadastro duplicado de moeda e regressao de fluxo completo legado, com `10 passed`.
+- Validacao frontend preservada: a suite `node --test tests/transport_page_date.test.js` permaneceu verde com `60 passed`, sustentando os contratos estaticos e de helper da fase 8.
+- Preview isolado para regressao manual: como o ambiente local padrao continua apontando para Postgres em `@db`, foi usado um banco SQLite isolado (`preview_checking.db`) com `alembic upgrade head` e `APP_ENV=production` para validar manualmente `/api/health` e `/transport` em `:8010`, sem depender da stack Compose ou do processo travado em `:8000`.
+- Fechamento seguro: com isso, os fluxos novos de veiculo parcial, o gate operacional de prontidao, o update de veiculo pendente e o contrato estendido de settings/moedas ficaram cobertos por teste e por uma passada manual real de carregamento do dashboard.
+
+## 6. Matriz de testes recomendada
+
+## 6.1 Backend/API
+
+Adicionar cobertura em `tests/test_api_flow.py` ou arquivo novo equivalente para:
+
+1. criar `extra` com apenas `service_date`, `departure_time` e `route_kind`;
+2. criar `extra` sem `departure_time` e receber erro;
+3. criar `weekend` com checkbox marcada e base incompleta;
+4. criar `weekend` sem checkboxes e receber erro;
+5. criar `regular` com ao menos um dia e base incompleta;
+6. criar `regular` sem dias e receber erro;
+7. editar veiculo pendente e preencher campos faltantes;
+8. tentar apagar `placa` ou `lugares` de veiculo com assignments futuros e receber erro;
+9. obter `/settings` com campos novos;
+10. salvar `/settings` com moeda, unidade e precos;
+11. cadastrar moeda duplicada e receber erro controlado;
+12. confirmar que veiculos completos antigos continuam funcionando sem migracao manual de dados.
+
+## 6.2 Frontend
+
+Cobrir pelo menos:
+
+1. `buildVehicleCreatePayload(...)` serializando `null` para campos vazios;
+2. `resolveVehicleCreateValidationError(...)` mantendo regras por escopo;
+3. renderizacao de `Waiting` traduzido ao trocar idioma;
+4. CSS de placeholder vermelho;
+5. bloqueio de drag and drop em veiculo pendente;
+6. leitura e escrita dos novos campos de settings;
+7. fluxo de adicionar nova moeda.
 
-Plano recomendado:
+## 6.3 Regressao manual obrigatoria
 
-1. Alterar as rotas de exportacao para receber `current_admin` explicitamente:
-   - `/api/admin/reports/events/export`
-   - `/api/admin/reports/events/export-all`
-2. Substituir o uso de colunas fixas por builders dinamicos, por exemplo:
-   - `build_report_export_columns(can_view_activity_time)`
-   - `build_report_event_export_values(row, can_view_activity_time)`
-   - equivalente para exportacao completa
-3. Para perfil `9`, manter exatamente o layout atual das planilhas.
-4. Para os demais perfis, remover a coluna `Horario` da planilha.
-5. Ajustar automaticamente:
-   - cabecalho das colunas
-   - quantidade de colunas usada no `merge_cells`
-   - posicao dos dados em cada linha
-6. Preservar o nome do arquivo, a aba `Relatorio` e as linhas de metadados ja existentes.
-7. Atualizar os testes para validar dois cenarios:
-   - perfil `9`: coluna `Horario` presente
-   - perfil nao `9`: coluna `Horario` ausente
+Executar manualmente:
 
-Observacao funcional importante:
+1. criar veiculo completo `extra`;
+2. criar veiculo completo `weekend`;
+3. criar veiculo completo `regular`;
+4. editar veiculo completo existente;
+5. abrir e salvar `Dashboard Settings` sem tocar em preco/moeda;
+6. trocar idioma e verificar `Waiting` em todas as superficies;
+7. confirmar que a pagina `/transport` continua carregando sem erro de inicializacao.
 
-- Quando a coluna `Horario` for removida para perfis nao `9`, a antiga coluna `D` passara a ocupar a coluna `C` e assim por diante.
-- Isso e esperado e deve ser refletido conscientemente nos testes.
+## 7. Ordem segura de implementacao e rollout
 
-### Etapa 6. Ajustar a aba `Eventos`
+Ordem recomendada:
 
-Arquivos principais:
+1. migration de banco para `vehicles` e `MobileAppSettings`;
+2. modelos ORM e schemas Pydantic;
+3. servicos de criacao/edicao de veiculo;
+4. contratos `/settings` e endpoint de moedas;
+5. frontend do modal de veiculo;
+6. frontend de `Waiting` e gate de alocacao;
+7. frontend de `Dashboard Settings`;
+8. testes automatizados;
+9. validacao manual no preview local;
+10. deploy primeiro do backend, depois do frontend, se houver janela de incompatibilidade.
 
-- `sistema/app/routers/admin.py`
-- `sistema/app/schemas.py`
-- `sistema/app/static/admin/index.html`
-- `sistema/app/static/admin/app.js`
+## 8. Checklist de aceite final
 
-Situacao atual:
+Considerar a entrega concluida apenas quando tudo abaixo for verdadeiro:
 
-- O backend devolve `EventRow.event_time` bruto.
-- O frontend usa `makeEventDateTimeCell(row.event_time, row.timezone_name)`.
-- A tabela `Eventos` hoje mostra duas linhas na primeira coluna: data e horario.
+1. `EXTRA` permite cadastro com apenas `Departure Date`, `Departure Time` e `Route`.
+2. `WEEKEND` exige pelo menos `Saturday` ou `Sunday`.
+3. `REGULAR` exige pelo menos um dia util.
+4. Campos base vazios nao impedem cadastro nos tres escopos.
+5. Campos ausentes aparecem como `Waiting` em vermelho, traduzidos conforme idioma ativo.
+6. Veiculos pendentes nao entram em alocacao enquanto faltarem dados operacionais criticos.
+7. `Dashboard Settings` exibe variaveis de preco, moeda e unidade.
+8. E possivel cadastrar nova moeda pelo botao dedicado.
+9. Os quatro tipos de veiculo possuem campo de preco padrao persistido.
+10. O autosave de settings continua funcional.
+11. Nenhum fluxo antigo de veiculo completo foi quebrado.
 
-Plano recomendado:
+## 9. Observacao final
 
-1. Alterar a rota `/api/admin/events` para receber o `current_admin` explicitamente.
-2. Criar campos seguros de exibicao para a data/horario do evento, por exemplo:
-   - `event_date_label`
-   - `event_time_label` ou `null`
-3. Para perfil `9`:
-   - manter data + horario.
-4. Para demais perfis:
-   - manter apenas a data.
-5. No frontend, fazer a primeira coluna da tabela `Eventos` usar os campos seguros.
-6. Atualizar o titulo visual da coluna para manter coerencia:
-   - `Horario` para perfil `9`
-   - `Data` para demais perfis, se a decisao de UX for tornar o texto coerente com o conteudo.
-7. Nao alterar nenhuma das outras colunas da tabela `Eventos`.
+O maior risco desta demanda nao esta no placeholder `Waiting`. O maior risco esta em desacoplar, com seguranca, o conceito de "veiculo cadastrado" do conceito de "veiculo operacionalmente pronto". Se esse desacoplamento for bem implementado, os tres pedidos passam a conviver com o dashboard atual sem introduzir dados falsos nem comportamento ambiguo.
 
-### Etapa 7. Ajustar o estado global do frontend com a nova capacidade
+## 10. Lista de verificacao por fases de implementacao
 
-Arquivo principal:
+Use esta lista para conferir rapidamente o que ja foi implementado e o que ainda falta.
 
-- `sistema/app/static/admin/app.js`
+### Fase 0 - Baseline e congelamento de comportamento atual
 
-Plano recomendado:
+- [x] O comportamento atual do dashboard `/transport` foi mapeado antes das alteracoes.
+- [x] O fluxo atual de criacao de veiculos `extra`, `weekend` e `regular` foi validado e documentado.
+- [x] O fluxo de leitura e escrita de `Dashboard Settings` foi validado e documentado.
+- [x] A renderizacao baseline dos tiles e da management table foi validada e documentada.
+- [x] Foram registrados comportamento atual confirmado, constraints reais do banco, validacoes frontend/backend existentes, pontos de risco para rollout e invariantes que nao poderiam quebrar.
+- [x] A totalidade da Fase 0 foi implementada e consolidada no resumo da secao 5.1.
 
-1. Criar um estado global simples, por exemplo:
-   - `adminCanViewActivityTime`
-2. Alimentar esse estado em `showAdminShell(admin)` a partir da sessao.
-3. Resetar esse estado em logout ou quando a sessao expirar.
-4. Centralizar a verificacao em um helper unico no frontend para evitar repeticao.
+### Fase 1 - Banco, ORM e contratos para veiculo parcial
 
-Beneficio:
+- [x] Fase 1 implementada e resumida na secao 5.2.
 
-- A SPA passa a ter uma unica fonte de verdade para saber se deve renderizar colunas e labels sensiveis.
+### Fase 2 - Criacao parcial para `EXTRA TRANSPORT LIST`
 
-### Etapa 8. Preparar o HTML para mutacoes seguras e de baixo risco
+- [x] Fase 2 implementada e resumida na secao 5.3.
 
-Arquivo principal:
+### Fase 3 - Criacao parcial para `WEEKEND` e `REGULAR`
 
-- `sistema/app/static/admin/index.html`
+- [x] Fase 3 implementada e resumida na secao 5.4.
 
-Como o HTML atual tem cabecalhos fixos, a recomendacao e adicionar pontos de ancoragem claros para manipulacao do DOM, por exemplo:
+### Fase 4 - Exibicao localizada de `Waiting`
 
-- `id` ou `data-*` no cabecalho sensivel de `Check-In`
-- `id` ou `data-*` no cabecalho sensivel de `Check-Out`
-- `id` ou `data-*` no cabecalho sensivel de `Forms`
-- `id` ou `data-*` no cabecalho sensivel de `Eventos`
-- `data-*` nos labels de filtros que hoje dizem `Filtrar Horario`
+- [x] Fase 4 implementada e resumida na secao 5.5.
 
-Objetivo:
+### Fase 5 - Gate de seguranca para alocacao de veiculo pendente
 
-- Permitir alterar label, ocultar coluna e aplicar classes CSS sem mexer em trechos nao relacionados.
+- [x] Fase 5 implementada e resumida na secao 5.6.
 
-### Etapa 9. Ajustar CSS somente onde houver mudanca estrutural real
+### Fase 6 - Backend de `Dashboard Settings` para moeda e precos
 
-Arquivo principal:
+- [x] Fase 6 implementada e resumida na secao 5.7.
 
-- `sistema/app/static/admin/styles.css`
+### Fase 7 - Frontend de `Dashboard Settings` para moeda e precos
 
-Recomendacoes:
+- [x] Fase 7 implementada e resumida na secao 5.8.
 
-1. Nao reformatar CSS de tabelas nao impactadas.
-2. Criar classes especificas para as variantes sem horario.
-3. Atualizar apenas os seletores necessarios para:
-   - `Forms` com 8 colunas
-   - `Relatorios` sem coluna `Horario`
-4. Manter a tabela `Check-In`, `Check-Out` e `Eventos` com a mesma quantidade de colunas, mudando apenas o conteudo da primeira coluna quando necessario.
-5. Verificar responsividade e os `labels` gerados por `applyResponsiveLabels()`.
+### Fase 8 - Compatibilidade de UX, reabertura e defaults
 
-## 7. Sequencia de implementacao recomendada
+- [x] Fase 8 implementada e resumida na secao 5.9.
 
-Para reduzir risco e facilitar rollback local, a ordem recomendada e:
+### Fase 9 - Testes, regressao e fechamento seguro
 
-1. Criar helper de permissao sensivel no backend.
-2. Expor a capacidade na sessao (`/api/admin/auth/session`).
-3. Refatorar o backend das rotas afetadas para nao devolver horario a perfis nao autorizados.
-4. Ajustar exportacoes XLSX.
-5. Ajustar frontend para usar a nova capacidade.
-6. Ajustar HTML e CSS das colunas dinamicas.
-7. Atualizar testes backend.
-8. Atualizar testes estaticos do frontend.
-9. Executar smoke tests manuais com perfis diferentes.
-
-Essa ordem e importante porque o maior risco de seguranca esta no backend, nao na camada visual.
-
-## 8. Plano de testes detalhado
-
-### 8.1. Testes de backend
-
-Adicionar ou ajustar testes em `tests/test_api_flow.py` para cobrir pelo menos estes cenarios:
-
-1. Sessao Admin
-   - perfil `9` recebe `can_view_activity_time = true`
-   - perfil `1` recebe `can_view_activity_time = false`
-   - perfil `0` recebe `can_view_activity_time = false`
-
-2. `Check-In` e `Check-Out`
-   - perfil `9` recebe data + horario
-   - perfil `0` recebe apenas data
-   - validar que o horario bruto nao fica acessivel para perfil nao autorizado
-
-3. `Forms`
-   - perfil `9` recebe `hora`
-   - perfil `1` recebe `hora = null` ou payload equivalente sem valor
-   - rota continua retornando `200` para perfil `1`
-
-4. `Relatorios`
-   - perfil `9` recebe `event_time_label`
-   - perfil `1` nao recebe horario utilizavel
-   - agrupamento por `event_date` continua correto
-
-5. `Exportar`
-   - perfil `9` gera planilha com coluna `Horario`
-   - perfil `1` gera planilha sem coluna `Horario`
-
-6. `Exportar Tudo`
-   - perfil `9` gera planilha com `Horario` na coluna `C`
-   - perfil `1` gera planilha sem a coluna `Horario`
-
-7. `Eventos`
-   - perfil `9` recebe data + horario
-   - perfil `1` recebe apenas data
-   - nenhum horario bruto fica acessivel para perfil nao autorizado
-
-### 8.2. Testes estaticos de frontend
-
-Arquivos provaveis de ajuste:
-
-- `tests/check_admin_presence_forms_layout.test.js`
-- `tests/check_admin_project_timezone_ui.test.js`
-- `tests/check_admin_reports_ui.test.js`
-
-Estrutura recomendada de validacao:
-
-1. Parar de assumir que a coluna de horario esta sempre fixa no HTML em todos os contextos.
-2. Passar a validar que o frontend possui suporte a renderizacao condicional.
-3. Validar a existencia de:
-   - hooks de DOM para colunas sensiveis
-   - helper de permissao no frontend
-   - variantes de montagem com e sem horario
-   - classes CSS alternativas para tabelas que perdem coluna
-
-### 8.3. Smoke tests manuais obrigatorios
-
-Executar pelo menos estes cenarios no ambiente local:
-
-1. Login com perfil `9`
-   - `Check-In`: mostra data + horario
-   - `Check-Out`: mostra data + horario
-   - `Forms`: mostra coluna `Hora`
-   - `Relatorios`: mostra coluna `Horario`
-   - `Exportar`: XLSX com `Horario`
-   - `Exportar Tudo`: XLSX com `Horario`
-   - `Eventos`: mostra data + horario
-
-2. Login com perfil `1`
-   - continua acessando as mesmas abas que ja acessa hoje
-   - `Check-In`: mostra apenas data
-   - `Check-Out`: mostra apenas data
-   - `Forms`: nao mostra coluna `Hora`
-   - `Relatorios`: nao mostra coluna `Horario`
-   - `Exportar`: XLSX sem `Horario`
-   - `Exportar Tudo`: XLSX sem `Horario`
-   - `Eventos`: mostra apenas data
-
-3. Login com perfil `0`
-   - continua acessando apenas o escopo limitado atual
-   - `Check-In` e `Check-Out`: apenas data
-   - sem regressao nas restricoes de abas
-
-4. Verificacao de rede
-   - inspecionar respostas JSON das rotas afetadas para confirmar ausencia de horario exato em perfis nao `9`
-
-## 9. Riscos principais e mitigacoes
-
-### Risco 1. Esconder na UI, mas continuar vazando no JSON
-
-Mitigacao:
-
-- Fazer a sanitizacao no backend antes da serializacao.
-
-### Risco 2. Quebrar layout das tabelas por mudanca no numero de colunas
-
-Mitigacao:
-
-- Usar classes CSS dedicadas para as variantes sem horario.
-- Ajustar `colspan`, `colgroup` e `applyResponsiveLabels()` conscientemente.
-
-### Risco 3. Quebrar ordenacao e filtros em `Check-In` e `Check-Out`
-
-Mitigacao:
-
-- Atualizar `getPresenceRowDisplayValue()`, `getPresenceFilterOptions()` e a logica de sort para usar dados seguros.
-
-### Risco 4. Quebrar exportacao XLSX por manter contagem fixa de colunas
-
-Mitigacao:
-
-- Tornar o cabecalho e as linhas da planilha totalmente dinamicos com base na permissao.
-
-### Risco 5. Regressao em perfis limitados
-
-Mitigacao:
-
-- Testar explicitamente perfil `0` em `checkin` e `checkout`, porque esse perfil continua entrando no painel com escopo limitado.
-
-## 10. Critérios de aceite
-
-O trabalho pode ser considerado concluido quando todos os pontos abaixo forem verdadeiros ao mesmo tempo:
-
-1. Apenas perfil `9` ve horario exato nas areas solicitadas.
-2. Perfis nao `9` continuam usando o Admin sem perder funcionalidades que nao fazem parte deste requisito.
-3. A API nao entrega horario exato para perfis nao autorizados nas rotas afetadas.
-4. As exportacoes XLSX respeitam a mesma regra da UI.
-5. Os testes automatizados atualizados passam.
-6. Os smoke tests manuais com perfis `9`, `1` e `0` passam.
-
-## 11. Recomendacao final de implementacao
-
-A melhor abordagem para preservar o Admin que ja esta funcionando e:
-
-- nao mudar as regras de acesso das abas
-- nao criar excecoes espalhadas no frontend
-- nao confiar em ocultacao visual isolada
-- centralizar a permissao de horario sensivel no backend
-- usar contratos de exibicao seguros para cada tabela
-- ajustar o frontend apenas para refletir a permissao que a sessao ja informou
-
-Assim, a alteracao fica localizada, auditavel, testavel e com menor risco de regressao sobre o restante do Website do Administrador.
-
-## 12. To-do list detalhada por fases
-
-### Fase 0. Fechamento funcional e preparacao
-
-- [x] Confirmar formalmente que a regra de visibilidade sensivel sera `apenas perfil 9`.
-- [x] Validar com o responsavel de produto se perfis legados como `19`, `29`, `99` ou `999` devem ou nao herdar a visualizacao de horario.
-- [x] Consolidar que a regra e global por perfil e nao deve ser relaxada em outras interfaces que exponham o mesmo dado sensivel.
-- [x] Confirmar que `Check-In`, `Check-Out`, `Forms`, `Relatorios`, exportacoes e `Eventos` sao todas as superficies que expoem horario sensivel no Admin.
-- [x] Mapear no codigo todos os pontos que hoje leem `admin.perfil` ou derivam permissao da sessao para evitar criacao de regra duplicada.
-- [x] Registrar a decisao final sobre perfis legados no proprio documento antes de iniciar implementacao.
-
-### Fase 1. Centralizacao da permissao sensivel no backend
-
-- [x] Criar helper unico de autorizacao para horario sensivel em `sistema/app/services/admin_auth.py`.
-- [x] Garantir que o helper fique desacoplado de `access_scope` e `allowed_tabs`.
-- [x] Aplicar a igualdade estrita com `9` aprovada na Fase 0 na nova capacidade sensivel.
-- [x] Adicionar teste unitario ou de integracao cobrindo o helper novo para perfil `9`.
-- [x] Adicionar teste cobrindo perfil `1` sem acesso ao horario.
-- [x] Adicionar teste cobrindo perfil `0` sem acesso ao horario.
-- [x] Adicionar teste cobrindo o caso legado decidido na Fase 0 (`999` nao herda visibilidade de horario).
-
-### Fase 2. Exposicao da nova capacidade na sessao do Admin
-
-- [x] Atualizar `AdminIdentity` em `sistema/app/schemas.py` para expor um booleano explicito, por exemplo `can_view_activity_time`.
-- [x] Atualizar `build_admin_identity()` em `sistema/app/routers/admin.py` para preencher esse campo.
-- [x] Confirmar que `/api/admin/auth/session` continua retornando `access_scope` e `allowed_tabs` sem regressao.
-- [x] Garantir que a autenticacao de perfil `0` continue funcionando no painel com escopo limitado.
-- [x] Adicionar teste para `/api/admin/auth/session` validando `can_view_activity_time = true` para perfil `9`.
-- [x] Adicionar teste para `/api/admin/auth/session` validando `can_view_activity_time = false` para perfil `1`.
-- [x] Adicionar teste para `/api/admin/auth/session` validando `can_view_activity_time = false` para perfil `0`.
-
-### Fase 3. Sanitizacao backend de `Check-In` e `Check-Out`
-
-- [x] Revisar o contrato atual de `UserRow` em `sistema/app/schemas.py`.
-- [x] Definir se a linha de presenca passara a expor campos seguros novos ou um schema alternativo para exibicao.
-- [x] Preservar a ordenacao de backend por timestamp real antes da sanitizacao.
-- [x] Ajustar `build_presence_rows()` para preencher data e horario apenas quando permitido.
-- [x] Garantir que perfis nao autorizados recebam somente a data de exibicao.
-- [x] Garantir que perfis nao autorizados nao recebam horario bruto serializado em campos auxiliares.
-- [x] Revisar se `time` pode continuar existindo no schema ou se deve ser substituido por campos de display seguros.
-- [x] Ajustar as rotas `/api/admin/checkin` e `/api/admin/checkout` para usar a nova representacao segura sem afetar o controle de acesso atual.
-- [x] Adicionar teste para `/api/admin/checkin` com perfil `9` validando data + horario.
-- [x] Adicionar teste para `/api/admin/checkin` com perfil `0` validando apenas data.
-- [x] Adicionar teste para `/api/admin/checkout` com perfil `9` validando data + horario.
-- [x] Adicionar teste para `/api/admin/checkout` com perfil `0` validando apenas data.
-
-### Fase 4. Sanitizacao backend da aba `Forms`
-
-- [x] Alterar a rota `/api/admin/forms` para receber `current_admin: User = Depends(require_full_admin_session)` explicitamente.
-- [x] Passar a permissao sensivel para `build_provider_forms_rows()`.
-- [x] Tornar `ProviderFormRow.hora` anulavel ou criar contrato seguro equivalente.
-- [x] Garantir que perfil `9` continue recebendo `hora` normalmente.
-- [x] Garantir que perfil `1` nao receba horario utilizavel em `hora`.
-- [x] Confirmar que `data`, `recebimento`, `atividade`, `informe`, `projeto` e `timezone_label` continuam corretos.
-- [x] Verificar se `recebimento` tambem precisa ser sanitizado na API ou apenas a coluna dedicada `Hora` faz parte da restricao aprovada.
-- [x] Adicionar teste de API para `/api/admin/forms` com perfil `9`.
-- [x] Adicionar teste de API para `/api/admin/forms` com perfil `1` sem horario.
-- [x] Confirmar que a funcionalidade `Limpar` de `Forms` continua intacta.
-
-### Fase 5. Sanitizacao backend da aba `Relatorios`
-
-- [x] Alterar a rota `/api/admin/reports/events` para receber `current_admin` explicitamente.
-- [x] Passar a permissao sensivel para `build_report_events_response()`.
-- [x] Tornar `ReportEventRow.event_time_label` anulavel ou criar contrato seguro equivalente.
-- [x] Sanitizar tambem `ReportEventRow.event_time` bruto para perfis nao `9`.
-- [x] Manter `event_date` sempre preenchido.
-- [x] Garantir que perfil `9` continue recebendo `event_time_label`.
-- [x] Garantir que perfil `1` nao receba horario utilizavel em `event_time_label`.
-- [x] Confirmar que `source_label`, `action_label`, `local_label`, `projeto`, `timezone_label` e `assiduidade` continuam inalterados.
-- [x] Confirmar que o agrupamento por data continua correto mesmo sem horario visivel.
-- [x] Adicionar teste de API para `/api/admin/reports/events` com perfil `9`.
-- [x] Adicionar teste de API para `/api/admin/reports/events` com perfil `1` sem horario.
-- [x] Registrar compatibilidade da UI atual: `renderReportsResults()` continua agrupando por `event_date` e tolera `event_time = null` / `event_time_label = null` sem quebrar a tabela.
-
-### Fase 6. Sanitizacao backend das exportacoes de `Relatorios`
-
-- [x] Alterar a rota `/api/admin/reports/events/export` para receber `current_admin` explicitamente.
-- [x] Alterar a rota `/api/admin/reports/events/export-all` para receber `current_admin` explicitamente.
-- [x] Refatorar `REPORT_EXPORT_COLUMNS` para uma estrutura dinamica baseada na permissao.
-- [x] Criar builder para colunas da exportacao individual com e sem `Horario`.
-- [x] Criar builder para colunas da exportacao completa com e sem `Horario`.
-- [x] Ajustar `build_report_event_export_values()` para respeitar a nova estrutura.
-- [x] Ajustar `build_report_events_export()` para recalcular `merge_cells` conforme a quantidade real de colunas.
-- [x] Ajustar `build_all_report_events_export()` para remover `Horario` da coluna `C` quando o perfil nao puder ver essa informacao.
-- [x] Garantir que nomes de arquivo, titulo da aba e metadados do topo permaneçam identicos ao comportamento atual.
-- [x] Adicionar teste da exportacao individual com perfil `9` mantendo `Horario`.
-- [x] Adicionar teste da exportacao individual com perfil `1` sem `Horario`.
-- [x] Adicionar teste da exportacao completa com perfil `9` mantendo `Horario`.
-- [x] Adicionar teste da exportacao completa com perfil `1` sem `Horario`.
-- [x] Confirmar que `perfil 0` continua bloqueado nas duas rotas de exportacao de `Relatorios`.
-
-### Fase 7. Sanitizacao backend da aba `Eventos`
-
-- [x] Alterar a rota `/api/admin/events` para receber `current_admin` explicitamente.
-- [x] Revisar o schema `EventRow` para expor campos seguros de data e horario, ou criar contrato alternativo de exibicao.
-- [x] Ajustar `build_event_row_payload()` para preencher data + horario apenas quando permitido.
-- [x] Garantir que perfis nao autorizados recebam apenas a data de exibicao.
-- [x] Garantir que `event_time` bruto nao permaneça exposto para perfis nao `9`, caso esse campo participe da resposta final.
-- [x] Confirmar que as demais colunas da aba `Eventos` nao sofram qualquer alteracao funcional.
-- [x] Adicionar teste de API para `/api/admin/events` com perfil `9`.
-- [x] Adicionar teste de API para `/api/admin/events` com perfil `1` sem horario.
-- [x] Registrar a compatibilidade minima da UI atual: `loadEvents()` passou a priorizar `event_date_label` e `event_time_label`, sem ainda alterar o cabecalho fixo `Horario`.
-
-### Fase 8. Estado global e helpers do frontend
-
-- [x] Criar estado global em `sistema/app/static/admin/app.js`, por exemplo `adminCanViewActivityTime`.
-- [x] Alimentar esse estado em `showAdminShell(admin)` a partir de `session.admin.can_view_activity_time`.
-- [x] Resetar esse estado em logout, expiracao de sessao e retorno para `authShell`.
-- [x] Criar helper unico no frontend para consultar a permissao e evitar condicionais dispersas.
-- [x] Revisar as chamadas de renderizacao que hoje assumem horario por padrao.
-- [x] Garantir que a nova permissao nao afete `allowedAdminTabs` nem preload de abas.
-
-### Fase 9. Ajustes de frontend em `Check-In` e `Check-Out`
-
-- [x] Atualizar o cabecalho da primeira coluna para variar entre `Horario` e `Data` conforme a permissao.
-- [x] Atualizar os labels de filtro `Filtrar Horario` para `Filtrar Data` quando necessario.
-- [x] Refatorar `buildPresenceRow()` para renderizar duas linhas apenas para perfil `9`.
-- [x] Refatorar `getPresenceRowDisplayValue()` para usar o valor seguro da coluna inicial.
-- [x] Refatorar `getPresenceFilterOptions()` para gerar opcoes coerentes com o valor efetivamente exibido.
-- [x] Revisar `sortPresenceRows()` e `getPresenceRowSortValue()` para nao depender de horario oculto no frontend.
-- [x] Garantir que `renderEmptyStateRow()` mantenha `colspan` correto.
-- [x] Validar que os totais `Usuários em Check-In` e `Usuários em Check-Out` continuam corretos.
-- [x] Validar que `applyResponsiveLabels()` continua coerente no mobile com a coluna alterada.
-
-### Fase 10. Ajustes de frontend em `Forms`
-
-- [x] Adicionar ancoragem no HTML para o cabecalho da coluna `Hora`.
-- [x] Criar logica para ocultar completamente a coluna `Hora` quando `adminCanViewActivityTime` for falso.
-- [x] Ajustar `loadForms()` para montar 9 colunas com perfil `9` e 8 colunas para os demais.
-- [x] Ajustar `renderEmptyStateRow("formsBody", ...)` para usar `colspan` dinamico.
-- [x] Adicionar ou aplicar classe de variante, como `forms-table--without-time`, quando a coluna nao existir.
-- [x] Ajustar CSS da tabela `Forms` sem alterar a variante atual com `Hora`.
-- [x] Confirmar que os botoes `Atualizar` e `Limpar` continuam funcionando sem dependencia da coluna removida.
-- [x] Validar responsividade da tabela `Forms` nas duas variantes.
-
-### Fase 11. Ajustes de frontend em `Relatorios`
-
-- [x] Refatorar `renderReportsResults()` para montar tabela com `Horario` apenas para perfil `9`.
-- [x] Criar variante da tabela de `Relatorios` sem a coluna `Horario`.
-- [x] Ajustar o `colgroup` da tabela para as duas variantes.
-- [x] Confirmar que o agrupamento visual por data continua identico ao atual.
-- [x] Garantir que `reportsHasLoadedResult` e `reportsExportQueryString` continuem funcionando igual.
-- [x] Garantir que os botoes `Exportar` e `Exportar Tudo` continuem aparecendo nos cenarios corretos.
-- [x] Ajustar CSS de `reports-results-table` sem afetar alinhamento das demais colunas.
-- [x] Validar comportamento responsivo da tabela com e sem coluna de horario.
-
-### Fase 12. Ajustes de frontend em `Eventos`
-
-- [x] Adicionar ancoragem no HTML para o cabecalho sensivel da primeira coluna de `Eventos`.
-- [x] Decidir se o titulo visual permanece `Horario` ou muda para `Data` para perfis nao `9`.
-- [x] Refatorar `loadEvents()` para usar campos seguros de exibicao em vez de timestamp bruto.
-- [x] Ajustar `makeEventDateTimeCell()` ou criar variante que renderize apenas data quando necessario.
-- [x] Garantir que a abertura de detalhes do evento continue igual.
-- [x] Confirmar que ordenacao, totais e `updateDashboardSummary()` nao sofram regressao.
-- [x] Validar responsividade da tabela `Eventos` com a nova representacao da primeira coluna.
-
-### Fase 13. Ajustes estruturais de HTML e CSS
-
-- [x] Inserir `id` ou `data-*` nos cabecalhos sensiveis de `Check-In`, `Check-Out`, `Forms` e `Eventos`.
-- [x] Inserir `data-*` nos labels de filtro relacionados a horario/data.
-- [x] Revisar se alguma tabela precisa de classes variantes adicionais alem de `Forms` e `Relatorios`.
-- [x] Criar somente os seletores CSS necessarios para as variantes sem horario.
-- [x] Evitar reformatacao global de `styles.css`.
-- [x] Conferir se `event-cell`, `event-datetime-cell` e `event-datetime-line` continuam corretos nas duas apresentacoes.
-
-### Fase 14. Atualizacao dos testes automatizados
-
-- [x] Atualizar `tests/check_admin_presence_forms_layout.test.js` para refletir suporte condicional a coluna `Hora`.
-- [x] Atualizar `tests/check_admin_project_timezone_ui.test.js` para parar de assumir horario fixo em toda renderizacao.
-- [x] Atualizar `tests/check_admin_reports_ui.test.js` para validar estrutura condicional nas tabelas de `Relatorios`.
-- [x] Adicionar ou ajustar testes em `tests/test_api_flow.py` para cada rota afetada.
-- [x] Garantir cobertura para perfil `9` e para pelo menos um perfil nao `9` em todas as superficies sensiveis.
-- [x] Garantir que os testes atuais de funcionalidades nao relacionadas nao precisem ser relaxados desnecessariamente.
-
-### Fase 15. Validacao manual e fechamento
-
-- [x] Executar smoke test manual com perfil `9` em todas as abas afetadas.
-- [x] Executar smoke test manual com perfil `1` em todas as abas afetadas.
-- [x] Executar smoke test manual com perfil `0` em `Check-In` e `Check-Out`.
-- [x] Inspecionar respostas de rede para confirmar ausencia de horario em perfis nao autorizados.
-- [x] Validar exportacao XLSX gerada para perfil `9`.
-- [x] Validar exportacao XLSX gerada para perfil `1`.
-- [x] Revisar se nenhuma outra funcionalidade do Admin foi alterada acidentalmente.
-- [x] Confirmar que os criterios de aceite da secao 10 foram todos atendidos.
-- [x] Atualizar o documento com status final, decisoes tomadas e eventuais excecoes aprovadas.
-
-## 13. Encerramento final
-
-Status final desta frente:
-
-- Todas as fases de `0` a `15` foram concluidas.
-- A regra funcional final permanece estrita: apenas perfil normalizado exatamente igual a `9` pode visualizar horario sensivel.
-- Nenhuma excecao adicional foi aprovada para perfis legados como `19`, `29`, `99` ou `999`.
-
-Validacoes executadas no fechamento em `27/04/2026`:
-
-1. Smoke final do Admin em navegador headless contra servidor HTTP local, cobrindo login e navegacao real no `/admin` para tres perfis:
-   - perfil `9`: `Check-In`, `Check-Out`, `Forms`, `Relatorios` e `Eventos` mantiveram labels e colunas com horario.
-   - perfil `1`: as mesmas abas permaneceram acessiveis, mas com horario oculto em UI, JSON e exportacoes.
-   - perfil `0`: o shell permaneceu limitado a `Check-In` e `Check-Out`, sem acesso a `Forms`, `Relatorios` e `Eventos`.
-2. Inspecao autenticada das respostas JSON de sessao e das rotas sensiveis:
-   - `/api/admin/auth/session`
-   - `/api/admin/checkin`
-   - `/api/admin/checkout`
-   - `/api/admin/forms`
-   - `/api/admin/reports/events`
-   - `/api/admin/events`
-   - bloqueios `403` esperados para perfil `0` nas areas fora do escopo limitado.
-3. Validacao das exportacoes XLSX de `Relatorios` com leitura estrutural do arquivo gerado:
-   - perfil `9`: `Horário` permaneceu presente em `/api/admin/reports/events/export` e `/api/admin/reports/events/export-all`.
-   - perfil `1`: a coluna `Horário` permaneceu ausente nas duas exportacoes.
-4. Confirmacao de ausencia de regressao acidental por meio das validacoes automatizadas ja executadas ao fim das fases anteriores, incluindo regressao estatica do frontend e subconjunto focado de `pytest` nas superficies sensiveis.
-
-Critérios de aceite da secao `10`:
-
-- `1.` Atendido.
-- `2.` Atendido.
-- `3.` Atendido.
-- `4.` Atendido.
-- `5.` Atendido.
-- `6.` Atendido.
-
-Conclusao:
-
-- Esta entrega foi encerrada sem pendencias abertas dentro do escopo aprovado do Admin.
-- O comportamento final ficou coerente entre backend, frontend, exportacoes e shell administrativo.
-- Eventuais evolucoes futuras devem partir desta linha de base, sem reabrir a regra de visibilidade sensivel por digitos legados sem nova decisao formal.
+- [x] Fase 9 implementada e resumida na secao 5.10.

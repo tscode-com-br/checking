@@ -36,12 +36,23 @@
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
   const DEFAULT_VEHICLE_TOLERANCE_MINUTES = 5;
+  const DEFAULT_TRANSPORT_PRICE_RATE_UNIT = "day";
+  const MAX_TRANSPORT_PRICE_VALUE = 9999999999.99;
+  const TRANSPORT_CURRENCY_CODE_PATTERN = /^[A-Z0-9]{2,12}$/;
+  const TRANSPORT_PRICE_RATE_UNITS = ["hour", "day", "week", "month"];
   const DEFAULT_VEHICLE_SEAT_COUNT = {
     carro: 3,
     minivan: 6,
     van: 10,
     onibus: 40,
   };
+  const DEFAULT_VEHICLE_PRICE_DEFAULTS = {
+    carro: null,
+    minivan: null,
+    van: null,
+    onibus: null,
+  };
+  const VEHICLE_BASE_FIELD_ORDER = ["tipo", "placa", "color", "lugares", "tolerance"];
   let vehicleDefaultSeatCount = Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT);
   let vehicleDefaultToleranceMinutes = DEFAULT_VEHICLE_TOLERANCE_MINUTES;
   const transportLanguages = Array.isArray(transportI18n.languages) && transportI18n.languages.length
@@ -641,6 +652,81 @@
     return element;
   }
 
+  function getWaitingLabel() {
+    const waitingLabel = t("misc.waiting");
+    return waitingLabel === "misc.waiting" ? "Waiting" : waitingLabel;
+  }
+
+  function getWaitingAriaLabel() {
+    const waitingAriaLabel = t("misc.waitingAria");
+    return waitingAriaLabel === "misc.waitingAria" ? "Vehicle field pending completion" : waitingAriaLabel;
+  }
+
+  function isPendingVehicleField(value) {
+    if (value === null || value === undefined) {
+      return true;
+    }
+
+    if (typeof value === "string") {
+      return !value.trim();
+    }
+
+    return false;
+  }
+
+  function formatPendingVehicleField(value, formatter) {
+    if (isPendingVehicleField(value)) {
+      return getWaitingLabel();
+    }
+
+    if (typeof formatter === "function") {
+      return formatter(value);
+    }
+
+    return String(value);
+  }
+
+  function createWaitingNode(tagName, className) {
+    const waitingNode = createNode(tagName || "span", className, getWaitingLabel());
+    waitingNode.classList.add("transport-pending-value");
+    waitingNode.setAttribute("aria-label", getWaitingAriaLabel());
+    return waitingNode;
+  }
+
+  function createPendingVehicleFieldNode(tagName, className, value, formatter) {
+    if (isPendingVehicleField(value)) {
+      return createWaitingNode(tagName, className);
+    }
+
+    return createNode(tagName, className, formatPendingVehicleField(value, formatter));
+  }
+
+  function isVehicleReadyForAllocation(vehicle) {
+    if (!vehicle || typeof vehicle !== "object") {
+      return false;
+    }
+
+    if (typeof vehicle.is_ready_for_allocation === "boolean") {
+      return vehicle.is_ready_for_allocation;
+    }
+
+    return !isPendingVehicleField(vehicle.tipo)
+      && !isPendingVehicleField(vehicle.placa)
+      && !isPendingVehicleField(vehicle.lugares)
+      && !isPendingVehicleField(vehicle.tolerance);
+  }
+
+  function getVehiclePendingAllocationMessage(vehicle) {
+    if (isVehicleReadyForAllocation(vehicle)) {
+      return "";
+    }
+
+    const pendingAllocationMessage = t("warnings.vehiclePendingAllocation");
+    return pendingAllocationMessage === "warnings.vehiclePendingAllocation"
+      ? "This vehicle is still missing required allocation data."
+      : pendingAllocationMessage;
+  }
+
   function requestJson(url, options) {
     const requestOptions = Object.assign(
       {
@@ -724,14 +810,18 @@
       "This user does not have transport access.": "auth.noAccess",
       "Transport access granted.": "status.accessGranted",
       "Vehicle saved successfully.": "status.vehicleSaved",
+      "Vehicle updated successfully.": "status.vehicleUpdated",
       "Vehicle deleted from the database.": "status.vehicleDeleted",
       "Transport request rejected successfully.": "status.requestRejected",
+      "Currency code already exists.": "warnings.currencyAlreadyExists",
       "departure_time is required for extra vehicles": "warnings.extraDepartureRequired",
+      "The selected currency is not available.": "warnings.currencyNotAvailable",
       "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": "warnings.weekendPersistence",
       "Regular vehicles must be persistent. Select at least one weekday": "warnings.regularPersistence",
       "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
       "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
       "This vehicle cannot be removed from the selected route.": "warnings.vehicleCannotBeRemoved",
+      "The selected vehicle is not ready for allocation.": "warnings.vehiclePendingAllocation",
     }[normalizedMessage];
 
     return messageKey ? t(messageKey) : normalizedMessage;
@@ -770,6 +860,111 @@
   function applyTransportVehicleSeatDefaults(nextValues) {
     vehicleDefaultSeatCount = resolveTransportVehicleSeatDefaults(nextValues, vehicleDefaultSeatCount);
     return Object.assign({}, vehicleDefaultSeatCount);
+  }
+
+  function normalizeTransportCurrencyCode(value) {
+    return String(value || "")
+      .toUpperCase()
+      .replace(/\s+/g, "")
+      .trim();
+  }
+
+  function isValidTransportCurrencyCode(value) {
+    return TRANSPORT_CURRENCY_CODE_PATTERN.test(normalizeTransportCurrencyCode(value));
+  }
+
+  function normalizeTransportCurrencyLabel(value) {
+    const normalizedValue = String(value || "").trim();
+    return normalizedValue || "";
+  }
+
+  function resolveTransportCurrencyOptions(sourceOptions) {
+    const rows = Array.isArray(sourceOptions) ? sourceOptions : [];
+    const seenCodes = new Set();
+
+    return rows.reduce(function (resolvedRows, row) {
+      const code = normalizeTransportCurrencyCode(row && row.code);
+      if (!code || !isValidTransportCurrencyCode(code) || seenCodes.has(code)) {
+        return resolvedRows;
+      }
+
+      seenCodes.add(code);
+      resolvedRows.push({
+        code,
+        display_label: normalizeTransportCurrencyLabel(row && row.display_label) || null,
+      });
+      return resolvedRows;
+    }, []).sort(function (left, right) {
+      return left.code.localeCompare(right.code);
+    });
+  }
+
+  function formatTransportCurrencyOptionLabel(option) {
+    if (!option) {
+      return "";
+    }
+    return option.display_label ? `${option.code} - ${option.display_label}` : option.code;
+  }
+
+  function normalizeTransportPriceRateUnit(value, fallbackValue) {
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (!TRANSPORT_PRICE_RATE_UNITS.includes(normalizedValue)) {
+      return fallbackValue;
+    }
+    return normalizedValue;
+  }
+
+  function normalizeTransportPriceSetting(value, fallbackValue) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    const normalizedValue = String(value).trim();
+    if (!normalizedValue) {
+      return null;
+    }
+
+    const parsedValue = Number(normalizedValue);
+    if (!Number.isFinite(parsedValue) || parsedValue < 0 || parsedValue > MAX_TRANSPORT_PRICE_VALUE) {
+      return fallbackValue;
+    }
+
+    return Math.round(parsedValue * 100) / 100;
+  }
+
+  function resolveTransportVehiclePriceDefaults(source, fallbackValues) {
+    const fallbackPriceDefaults = fallbackValues || DEFAULT_VEHICLE_PRICE_DEFAULTS;
+    return {
+      carro: normalizeTransportPriceSetting(
+        source && (source.carro !== undefined ? source.carro : source.default_car_price),
+        fallbackPriceDefaults.carro
+      ),
+      minivan: normalizeTransportPriceSetting(
+        source && (source.minivan !== undefined ? source.minivan : source.default_minivan_price),
+        fallbackPriceDefaults.minivan
+      ),
+      van: normalizeTransportPriceSetting(
+        source && (source.van !== undefined ? source.van : source.default_van_price),
+        fallbackPriceDefaults.van
+      ),
+      onibus: normalizeTransportPriceSetting(
+        source && (source.onibus !== undefined ? source.onibus : source.default_bus_price),
+        fallbackPriceDefaults.onibus
+      ),
+    };
+  }
+
+  function formatTransportPriceInputValue(value) {
+    if (value === null || value === undefined || value === "") {
+      return "";
+    }
+
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) {
+      return "";
+    }
+
+    return parsedValue.toFixed(2);
   }
 
   function normalizeVehicleToleranceSetting(value, fallbackValue) {
@@ -838,15 +1033,64 @@
     resolvedForm.elements.lugares.value = String(getDefaultVehicleSeatCount(vehicleType));
   }
 
+  function normalizeOptionalVehicleFormTextValue(value) {
+    const normalizedValue = String(value || '').trim();
+    return normalizedValue || null;
+  }
+
+  function normalizeOptionalVehicleFormIntegerValue(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      return null;
+    }
+
+    const parsedValue = Number(normalizedValue);
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }
+
+  function buildVehicleBasePayload(formData) {
+    return {
+      tipo: normalizeOptionalVehicleFormTextValue(formData.get("tipo")),
+      placa: normalizeOptionalVehicleFormTextValue(formData.get("placa")),
+      color: normalizeOptionalVehicleFormTextValue(formData.get("color")),
+      lugares: normalizeOptionalVehicleFormIntegerValue(formData.get("lugares")),
+      tolerance: normalizeOptionalVehicleFormIntegerValue(formData.get("tolerance")),
+    };
+  }
+
+  function resolveVehicleEditFocusField(vehicle) {
+    const resolvedVehicle = vehicle || {};
+    const pendingFields = Array.isArray(resolvedVehicle.pending_fields) ? resolvedVehicle.pending_fields : [];
+    const pendingField = VEHICLE_BASE_FIELD_ORDER.find(function (fieldName) {
+      return pendingFields.includes(fieldName);
+    });
+
+    if (pendingField) {
+      return pendingField;
+    }
+
+    const firstEmptyField = VEHICLE_BASE_FIELD_ORDER.find(function (fieldName) {
+      const fieldValue = resolvedVehicle[fieldName];
+      return fieldValue === null || fieldValue === undefined || String(fieldValue).trim() === "";
+    });
+
+    return firstEmptyField || "tipo";
+  }
+
   function syncVehicleTypeDependentDefaults(vehicleType, formElement) {
     const resolvedForm = resolveVehicleForm(formElement);
     if (!resolvedForm) {
       return;
     }
 
-    const normalizedVehicleType = Object.prototype.hasOwnProperty.call(DEFAULT_VEHICLE_SEAT_COUNT, vehicleType)
-      ? vehicleType
-      : "carro";
+    const normalizedVehicleType = String(vehicleType || '').trim().toLowerCase();
+
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_VEHICLE_SEAT_COUNT, normalizedVehicleType)) {
+      if (resolvedForm.elements.tipo) {
+        resolvedForm.elements.tipo.value = '';
+      }
+      return;
+    }
 
     if (resolvedForm.elements.tipo) {
       resolvedForm.elements.tipo.value = normalizedVehicleType;
@@ -880,15 +1124,10 @@
 
   function buildVehicleCreatePayload(formData, serviceDate, selectedRouteKind) {
     const serviceScope = normalizeVehicleScope(formData.get("service_scope") || "regular");
-    const payload = {
+    const payload = Object.assign({
       service_scope: serviceScope,
       service_date: String(serviceDate || ""),
-      tipo: String(formData.get("tipo") || "carro"),
-      placa: String(formData.get("placa") || ""),
-      color: String(formData.get("color") || ""),
-      lugares: Number(formData.get("lugares") || 0),
-      tolerance: Number(formData.get("tolerance") || 0),
-    };
+    }, buildVehicleBasePayload(formData));
 
     if (serviceScope === "extra") {
       payload.service_date = String(formData.get("service_date") || "").trim();
@@ -985,6 +1224,10 @@
   }
 
   function formatVehicleTypeTableValue(value) {
+    if (isPendingVehicleField(value)) {
+      return getWaitingLabel();
+    }
+
     return String(mapVehicleTypeLabel(value) || value || "").toLowerCase();
   }
 
@@ -998,13 +1241,17 @@
 
   function formatVehicleOccupancyLabel(vehicle, assignedCount) {
     const occupiedSeats = Math.max(0, Number(assignedCount) || 0);
-    const totalSeats = Math.max(0, Number(vehicle && vehicle.lugares) || 0);
-    return `${vehicle.placa} (${occupiedSeats}/${totalSeats})`;
+    const totalSeats = isPendingVehicleField(vehicle && vehicle.lugares)
+      ? getWaitingLabel()
+      : Math.max(0, Number(vehicle && vehicle.lugares) || 0);
+    return `${formatPendingVehicleField(vehicle && vehicle.placa)} (${occupiedSeats}/${totalSeats})`;
   }
 
   function formatVehicleOccupancyCount(vehicle, assignedCount) {
     const occupiedSeats = Math.max(0, Number(assignedCount) || 0);
-    const totalSeats = Math.max(0, Number(vehicle && vehicle.lugares) || 0);
+    const totalSeats = isPendingVehicleField(vehicle && vehicle.lugares)
+      ? getWaitingLabel()
+      : Math.max(0, Number(vehicle && vehicle.lugares) || 0);
     return `${occupiedSeats}/${totalSeats}`;
   }
 
@@ -1086,6 +1333,10 @@
       return false;
     }
 
+    if (!isVehicleReadyForAllocation(vehicle)) {
+      return false;
+    }
+
     if (isRequestAssignedToVehicle(requestRow, vehicle)) {
       return false;
     }
@@ -1113,7 +1364,9 @@
   }
 
   function buildVehiclePassengerAwarenessRows(assignedRows, maxRows) {
-    const normalizedMaxRows = Math.max(1, Number(maxRows) || VEHICLE_DETAILS_MAX_ROWS);
+    const normalizedMaxRows = Number.isFinite(Number(maxRows)) && Number(maxRows) > 0
+      ? Math.max(1, Number(maxRows))
+      : null;
     const rows = Array.isArray(assignedRows)
       ? assignedRows.map(function (requestRow) {
           return {
@@ -1123,14 +1376,11 @@
         })
       : [];
 
-    while (rows.length < normalizedMaxRows) {
-      rows.push({
-        name: "",
-        awarenessState: null,
-      });
+    if (normalizedMaxRows === null) {
+      return rows;
     }
 
-    return rows;
+    return rows.slice(0, normalizedMaxRows);
   }
 
   function mapScopeTitle(scope) {
@@ -1189,11 +1439,20 @@
       settingsLoading: false,
       settingsSaving: false,
       languageLoading: false,
+      vehicleModalMode: "create",
+      vehicleModalVehicleId: null,
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
       vehicleSeatDefaults: Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT),
+      vehiclePriceDefaults: Object.assign({}, DEFAULT_VEHICLE_PRICE_DEFAULTS),
       vehicleToleranceDefaultMinutes: DEFAULT_VEHICLE_TOLERANCE_MINUTES,
+      priceCurrencyCode: "",
+      priceRateUnit: DEFAULT_TRANSPORT_PRICE_RATE_UNIT,
+      availableCurrencies: [],
+      currencyCreateOpen: false,
+      currencyCreateSaving: false,
       routeTimeSaving: false,
+      aiMenuOpen: false,
       expandedVehiclePositionFrame: null,
       requestSectionCollapsedByKind: {
         extra: false,
@@ -1221,6 +1480,21 @@
     const settingsLastUpdateInput = document.querySelector("[data-settings-last-update-time]");
     const settingsTimeNote = document.querySelector("[data-settings-time-note]");
     const settingsVehicleDefaultsNote = document.querySelector("[data-settings-vehicle-defaults-note]");
+    const settingsPriceVariablesLabel = document.querySelector("[data-settings-price-variables-label]");
+    const settingsPriceVariablesNote = document.querySelector("[data-settings-price-variables-note]");
+    const settingsPriceCurrencyLabel = document.querySelector("[data-settings-price-currency-label]");
+    const settingsPriceCurrencySelect = document.querySelector("[data-settings-price-currency]");
+    const settingsPriceRateUnitLabel = document.querySelector("[data-settings-price-rate-unit-label]");
+    const settingsPriceRateUnitSelect = document.querySelector("[data-settings-price-rate-unit]");
+    const settingsPriceRateUnitOptions = settingsPriceRateUnitSelect ? Array.from(settingsPriceRateUnitSelect.options) : [];
+    const settingsAddCurrencyButton = document.querySelector("[data-settings-add-currency-button]");
+    const settingsAddCurrencyPanel = document.querySelector("[data-settings-add-currency-panel]");
+    const settingsNewCurrencyCodeLabel = document.querySelector("[data-settings-new-currency-code-label]");
+    const settingsNewCurrencyCodeInput = document.querySelector("[data-settings-new-currency-code]");
+    const settingsNewCurrencyLabelLabel = document.querySelector("[data-settings-new-currency-label-label]");
+    const settingsNewCurrencyLabelInput = document.querySelector("[data-settings-new-currency-label]");
+    const settingsCancelCurrencyButton = document.querySelector("[data-settings-cancel-currency-button]");
+    const settingsSaveCurrencyButton = document.querySelector("[data-settings-save-currency-button]");
     const settingsDefaultToleranceLabel = document.querySelector("[data-settings-default-tolerance-label]");
     const settingsDefaultToleranceInput = document.querySelector("[data-settings-default-tolerance]");
     const settingsCloseButton = document.querySelector("[data-settings-close-button]");
@@ -1236,8 +1510,25 @@
       van: document.querySelector('[data-settings-default-seat="van"]'),
       onibus: document.querySelector('[data-settings-default-seat="onibus"]'),
     };
+    const settingsDefaultPriceLabels = {
+      carro: document.querySelector('[data-settings-default-price-label="carro"]'),
+      minivan: document.querySelector('[data-settings-default-price-label="minivan"]'),
+      van: document.querySelector('[data-settings-default-price-label="van"]'),
+      onibus: document.querySelector('[data-settings-default-price-label="onibus"]'),
+    };
+    const settingsDefaultPriceInputs = {
+      carro: document.querySelector('[data-settings-default-price="carro"]'),
+      minivan: document.querySelector('[data-settings-default-price="minivan"]'),
+      van: document.querySelector('[data-settings-default-price="van"]'),
+      onibus: document.querySelector('[data-settings-default-price="onibus"]'),
+    };
     const vehicleModal = document.querySelector("[data-vehicle-modal]");
+    const extraVehicleSection = document.querySelector("[data-extra-vehicle-section]");
+    const weekendPersistenceGroup = document.querySelector("[data-weekend-persistence-group]");
+    const regularPersistenceGroup = document.querySelector("[data-regular-persistence-group]");
     const vehicleForm = document.querySelector("[data-vehicle-form]");
+    const vehicleModalTitle = document.getElementById("transport-vehicle-modal-title");
+    const vehicleModalSubmitButton = vehicleForm ? vehicleForm.querySelector('button[type="submit"]') : null;
     const modalScopeLabel = document.querySelector("[data-modal-scope-label]");
     const modalScopeNote = document.querySelector("[data-modal-scope-note]");
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
@@ -1249,6 +1540,11 @@
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
     const routeTimeLabel = document.querySelector("[data-route-time-label]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
+    const aiMenuShell = document.querySelector("[data-ai-menu-shell]");
+    const aiMenuTrigger = document.querySelector("[data-ai-menu-trigger]");
+    const aiMenu = document.querySelector("[data-ai-menu]");
+    const aiCalculateRoutesButton = document.querySelector('[data-ai-menu-action="calculate-routes"]');
+    const aiImplementModificationsButton = document.querySelector('[data-ai-menu-action="implement-modifications"]');
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
@@ -1310,6 +1606,10 @@
       if (event.key !== "Escape") {
         return;
       }
+      if (state.aiMenuOpen) {
+        closeAiMenu({ restoreFocus: true });
+        return;
+      }
       if (!state.expandedVehicleKey && !state.pendingAssignmentPreview) {
         return;
       }
@@ -1356,6 +1656,92 @@
       return true;
     }
 
+    function getVehicleModalMode() {
+      return state.vehicleModalMode === "edit" ? "edit" : "create";
+    }
+
+    function isVehicleModalEditMode() {
+      return getVehicleModalMode() === "edit";
+    }
+
+    function setVehicleModalContext(context) {
+      const nextContext = context || {};
+      const nextMode = nextContext.mode === "edit" ? "edit" : "create";
+      const nextScope = normalizeVehicleScope(
+        nextContext.scope
+        || (vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular")
+      );
+      const nextVehicleId = nextMode === "edit" && Number.isFinite(Number(nextContext.vehicleId))
+        ? Number(nextContext.vehicleId)
+        : null;
+
+      state.vehicleModalMode = nextMode;
+      state.vehicleModalVehicleId = nextVehicleId;
+
+      if (vehicleModal) {
+        vehicleModal.dataset.mode = nextMode;
+        vehicleModal.dataset.scope = nextScope;
+        if (nextVehicleId === null) {
+          delete vehicleModal.dataset.vehicleId;
+        } else {
+          vehicleModal.dataset.vehicleId = String(nextVehicleId);
+        }
+      }
+
+      return nextScope;
+    }
+
+    function syncVehicleModalCopy(scope) {
+      const normalizedScope = normalizeVehicleScope(scope || (vehicleModal && vehicleModal.dataset.scope));
+
+      if (modalScopeLabel) {
+        modalScopeLabel.textContent = mapScopeTitle(normalizedScope);
+      }
+      if (modalScopeNote) {
+        modalScopeNote.textContent = isVehicleModalEditMode()
+          ? t("modal.notes.edit")
+          : getModalScopeNote(normalizedScope);
+      }
+      if (vehicleModalTitle) {
+        vehicleModalTitle.textContent = isVehicleModalEditMode()
+          ? t("modal.editTitle")
+          : t("modal.title");
+      }
+      if (vehicleModalSubmitButton) {
+        vehicleModalSubmitButton.textContent = isVehicleModalEditMode()
+          ? t("modal.actions.update")
+          : t("modal.actions.save");
+      }
+    }
+
+    function formatVehicleFormFieldValue(value) {
+      return value === null || value === undefined ? "" : String(value);
+    }
+
+    function populateVehicleFormBaseFields(vehicle) {
+      const resolvedVehicle = vehicle || {};
+
+      if (!vehicleForm) {
+        return;
+      }
+
+      if (vehicleForm.elements.tipo) {
+        vehicleForm.elements.tipo.value = formatVehicleFormFieldValue(resolvedVehicle.tipo).trim().toLowerCase();
+      }
+      if (vehicleForm.elements.placa) {
+        vehicleForm.elements.placa.value = formatVehicleFormFieldValue(resolvedVehicle.placa);
+      }
+      if (vehicleForm.elements.color) {
+        vehicleForm.elements.color.value = formatVehicleFormFieldValue(resolvedVehicle.color);
+      }
+      if (vehicleForm.elements.lugares) {
+        vehicleForm.elements.lugares.value = formatVehicleFormFieldValue(resolvedVehicle.lugares);
+      }
+      if (vehicleForm.elements.tolerance) {
+        vehicleForm.elements.tolerance.value = formatVehicleFormFieldValue(resolvedVehicle.tolerance);
+      }
+    }
+
     function applyStaticTranslations() {
       if (typeof document === "undefined") {
         return;
@@ -1393,6 +1779,18 @@
       }
       if (routeTimeLabel) {
         routeTimeLabel.textContent = t("settings.workToHomeTime");
+      }
+      if (aiMenuTrigger) {
+        aiMenuTrigger.setAttribute("aria-label", t("ai.openMenuAria"));
+      }
+      if (aiMenu) {
+        aiMenu.setAttribute("aria-label", t("ai.menuAria"));
+      }
+      if (aiCalculateRoutesButton) {
+        aiCalculateRoutesButton.textContent = t("ai.calculateRoutes");
+      }
+      if (aiImplementModificationsButton) {
+        aiImplementModificationsButton.textContent = t("ai.implementModifications");
       }
       if (authLabels[0]) {
         authLabels[0].textContent = t("auth.key");
@@ -1439,13 +1837,7 @@
         settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
       }
 
-      if (modalScopeLabel) {
-        modalScopeLabel.textContent = mapScopeTitle(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
-      }
-      const modalTitle = document.getElementById("transport-vehicle-modal-title");
-      if (modalTitle) {
-        modalTitle.textContent = t("modal.title");
-      }
+      syncVehicleModalCopy(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
       document.querySelectorAll("[data-close-vehicle-modal]").forEach(function (buttonElement) {
         if (buttonElement.classList.contains("transport-modal-close")) {
           buttonElement.setAttribute("aria-label", t("modal.closeVehicleAria"));
@@ -1477,18 +1869,35 @@
       if (modalFieldLabels[7]) {
         modalFieldLabels[7].textContent = t("modal.fields.route");
       }
-      if (typeOptions[0]) {
-        typeOptions[0].text = t("modal.options.car");
-      }
-      if (typeOptions[1]) {
-        typeOptions[1].text = t("modal.options.minivan");
-      }
-      if (typeOptions[2]) {
-        typeOptions[2].text = t("modal.options.van");
-      }
-      if (typeOptions[3]) {
-        typeOptions[3].text = t("modal.options.bus");
-      }
+      typeOptions.forEach(function (optionElement) {
+        if (!optionElement) {
+          return;
+        }
+
+        if (optionElement.value === "") {
+          optionElement.text = t("modal.options.blankType");
+          return;
+        }
+
+        if (optionElement.value === "carro") {
+          optionElement.text = t("modal.options.car");
+          return;
+        }
+
+        if (optionElement.value === "minivan") {
+          optionElement.text = t("modal.options.minivan");
+          return;
+        }
+
+        if (optionElement.value === "van") {
+          optionElement.text = t("modal.options.van");
+          return;
+        }
+
+        if (optionElement.value === "onibus") {
+          optionElement.text = t("modal.options.bus");
+        }
+      });
       if (routeOptions[0]) {
         routeOptions[0].text = getRouteKindLabel("home_to_work");
       }
@@ -1516,10 +1925,6 @@
       if (regularLabels[4]) {
         regularLabels[4].textContent = t("modal.fields.everyFriday");
       }
-      if (modalActionButtons[1]) {
-        modalActionButtons[1].textContent = t("modal.actions.save");
-      }
-
       const settingsTitle = document.getElementById("transport-settings-modal-title");
       if (settingsTitle) {
         settingsTitle.textContent = t("settings.title");
@@ -1537,6 +1942,9 @@
       if (settingsVehicleDefaultsTitle) {
         settingsVehicleDefaultsTitle.textContent = t("settings.vehicleDefaults");
       }
+      if (settingsPriceVariablesLabel) {
+        settingsPriceVariablesLabel.textContent = t("settings.priceVariables");
+      }
       if (settingsLanguageLabel) {
         settingsLanguageLabel.textContent = t("settings.languages");
       }
@@ -1551,6 +1959,50 @@
       }
       if (settingsVehicleDefaultsNote) {
         settingsVehicleDefaultsNote.textContent = t("settings.vehicleDefaultsNote");
+      }
+      if (settingsPriceVariablesNote) {
+        settingsPriceVariablesNote.textContent = t("settings.priceVariablesNote");
+      }
+      if (settingsPriceCurrencyLabel) {
+        settingsPriceCurrencyLabel.textContent = t("settings.currency");
+      }
+      if (settingsPriceRateUnitLabel) {
+        settingsPriceRateUnitLabel.textContent = t("settings.billingUnit");
+      }
+      settingsPriceRateUnitOptions.forEach(function (optionElement) {
+        if (!optionElement) {
+          return;
+        }
+        if (optionElement.value === "hour") {
+          optionElement.text = t("settings.perHour");
+          return;
+        }
+        if (optionElement.value === "day") {
+          optionElement.text = t("settings.perDay");
+          return;
+        }
+        if (optionElement.value === "week") {
+          optionElement.text = t("settings.perWeek");
+          return;
+        }
+        if (optionElement.value === "month") {
+          optionElement.text = t("settings.perMonth");
+        }
+      });
+      if (settingsAddCurrencyButton) {
+        settingsAddCurrencyButton.textContent = t("settings.addCurrency");
+      }
+      if (settingsNewCurrencyCodeLabel) {
+        settingsNewCurrencyCodeLabel.textContent = t("settings.currencyCode");
+      }
+      if (settingsNewCurrencyLabelLabel) {
+        settingsNewCurrencyLabelLabel.textContent = t("settings.currencyLabel");
+      }
+      if (settingsCancelCurrencyButton) {
+        settingsCancelCurrencyButton.textContent = t("modal.actions.cancel");
+      }
+      if (settingsSaveCurrencyButton) {
+        settingsSaveCurrencyButton.textContent = t("settings.saveCurrency");
       }
       if (settingsDefaultToleranceLabel) {
         settingsDefaultToleranceLabel.textContent = t("settings.standardTolerance");
@@ -1575,6 +2027,27 @@
           type: mapVehicleTypeLabel("onibus"),
         });
       }
+      if (settingsDefaultPriceLabels.carro) {
+        settingsDefaultPriceLabels.carro.textContent = t("settings.defaultPriceLabel", {
+          type: mapVehicleTypeLabel("carro"),
+        });
+      }
+      if (settingsDefaultPriceLabels.minivan) {
+        settingsDefaultPriceLabels.minivan.textContent = t("settings.defaultPriceLabel", {
+          type: mapVehicleTypeLabel("minivan"),
+        });
+      }
+      if (settingsDefaultPriceLabels.van) {
+        settingsDefaultPriceLabels.van.textContent = t("settings.defaultPriceLabel", {
+          type: mapVehicleTypeLabel("van"),
+        });
+      }
+      if (settingsDefaultPriceLabels.onibus) {
+        settingsDefaultPriceLabels.onibus.textContent = t("settings.defaultPriceLabel", {
+          type: mapVehicleTypeLabel("onibus"),
+        });
+      }
+      populateTransportCurrencyOptions();
       if (settingsCloseButton) {
         settingsCloseButton.textContent = t("settings.close");
       }
@@ -1770,18 +2243,65 @@
       });
     }
 
+    function populateTransportCurrencyOptions() {
+      if (!settingsPriceCurrencySelect) {
+        return;
+      }
+
+      clearElement(settingsPriceCurrencySelect);
+
+      const blankOption = document.createElement("option");
+      blankOption.value = "";
+      blankOption.textContent = t("settings.selectCurrency");
+      settingsPriceCurrencySelect.appendChild(blankOption);
+
+      resolveTransportCurrencyOptions(state.availableCurrencies).forEach(function (currencyOption) {
+        const optionElement = document.createElement("option");
+        optionElement.value = currencyOption.code;
+        optionElement.textContent = formatTransportCurrencyOptionLabel(currencyOption);
+        settingsPriceCurrencySelect.appendChild(optionElement);
+      });
+    }
+
+    function closeCurrencyCreatePanel(options) {
+      const nextOptions = options || {};
+      state.currencyCreateOpen = false;
+
+      if (!nextOptions.preserveDraft) {
+        if (settingsNewCurrencyCodeInput) {
+          settingsNewCurrencyCodeInput.value = "";
+        }
+        if (settingsNewCurrencyLabelInput) {
+          settingsNewCurrencyLabelInput.value = "";
+        }
+      }
+
+      syncSettingsControls();
+    }
+
+    function openCurrencyCreatePanel() {
+      state.currencyCreateOpen = true;
+      syncSettingsControls();
+
+      if (settingsNewCurrencyCodeInput && typeof settingsNewCurrencyCodeInput.focus === "function") {
+        settingsNewCurrencyCodeInput.focus();
+      }
+    }
+
     function syncSettingsControls() {
+      const settingsControlsDisabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+
       if (settingsLanguageSelect) {
         settingsLanguageSelect.value = getActiveLanguageCode();
         settingsLanguageSelect.disabled = state.languageLoading;
       }
       if (settingsTimeInput) {
         settingsTimeInput.value = normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME);
-        settingsTimeInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+        settingsTimeInput.disabled = settingsControlsDisabled;
       }
       if (settingsLastUpdateInput) {
         settingsLastUpdateInput.value = normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME);
-        settingsLastUpdateInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+        settingsLastUpdateInput.disabled = settingsControlsDisabled;
       }
       Object.keys(settingsDefaultSeatInputs).forEach(function (vehicleType) {
         const seatInput = settingsDefaultSeatInputs[vehicleType];
@@ -1789,11 +2309,56 @@
           return;
         }
         seatInput.value = String(getDefaultVehicleSeatCount(vehicleType));
-        seatInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+        seatInput.disabled = settingsControlsDisabled;
+      });
+      Object.keys(settingsDefaultPriceInputs).forEach(function (vehicleType) {
+        const priceInput = settingsDefaultPriceInputs[vehicleType];
+        if (!priceInput) {
+          return;
+        }
+        priceInput.value = formatTransportPriceInputValue(state.vehiclePriceDefaults[vehicleType]);
+        priceInput.disabled = settingsControlsDisabled;
       });
       if (settingsDefaultToleranceInput) {
         settingsDefaultToleranceInput.value = String(getDefaultVehicleToleranceMinutes());
-        settingsDefaultToleranceInput.disabled = !state.isAuthenticated || state.settingsLoading || state.settingsSaving;
+        settingsDefaultToleranceInput.disabled = settingsControlsDisabled;
+      }
+      state.availableCurrencies = resolveTransportCurrencyOptions(state.availableCurrencies);
+      populateTransportCurrencyOptions();
+      if (settingsPriceCurrencySelect) {
+        const selectedCurrencyCode = normalizeTransportCurrencyCode(state.priceCurrencyCode);
+        settingsPriceCurrencySelect.value = state.availableCurrencies.some(function (currencyOption) {
+          return currencyOption.code === selectedCurrencyCode;
+        })
+          ? selectedCurrencyCode
+          : "";
+        settingsPriceCurrencySelect.disabled = settingsControlsDisabled || state.currencyCreateSaving;
+      }
+      if (settingsPriceRateUnitSelect) {
+        settingsPriceRateUnitSelect.value = normalizeTransportPriceRateUnit(
+          state.priceRateUnit,
+          DEFAULT_TRANSPORT_PRICE_RATE_UNIT
+        );
+        settingsPriceRateUnitSelect.disabled = settingsControlsDisabled || state.currencyCreateSaving;
+      }
+      if (settingsAddCurrencyButton) {
+        settingsAddCurrencyButton.disabled = settingsControlsDisabled || state.currencyCreateSaving;
+        settingsAddCurrencyButton.setAttribute("aria-expanded", String(state.currencyCreateOpen));
+      }
+      if (settingsAddCurrencyPanel) {
+        settingsAddCurrencyPanel.hidden = !state.currencyCreateOpen;
+      }
+      if (settingsNewCurrencyCodeInput) {
+        settingsNewCurrencyCodeInput.disabled = settingsControlsDisabled || state.currencyCreateSaving;
+      }
+      if (settingsNewCurrencyLabelInput) {
+        settingsNewCurrencyLabelInput.disabled = settingsControlsDisabled || state.currencyCreateSaving;
+      }
+      if (settingsCancelCurrencyButton) {
+        settingsCancelCurrencyButton.disabled = state.currencyCreateSaving;
+      }
+      if (settingsSaveCurrencyButton) {
+        settingsSaveCurrencyButton.disabled = settingsControlsDisabled || state.currencyCreateSaving;
       }
     }
 
@@ -1801,17 +2366,23 @@
       return {
         workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
         lastUpdateTime: settingsLastUpdateInput ? settingsLastUpdateInput.value : state.lastUpdateTime,
+        priceCurrencyCode: settingsPriceCurrencySelect ? settingsPriceCurrencySelect.value : state.priceCurrencyCode,
+        priceRateUnit: settingsPriceRateUnitSelect ? settingsPriceRateUnitSelect.value : state.priceRateUnit,
         defaultCarSeats: settingsDefaultSeatInputs.carro ? settingsDefaultSeatInputs.carro.value : state.vehicleSeatDefaults.carro,
         defaultMinivanSeats: settingsDefaultSeatInputs.minivan ? settingsDefaultSeatInputs.minivan.value : state.vehicleSeatDefaults.minivan,
         defaultVanSeats: settingsDefaultSeatInputs.van ? settingsDefaultSeatInputs.van.value : state.vehicleSeatDefaults.van,
         defaultBusSeats: settingsDefaultSeatInputs.onibus ? settingsDefaultSeatInputs.onibus.value : state.vehicleSeatDefaults.onibus,
+        defaultCarPrice: settingsDefaultPriceInputs.carro ? settingsDefaultPriceInputs.carro.value : state.vehiclePriceDefaults.carro,
+        defaultMinivanPrice: settingsDefaultPriceInputs.minivan ? settingsDefaultPriceInputs.minivan.value : state.vehiclePriceDefaults.minivan,
+        defaultVanPrice: settingsDefaultPriceInputs.van ? settingsDefaultPriceInputs.van.value : state.vehiclePriceDefaults.van,
+        defaultBusPrice: settingsDefaultPriceInputs.onibus ? settingsDefaultPriceInputs.onibus.value : state.vehiclePriceDefaults.onibus,
         defaultToleranceMinutes: settingsDefaultToleranceInput ? settingsDefaultToleranceInput.value : state.vehicleToleranceDefaultMinutes,
       };
     }
 
     function syncRouteTimeControls() {
       const canEditRouteTime = state.isAuthenticated;
-      const shouldShowRouteTime = state.isAuthenticated;
+      const shouldShowRouteTime = true;
       const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
 
       if (routeTimeInput) {
@@ -1827,6 +2398,79 @@
       if (routeTimePopover) {
         routeTimePopover.hidden = !shouldShowRouteTime;
       }
+
+      syncAiButtonPlacement();
+    }
+
+    function syncAiButtonPlacement() {
+      if (!aiMenuShell || !transportTopbar) {
+        return;
+      }
+
+      if (globalScope.matchMedia && globalScope.matchMedia("(max-width: 860px)").matches) {
+        aiMenuShell.style.removeProperty("--transport-ai-anchor-x");
+        return;
+      }
+
+      const allocationBoardTitle = document.querySelector(".transport-topbar-brand .transport-topbar-title");
+      if (!allocationBoardTitle || !routeTimePopover || routeTimePopover.hidden) {
+        aiMenuShell.style.removeProperty("--transport-ai-anchor-x");
+        return;
+      }
+
+      const topbarRect = transportTopbar.getBoundingClientRect();
+      const titleRect = allocationBoardTitle.getBoundingClientRect();
+      const routeTimeRect = routeTimePopover.getBoundingClientRect();
+      const aiShellRect = aiMenuShell.getBoundingClientRect();
+      if (!topbarRect.width || !titleRect.width || !routeTimeRect.width || !aiShellRect.width) {
+        return;
+      }
+
+      const desiredCenter = ((titleRect.right + routeTimeRect.left) / 2) - topbarRect.left;
+      const minCenter = aiShellRect.width / 2 + 8;
+      const maxCenter = topbarRect.width - aiShellRect.width / 2 - 8;
+      const clampedCenter = Math.min(maxCenter, Math.max(minCenter, desiredCenter));
+      aiMenuShell.style.setProperty("--transport-ai-anchor-x", `${clampedCenter}px`);
+    }
+
+    function syncAiMenuControls() {
+      if (aiMenuShell) {
+        aiMenuShell.classList.toggle("is-open", state.aiMenuOpen);
+      }
+      if (aiMenuTrigger) {
+        aiMenuTrigger.setAttribute("aria-expanded", String(state.aiMenuOpen));
+            syncAiButtonPlacement();
+      }
+      if (aiMenu) {
+        aiMenu.hidden = !state.aiMenuOpen;
+      }
+    }
+
+    function closeAiMenu(options) {
+      const closeOptions = options || {};
+      state.aiMenuOpen = false;
+      syncAiMenuControls();
+
+      if (
+        closeOptions.restoreFocus
+        && aiMenuTrigger
+        && typeof aiMenuTrigger.focus === "function"
+      ) {
+        aiMenuTrigger.focus();
+      }
+    }
+
+    function openAiMenu() {
+      state.aiMenuOpen = true;
+      syncAiMenuControls();
+    }
+
+    function toggleAiMenu() {
+      if (state.aiMenuOpen) {
+        closeAiMenu();
+        return;
+      }
+      openAiMenu();
     }
 
     function closeRouteTimePopover() {
@@ -2065,7 +2709,14 @@
         state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
         state.lastUpdateTime = state.lastUpdateTime || DEFAULT_LAST_UPDATE_TIME;
         state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
+        state.vehiclePriceDefaults = resolveTransportVehiclePriceDefaults(
+          state.vehiclePriceDefaults,
+          DEFAULT_VEHICLE_PRICE_DEFAULTS
+        );
         state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(state.vehicleToleranceDefaultMinutes);
+        state.priceCurrencyCode = normalizeTransportCurrencyCode(state.priceCurrencyCode);
+        state.priceRateUnit = normalizeTransportPriceRateUnit(state.priceRateUnit, DEFAULT_TRANSPORT_PRICE_RATE_UNIT);
+        state.availableCurrencies = resolveTransportCurrencyOptions(state.availableCurrencies);
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -2081,7 +2732,17 @@
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : DEFAULT_LAST_UPDATE_TIME
           );
+          state.priceCurrencyCode = normalizeTransportCurrencyCode(response && response.price_currency_code);
+          state.priceRateUnit = normalizeTransportPriceRateUnit(
+            response && response.price_rate_unit,
+            DEFAULT_TRANSPORT_PRICE_RATE_UNIT
+          );
+          state.availableCurrencies = resolveTransportCurrencyOptions(response && response.available_currencies);
           state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
+          state.vehiclePriceDefaults = resolveTransportVehiclePriceDefaults(
+            response,
+            state.vehiclePriceDefaults
+          );
           state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(
             response && response.default_tolerance_minutes !== undefined
               ? response.default_tolerance_minutes
@@ -2106,7 +2767,11 @@
     function saveTransportSettings(nextValues) {
       const previousWorkToHomeTime = state.workToHomeTime;
       const previousLastUpdateTime = state.lastUpdateTime;
+      const previousPriceCurrencyCode = state.priceCurrencyCode;
+      const previousPriceRateUnit = state.priceRateUnit;
       const previousVehicleSeatDefaults = Object.assign({}, state.vehicleSeatDefaults);
+      const previousVehiclePriceDefaults = Object.assign({}, state.vehiclePriceDefaults);
+      const previousAvailableCurrencies = resolveTransportCurrencyOptions(state.availableCurrencies);
       const previousVehicleToleranceDefaultMinutes = state.vehicleToleranceDefaultMinutes;
       const normalizedTime = normalizeTransportTimeValue(
         nextValues && nextValues.workToHomeTime,
@@ -2125,11 +2790,35 @@
         },
         state.vehicleSeatDefaults
       );
+      const normalizedPriceCurrencyCode = normalizeTransportCurrencyCode(nextValues && nextValues.priceCurrencyCode);
+      const normalizedPriceRateUnit = normalizeTransportPriceRateUnit(
+        nextValues && nextValues.priceRateUnit,
+        state.priceRateUnit || DEFAULT_TRANSPORT_PRICE_RATE_UNIT
+      );
+      const normalizedPriceDefaults = resolveTransportVehiclePriceDefaults(
+        {
+          default_car_price: nextValues && nextValues.defaultCarPrice,
+          default_minivan_price: nextValues && nextValues.defaultMinivanPrice,
+          default_van_price: nextValues && nextValues.defaultVanPrice,
+          default_bus_price: nextValues && nextValues.defaultBusPrice,
+        },
+        state.vehiclePriceDefaults
+      );
       const normalizedToleranceDefault = normalizeVehicleToleranceSetting(
         nextValues && nextValues.defaultToleranceMinutes,
         state.vehicleToleranceDefaultMinutes
       );
       if (!isValidTransportTimeValue(normalizedTime) || !isValidTransportTimeValue(normalizedLastUpdateTime)) {
+        syncSettingsControls();
+        return Promise.resolve(null);
+      }
+      if (
+        normalizedPriceCurrencyCode
+        && !state.availableCurrencies.some(function (currencyOption) {
+          return currencyOption.code === normalizedPriceCurrencyCode;
+        })
+      ) {
+        setStatus(t("warnings.currencyNotAvailable"), "warning");
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -2141,8 +2830,12 @@
 
       state.workToHomeTime = normalizedTime;
       state.lastUpdateTime = normalizedLastUpdateTime;
+      state.priceCurrencyCode = normalizedPriceCurrencyCode;
+      state.priceRateUnit = normalizedPriceRateUnit;
       state.vehicleSeatDefaults = Object.assign({}, normalizedSeatDefaults);
+      state.vehiclePriceDefaults = Object.assign({}, normalizedPriceDefaults);
       state.vehicleToleranceDefaultMinutes = normalizedToleranceDefault;
+      state.availableCurrencies = previousAvailableCurrencies;
       applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
       applyTransportVehicleToleranceDefault(state.vehicleToleranceDefaultMinutes);
       state.settingsSaving = true;
@@ -2156,6 +2849,12 @@
           default_minivan_seats: normalizedSeatDefaults.minivan,
           default_van_seats: normalizedSeatDefaults.van,
           default_bus_seats: normalizedSeatDefaults.onibus,
+          price_currency_code: normalizedPriceCurrencyCode || null,
+          price_rate_unit: normalizedPriceRateUnit,
+          default_car_price: normalizedPriceDefaults.carro,
+          default_minivan_price: normalizedPriceDefaults.minivan,
+          default_van_price: normalizedPriceDefaults.van,
+          default_bus_price: normalizedPriceDefaults.onibus,
           default_tolerance_minutes: normalizedToleranceDefault,
         }),
       })
@@ -2167,7 +2866,19 @@
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : normalizedLastUpdateTime
           );
+          state.priceCurrencyCode = normalizeTransportCurrencyCode(response && response.price_currency_code);
+          state.priceRateUnit = normalizeTransportPriceRateUnit(
+            response && response.price_rate_unit,
+            normalizedPriceRateUnit
+          );
+          state.availableCurrencies = resolveTransportCurrencyOptions(
+            response && response.available_currencies
+          );
           state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(response);
+          state.vehiclePriceDefaults = resolveTransportVehiclePriceDefaults(
+            response,
+            normalizedPriceDefaults
+          );
           state.vehicleToleranceDefaultMinutes = applyTransportVehicleToleranceDefault(
             response && response.default_tolerance_minutes !== undefined
               ? response.default_tolerance_minutes
@@ -2181,7 +2892,11 @@
         .catch(function (error) {
           state.workToHomeTime = previousWorkToHomeTime;
           state.lastUpdateTime = previousLastUpdateTime;
+          state.priceCurrencyCode = previousPriceCurrencyCode;
+          state.priceRateUnit = previousPriceRateUnit;
           state.vehicleSeatDefaults = previousVehicleSeatDefaults;
+          state.vehiclePriceDefaults = previousVehiclePriceDefaults;
+          state.availableCurrencies = previousAvailableCurrencies;
           state.vehicleToleranceDefaultMinutes = previousVehicleToleranceDefaultMinutes;
           applyTransportVehicleSeatDefaults(previousVehicleSeatDefaults);
           applyTransportVehicleToleranceDefault(previousVehicleToleranceDefaultMinutes);
@@ -2190,6 +2905,58 @@
         })
         .finally(function () {
           state.settingsSaving = false;
+          syncSettingsControls();
+        });
+    }
+
+    function saveTransportCurrencyOption() {
+      const normalizedCurrencyCode = normalizeTransportCurrencyCode(
+        settingsNewCurrencyCodeInput ? settingsNewCurrencyCodeInput.value : ""
+      );
+      const normalizedCurrencyLabel = normalizeTransportCurrencyLabel(
+        settingsNewCurrencyLabelInput ? settingsNewCurrencyLabelInput.value : ""
+      );
+
+      if (!state.isAuthenticated) {
+        setStatus(getTransportLockedMessage(), "warning");
+        return Promise.resolve(null);
+      }
+
+      if (!isValidTransportCurrencyCode(normalizedCurrencyCode)) {
+        setStatus(t("warnings.invalidCurrencyCode"), "warning");
+        if (settingsNewCurrencyCodeInput && typeof settingsNewCurrencyCodeInput.focus === "function") {
+          settingsNewCurrencyCodeInput.focus();
+        }
+        return Promise.resolve(null);
+      }
+
+      state.currencyCreateSaving = true;
+      syncSettingsControls();
+      return requestJson(`${TRANSPORT_API_PREFIX}/settings/currencies`, {
+        method: "POST",
+        body: JSON.stringify({
+          code: normalizedCurrencyCode,
+          display_label: normalizedCurrencyLabel || null,
+        }),
+      })
+        .then(function (response) {
+          state.availableCurrencies = resolveTransportCurrencyOptions(
+            state.availableCurrencies.concat([response || {}])
+          );
+          state.priceCurrencyCode = normalizeTransportCurrencyCode(response && response.code);
+          closeCurrencyCreatePanel();
+          return saveTransportSettings(
+            Object.assign({}, readTransportSettingsDraft(), {
+              priceCurrencyCode: state.priceCurrencyCode,
+            })
+          );
+        })
+        .catch(function (error) {
+          handleProtectedRequestError(error, t("status.couldNotAddCurrency"));
+          return null;
+        })
+        .finally(function () {
+          state.currencyCreateSaving = false;
           syncSettingsControls();
         });
     }
@@ -2339,6 +3106,18 @@
       });
     }
 
+    if (settingsPriceCurrencySelect) {
+      settingsPriceCurrencySelect.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
+
+    if (settingsPriceRateUnitSelect) {
+      settingsPriceRateUnitSelect.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
+
     Object.keys(settingsDefaultSeatInputs).forEach(function (vehicleType) {
       const seatInput = settingsDefaultSeatInputs[vehicleType];
       if (!seatInput) {
@@ -2349,9 +3128,41 @@
       });
     });
 
+    Object.keys(settingsDefaultPriceInputs).forEach(function (vehicleType) {
+      const priceInput = settingsDefaultPriceInputs[vehicleType];
+      if (!priceInput) {
+        return;
+      }
+      priceInput.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    });
+
     if (settingsDefaultToleranceInput) {
       settingsDefaultToleranceInput.addEventListener("change", function () {
         void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
+
+    if (settingsAddCurrencyButton) {
+      settingsAddCurrencyButton.addEventListener("click", function () {
+        if (state.currencyCreateOpen) {
+          closeCurrencyCreatePanel();
+          return;
+        }
+        openCurrencyCreatePanel();
+      });
+    }
+
+    if (settingsCancelCurrencyButton) {
+      settingsCancelCurrencyButton.addEventListener("click", function () {
+        closeCurrencyCreatePanel();
+      });
+    }
+
+    if (settingsSaveCurrencyButton) {
+      settingsSaveCurrencyButton.addEventListener("click", function () {
+        void saveTransportCurrencyOption();
       });
     }
 
@@ -2365,6 +3176,41 @@
     applyStaticTranslations();
     syncSettingsControls();
     syncRouteTimeControls();
+    syncAiMenuControls();
+
+    if (aiMenuShell) {
+      aiMenuShell.addEventListener("click", function (event) {
+        event.stopPropagation();
+      });
+    }
+
+    if (aiMenuTrigger) {
+      aiMenuTrigger.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleAiMenu();
+      });
+    }
+
+    [aiCalculateRoutesButton, aiImplementModificationsButton].forEach(function (buttonElement) {
+      if (!buttonElement) {
+        return;
+      }
+      buttonElement.addEventListener("click", function (event) {
+        event.preventDefault();
+        closeAiMenu();
+      });
+    });
+
+    document.addEventListener("click", function (event) {
+      if (!state.aiMenuOpen || !aiMenuShell) {
+        return;
+      }
+      if (aiMenuShell.contains(event.target)) {
+        return;
+      }
+      closeAiMenu();
+    });
 
     if (settingsTrigger) {
       settingsTrigger.addEventListener("click", function (event) {
@@ -2406,18 +3252,53 @@
     if (vehicleForm) {
       if (vehicleForm.elements.tipo) {
         vehicleForm.elements.tipo.addEventListener("change", function () {
-          syncVehicleTypeDependentDefaults(String(vehicleForm.elements.tipo.value || "carro"), vehicleForm);
-          });
-          vehicleForm.elements.tipo.addEventListener("input", function () {
-          syncVehicleTypeDependentDefaults(String(vehicleForm.elements.tipo.value || "carro"), vehicleForm);
+          syncVehicleTypeDependentDefaults(vehicleForm.elements.tipo.value, vehicleForm);
         });
       }
 
       vehicleForm.addEventListener("submit", function (event) {
         event.preventDefault();
         const formData = new FormData(vehicleForm);
-        const payload = buildVehicleCreatePayload(formData, getCurrentServiceDateIso(), getSelectedRouteKind());
         const submitButton = vehicleForm.querySelector('button[type="submit"]');
+        const isEditMode = isVehicleModalEditMode();
+
+        if (isEditMode) {
+          const vehicleId = state.vehicleModalVehicleId;
+          if (!Number.isFinite(vehicleId)) {
+            setVehicleModalFeedback(t("status.couldNotUpdateVehicle"), "error");
+            return;
+          }
+
+          clearVehicleModalFeedback();
+          if (submitButton) {
+            submitButton.disabled = true;
+          }
+
+          requestJson(`${TRANSPORT_API_PREFIX}/vehicles/${encodeURIComponent(String(vehicleId))}`, {
+            method: "PUT",
+            body: JSON.stringify(buildVehicleBasePayload(formData)),
+          })
+            .then(function (response) {
+              closeVehicleModal();
+              setStatus(localizeTransportApiMessage(response && response.message) || t("status.vehicleUpdated"), "success");
+              return loadDashboard(dateStore.getValue(), { announce: false });
+            })
+            .catch(function (error) {
+              setVehicleModalFeedback(
+                localizeTransportApiMessage(error && error.message) || t("status.couldNotUpdateVehicle"),
+                "error"
+              );
+              handleProtectedRequestError(error, t("status.couldNotUpdateVehicle"));
+            })
+            .finally(function () {
+              if (submitButton) {
+                submitButton.disabled = false;
+              }
+            });
+          return;
+        }
+
+        const payload = buildVehicleCreatePayload(formData, getCurrentServiceDateIso(), getSelectedRouteKind());
         const validationError = resolveVehicleCreateValidationError(payload);
 
         clearVehicleModalFeedback();
@@ -2492,6 +3373,7 @@
       if (!settingsModal) {
         return;
       }
+      closeAiMenu();
       closeExpandedVehicleDetails({ render: false });
       if (state.isAuthenticated && !state.settingsLoaded) {
         void loadTransportSettings({ silent: true });
@@ -2507,6 +3389,7 @@
       if (!settingsModal) {
         return;
       }
+      closeCurrencyCreatePanel();
       settingsModal.hidden = true;
       if (settingsTrigger) {
         settingsTrigger.setAttribute("aria-expanded", "false");
@@ -2559,51 +3442,63 @@
       }
 
       const normalizedScope = normalizeVehicleScope(scope);
+      const isEditMode = isVehicleModalEditMode();
+      const showExtraFields = !isEditMode && normalizedScope === "extra";
+      const showWeekendPersistence = !isEditMode && normalizedScope === "weekend";
+      const showRegularPersistence = !isEditMode && normalizedScope === "regular";
 
-      if (modalScopeLabel) {
-        modalScopeLabel.textContent = mapScopeTitle(normalizedScope);
+      syncVehicleModalCopy(normalizedScope);
+      if (extraVehicleSection) {
+        extraVehicleSection.hidden = !showExtraFields;
       }
-      if (modalScopeNote) {
-        modalScopeNote.textContent = getModalScopeNote(normalizedScope);
+      if (weekendPersistenceGroup) {
+        weekendPersistenceGroup.hidden = !showWeekendPersistence;
+      }
+      if (regularPersistenceGroup) {
+        regularPersistenceGroup.hidden = !showRegularPersistence;
       }
       if (extraServiceDateField) {
-        extraServiceDateField.hidden = normalizedScope !== "extra";
+        extraServiceDateField.hidden = !showExtraFields;
       }
       if (extraDepartureField) {
-        extraDepartureField.hidden = normalizedScope !== "extra";
+        extraDepartureField.hidden = !showExtraFields;
       }
       if (extraRouteField) {
-        extraRouteField.hidden = normalizedScope !== "extra";
+        extraRouteField.hidden = !showExtraFields;
       }
       weekendPersistenceFields.forEach(function (fieldElement) {
-        fieldElement.hidden = normalizedScope !== "weekend";
+        fieldElement.hidden = !showWeekendPersistence;
       });
       regularPersistenceFields.forEach(function (fieldElement) {
-        fieldElement.hidden = normalizedScope !== "regular";
+        fieldElement.hidden = !showRegularPersistence;
       });
       if (vehicleForm.elements.route_kind) {
-        vehicleForm.elements.route_kind.value = getSelectedRouteKind();
-        vehicleForm.elements.route_kind.disabled = normalizedScope !== "extra";
+        if (!isEditMode && normalizedScope === "extra") {
+          vehicleForm.elements.route_kind.value = getSelectedRouteKind();
+        }
+        vehicleForm.elements.route_kind.disabled = isEditMode || normalizedScope !== "extra";
       }
       if (vehicleForm.elements.service_date) {
-        vehicleForm.elements.service_date.required = normalizedScope === "extra";
-        vehicleForm.elements.service_date.disabled = normalizedScope !== "extra";
+        vehicleForm.elements.service_date.required = !isEditMode && normalizedScope === "extra";
+        vehicleForm.elements.service_date.disabled = isEditMode || normalizedScope !== "extra";
       }
-      if (vehicleForm.elements.service_date && normalizedScope !== "extra") {
+      if (vehicleForm.elements.service_date && !isEditMode && normalizedScope !== "extra") {
         vehicleForm.elements.service_date.value = "";
       }
       if (vehicleForm.elements.departure_time) {
-        vehicleForm.elements.departure_time.required = normalizedScope === "extra";
-        vehicleForm.elements.departure_time.disabled = normalizedScope !== "extra";
+        vehicleForm.elements.departure_time.required = !isEditMode && normalizedScope === "extra";
+        vehicleForm.elements.departure_time.disabled = isEditMode || normalizedScope !== "extra";
       }
-      if (vehicleForm.elements.departure_time && normalizedScope !== "extra") {
+      if (vehicleForm.elements.departure_time && !isEditMode && normalizedScope !== "extra") {
         vehicleForm.elements.departure_time.value = "";
       }
-      if (vehicleForm.elements.every_saturday) {
-        vehicleForm.elements.every_saturday.checked = false;
-      }
-      if (vehicleForm.elements.every_sunday) {
-        vehicleForm.elements.every_sunday.checked = false;
+      if (!isEditMode) {
+        if (vehicleForm.elements.every_saturday) {
+          vehicleForm.elements.every_saturday.checked = false;
+        }
+        if (vehicleForm.elements.every_sunday) {
+          vehicleForm.elements.every_sunday.checked = false;
+        }
       }
     }
 
@@ -2615,9 +3510,10 @@
       if (!canOpenVehicleModal(normalizedScope)) {
         return;
       }
+      closeAiMenu();
       closeExpandedVehicleDetails({ render: false });
+      setVehicleModalContext({ mode: "create", scope: normalizedScope, vehicleId: null });
       vehicleModal.hidden = false;
-      vehicleModal.dataset.scope = normalizedScope;
       vehicleForm.reset();
       clearVehicleModalFeedback();
       vehicleForm.elements.service_scope.value = normalizedScope;
@@ -2635,6 +3531,43 @@
       }
     }
 
+    function openVehicleEditModal(vehicle) {
+      if (!vehicleModal || !vehicleForm || !vehicle || vehicle.id === null || vehicle.id === undefined) {
+        return;
+      }
+
+      const normalizedScope = normalizeVehicleScope(vehicle.service_scope || "regular");
+      if (!canOpenVehicleModal(normalizedScope)) {
+        return;
+      }
+
+      closeAiMenu();
+      closeExpandedVehicleDetails({ render: false });
+      setVehicleModalContext({ mode: "edit", scope: normalizedScope, vehicleId: vehicle.id });
+      vehicleModal.hidden = false;
+      vehicleForm.reset();
+      clearVehicleModalFeedback();
+      vehicleForm.elements.service_scope.value = normalizedScope;
+      populateVehicleFormBaseFields(vehicle);
+
+      if (vehicleForm.elements.service_date) {
+        vehicleForm.elements.service_date.value = formatVehicleFormFieldValue(vehicle.service_date);
+      }
+      if (vehicleForm.elements.departure_time) {
+        vehicleForm.elements.departure_time.value = formatVehicleFormFieldValue(vehicle.departure_time);
+      }
+      if (vehicleForm.elements.route_kind) {
+        vehicleForm.elements.route_kind.value = ROUTE_KIND_KEYS[vehicle.route_kind]
+          ? vehicle.route_kind
+          : getSelectedRouteKind();
+      }
+
+      syncVehicleModalFields(normalizedScope);
+      if (!focusVehicleFormField(resolveVehicleEditFocusField(vehicle))) {
+        focusVehicleFormField("tipo");
+      }
+    }
+
     function closeVehicleModal() {
       if (!vehicleModal || !vehicleForm) {
         return;
@@ -2642,6 +3575,8 @@
       vehicleModal.hidden = true;
       clearVehicleModalFeedback();
       vehicleForm.reset();
+      setVehicleModalContext({ mode: "create", scope: "regular", vehicleId: null });
+      syncVehicleModalCopy("regular");
     }
 
     function getRequestsForKind(kind) {
@@ -2956,46 +3891,56 @@
       const passengerTable = createNode("table", "transport-vehicle-passenger-table");
       const tableBody = createNode("tbody");
       const passengerSourceRows = buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow);
-
-      buildVehiclePassengerAwarenessRows(
+      const visiblePassengerRows = buildVehiclePassengerAwarenessRows(
         passengerSourceRows,
         VEHICLE_DETAILS_MAX_ROWS
-      ).forEach(function (row, index) {
-        const tableRow = createNode("tr", "transport-vehicle-passenger-row");
-        const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
-        const statusCell = createNode("td", "transport-vehicle-passenger-status");
-        const sourceRequestRow = passengerSourceRows[index] || null;
-        const isPreviewRow = Boolean(
-          previewRequestRow
-          && sourceRequestRow
-          && Number(sourceRequestRow.id) === Number(previewRequestRow.id)
+      );
+
+      if (visiblePassengerRows.length) {
+        visiblePassengerRows.forEach(function (row, index) {
+          const tableRow = createNode("tr", "transport-vehicle-passenger-row");
+          const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
+          const statusCell = createNode("td", "transport-vehicle-passenger-status");
+          const sourceRequestRow = passengerSourceRows[index] || null;
+          const isPreviewRow = Boolean(
+            previewRequestRow
+            && sourceRequestRow
+            && Number(sourceRequestRow.id) === Number(previewRequestRow.id)
+          );
+
+          if (sourceRequestRow && !isPreviewRow) {
+            statusCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
+          } else {
+            statusCell.innerHTML = "&nbsp;";
+          }
+          tableRow.appendChild(nameCell);
+          tableRow.appendChild(statusCell);
+          tableBody.appendChild(tableRow);
+        });
+
+        passengerTable.appendChild(tableBody);
+        passengerTableShell.appendChild(passengerTable);
+      } else {
+        passengerTableShell.appendChild(
+          createNode("p", "transport-vehicle-passenger-empty", t("empty.noPassengersAssigned"))
         );
+      }
 
-        if (!row.name) {
-          nameCell.innerHTML = "&nbsp;";
-        }
-
-        if (sourceRequestRow && !isPreviewRow) {
-          statusCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
-        } else {
-          statusCell.innerHTML = "&nbsp;";
-        }
-        tableRow.appendChild(nameCell);
-        tableRow.appendChild(statusCell);
-        tableBody.appendChild(tableRow);
-      });
-
-      passengerTable.appendChild(tableBody);
-      passengerTableShell.appendChild(passengerTable);
       detailsPanel.appendChild(passengerTableShell);
 
       if (previewRequestRow) {
         const previewActions = createNode("div", "transport-vehicle-preview-actions");
         const cancelButton = createNode("button", "transport-secondary-button", t("modal.actions.cancel"));
         const confirmButton = createNode("button", "transport-primary-button", t("misc.confirm"));
+        const pendingAllocationMessage = getVehiclePendingAllocationMessage(vehicle);
 
         cancelButton.type = "button";
         confirmButton.type = "button";
+        confirmButton.disabled = Boolean(pendingAllocationMessage);
+        if (pendingAllocationMessage) {
+          confirmButton.title = pendingAllocationMessage;
+          confirmButton.setAttribute("aria-label", pendingAllocationMessage);
+        }
 
         cancelButton.addEventListener("click", function (event) {
           event.preventDefault();
@@ -3008,6 +3953,10 @@
         confirmButton.addEventListener("click", function (event) {
           event.preventDefault();
           event.stopPropagation();
+          if (pendingAllocationMessage) {
+            setStatus(pendingAllocationMessage, "warning");
+            return;
+          }
           if (!state.dashboard) {
             return;
           }
@@ -3043,6 +3992,24 @@
         event.stopPropagation();
         removeVehicleFromRoute(vehicle);
       });
+
+      if (Array.isArray(vehicle.pending_fields) && vehicle.pending_fields.length) {
+        const actionRow = createNode("div", "transport-vehicle-details-actions");
+        const editButton = createNode("button", "transport-secondary-button transport-vehicle-edit-button", t("misc.edit"));
+
+        editButton.type = "button";
+        editButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openVehicleEditModal(vehicle);
+        });
+
+        actionRow.appendChild(editButton);
+        actionRow.appendChild(deleteButton);
+        detailsPanel.insertBefore(actionRow, passengerTableShell);
+        return detailsPanel;
+      }
+
       detailsPanel.insertBefore(deleteButton, passengerTableShell);
       return detailsPanel;
     }
@@ -3094,7 +4061,7 @@
         metaParts.push(String(requestRow.requested_time));
       }
       if (requestRow.assigned_vehicle) {
-        metaParts.push(t("misc.assignedTo", { plate: requestRow.assigned_vehicle.placa }));
+        metaParts.push(t("misc.assignedTo", { plate: formatPendingVehicleField(requestRow.assigned_vehicle.placa) }));
       }
       if (requestRow.response_message) {
         metaParts.push(requestRow.response_message);
@@ -3326,19 +4293,21 @@
         : null;
       const isDropTarget = canRequestBeDroppedOnVehicle(draggedRequest, scope, vehicle, getSelectedRouteKind());
       const isExpanded = state.expandedVehicleKey === vehicleDetailsKey;
+      const pendingAllocationMessage = getVehiclePendingAllocationMessage(vehicle);
 
       vehicleButton.type = "button";
       vehicleButton.dataset.vehicleId = String(vehicle.id);
       vehicleButton.dataset.vehicleScope = scope;
       vehicleButton.dataset.vehicleDetailsAnchorKey = vehicleDetailsKey;
       vehicleButton.title = t("misc.vehicleButtonTitle", {
-        type: mapVehicleTypeLabel(vehicle.tipo),
+        type: formatPendingVehicleField(vehicle.tipo, mapVehicleTypeLabel),
         occupancy: formatVehicleOccupancyLabel(vehicle, assignedCount),
       });
       vehicleButton.setAttribute("aria-label", vehicleButton.title);
       vehicleButton.classList.toggle("is-selectable", isDropTarget);
       vehicleButton.classList.toggle("is-preview-target", !!previewRequestRow);
       vehicleButton.classList.toggle("is-details-open", isExpanded);
+      vehicleButton.classList.toggle("is-pending-allocation", !!pendingAllocationMessage);
       tileElement.classList.toggle("is-expanded", isExpanded);
       if (!isDropTarget && !previewRequestRow) {
         vehicleButton.classList.add("is-idle");
@@ -3349,12 +4318,15 @@
       iconImage.src = mapVehicleIconPath(vehicle.tipo);
       iconImage.alt = "";
 
-      const plateLabel = createNode("span", "transport-vehicle-plate", vehicle.placa);
+      const plateLabel = createPendingVehicleFieldNode("span", "transport-vehicle-plate", vehicle.placa);
       const occupancyLabel = createNode(
         "span",
         "transport-vehicle-occupancy",
         formatVehicleOccupancyCount(vehicle, assignedCount)
       );
+      if (isPendingVehicleField(vehicle.lugares)) {
+        occupancyLabel.classList.add("transport-pending-value");
+      }
       const departureLabel = departureTime
         ? createNode("span", "transport-vehicle-departure", departureTime)
         : null;
@@ -3368,6 +4340,10 @@
       if (departureLabel) {
         departureLabel.setAttribute("aria-label", departureTime);
         vehicleButton.title = `${vehicleButton.title} | ${departureTime}`;
+      }
+      if (pendingAllocationMessage) {
+        vehicleButton.title = `${vehicleButton.title} | ${pendingAllocationMessage}`;
+        vehicleButton.setAttribute("aria-label", vehicleButton.title);
       }
       vehicleButton.appendChild(plateLabel);
       vehicleButton.appendChild(iconImage);
@@ -3449,19 +4425,22 @@
 
       registryRows.forEach(function (rowData) {
         const row = createNode("tr", "transport-vehicle-management-row");
-        const typeCell = createNode(
-          "td",
-          "transport-vehicle-management-type",
-          formatVehicleTypeTableValue(rowData.tipo)
-        );
+        const typeCell = createNode("td", "transport-vehicle-management-type");
         const plateCell = createNode("td", "transport-vehicle-management-plate-cell");
-        const occupancyCell = createNode(
-          "td",
-          "transport-vehicle-management-occupancy",
+        const occupancyCell = createNode("td", "transport-vehicle-management-occupancy");
+        const actionsCell = createNode("td", "transport-vehicle-management-actions");
+        const vehicleType = createPendingVehicleFieldNode(
+          "span",
+          "transport-vehicle-management-type-value",
+          rowData.tipo,
+          formatVehicleTypeTableValue
+        );
+        const vehiclePlate = createPendingVehicleFieldNode("strong", "transport-vehicle-management-plate", rowData.placa);
+        const occupancyValue = createNode(
+          "span",
+          "transport-vehicle-management-occupancy-value",
           formatVehicleOccupancyCount(rowData, rowData.assigned_count)
         );
-        const actionsCell = createNode("td", "transport-vehicle-management-actions");
-        const vehiclePlate = createNode("strong", "transport-vehicle-management-plate", rowData.placa);
         const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
         const departureTime = getVehicleDepartureTime(rowData, effectiveDepartureTime, scope);
         const deleteButton = createNode(
@@ -3479,7 +4458,13 @@
           removeVehicleFromRoute(rowData);
         });
 
+        if (isPendingVehicleField(rowData.lugares)) {
+          occupancyValue.classList.add("transport-pending-value");
+        }
+
+        typeCell.appendChild(vehicleType);
         plateCell.appendChild(vehiclePlate);
+        occupancyCell.appendChild(occupancyValue);
         row.appendChild(typeCell);
         row.appendChild(plateCell);
         if (departureTime) {
@@ -3652,6 +4637,7 @@
       refreshVehicleGridLayouts: function () {
         updateVehicleGridLayouts(document);
         scheduleExpandedVehicleDetailsPositionSync();
+        syncAiButtonPlacement();
       },
     };
   }
@@ -3690,13 +4676,25 @@
     getEffectiveWorkToHomeDepartureTime,
     getTransportDateState,
     getVehicleDepartureTime,
+    getVehiclePendingAllocationMessage,
     getOrdinalSuffix,
+    isPendingVehicleField,
+    isVehicleReadyForAllocation,
+    formatPendingVehicleField,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,
     getDefaultVehicleFormValues,
     getDefaultVehicleSeatCount,
     getDefaultVehicleToleranceMinutes,
+    formatTransportCurrencyOptionLabel,
+    formatTransportPriceInputValue,
+    normalizeTransportCurrencyCode,
+    normalizeTransportPriceRateUnit,
     applyTransportVehicleToleranceDefault,
+    resolveTransportCurrencyOptions,
+    resolveTransportVehiclePriceDefaults,
+    buildVehicleBasePayload,
+    resolveVehicleEditFocusField,
     syncVehicleTypeDependentDefaults,
     buildVehiclePassengerAwarenessRows,
     getPassengerAwarenessState,

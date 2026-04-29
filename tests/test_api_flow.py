@@ -56,6 +56,7 @@ from sistema.app.models import (
     FormsSubmission,
     ManagedLocation,
     Project,
+    TransportCurrencyOption,
     TransportAssignment,
     TransportRequest,
     TransportVehicleSchedule,
@@ -72,6 +73,8 @@ from sistema.app.services.forms_queue import process_forms_submission_queue_once
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
+from sistema.app.services import transport_proposals as transport_proposal_service_module
+from sistema.app.services import transport_reevaluation_events as transport_reevaluation_module
 from sistema.app.services import user_activity as user_activity_module
 from sistema.app.services.admin_project_scope import (
     admin_monitors_project,
@@ -80,7 +83,7 @@ from sistema.app.services.admin_project_scope import (
     normalize_admin_monitored_project_names,
     resolve_effective_admin_monitored_projects,
 )
-from sistema.app.schemas import AdminManagementRow, AdminProfileUpdateRequest
+from sistema.app.schemas import AdminManagementRow, AdminProfileUpdateRequest, TransportProposalDecision
 from sistema.app.services.admin_auth import ensure_default_admin, profile_can_view_activity_time, user_can_view_activity_time
 from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
@@ -1109,6 +1112,7 @@ def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
             chave="TR01",
             projeto="P80",
             workplace="Innovation Hub",
+            vehicle_id=vehicle.id,
             placa="SGX1234A",
             end_rua="123 Harbour Road",
             zip="0012345678",
@@ -1131,6 +1135,7 @@ def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
         assert persisted_vehicle.tolerance == 12
         assert persisted_vehicle.service_scope == "regular"
         assert persisted_user.workplace == "Innovation Hub"
+        assert persisted_user.vehicle_id == persisted_vehicle.id
         assert persisted_user.placa == "SGX1234A"
         assert persisted_user.end_rua == "123 Harbour Road"
         assert persisted_user.zip == "0012345678"
@@ -1208,6 +1213,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         users = client.get("/api/admin/users")
         assert users.status_code == 200
         user_row = next(row for row in users.json() if row["chave"] == "UF01")
+        assert user_row["vehicle_id"] is not None
         assert user_row["workplace"] == "Refinery West"
         assert user_row["placa"] == "TRP1234A"
         assert user_row["end_rua"] == "123 Harbour Road"
@@ -1224,7 +1230,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
                 "chave": "UF02",
                 "projeto": "P83",
                 "workplace": "Refinery West",
-                "placa": "TRP1234A",
+                "vehicle_id": user_row["vehicle_id"],
                 "end_rua": "456 Harbour Road",
                 "zip": "0000001234",
                 "cargo": "Cargo Final",
@@ -1240,6 +1246,7 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         assert updated_row["nome"] == "Usuario Ajustado"
         assert updated_row["chave"] == "UF02"
         assert updated_row["projeto"] == "P83"
+        assert updated_row["vehicle_id"] == user_row["vehicle_id"]
         assert updated_row["workplace"] == "Refinery West"
         assert updated_row["placa"] == "TRP1234A"
         assert updated_row["end_rua"] == "456 Harbour Road"
@@ -5748,6 +5755,1072 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert friday_work_to_home_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
 
 
+def test_transport_operational_proposal_represents_decisions_without_applying_assignments():
+    friday = date(2026, 4, 17)
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Proposal Hub",
+            address="41 Proposal Road",
+            zip="941001",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="PRP4101", tipo="van", color="White", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Proposal Rider",
+            chave="PR41",
+            projeto="P41",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="41 Proposal Avenue",
+            zip="941002",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+
+        request_id = transport_request.id
+        vehicle_id = vehicle.id
+
+    with SessionLocal() as db:
+        snapshot = transport_proposal_service_module.build_transport_operational_snapshot(
+            db,
+            service_date=friday,
+            route_kind="home_to_work",
+            captured_at=captured_at,
+        )
+        proposal = transport_proposal_service_module.build_transport_operational_proposal(
+            snapshot=snapshot,
+            origin="manual",
+            created_at=created_at,
+            decisions=[
+                TransportProposalDecision(
+                    request_id=request_id,
+                    request_kind="regular",
+                    service_date=friday,
+                    route_kind="home_to_work",
+                    suggested_status="confirmed",
+                    vehicle_id=vehicle_id,
+                    rationale="Manual planning draft for weekday route.",
+                )
+            ],
+        )
+        persisted_assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == request_id)
+        ).scalars().all()
+
+    assert snapshot.service_date == friday
+    assert snapshot.route_kind == "home_to_work"
+    assert snapshot.snapshot_key.startswith("transport-snapshot:2026-04-17:home_to_work:")
+    snapshot_request = next(row for row in snapshot.regular_requests if row.id == request_id)
+    assert snapshot_request.assignment_status == "pending"
+    assert snapshot_request.id == request_id
+
+    assert proposal.proposal_status == "draft"
+    assert proposal.origin == "manual"
+    assert proposal.created_at == created_at
+    assert proposal.snapshot.snapshot_key == snapshot.snapshot_key
+    assert proposal.summary.total_snapshot_requests == (
+        len(snapshot.regular_requests) + len(snapshot.weekend_requests) + len(snapshot.extra_requests)
+    )
+    assert proposal.summary.total_snapshot_vehicles == (
+        len(snapshot.regular_vehicles)
+        + len(snapshot.weekend_vehicles)
+        + len(snapshot.extra_vehicles)
+    )
+    assert proposal.summary.total_decisions == 1
+    assert proposal.summary.confirmed_decisions == 1
+    assert proposal.summary.rejected_decisions == 0
+    assert proposal.summary.pending_decisions == 0
+    assert proposal.decisions[0].vehicle_id == vehicle_id
+    assert proposal.decisions[0].suggested_status == "confirmed"
+    assert persisted_assignments == []
+
+
+def test_transport_proposal_validate_and_approve_commands_record_audit_without_applying_assignments():
+    friday = date(2026, 4, 17)
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Proposal Review Hub",
+            address="42 Review Road",
+            zip="941101",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="PRP4201", tipo="van", color="Silver", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Review Rider",
+            chave="PR42",
+            projeto="P42",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="42 Review Avenue",
+            zip="941102",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:40",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+
+        proposal = transport_proposal_service_module.build_transport_operational_proposal(
+            snapshot=transport_proposal_service_module.build_transport_operational_snapshot(
+                db,
+                service_date=friday,
+                route_kind="home_to_work",
+                captured_at=captured_at,
+            ),
+            origin="manual",
+            created_at=created_at,
+            decisions=[
+                TransportProposalDecision(
+                    request_id=transport_request.id,
+                    request_kind="regular",
+                    service_date=friday,
+                    route_kind="home_to_work",
+                    suggested_status="confirmed",
+                    vehicle_id=vehicle.id,
+                    rationale="Planner approved this pairing.",
+                )
+            ],
+        )
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        validate_response = client.post(
+            "/api/transport/proposals/validate",
+            json=proposal.model_dump(mode="json"),
+        )
+        approve_response = client.post(
+            "/api/transport/proposals/approve",
+            json=proposal.model_dump(mode="json"),
+        )
+
+    assert validate_response.status_code == 200, validate_response.text
+    assert approve_response.status_code == 200, approve_response.text
+
+    validate_payload = validate_response.json()
+    approve_payload = approve_response.json()
+
+    assert validate_payload["ok"] is True
+    assert validate_payload["message"] == "Proposal validation passed without blocking issues."
+    assert validate_payload["proposal"]["proposal_status"] == "draft"
+    assert validate_payload["proposal"]["validation_issues"] == []
+    assert validate_payload["proposal"]["audit_trail"][0]["action"] == "validated"
+    assert validate_payload["proposal"]["audit_trail"][0]["outcome"] == "passed"
+    assert validate_payload["proposal"]["audit_trail"][0]["actor"]["chave"] == ADMIN_LOGIN_CHAVE
+
+    assert approve_payload["ok"] is True
+    assert approve_payload["message"] == "Proposal approved without applying assignments."
+    assert approve_payload["proposal"]["proposal_status"] == "approved"
+    assert approve_payload["proposal"]["validation_issues"] == []
+    assert [entry["action"] for entry in approve_payload["proposal"]["audit_trail"]] == ["validated", "approved"]
+    assert [entry["outcome"] for entry in approve_payload["proposal"]["audit_trail"]] == ["passed", "approved"]
+
+    with SessionLocal() as db:
+        persisted_assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == transport_request.id)
+        ).scalars().all()
+
+    assert persisted_assignments == []
+
+
+def test_transport_proposal_approval_reports_blocking_inconsistencies():
+    friday = date(2026, 4, 17)
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Proposal Drift Hub",
+            address="43 Drift Road",
+            zip="941201",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="PRP4202", tipo="van", color="Black", lugares=8, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Drift Rider",
+            chave="PR43",
+            projeto="P43",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="43 Drift Avenue",
+            zip="941202",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:50",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+
+        proposal = transport_proposal_service_module.build_transport_operational_proposal(
+            snapshot=transport_proposal_service_module.build_transport_operational_snapshot(
+                db,
+                service_date=friday,
+                route_kind="home_to_work",
+                captured_at=captured_at,
+            ),
+            origin="manual",
+            created_at=created_at,
+            decisions=[
+                TransportProposalDecision(
+                    request_id=transport_request.id,
+                    request_kind="regular",
+                    service_date=friday,
+                    route_kind="home_to_work",
+                    suggested_status="confirmed",
+                    vehicle_id=vehicle.id,
+                    rationale="Vehicle looked available when the snapshot was captured.",
+                )
+            ],
+        )
+
+        schedule = db.execute(
+            select(TransportVehicleSchedule).where(
+                TransportVehicleSchedule.vehicle_id == vehicle.id,
+                TransportVehicleSchedule.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+        db.delete(schedule)
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        approve_response = client.post(
+            "/api/transport/proposals/approve",
+            json=proposal.model_dump(mode="json"),
+        )
+
+    assert approve_response.status_code == 200, approve_response.text
+    approve_payload = approve_response.json()
+
+    assert approve_payload["ok"] is False
+    assert approve_payload["message"] == "Proposal approval was blocked by validation issues."
+    assert approve_payload["proposal"]["proposal_status"] == "draft"
+    assert approve_payload["proposal"]["validation_issues"][0]["code"] == "vehicle_unavailable"
+    assert "not currently available" in approve_payload["proposal"]["validation_issues"][0]["message"]
+    assert [entry["action"] for entry in approve_payload["proposal"]["audit_trail"]] == ["validated", "approved"]
+    assert [entry["outcome"] for entry in approve_payload["proposal"]["audit_trail"]] == ["blocked", "blocked"]
+    assert approve_payload["proposal"]["audit_trail"][1]["result"]["validation_issue_codes"] == [
+        "vehicle_unavailable"
+    ]
+
+
+def test_transport_proposal_build_contract_returns_fresh_snapshot_backed_draft():
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Contract Build Hub",
+            address="62 Contract Lane",
+            zip="941621",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="CNT6201", tipo="van", color="Silver", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Contract Builder",
+            chave="CB62",
+            projeto="P62",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="62 Contract Avenue",
+            zip="941622",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:35",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        vehicle_id = vehicle.id
+        request_id = transport_request.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        build_response = client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "replaces_proposal_key": "transport-proposal:previous-draft-62",
+                "captured_at": captured_at.isoformat(),
+                "created_at": created_at.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": friday.isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "Build a contract-backed draft from a stable snapshot.",
+                    }
+                ],
+            },
+        )
+
+    assert build_response.status_code == 200, build_response.text
+    payload = build_response.json()
+    assert payload["proposal_status"] == "draft"
+    assert payload["snapshot"]["service_date"] == friday.isoformat()
+    assert payload["snapshot"]["route_kind"] == "home_to_work"
+    snapshot_request = next(row for row in payload["snapshot"]["regular_requests"] if row["id"] == request_id)
+    assert snapshot_request["id"] == request_id
+    assert payload["summary"]["total_snapshot_requests"] == (
+        len(payload["snapshot"]["regular_requests"])
+        + len(payload["snapshot"]["weekend_requests"])
+        + len(payload["snapshot"]["extra_requests"])
+    )
+    assert payload["summary"]["confirmed_decisions"] == 1
+    assert payload["validation_issues"] == []
+    assert payload["replaces_proposal_key"] == "transport-proposal:previous-draft-62"
+    assert [entry["action"] for entry in payload["audit_trail"]] == ["generated"]
+    assert payload["audit_trail"][0]["outcome"] == "generated"
+    assert payload["audit_trail"][0]["actor"]["chave"] == ADMIN_LOGIN_CHAVE
+    assert payload["audit_trail"][0]["context"]["proposal_origin"] == "manual"
+    assert payload["audit_trail"][0]["context"]["proposal_snapshot_key"] == payload["snapshot"]["snapshot_key"]
+    assert payload["audit_trail"][0]["context"]["evaluation_snapshot_key"] == payload["snapshot"]["snapshot_key"]
+    assert payload["audit_trail"][0]["context"]["decision_request_ids"] == [request_id]
+    assert payload["audit_trail"][0]["context"]["decision_vehicle_ids"] == [vehicle_id]
+    assert payload["audit_trail"][0]["context"]["replaces_proposal_key"] == "transport-proposal:previous-draft-62"
+    assert payload["audit_trail"][0]["result"]["proposal_status"] == "draft"
+    assert payload["audit_trail"][0]["result"]["validation_issue_count"] == 0
+    assert payload["audit_trail"][0]["result"]["applied_assignment_count"] == 0
+
+
+def test_transport_operational_snapshot_endpoint_returns_contract_for_selected_date_and_route():
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Snapshot Contract Hub",
+            address="66 Contract Lane",
+            zip="941661",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="SNP6601", tipo="van", color="White", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Snapshot Rider",
+            chave="SN66",
+            projeto="P66",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="66 Snapshot Avenue",
+            zip="941662",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:10",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        request_id = transport_request.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        snapshot_response = client.get(
+            "/api/transport/operational-snapshot",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert snapshot_response.status_code == 200, snapshot_response.text
+    payload = snapshot_response.json()
+    assert payload["service_date"] == friday.isoformat()
+    assert payload["route_kind"] == "home_to_work"
+    assert payload["snapshot_key"].startswith("transport-snapshot:2026-04-17:home_to_work:")
+    snapshot_request = next(row for row in payload["regular_requests"] if row["id"] == request_id)
+    assert snapshot_request["assignment_status"] == "pending"
+    assert any(row["vehicle_id"] == vehicle_id for row in payload["regular_vehicle_registry"])
+    assert any(row["workplace"] == "Snapshot Contract Hub" for row in payload["workplaces"])
+
+
+def test_transport_proposal_apply_contract_persists_assignments_after_approval():
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Contract Apply Hub",
+            address="63 Contract Lane",
+            zip="941631",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="CNT6301", tipo="van", color="White", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Contract Applier",
+            chave="CA63",
+            projeto="P63",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="63 Contract Avenue",
+            zip="941632",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:25",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        vehicle_id = vehicle.id
+        request_id = transport_request.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        build_response = client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "captured_at": captured_at.isoformat(),
+                "created_at": created_at.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": friday.isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "response_message": "Assigned through proposal application.",
+                        "rationale": "Use the contract apply flow after review.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        approve_response = client.post(
+            "/api/transport/proposals/approve",
+            json=build_response.json(),
+        )
+        assert approve_response.status_code == 200, approve_response.text
+
+        apply_response = client.post(
+            "/api/transport/proposals/apply",
+            json={"proposal": approve_response.json()["proposal"]},
+        )
+        events_response = client.get("/api/transport/reevaluation-events", params={"limit": 3})
+
+    assert apply_response.status_code == 200, apply_response.text
+    assert events_response.status_code == 200, events_response.text
+    payload = apply_response.json()
+    events_payload = events_response.json()
+    assert payload["ok"] is True
+    assert payload["message"] == "Proposal applied to transport assignments."
+    assert payload["proposal"]["proposal_status"] == "applied"
+    assert payload["applied_assignments"][0]["request_id"] == request_id
+    assert payload["applied_assignments"][0]["status"] == "confirmed"
+    assert payload["applied_assignments"][0]["vehicle_id"] == vehicle_id
+    assert [entry["action"] for entry in payload["proposal"]["audit_trail"]] == ["generated", "validated", "approved", "validated", "applied"]
+    assert [entry["outcome"] for entry in payload["proposal"]["audit_trail"]] == ["generated", "passed", "approved", "passed", "applied"]
+    assert payload["proposal"]["audit_trail"][1]["context"]["evaluation_snapshot_key"].startswith(
+        "transport-snapshot:2026-04-17:home_to_work:"
+    )
+    assert payload["proposal"]["audit_trail"][-1]["result"]["applied_assignment_count"] == len(
+        payload["applied_assignments"]
+    )
+    assert payload["proposal"]["audit_trail"][-1]["result"]["applied_assignment_ids"] == [
+        row["assignment_id"] for row in payload["applied_assignments"]
+    ]
+    assert payload["proposal"]["audit_trail"][-1]["result"]["proposal_status"] == "applied"
+    assert events_payload["recent_events"][0]["event_type"] == "transport_assignment_changed"
+    assert events_payload["recent_events"][0]["source"] == "transport_proposal"
+    assert events_payload["recent_events"][0]["proposal_key"] == payload["proposal"]["proposal_key"]
+    assert events_payload["recent_events"][0]["route_kind"] == "home_to_work"
+
+    with SessionLocal() as db:
+        persisted_assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == request_id)
+        ).scalars().all()
+
+    assert len(persisted_assignments) == 2
+    assert {assignment.route_kind for assignment in persisted_assignments} == {"home_to_work", "work_to_home"}
+    assert all(assignment.status == "confirmed" for assignment in persisted_assignments)
+    assert all(assignment.vehicle_id == vehicle_id for assignment in persisted_assignments)
+
+
+def test_transport_proposal_apply_contract_blocks_draft_proposal():
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Contract Draft Guard Hub",
+            address="64 Contract Lane",
+            zip="941641",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="CNT6401", tipo="van", color="Blue", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Draft Guard Rider",
+            chave="DG64",
+            projeto="P64",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="64 Contract Avenue",
+            zip="941642",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:20",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        request_id = transport_request.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        build_response = client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": friday.isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "Draft proposals must not bypass approval.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        apply_response = client.post(
+            "/api/transport/proposals/apply",
+            json={"proposal": build_response.json()},
+        )
+
+    assert apply_response.status_code == 200, apply_response.text
+    payload = apply_response.json()
+    assert payload["ok"] is False
+    assert payload["message"] == "Proposal application was blocked by validation issues."
+    assert payload["proposal"]["proposal_status"] == "draft"
+    assert payload["applied_assignments"] == []
+    assert payload["proposal"]["validation_issues"][-1]["code"] == "proposal_not_approved_for_application"
+    assert [entry["action"] for entry in payload["proposal"]["audit_trail"]] == ["generated", "validated", "applied"]
+    assert payload["proposal"]["audit_trail"][-1]["result"]["validation_issue_codes"][-1] == (
+        "proposal_not_approved_for_application"
+    )
+    assert payload["proposal"]["audit_trail"][-1]["result"]["applied_assignment_count"] == 0
+
+    with SessionLocal() as db:
+        persisted_assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == request_id)
+        ).scalars().all()
+
+    assert persisted_assignments == []
+
+
+def test_transport_proposal_apply_contract_revalidates_after_operational_drift():
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Drift Apply Hub",
+            address="67 Contract Lane",
+            zip="941671",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="DRF6701", tipo="van", color="Black", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Drift Apply Rider",
+            chave="DA67",
+            projeto="P67",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="67 Drift Avenue",
+            zip="941672",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:18",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        request_id = transport_request.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        build_response = client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "captured_at": captured_at.isoformat(),
+                "created_at": created_at.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": friday.isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "Apply should revalidate after approval.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        approve_response = client.post(
+            "/api/transport/proposals/approve",
+            json=build_response.json(),
+        )
+        assert approve_response.status_code == 200, approve_response.text
+        approved_payload = approve_response.json()["proposal"]
+
+    with SessionLocal() as db:
+        schedule = db.execute(
+            select(TransportVehicleSchedule).where(
+                TransportVehicleSchedule.vehicle_id == vehicle_id,
+                TransportVehicleSchedule.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+        db.delete(schedule)
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        apply_response = client.post(
+            "/api/transport/proposals/apply",
+            json={"proposal": approved_payload},
+        )
+
+    assert apply_response.status_code == 200, apply_response.text
+    payload = apply_response.json()
+    assert payload["ok"] is False
+    assert payload["message"] == "Proposal application was blocked by validation issues."
+    assert payload["proposal"]["proposal_status"] == "approved"
+    assert payload["applied_assignments"] == []
+    assert payload["proposal"]["validation_issues"][0]["code"] == "vehicle_unavailable"
+    assert payload["proposal"]["audit_trail"][-1]["action"] == "applied"
+    assert payload["proposal"]["audit_trail"][-1]["outcome"] == "blocked"
+    assert payload["proposal"]["audit_trail"][-1]["result"]["validation_issue_codes"] == [
+        "vehicle_unavailable"
+    ]
+
+    with SessionLocal() as db:
+        persisted_assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id == request_id)
+        ).scalars().all()
+
+    assert persisted_assignments == []
+
+
+def test_transport_proposal_reject_records_structured_audit_metadata():
+    friday = date(2026, 4, 17)
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Contract Reject Hub",
+            address="65 Contract Lane",
+            zip="941651",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="CNT6501", tipo="van", color="Gray", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Contract Reject Rider",
+            chave="CR65",
+            projeto="P65",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="65 Contract Avenue",
+            zip="941652",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:15",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+        request_id = transport_request.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        build_response = client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "captured_at": captured_at.isoformat(),
+                "created_at": created_at.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": friday.isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "This proposal will be rejected during review.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        reject_response = client.post(
+            "/api/transport/proposals/reject",
+            json={
+                "proposal": build_response.json(),
+                "message": "Rejected after supervisor review.",
+            },
+        )
+
+    assert reject_response.status_code == 200, reject_response.text
+    payload = reject_response.json()
+    assert payload["ok"] is True
+    assert payload["proposal"]["proposal_status"] == "rejected"
+    assert [entry["action"] for entry in payload["proposal"]["audit_trail"]] == ["generated", "rejected"]
+    assert payload["proposal"]["audit_trail"][-1]["context"]["decision_request_ids"] == [request_id]
+    assert payload["proposal"]["audit_trail"][-1]["context"]["decision_vehicle_ids"] == [vehicle_id]
+    assert payload["proposal"]["audit_trail"][-1]["result"]["proposal_status"] == "rejected"
+    assert payload["proposal"]["audit_trail"][-1]["result"]["validation_issue_count"] == 0
+
+
 def test_transport_vehicle_registration_creates_route_aware_schedules():
     friday = date(2026, 4, 17)
     saturday = date(2026, 4, 18)
@@ -5901,6 +6974,70 @@ def test_transport_vehicle_registration_accepts_long_plate_with_special_characte
     with SessionLocal() as db:
         persisted_vehicle = db.execute(select(Vehicle).where(Vehicle.placa == long_plate)).scalar_one()
         assert persisted_vehicle.placa == long_plate
+
+
+def test_transport_extra_vehicle_registration_allows_partial_base_data():
+    friday = date(2026, 4, 17)
+
+    with SessionLocal() as db:
+        previous_vehicle_id = db.execute(select(Vehicle.id).order_by(Vehicle.id.desc())).scalars().first() or 0
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "extra",
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "departure_time": "17:45",
+            },
+        )
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "work_to_home"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert dashboard_response.status_code == 200, dashboard_response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.execute(
+            select(Vehicle).where(Vehicle.id > previous_vehicle_id).order_by(Vehicle.id.desc())
+        ).scalar_one()
+        schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == persisted_vehicle.id)
+            .order_by(TransportVehicleSchedule.id)
+        ).scalars().all()
+
+    assert persisted_vehicle.placa is None
+    assert persisted_vehicle.tipo is None
+    assert persisted_vehicle.color is None
+    assert persisted_vehicle.lugares is None
+    assert persisted_vehicle.tolerance is None
+    assert len(schedules) == 1
+    assert schedules[0].service_scope == "extra"
+    assert schedules[0].route_kind == "work_to_home"
+    assert schedules[0].service_date == friday
+    assert schedules[0].departure_time == "17:45"
+
+    dashboard_payload = dashboard_response.json()
+    extra_vehicle_row = next(row for row in dashboard_payload["extra_vehicles"] if row["id"] == persisted_vehicle.id)
+    extra_registry_row = next(
+        row for row in dashboard_payload["extra_vehicle_registry"] if row["vehicle_id"] == persisted_vehicle.id
+    )
+
+    assert extra_vehicle_row["placa"] is None
+    assert extra_vehicle_row["tipo"] is None
+    assert extra_vehicle_row["lugares"] is None
+    assert extra_vehicle_row["tolerance"] is None
+    assert extra_vehicle_row["pending_fields"] == ["tipo", "placa", "color", "lugares", "tolerance"]
+    assert extra_vehicle_row["is_ready_for_allocation"] is False
+    assert extra_vehicle_row["route_kind"] == "work_to_home"
+    assert extra_registry_row["placa"] is None
+    assert extra_registry_row["pending_fields"] == ["tipo", "placa", "color", "lugares", "tolerance"]
+    assert extra_registry_row["is_ready_for_allocation"] is False
 
 
 def test_transport_regular_vehicle_registration_supports_selected_weekdays():
@@ -6180,6 +7317,947 @@ def test_transport_vehicle_registration_reuses_plate_after_past_single_date_sche
     assert {row.route_kind for row in schedules[1:] if row.is_active} == {"home_to_work", "work_to_home"}
 
 
+def test_transport_vehicle_registration_allows_partial_regular_vehicle_and_exposes_readiness_metadata():
+    monday = date(2026, 4, 20)
+
+    with SessionLocal() as db:
+        previous_vehicle_id = db.execute(select(Vehicle.id).order_by(Vehicle.id.desc())).scalars().first() or 0
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": monday.isoformat(),
+                "every_monday": True,
+            },
+        )
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert dashboard_response.status_code == 200, dashboard_response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.execute(
+            select(Vehicle).where(Vehicle.id > previous_vehicle_id).order_by(Vehicle.id.desc())
+        ).scalar_one()
+
+    assert persisted_vehicle.placa is None
+    assert persisted_vehicle.tipo is None
+    assert persisted_vehicle.color is None
+    assert persisted_vehicle.lugares is None
+    assert persisted_vehicle.tolerance is None
+
+    dashboard_payload = dashboard_response.json()
+    vehicle_row = next(row for row in dashboard_payload["regular_vehicles"] if row["id"] == persisted_vehicle.id)
+    registry_row = next(
+        row for row in dashboard_payload["regular_vehicle_registry"] if row["vehicle_id"] == persisted_vehicle.id
+    )
+
+    assert vehicle_row["placa"] is None
+    assert vehicle_row["tipo"] is None
+    assert vehicle_row["lugares"] is None
+    assert vehicle_row["pending_fields"] == ["tipo", "placa", "color", "lugares", "tolerance"]
+    assert vehicle_row["is_ready_for_allocation"] is False
+    assert registry_row["placa"] is None
+    assert registry_row["tipo"] is None
+    assert registry_row["lugares"] is None
+    assert registry_row["pending_fields"] == ["tipo", "placa", "color", "lugares", "tolerance"]
+    assert registry_row["is_ready_for_allocation"] is False
+
+
+def test_transport_vehicle_registration_allows_partial_weekend_vehicle_and_exposes_readiness_metadata():
+    saturday = date(2026, 4, 18)
+
+    with SessionLocal() as db:
+        previous_vehicle_id = db.execute(select(Vehicle.id).order_by(Vehicle.id.desc())).scalars().first() or 0
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "weekend",
+                "service_date": saturday.isoformat(),
+                "every_sunday": True,
+            },
+        )
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": saturday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert dashboard_response.status_code == 200, dashboard_response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.execute(
+            select(Vehicle).where(Vehicle.id > previous_vehicle_id).order_by(Vehicle.id.desc())
+        ).scalar_one()
+
+    assert persisted_vehicle.placa is None
+    assert persisted_vehicle.tipo is None
+    assert persisted_vehicle.color is None
+    assert persisted_vehicle.lugares is None
+    assert persisted_vehicle.tolerance is None
+
+    dashboard_payload = dashboard_response.json()
+    registry_row = next(
+        row for row in dashboard_payload["weekend_vehicle_registry"] if row["vehicle_id"] == persisted_vehicle.id
+    )
+
+    assert registry_row["placa"] is None
+    assert registry_row["tipo"] is None
+    assert registry_row["lugares"] is None
+    assert registry_row["pending_fields"] == ["tipo", "placa", "color", "lugares", "tolerance"]
+    assert registry_row["is_ready_for_allocation"] is False
+
+
+def test_transport_regular_vehicle_registration_requires_explicit_weekday_selection_when_fields_are_present():
+    monday = date(2026, 4, 20)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": monday.isoformat(),
+                "every_monday": False,
+                "every_tuesday": False,
+                "every_wednesday": False,
+                "every_thursday": False,
+                "every_friday": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "Regular vehicles must be persistent" in json.dumps(response.json()["detail"])
+
+
+def test_transport_assignment_rejects_vehicle_that_is_not_ready_for_allocation():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Pending Allocation Hub",
+            address="55 Pending Road",
+            zip="550055",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa=None, tipo=None, color=None, lugares=None, tolerance=None, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Pending Allocation Rider",
+            chave="PA55",
+            projeto="P55",
+            workplace=workplace.workplace,
+            placa="PA5500",
+            end_rua="55 Pending Road",
+            zip="550055",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:10",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "The selected vehicle is not ready for allocation."
+
+    with SessionLocal() as db:
+        assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == request_id,
+                TransportAssignment.service_date == friday,
+                TransportAssignment.route_kind == "home_to_work",
+            )
+        ).scalar_one_or_none()
+
+    assert assignment is None
+
+
+def test_transport_vehicle_registration_without_plate_always_creates_new_vehicle():
+    monday = date(2026, 4, 20)
+    saturday = date(2026, 4, 25)
+
+    with SessionLocal() as db:
+        previous_vehicle_id = db.execute(select(Vehicle.id).order_by(Vehicle.id.desc())).scalars().first() or 0
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        first_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "regular",
+                "service_date": monday.isoformat(),
+                "every_monday": True,
+            },
+        )
+        second_response = client.post(
+            "/api/transport/vehicles",
+            json={
+                "service_scope": "weekend",
+                "service_date": saturday.isoformat(),
+                "every_saturday": True,
+            },
+        )
+
+    assert first_response.status_code == 200, first_response.text
+    assert second_response.status_code == 200, second_response.text
+
+    with SessionLocal() as db:
+        new_vehicle_ids = db.execute(
+            select(Vehicle.id).where(Vehicle.id > previous_vehicle_id).order_by(Vehicle.id)
+        ).scalars().all()
+
+    assert len(new_vehicle_ids) == 2
+
+
+def test_transport_vehicle_update_blocks_ready_vehicle_from_becoming_incomplete_with_future_confirmed_assignments():
+    future_monday = now_sgt().date() + timedelta(days=1)
+    while future_monday.weekday() != 0:
+        future_monday += timedelta(days=1)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Vehicle Readiness Hub",
+            address="41 Readiness Road",
+            zip="841001",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="RDY4101", tipo="van", color="White", lugares=2, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Vehicle Readiness Rider",
+            chave="RD41",
+            projeto="P41",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="41 Readiness Avenue",
+            zip="841002",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(transport_request)
+        db.flush()
+
+        db.add(
+            TransportAssignment(
+                request_id=transport_request.id,
+                service_date=future_monday,
+                route_kind="home_to_work",
+                vehicle_id=vehicle.id,
+                status="confirmed",
+                response_message="Assigned",
+                acknowledged_by_user=False,
+                assigned_by_admin_id=None,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        db.commit()
+
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicles/{vehicle_id}",
+            json={
+                "placa": None,
+                "tipo": "van",
+                "color": "White",
+                "lugares": 2,
+                "tolerance": 8,
+            },
+        )
+
+    assert response.status_code == 409
+    assert "Cannot make the vehicle incomplete because future confirmed assignments exist" in response.json()["detail"]
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.get(Vehicle, vehicle_id)
+
+    assert persisted_vehicle is not None
+    assert persisted_vehicle.placa == "RDY4101"
+
+
+def test_transport_vehicle_update_updates_base_fields_without_recreating_schedules_or_assignments():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Vehicle Update Hub",
+            address="1 Update Road",
+            zip="750001",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="UPD2301", tipo="van", color="Blue", lugares=11, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        first_schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        second_schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Vehicle Update Rider",
+            chave="VU23",
+            projeto="P23",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="23 Update Avenue",
+            zip="760001",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(transport_request)
+        db.flush()
+
+        assignment = TransportAssignment(
+            request_id=transport_request.id,
+            service_date=friday,
+            route_kind="home_to_work",
+            vehicle_id=vehicle.id,
+            status="confirmed",
+            response_message="Assigned",
+            acknowledged_by_user=False,
+            assigned_by_admin_id=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(assignment)
+        db.commit()
+
+        vehicle_id = vehicle.id
+        schedule_ids = {first_schedule.id, second_schedule.id}
+        assignment_id = assignment.id
+        user_id = user.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicles/{vehicle_id}",
+            json={
+                "placa": "UPD2301B",
+                "tipo": "onibus",
+                "color": "White",
+                "lugares": 40,
+                "tolerance": 15,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.get(Vehicle, vehicle_id)
+        persisted_user = db.get(User, user_id)
+        persisted_assignment = db.get(TransportAssignment, assignment_id)
+        schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == vehicle_id)
+            .order_by(TransportVehicleSchedule.id)
+        ).scalars().all()
+
+    assert persisted_vehicle is not None
+    assert persisted_vehicle.placa == "UPD2301B"
+    assert persisted_vehicle.tipo == "onibus"
+    assert persisted_vehicle.color == "White"
+    assert persisted_vehicle.lugares == 40
+    assert persisted_vehicle.tolerance == 15
+    assert persisted_vehicle.service_scope == "regular"
+    assert persisted_user is not None
+    assert persisted_user.vehicle_id == vehicle_id
+    assert persisted_user.placa == "UPD2301B"
+    assert persisted_assignment is not None
+    assert persisted_assignment.vehicle_id == vehicle_id
+    assert len(schedules) == 2
+    assert {schedule.id for schedule in schedules} == schedule_ids
+
+
+def test_transport_vehicle_update_can_complete_pending_vehicle_and_expose_readiness_metadata():
+    monday = date(2026, 4, 20)
+
+    with SessionLocal() as db:
+        pending_vehicle = Vehicle(
+            placa=None,
+            tipo=None,
+            color=None,
+            lugares=None,
+            tolerance=None,
+            service_scope="regular",
+        )
+        db.add(pending_vehicle)
+        db.flush()
+
+        first_schedule = add_transport_schedule(
+            db,
+            vehicle=pending_vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        second_schedule = add_transport_schedule(
+            db,
+            vehicle=pending_vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+
+        vehicle_id = pending_vehicle.id
+        schedule_ids = {first_schedule.id, second_schedule.id}
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        update_response = client.put(
+            f"/api/transport/vehicles/{vehicle_id}",
+            json={
+                "placa": "CMP8401",
+                "tipo": "minivan",
+                "color": "Silver",
+                "lugares": 7,
+                "tolerance": 9,
+            },
+        )
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert update_response.status_code == 200, update_response.text
+    assert dashboard_response.status_code == 200, dashboard_response.text
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.get(Vehicle, vehicle_id)
+        schedules = db.execute(
+            select(TransportVehicleSchedule)
+            .where(TransportVehicleSchedule.vehicle_id == vehicle_id)
+            .order_by(TransportVehicleSchedule.id)
+        ).scalars().all()
+
+    assert persisted_vehicle is not None
+    assert persisted_vehicle.placa == "CMP8401"
+    assert persisted_vehicle.tipo == "minivan"
+    assert persisted_vehicle.color == "Silver"
+    assert persisted_vehicle.lugares == 7
+    assert persisted_vehicle.tolerance == 9
+    assert len(schedules) == 2
+    assert {schedule.id for schedule in schedules} == schedule_ids
+
+    dashboard_payload = dashboard_response.json()
+    vehicle_row = next(row for row in dashboard_payload["regular_vehicles"] if row["id"] == vehicle_id)
+    registry_row = next(
+        row for row in dashboard_payload["regular_vehicle_registry"] if row["vehicle_id"] == vehicle_id
+    )
+
+    assert vehicle_row["placa"] == "CMP8401"
+    assert vehicle_row["tipo"] == "minivan"
+    assert vehicle_row["color"] == "Silver"
+    assert vehicle_row["lugares"] == 7
+    assert vehicle_row["tolerance"] == 9
+    assert vehicle_row["pending_fields"] == []
+    assert vehicle_row["is_ready_for_allocation"] is True
+    assert registry_row["placa"] == "CMP8401"
+    assert registry_row["pending_fields"] == []
+    assert registry_row["is_ready_for_allocation"] is True
+
+
+def test_transport_vehicle_update_rejects_duplicate_plate_from_another_vehicle():
+    with SessionLocal() as db:
+        first_vehicle = Vehicle(placa="UPD2302", tipo="van", color="Blue", lugares=12, tolerance=9, service_scope="regular")
+        second_vehicle = Vehicle(placa="UPD2303", tipo="carro", color="Gray", lugares=4, tolerance=6, service_scope="extra")
+        db.add_all([first_vehicle, second_vehicle])
+        db.commit()
+        second_vehicle_id = second_vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicles/{second_vehicle_id}",
+            json={
+                "placa": "UPD2302",
+                "tipo": "carro",
+                "color": "Gray",
+                "lugares": 4,
+                "tolerance": 6,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "A vehicle with this plate already exists."
+
+
+def test_transport_vehicle_update_blocks_seat_reduction_when_future_confirmed_assignments_exceed_new_capacity():
+    future_monday = now_sgt().date() + timedelta(days=1)
+    while future_monday.weekday() != 0:
+        future_monday += timedelta(days=1)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Vehicle Capacity Hub",
+            address="31 Capacity Road",
+            zip="831001",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="CAP3301", tipo="van", color="White", lugares=2, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        request_ids: list[int] = []
+        for suffix in ("A", "B"):
+            user = User(
+                rfid=None,
+                nome=f"Capacity Rider {suffix}",
+                chave=f"C3{suffix}1",
+                projeto="P33",
+                workplace=workplace.workplace,
+                placa=vehicle.placa,
+                end_rua=f"31 Capacity Avenue {suffix}",
+                zip="831002",
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=timestamp,
+                inactivity_days=0,
+            )
+            db.add(user)
+            db.flush()
+
+            transport_request = TransportRequest(
+                user_id=user.id,
+                request_kind="regular",
+                recurrence_kind="weekday",
+                requested_time="07:30",
+                selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+                single_date=None,
+                created_via="admin",
+                status="active",
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            db.add(transport_request)
+            db.flush()
+            request_ids.append(transport_request.id)
+
+        for request_id in request_ids:
+            db.add(
+                TransportAssignment(
+                    request_id=request_id,
+                    service_date=future_monday,
+                    route_kind="home_to_work",
+                    vehicle_id=vehicle.id,
+                    status="confirmed",
+                    response_message="Assigned",
+                    acknowledged_by_user=False,
+                    assigned_by_admin_id=None,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+        db.commit()
+
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicles/{vehicle_id}",
+            json={
+                "placa": "CAP3301",
+                "tipo": "van",
+                "color": "White",
+                "lugares": 1,
+                "tolerance": 8,
+            },
+        )
+
+    assert response.status_code == 409
+    assert "confirmed assignments would exceed the new capacity" in response.json()["detail"]
+
+    with SessionLocal() as db:
+        persisted_vehicle = db.get(Vehicle, vehicle_id)
+
+    assert persisted_vehicle is not None
+    assert persisted_vehicle.lugares == 2
+
+
+def test_transport_vehicle_schedule_update_changes_extra_availability_without_recreating_vehicle():
+    original_date = now_sgt().date() + timedelta(days=10)
+    updated_date = original_date + timedelta(days=1)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="SCH2401", tipo="carro", color="Black", lugares=4, tolerance=6, service_scope="extra")
+        db.add(vehicle)
+        db.flush()
+
+        schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="extra",
+            route_kind="work_to_home",
+            recurrence_kind="single_date",
+            service_date=original_date,
+            departure_time="18:10",
+        )
+        db.add(
+            TransportVehicleScheduleException(
+                vehicle_schedule_id=schedule.id,
+                service_date=original_date,
+                created_at=timestamp,
+            )
+        )
+        db.commit()
+
+        schedule_id = schedule.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicle-schedules/{schedule_id}",
+            json={
+                "service_scope": "extra",
+                "route_kind": "home_to_work",
+                "recurrence_kind": "single_date",
+                "service_date": updated_date.isoformat(),
+                "departure_time": "19:00",
+                "is_active": True,
+            },
+        )
+        old_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": original_date.isoformat(), "route_kind": "work_to_home"},
+        )
+        new_dashboard = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": updated_date.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert old_dashboard.status_code == 200
+    assert new_dashboard.status_code == 200
+    assert all(row["placa"] != "SCH2401" for row in old_dashboard.json()["extra_vehicles"])
+    assert any(row["placa"] == "SCH2401" for row in new_dashboard.json()["extra_vehicles"])
+
+    with SessionLocal() as db:
+        persisted_schedule = db.get(TransportVehicleSchedule, schedule_id)
+        persisted_vehicle = db.get(Vehicle, vehicle_id)
+        persisted_exceptions = db.execute(
+            select(TransportVehicleScheduleException).where(
+                TransportVehicleScheduleException.vehicle_schedule_id == schedule_id
+            )
+        ).scalars().all()
+
+    assert persisted_schedule is not None
+    assert persisted_schedule.vehicle_id == vehicle_id
+    assert persisted_schedule.service_scope == "extra"
+    assert persisted_schedule.route_kind == "home_to_work"
+    assert persisted_schedule.recurrence_kind == "single_date"
+    assert persisted_schedule.service_date == updated_date
+    assert persisted_schedule.departure_time == "19:00"
+    assert persisted_schedule.is_active is True
+    assert persisted_vehicle is not None
+    assert persisted_vehicle.placa == "SCH2401"
+    assert persisted_exceptions == []
+
+
+def test_transport_vehicle_schedule_update_rejects_conflict_with_existing_active_schedule():
+    with SessionLocal() as db:
+        vehicle = Vehicle(placa="SCH2402", tipo="van", color="Blue", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        home_schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        work_schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+
+        work_schedule_id = work_schedule.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicle-schedules/{work_schedule_id}",
+            json={
+                "service_scope": "regular",
+                "route_kind": "home_to_work",
+                "recurrence_kind": "weekday",
+                "is_active": True,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Another active schedule already exists for the selected list and recurrence pattern."
+
+
+def test_transport_vehicle_schedule_update_blocks_when_confirmed_assignments_would_become_unavailable():
+    future_monday = now_sgt().date() + timedelta(days=1)
+    while future_monday.weekday() != 0:
+        future_monday += timedelta(days=1)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Schedule Update Hub",
+            address="24 Schedule Road",
+            zip="824001",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="SCH2403", tipo="van", color="White", lugares=11, tolerance=9, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        home_schedule = add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Schedule Update Rider",
+            chave="SU24",
+            projeto="P24",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="24 Update Avenue",
+            zip="834001",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(transport_request)
+        db.flush()
+
+        db.add(
+            TransportAssignment(
+                request_id=transport_request.id,
+                service_date=future_monday,
+                route_kind="home_to_work",
+                vehicle_id=vehicle.id,
+                status="confirmed",
+                response_message="Assigned",
+                acknowledged_by_user=False,
+                assigned_by_admin_id=None,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        db.commit()
+
+        home_schedule_id = home_schedule.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            f"/api/transport/vehicle-schedules/{home_schedule_id}",
+            json={
+                "service_scope": "regular",
+                "route_kind": "home_to_work",
+                "recurrence_kind": "weekday",
+                "is_active": False,
+            },
+        )
+
+    assert response.status_code == 409
+    assert "confirmed assignments would become unavailable" in response.json()["detail"]
+
+    with SessionLocal() as db:
+        persisted_schedule = db.get(TransportVehicleSchedule, home_schedule_id)
+
+    assert persisted_schedule is not None
+    assert persisted_schedule.is_active is True
+
+
 def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending():
     friday = date(2026, 4, 17)
     timestamp = now_sgt()
@@ -6306,6 +8384,7 @@ def test_transport_vehicle_delete_purges_vehicle_and_returns_requests_to_pending
         ).scalars().all()
 
     assert user_row is not None
+    assert user_row.vehicle_id is None
     assert user_row.placa is None
     assert vehicle_row is None
     assert schedules == []
@@ -7871,6 +9950,165 @@ def test_web_transport_stream_emits_connected_and_transport_events():
         asyncio.run(response.body_iterator.aclose())
 
 
+def test_transport_reevaluation_catalog_tracks_recent_request_trigger(monkeypatch):
+    fixed_now = datetime(2026, 4, 28, 9, 5, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+
+    ensure_web_user_exists(chave="WT61", projeto="P80", nome="Reevaluation Request Rider")
+    set_user_checkin_state(chave="WT61", event_time=fixed_now, local="Reevaluation Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT61",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT61", "request_kind": "regular"},
+        )
+        assert created.status_code == 200, created.text
+        request_id = created.json()["state"]["request_id"]
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        catalog_response = admin_client.get("/api/transport/reevaluation-events", params={"limit": 5})
+
+    assert catalog_response.status_code == 200, catalog_response.text
+    payload = catalog_response.json()
+    request_catalog_entry = next(row for row in payload["catalog"] if row["event_type"] == "transport_request_changed")
+    latest_event = payload["recent_events"][0]
+
+    assert request_catalog_entry["downstream_actions"] == [
+        "refresh_snapshot",
+        "revalidate_constraints",
+        "rebuild_proposal",
+        "regenerate_export",
+        "refresh_transport_state",
+    ]
+    assert latest_event["event_type"] == "transport_request_changed"
+    assert latest_event["source"] == "web_transport"
+    assert latest_event["reason"] == "event"
+    assert latest_event["request_id"] == request_id
+    assert latest_event["downstream_actions"] == request_catalog_entry["downstream_actions"]
+
+
+def test_transport_proposal_approval_emits_operational_review_trigger():
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+    friday = date(2026, 4, 17)
+    captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+    created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        workplace = Workplace(
+            workplace="Reevaluation Review Hub",
+            address="51 Review Road",
+            zip="941511",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(placa="REV6101", tipo="van", color="White", lugares=10, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Reevaluation Review Rider",
+            chave="RV61",
+            projeto="P61",
+            workplace=workplace.workplace,
+            placa=vehicle.placa,
+            end_rua="61 Review Avenue",
+            zip="941512",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=created_at,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:35",
+            selected_weekdays_json=json.dumps([0, 1, 2, 3, 4]),
+            single_date=None,
+            created_via="admin",
+            status="active",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(transport_request)
+        db.commit()
+
+        proposal = transport_proposal_service_module.build_transport_operational_proposal(
+            snapshot=transport_proposal_service_module.build_transport_operational_snapshot(
+                db,
+                service_date=friday,
+                route_kind="home_to_work",
+                captured_at=captured_at,
+            ),
+            origin="manual",
+            created_at=created_at,
+            decisions=[
+                TransportProposalDecision(
+                    request_id=transport_request.id,
+                    request_kind="regular",
+                    service_date=friday,
+                    route_kind="home_to_work",
+                    suggested_status="confirmed",
+                    vehicle_id=vehicle.id,
+                    rationale="Review trigger validation.",
+                )
+            ],
+        )
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        approve_response = admin_client.post(
+            "/api/transport/proposals/approve",
+            json=proposal.model_dump(mode="json"),
+        )
+        assert approve_response.status_code == 200, approve_response.text
+
+        events_response = admin_client.get("/api/transport/reevaluation-events", params={"limit": 3})
+
+    assert events_response.status_code == 200, events_response.text
+    latest_event = events_response.json()["recent_events"][0]
+    assert latest_event["event_type"] == "transport_operational_review_changed"
+    assert latest_event["source"] == "transport_proposal"
+    assert latest_event["proposal_key"] == approve_response.json()["proposal"]["proposal_key"]
+    assert latest_event["service_date"] == friday.isoformat()
+    assert latest_event["route_kind"] == "home_to_work"
+
+
 def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypatch):
     fixed_now = datetime(2026, 4, 18, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
@@ -8725,6 +10963,304 @@ def test_transport_export_endpoint_builds_xlsx_download_and_saves_server_copy(mo
     assert saved_exports[0].is_file()
 
 
+def test_transport_operational_plan_export_includes_proposal_review_tabs(monkeypatch):
+    fixed_now = datetime(2026, 4, 22, 16, 5, 30, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    export_dir = Path(settings.transport_exports_dir)
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        vehicle = Vehicle(placa="EXP4530", tipo="van", color="Blue", lugares=7, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+
+        rider = User(
+            nome="Proposal Export Rider",
+            chave="PX30",
+            projeto="P83",
+            end_rua="30 Proposal Export Way",
+            zip="303030",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add(rider)
+        db.flush()
+
+        request_row, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=rider,
+            request_kind="regular",
+            requested_time="07:25",
+            requested_date=None,
+            created_via="web",
+        )
+        db.commit()
+
+        draft_proposal = transport_proposal_service_module.build_transport_operational_proposal(
+            snapshot=transport_proposal_service_module.build_transport_operational_snapshot(
+                db,
+                service_date=fixed_now.date(),
+                route_kind="home_to_work",
+                captured_at=fixed_now,
+            ),
+            origin="manual",
+            created_at=fixed_now,
+            decisions=[
+                TransportProposalDecision(
+                    request_id=request_row.id,
+                    request_kind="regular",
+                    service_date=fixed_now.date(),
+                    route_kind="home_to_work",
+                    suggested_status="confirmed",
+                    vehicle_id=vehicle.id,
+                    rationale="Approved for export review.",
+                )
+            ],
+        )
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        approved_proposal_response = admin_client.post(
+            "/api/transport/proposals/approve",
+            json=draft_proposal.model_dump(mode="json"),
+        )
+        assert approved_proposal_response.status_code == 200, approved_proposal_response.text
+        approved_proposal_payload = approved_proposal_response.json()["proposal"]
+
+        exported = admin_client.post(
+            "/api/transport/exports/operational-plan",
+            json=approved_proposal_payload,
+        )
+
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert (
+        exported.headers["content-disposition"]
+        == 'attachment; filename="Transport Operational Plan - 20260422 - 160530.xlsx"'
+    )
+
+    workbook = load_workbook(io.BytesIO(exported.content))
+    assert workbook.sheetnames == [
+        "Transport List",
+        "Executive Summary",
+        "Vehicle Load",
+        "Snapshot Requests",
+        "Proposed Decisions",
+        "Exceptions",
+        "Audit Trail",
+    ]
+
+    transport_list_sheet = workbook["Transport List"]
+    assert [
+        transport_list_sheet["A1"].value,
+        transport_list_sheet["B1"].value,
+        transport_list_sheet["C1"].value,
+        transport_list_sheet["D1"].value,
+        transport_list_sheet["E1"].value,
+        transport_list_sheet["F1"].value,
+    ] == [
+        "Nome/Name",
+        "Chave/Key",
+        "Projeto/Project",
+        "Endereço/Address",
+        "Data/Date",
+        "Partida/Departure",
+    ]
+    transport_list_rows = list(transport_list_sheet.iter_rows(min_row=2, values_only=True))
+    assert all(row[1] != "PX30" for row in transport_list_rows)
+
+    executive_summary_sheet = workbook["Executive Summary"]
+    assert [executive_summary_sheet["A1"].value, executive_summary_sheet["B1"].value] == [
+        "Campo/Field",
+        "Valor/Value",
+    ]
+    assert [executive_summary_sheet["A2"].value, executive_summary_sheet["B2"].value] == [
+        "Modo/Mode",
+        "proposal_review",
+    ]
+    assert [executive_summary_sheet["A13"].value, executive_summary_sheet["B13"].value] == [
+        "Proposal Key",
+        approved_proposal_payload["proposal_key"],
+    ]
+    assert [executive_summary_sheet["A14"].value, executive_summary_sheet["B14"].value] == [
+        "Proposal Status",
+        "approved",
+    ]
+
+    vehicle_load_sheet = workbook["Vehicle Load"]
+    vehicle_load_rows = {
+        row[0]: row
+        for row in vehicle_load_sheet.iter_rows(min_row=2, values_only=True)
+        if row[0] is not None
+    }
+    assert [vehicle_load_rows["EXP4530"][0], vehicle_load_rows["EXP4530"][3], vehicle_load_rows["EXP4530"][4]] == [
+        "EXP4530",
+        0,
+        1,
+    ]
+
+    snapshot_requests_sheet = workbook["Snapshot Requests"]
+    snapshot_request_rows = {
+        row[0]: row
+        for row in snapshot_requests_sheet.iter_rows(min_row=2, values_only=True)
+        if row[0] is not None
+    }
+    assert [snapshot_request_rows[request_row.id][0], snapshot_request_rows[request_row.id][1], snapshot_request_rows[request_row.id][2]] == [
+        request_row.id,
+        "regular",
+        "pending",
+    ]
+
+    proposed_decisions_sheet = workbook["Proposed Decisions"]
+    assert [
+        proposed_decisions_sheet["A2"].value,
+        proposed_decisions_sheet["C2"].value,
+        proposed_decisions_sheet["D2"].value,
+        proposed_decisions_sheet["E2"].value,
+        proposed_decisions_sheet["F2"].value,
+    ] == [
+        request_row.id,
+        "PX30",
+        "Proposal Export Rider",
+        "confirmed",
+        "EXP4530",
+    ]
+
+    exceptions_sheet = workbook["Exceptions"]
+    exception_rows = list(exceptions_sheet.iter_rows(min_row=2, values_only=True))
+    request_exception = next(
+        row
+        for row in exception_rows
+        if row[0] == "snapshot_request" and row[1] == f"request:{request_row.id}"
+    )
+    assert [request_exception[0], request_exception[2]] == ["snapshot_request", "pending"]
+
+    audit_trail_sheet = workbook["Audit Trail"]
+    assert [audit_trail_sheet["A2"].value, audit_trail_sheet["B2"].value] == ["validated", "passed"]
+    assert [audit_trail_sheet["A3"].value, audit_trail_sheet["B3"].value] == ["approved", "approved"]
+    workbook.close()
+
+    saved_exports = sorted(Path(settings.transport_exports_dir).glob("Transport Operational Plan - 20260422 - 160530*.xlsx"))
+    assert len(saved_exports) == 1
+    assert saved_exports[0].is_file()
+
+
+def test_transport_operational_plan_export_supports_contract_built_proposal_audit_trail(monkeypatch):
+    fixed_now = datetime(2026, 4, 22, 16, 20, 45, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    export_dir = Path(settings.transport_exports_dir)
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        vehicle = Vehicle(placa="EXP4620", tipo="van", color="Silver", lugares=7, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        rider = User(
+            nome="Contract Export Rider",
+            chave="CX20",
+            projeto="P84",
+            end_rua="20 Contract Export Way",
+            zip="202020",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add(rider)
+        db.flush()
+
+        request_row, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=rider,
+            request_kind="regular",
+            requested_time="07:40",
+            requested_date=None,
+            created_via="web",
+        )
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        build_response = admin_client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "manual",
+                "captured_at": fixed_now.isoformat(),
+                "created_at": fixed_now.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": fixed_now.date().isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "Built through the contract before export review.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        approved_proposal_response = admin_client.post(
+            "/api/transport/proposals/approve",
+            json=build_response.json(),
+        )
+        assert approved_proposal_response.status_code == 200, approved_proposal_response.text
+        approved_proposal_payload = approved_proposal_response.json()["proposal"]
+
+        exported = admin_client.post(
+            "/api/transport/exports/operational-plan",
+            json=approved_proposal_payload,
+        )
+
+    assert exported.status_code == 200, exported.text
+    workbook = load_workbook(io.BytesIO(exported.content))
+    audit_trail_sheet = workbook["Audit Trail"]
+    assert [audit_trail_sheet["A2"].value, audit_trail_sheet["B2"].value] == ["generated", "generated"]
+    assert [audit_trail_sheet["A3"].value, audit_trail_sheet["B3"].value] == ["validated", "passed"]
+    assert [audit_trail_sheet["A4"].value, audit_trail_sheet["B4"].value] == ["approved", "approved"]
+    workbook.close()
+
+
 def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 8, 10, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
@@ -8766,6 +11302,26 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert current_settings.json()["default_van_seats"] == 10
         assert current_settings.json()["default_bus_seats"] == 40
         assert current_settings.json()["default_tolerance_minutes"] == 5
+        assert current_settings.json()["price_currency_code"] is None
+        assert current_settings.json()["price_rate_unit"] == "day"
+        assert current_settings.json()["default_car_price"] is None
+        assert current_settings.json()["default_minivan_price"] is None
+        assert current_settings.json()["default_van_price"] is None
+        assert current_settings.json()["default_bus_price"] is None
+        assert current_settings.json()["available_currencies"] == []
+
+        created_currency = admin_client.post(
+            "/api/transport/settings/currencies",
+            json={
+                "code": "sgd",
+                "display_label": "Singapore Dollar",
+            },
+        )
+        assert created_currency.status_code == 200
+        assert created_currency.json() == {
+            "code": "SGD",
+            "display_label": "Singapore Dollar",
+        }
 
         updated_settings = admin_client.put(
             "/api/transport/settings",
@@ -8777,6 +11333,12 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 "default_van_seats": 11,
                 "default_bus_seats": 44,
                 "default_tolerance_minutes": 9,
+                "price_currency_code": "SGD",
+                "price_rate_unit": "week",
+                "default_car_price": 120.5,
+                "default_minivan_price": 150.75,
+                "default_van_price": 230.0,
+                "default_bus_price": 510.25,
             },
         )
         assert updated_settings.status_code == 200
@@ -8787,6 +11349,18 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert updated_settings.json()["default_van_seats"] == 11
         assert updated_settings.json()["default_bus_seats"] == 44
         assert updated_settings.json()["default_tolerance_minutes"] == 9
+        assert updated_settings.json()["price_currency_code"] == "SGD"
+        assert updated_settings.json()["price_rate_unit"] == "week"
+        assert updated_settings.json()["default_car_price"] == 120.5
+        assert updated_settings.json()["default_minivan_price"] == 150.75
+        assert updated_settings.json()["default_van_price"] == 230.0
+        assert updated_settings.json()["default_bus_price"] == 510.25
+        assert updated_settings.json()["available_currencies"] == [
+            {
+                "code": "SGD",
+                "display_label": "Singapore Dollar",
+            }
+        ]
 
     with TestClient(app) as client:
         registered = register_web_password(
@@ -8823,7 +11397,6 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 },
             )
             assert assigned.status_code == 200
-
         confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT19"})
         assert confirmed_state.status_code == 200
         assert confirmed_state.json()["status"] == "confirmed"
@@ -8835,6 +11408,304 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
         location_settings_module.upsert_transport_last_update_time(db, last_update_time="16:00")
         db.commit()
+
+
+def test_transport_settings_currency_endpoint_rejects_duplicate_currency_code():
+    currency_code = f"T{uuid.uuid4().hex[:7].upper()}"
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        first_response = admin_client.post(
+            "/api/transport/settings/currencies",
+            json={
+                "code": currency_code,
+                "display_label": "Singapore Dollar",
+            },
+        )
+        duplicate_response = admin_client.post(
+            "/api/transport/settings/currencies",
+            json={
+                "code": currency_code,
+                "display_label": "Singapore Dollar Duplicate",
+            },
+        )
+
+    assert first_response.status_code == 200, first_response.text
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["detail"] == "Currency code already exists."
+
+    with SessionLocal() as db:
+        matching_rows = db.execute(
+            select(TransportCurrencyOption).where(TransportCurrencyOption.code == currency_code)
+        ).scalars().all()
+
+    assert len(matching_rows) == 1
+    assert matching_rows[0].display_label == "Singapore Dollar"
+
+
+def test_transport_workplaces_support_operational_context_fields():
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        created = admin_client.post(
+            "/api/transport/workplaces",
+            json={
+                "workplace": "Operations Hub Prime",
+                "address": "100 Operations Avenue",
+                "zip": "543210",
+                "country": "Singapore",
+                "transport_group": "Jurong Cluster",
+                "boarding_point": "Gate 4 - South Lobby",
+                "transport_window_start": "07:10",
+                "transport_window_end": "08:05",
+                "service_restrictions": "Escort required after 20:00.",
+                "transport_work_to_home_time": "17:50",
+            },
+        )
+        assert created.status_code == 200, created.text
+        created_payload = created.json()
+
+        updated = admin_client.put(
+            f"/api/transport/workplaces/{created_payload['id']}",
+            json={
+                "address": "101 Operations Avenue",
+                "zip": "543211",
+                "country": "Singapore",
+                "transport_group": "Night Shift Cluster",
+                "boarding_point": "Gate 6 - Loading Bay",
+                "transport_window_start": "06:45",
+                "transport_window_end": "07:30",
+                "service_restrictions": "Badge check required before boarding.",
+                "transport_work_to_home_time": "18:05",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        updated_payload = updated.json()
+
+        listed = admin_client.get("/api/transport/workplaces")
+        assert listed.status_code == 200
+        listed_row = next(row for row in listed.json() if row["id"] == created_payload["id"])
+
+    assert created_payload["transport_group"] == "Jurong Cluster"
+    assert created_payload["boarding_point"] == "Gate 4 - South Lobby"
+    assert created_payload["transport_window_start"] == "07:10"
+    assert created_payload["transport_window_end"] == "08:05"
+    assert created_payload["service_restrictions"] == "Escort required after 20:00."
+    assert created_payload["transport_work_to_home_time"] == "17:50"
+
+    assert updated_payload["address"] == "101 Operations Avenue"
+    assert updated_payload["zip"] == "543211"
+    assert updated_payload["transport_group"] == "Night Shift Cluster"
+    assert updated_payload["boarding_point"] == "Gate 6 - Loading Bay"
+    assert updated_payload["transport_window_start"] == "06:45"
+    assert updated_payload["transport_window_end"] == "07:30"
+    assert updated_payload["service_restrictions"] == "Badge check required before boarding."
+    assert updated_payload["transport_work_to_home_time"] == "18:05"
+
+    assert listed_row["workplace"] == "Operations Hub Prime"
+    assert listed_row["address"] == "101 Operations Avenue"
+    assert listed_row["transport_group"] == "Night Shift Cluster"
+    assert listed_row["boarding_point"] == "Gate 6 - Loading Bay"
+    assert listed_row["transport_window_start"] == "06:45"
+    assert listed_row["transport_window_end"] == "07:30"
+    assert listed_row["transport_work_to_home_time"] == "18:05"
+
+
+def test_transport_work_to_home_time_policy_prefers_date_override_then_workplace_then_global(monkeypatch):
+    fixed_now = datetime(2026, 4, 23, 8, 20, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        db.add(
+            Workplace(
+                workplace="Policy Context Hub",
+                address="200 Policy Road",
+                zip="654321",
+                country="Singapore",
+                transport_group="Policy Cluster",
+                boarding_point="Gate A",
+                transport_window_start="07:00",
+                transport_window_end="08:00",
+                service_restrictions="Avoid oversized cargo.",
+                transport_work_to_home_time="17:40",
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        workplace_policy = admin_client.get(
+            "/api/transport/work-to-home-time-policy",
+            params={"service_date": fixed_now.date().isoformat(), "workplace": "Policy Context Hub"},
+        )
+        assert workplace_policy.status_code == 200, workplace_policy.text
+        workplace_policy_payload = workplace_policy.json()
+
+        global_policy = admin_client.get(
+            "/api/transport/work-to-home-time-policy",
+            params={"service_date": fixed_now.date().isoformat()},
+        )
+        assert global_policy.status_code == 200, global_policy.text
+        global_policy_payload = global_policy.json()
+
+        date_override = admin_client.put(
+            "/api/transport/date-settings",
+            json={
+                "service_date": fixed_now.date().isoformat(),
+                "work_to_home_time": "18:10",
+            },
+        )
+        assert date_override.status_code == 200, date_override.text
+
+        date_policy = admin_client.get(
+            "/api/transport/work-to-home-time-policy",
+            params={"service_date": fixed_now.date().isoformat(), "workplace": "Policy Context Hub"},
+        )
+        assert date_policy.status_code == 200, date_policy.text
+        date_policy_payload = date_policy.json()
+
+    assert workplace_policy_payload["resolved_work_to_home_time"] == "17:40"
+    assert workplace_policy_payload["source"] == "workplace_context"
+    assert workplace_policy_payload["global_work_to_home_time"] == "16:45"
+    assert workplace_policy_payload["workplace_work_to_home_time"] == "17:40"
+    assert workplace_policy_payload["date_override_work_to_home_time"] is None
+    assert workplace_policy_payload["transport_group"] == "Policy Cluster"
+    assert workplace_policy_payload["boarding_point"] == "Gate A"
+    assert workplace_policy_payload["transport_window_start"] == "07:00"
+    assert workplace_policy_payload["transport_window_end"] == "08:00"
+
+    assert global_policy_payload["resolved_work_to_home_time"] == "16:45"
+    assert global_policy_payload["source"] == "global"
+    assert global_policy_payload["workplace"] is None
+
+    assert date_policy_payload["resolved_work_to_home_time"] == "18:10"
+    assert date_policy_payload["source"] == "date_override"
+    assert date_policy_payload["global_work_to_home_time"] == "16:45"
+    assert date_policy_payload["workplace_work_to_home_time"] == "17:40"
+    assert date_policy_payload["date_override_work_to_home_time"] == "18:10"
+
+
+def test_web_transport_workplace_context_time_applies_before_date_override(monkeypatch):
+    fixed_now = datetime(2026, 4, 24, 8, 15, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+        db.add(
+            Workplace(
+                workplace="Context Boarding Hub",
+                address="300 Context Road",
+                zip="765432",
+                country="Singapore",
+                transport_group="Context Cluster",
+                boarding_point="West Gate",
+                transport_window_start="07:15",
+                transport_window_end="08:10",
+                service_restrictions="Use west gate after check-in.",
+                transport_work_to_home_time="17:55",
+            )
+        )
+
+        vehicle = Vehicle(placa="CTX1755", tipo="van", color="White", lugares=8, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    with SessionLocal() as db:
+        db.add(
+            User(
+                rfid=None,
+                nome="Context Boarding Rider",
+                chave="CB55",
+                projeto="P80",
+                workplace="Context Boarding Hub",
+                placa=None,
+                end_rua="55 Context Avenue",
+                zip="765433",
+                local="Context Gate",
+                checkin=True,
+                time=fixed_now,
+                last_active_at=fixed_now,
+                inactivity_days=0,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="CB55",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "CB55", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+            initial_policy = admin_client.get(
+                "/api/transport/work-to-home-time-policy",
+                params={"service_date": fixed_now.date().isoformat(), "workplace": "Context Boarding Hub"},
+            )
+            assert initial_policy.status_code == 200
+
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "CB55"})
+        assert confirmed_state.status_code == 200
+        assert confirmed_state.json()["boarding_time"] == "17:55"
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            updated_settings = admin_client.put(
+                "/api/transport/date-settings",
+                json={
+                    "service_date": fixed_now.date().isoformat(),
+                    "work_to_home_time": "18:20",
+                },
+            )
+            assert updated_settings.status_code == 200
+
+        overridden_state = client.get("/api/web/transport/state", params={"chave": "CB55"})
+        assert overridden_state.status_code == 200
+        assert overridden_state.json()["boarding_time"] == "18:20"
 
 
 def test_transport_date_settings_update_work_to_home_departure_for_selected_date_only(monkeypatch):
@@ -9207,6 +12078,78 @@ def test_web_transport_state_marks_departed_confirmed_request_as_realized_and_ex
     assert state_payload["requests"][0]["status"] == "realized"
     assert state_payload["requests"][0]["service_date"] == fixed_now.date().isoformat()
     assert state_payload["requests"][0]["vehicle_color"] == "Silver"
+
+
+def test_web_transport_state_prefers_schedule_scope_over_legacy_vehicle_scope_mirror(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 17, 30, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    with SessionLocal() as db:
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        vehicle = Vehicle(placa="SCP1730", tipo="carro", color="Silver", lugares=4, tolerance=7, service_scope="extra")
+        db.add(vehicle)
+        db.flush()
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        db.commit()
+        vehicle_id = vehicle.id
+
+    ensure_web_user_exists(chave="WS32", projeto="P80", nome="Scope Mirror Rider")
+    set_user_checkin_state(chave="WS32", event_time=fixed_now, local="Scope Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WS32",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        requested = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WS32", "request_kind": "regular"},
+        )
+        assert requested.status_code == 200
+        request_id = requested.json()["state"]["request_id"]
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            assigned = admin_client.post(
+                "/api/transport/assignments",
+                json={
+                    "request_id": request_id,
+                    "service_date": fixed_now.date().isoformat(),
+                    "route_kind": "home_to_work",
+                    "status": "confirmed",
+                    "vehicle_id": vehicle_id,
+                },
+            )
+            assert assigned.status_code == 200
+
+        state_response = client.get("/api/web/transport/state", params={"chave": "WS32"})
+        assert state_response.status_code == 200
+
+    state_payload = state_response.json()
+    assert state_payload["status"] == "confirmed"
+    assert state_payload["route_kind"] == "work_to_home"
+    assert state_payload["boarding_time"] == "18:10"
+    assert state_payload["requests"]
+    assert state_payload["requests"][0]["boarding_time"] == "18:10"
 
 
 def test_web_transport_request_history_uses_next_service_date_and_effective_departure_time(monkeypatch):

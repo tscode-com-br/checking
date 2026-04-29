@@ -24,6 +24,13 @@
   --transport-panel-padding: 5px 10px 12px 5px;
   --transport-title-size: clamp(0.82rem, 0.75vw, 0.9rem);
   --transport-body-size: 0.92rem;
+  --transport-ai-button-size: 38px;
+  --transport-ai-button-border-width: 2px;
+  --transport-ai-button-font-size: 0.936rem;
+  --transport-ai-hover-duration: 1.1s;
+  --transport-ai-hover-scale: 1.3;
+  --transport-ai-rainbow: linear-gradient(90deg, #ff3b30, #ff9500, #ffd60a, #30d158, #64d2ff, #0a84ff, #bf5af2);
+  --transport-ai-rainbow-conic: conic-gradient(from 0deg, #ff3b30, #ff9500, #ffd60a, #30d158, #64d2ff, #0a84ff, #bf5af2, #ff3b30);
 }
 
 *,
@@ -136,6 +143,161 @@ button {
   gap: 12px;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.transport-ai-menu-shell {
+  position: absolute;
+  top: 50%;
+  left: var(--transport-ai-anchor-x, 50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  z-index: 12;
+}
+
+.transport-ai-trigger {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: var(--transport-ai-button-size);
+  height: var(--transport-ai-button-size);
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+  transition:
+    transform var(--transport-ai-hover-duration) ease,
+    box-shadow 220ms ease,
+    filter 160ms ease;
+}
+
+.transport-ai-trigger::before,
+.transport-ai-trigger::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.transport-ai-trigger::before {
+  padding: var(--transport-ai-button-border-width);
+  background: var(--transport-ai-rainbow-conic);
+  z-index: 0;
+  will-change: transform;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+.transport-ai-trigger::after {
+  inset: var(--transport-ai-button-border-width);
+  background: var(--transport-bg);
+  z-index: 1;
+}
+
+.transport-ai-trigger:hover {
+  transform: translateY(-1px) scale(var(--transport-ai-hover-scale));
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.28);
+}
+
+.transport-ai-menu-shell.is-open .transport-ai-trigger {
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.28);
+}
+
+.transport-ai-trigger:hover::before {
+  animation: transport-ai-border-spin calc(var(--transport-ai-hover-duration) / 2) linear 2;
+}
+
+.transport-ai-trigger:focus-visible {
+  outline: 2px solid rgba(100, 210, 255, 0.72);
+  outline-offset: 4px;
+}
+
+.transport-ai-trigger-label {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--transport-ai-button-font-size);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  background: var(--transport-ai-rainbow);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  position: relative;
+  z-index: 2;
+}
+
+@keyframes transport-ai-border-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.transport-ai-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  min-width: 220px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(12, 13, 16, 0.98);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+  transform: translateX(-50%);
+  z-index: 30;
+}
+
+.transport-ai-menu-item {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--transport-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.transport-ai-menu-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(72, 212, 206, 0.32);
+  background: rgba(72, 212, 206, 0.1);
+}
+
+.transport-ai-menu-item:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.52);
+  outline-offset: 2px;
 }
 
 .transport-topbar-support {
@@ -1203,6 +1365,12 @@ button {
   color: var(--transport-success);
 }
 
+.transport-pending-value {
+  color: var(--transport-danger);
+  font-weight: 700;
+  text-transform: none;
+}
+
 .transport-vehicle-management-actions {
   width: 96px;
   text-align: right;
@@ -1312,15 +1480,15 @@ button {
   top: 0;
   left: 0;
   z-index: 2;
-  width: 264px;
-  max-height: min(248px, calc(100dvh - 24px));
+  width: 248px;
+  max-height: min(216px, calc(100dvh - 24px));
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(14, 16, 20, 0.98);
-  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.34);
   opacity: 0;
   pointer-events: auto;
   transition: opacity 120ms ease;
@@ -1330,14 +1498,27 @@ button {
   opacity: 1;
 }
 
+.transport-vehicle-details-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .transport-vehicle-details .transport-vehicle-delete-button {
-  justify-self: center;
+  justify-self: stretch;
+}
+
+.transport-vehicle-details-actions .transport-secondary-button,
+.transport-vehicle-details-actions .transport-vehicle-delete-button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 0.74rem;
 }
 
 .transport-vehicle-passenger-table-shell {
-  max-height: 140px;
+  max-height: 104px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 2px;
 }
 
 .transport-vehicle-passenger-table-shell::-webkit-scrollbar {
@@ -1356,26 +1537,28 @@ button {
 .transport-vehicle-preview-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .transport-vehicle-preview-actions .transport-primary-button,
 .transport-vehicle-preview-actions .transport-secondary-button {
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 0.74rem;
 }
 
 .transport-vehicle-delete-button {
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: 28px;
+  min-width: 0;
+  padding: 0 10px;
   justify-self: start;
   border: 1px solid rgba(255, 109, 84, 0.58);
   border-radius: 10px;
   background: rgba(155, 32, 32, 0.92);
   color: #fff0ed;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -1390,11 +1573,11 @@ button {
 }
 
 .transport-vehicle-passenger-row td {
-  height: 28px;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--transport-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
 }
 
 .transport-vehicle-passenger-row:first-child td {
@@ -1402,14 +1585,23 @@ button {
 }
 
 .transport-vehicle-passenger-name {
-  width: calc(100% - 34px);
+  width: calc(100% - 28px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .transport-vehicle-passenger-status {
-  width: 34px;
+  width: 28px;
+  text-align: center;
+}
+
+.transport-vehicle-passenger-empty {
+  margin: 0;
+  padding: 6px 2px 2px;
+  color: var(--transport-text-soft);
+  font-size: 0.72rem;
+  line-height: 1.3;
   text-align: center;
 }
 
@@ -1521,6 +1713,10 @@ button {
   color: #c3ffe6;
 }
 
+.transport-vehicle-button.is-assigned .transport-pending-value {
+  color: var(--transport-danger);
+}
+
 .transport-empty-state {
   display: flex;
   align-items: center;
@@ -1543,6 +1739,10 @@ button {
   padding: 24px;
   background: rgba(4, 5, 7, 0.76);
   backdrop-filter: blur(10px);
+}
+
+.transport-modal-backdrop[data-settings-modal] {
+  padding: 10px;
 }
 
 .transport-modal {
@@ -1630,8 +1830,111 @@ button {
   color: #c9ffe4;
 }
 
+.transport-modal-backdrop[data-vehicle-modal] {
+  padding: 10px;
+}
+
+.transport-vehicle-modal {
+  width: min(100%, 930px);
+  max-height: calc(100dvh - 20px);
+  padding: 12px 14px;
+}
+
+.transport-vehicle-modal .transport-modal-head {
+  gap: 10px;
+}
+
+.transport-vehicle-modal .transport-modal-title {
+  font-size: 1.06rem;
+}
+
+.transport-vehicle-modal .transport-modal-close {
+  width: 34px;
+  height: 34px;
+  font-size: 1.15rem;
+}
+
+.transport-vehicle-modal-form {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.transport-vehicle-modal-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.transport-vehicle-modal-section-scope {
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.transport-vehicle-modal-grid,
+.transport-vehicle-checkbox-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.transport-vehicle-modal-grid-primary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.transport-vehicle-modal-grid-extra {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.transport-vehicle-checkbox-grid-weekend {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transport-vehicle-checkbox-grid-regular {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.transport-vehicle-field {
+  gap: 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.transport-vehicle-field span {
+  color: var(--transport-text-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transport-vehicle-field input,
+.transport-vehicle-field select {
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 12px;
+}
+
 .transport-settings-modal {
-  width: min(100%, 560px);
+  width: min(100%, 940px);
+  max-height: calc(100dvh - 20px);
+  padding: 12px 14px;
+}
+
+.transport-settings-modal .transport-modal-head {
+  gap: 10px;
+}
+
+.transport-settings-modal .transport-modal-title {
+  font-size: 1.06rem;
+}
+
+.transport-settings-modal .transport-modal-close {
+  width: 34px;
+  height: 34px;
+  font-size: 1.15rem;
 }
 
 .transport-settings-modal-title {
@@ -1640,61 +1943,171 @@ button {
 }
 
 .transport-settings-modal-body {
-  margin-top: 20px;
+  margin-top: 10px;
   display: grid;
-  gap: 18px;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
 }
 
 .transport-settings-section {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 8px;
+  padding: 12px;
   border: 1px dashed rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.transport-settings-section-body {
+  display: grid;
+  gap: 8px;
+}
+
+.transport-settings-section-preferences .transport-settings-section-body {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.transport-settings-section-preferences .transport-settings-row {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 4px;
+}
+
+.transport-settings-section-preferences .transport-settings-note {
+  grid-column: 1 / -1;
 }
 
 .transport-settings-section-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.94rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .transport-settings-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 190px);
+  grid-template-columns: minmax(0, 1fr) minmax(145px, 190px);
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+}
+
+.transport-settings-wide-row {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.transport-settings-dual-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: flex-start;
+}
+
+.transport-settings-dual-field,
+.transport-settings-subfield {
+  display: grid;
+  gap: 6px;
+}
+
+.transport-settings-subfield-label {
+  color: var(--transport-text-soft);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transport-settings-subsection {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.transport-settings-price-variables-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.transport-settings-inline-controls,
+.transport-settings-add-currency-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transport-settings-inline-button {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.transport-settings-add-currency {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.transport-settings-add-currency-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .transport-settings-label {
   color: var(--transport-text);
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   font-weight: 600;
 }
 
 .transport-settings-note {
-  margin: -2px 0 0;
+  margin: 0;
   color: var(--transport-text-soft);
-  font-size: 0.82rem;
-  line-height: 1.5;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.transport-settings-defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transport-settings-default-card {
+  grid-template-columns: 1fr;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  align-items: stretch;
+  gap: 6px;
+}
+
+.transport-settings-default-card .transport-settings-label {
+  font-size: 0.78rem;
+  line-height: 1.2;
 }
 
 .transport-settings-select,
+.transport-settings-text-input,
 .transport-settings-time-input,
 .transport-settings-number-input {
   width: 100%;
-  min-height: 42px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(9, 9, 9, 0.78);
   color: var(--transport-text);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .transport-settings-select:disabled,
+.transport-settings-text-input:disabled,
 .transport-settings-time-input:disabled,
 .transport-settings-number-input:disabled {
   opacity: 0.6;
@@ -1708,6 +2121,8 @@ button {
 
 .transport-settings-actions {
   margin-top: 0;
+  grid-column: 1 / -1;
+  display: none;
 }
 
 .transport-field {
@@ -1740,17 +2155,18 @@ button {
 .transport-checkbox-field {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 0 14px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
   color: var(--transport-text-muted);
+  font-size: 0.78rem;
 }
 
 .transport-checkbox-field + .transport-checkbox-field {
-  margin-top: -2px;
+  margin-top: 0;
 }
 
 .transport-checkbox-field input {
@@ -1775,12 +2191,46 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .transport-vehicle-modal {
+    width: min(100%, 640px);
+  }
+
   .tela01main > .transport-divider-vertical {
+  .transport-vehicle-modal-grid-primary,
+  .transport-vehicle-modal-grid-extra,
+  .transport-vehicle-checkbox-grid-weekend,
+  .transport-vehicle-checkbox-grid-regular,
     display: none;
   }
 
   .tela01main_dir {
     border-top: 1px solid var(--transport-border);
+  }
+}
+
+@media (max-width: 960px) {
+  .transport-settings-modal {
+    width: min(100%, 640px);
+  }
+
+  .transport-settings-section-preferences .transport-settings-section-body,
+  .transport-settings-modal-body,
+  .transport-settings-defaults-grid,
+  .transport-settings-row,
+  .transport-settings-dual-row,
+  .transport-settings-inline-controls,
+  .transport-settings-add-currency-fields,
+  .transport-vehicle-details-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-settings-inline-button {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .transport-settings-actions {
+    display: flex;
   }
 }
 
@@ -1807,6 +2257,17 @@ button {
   .transport-topbar-auth,
   .transport-topbar-support {
     width: 100%;
+  }
+
+  .transport-ai-menu-shell {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+  }
+
+  .transport-ai-menu {
+    min-width: min(280px, calc(100vw - 48px));
   }
 
   .transport-topbar-support {
@@ -1875,6 +2336,12 @@ button {
     gap: 10px;
   }
 
+  .transport-settings-dual-row,
+  .transport-settings-inline-controls,
+  .transport-settings-add-currency-fields {
+    grid-template-columns: 1fr;
+  }
+
   .transport-request-sections {
     padding-right: 0;
   }
@@ -1894,7 +2361,7 @@ button {
 
   .transport-vehicle-details {
     left: calc(100% + 8px);
-    width: min(240px, calc(100vw - 96px));
+    width: min(220px, calc(100vw - 88px));
   }
 
   .transport-footer-status {

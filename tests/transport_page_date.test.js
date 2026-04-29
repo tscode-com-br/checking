@@ -186,12 +186,34 @@ test('formatVehicleOccupancyLabel shows the current and total allocated seats', 
     transportPage.formatVehicleOccupancyLabel({ placa: 'SGX1234A', lugares: 7 }, 3),
     'SGX1234A (3/7)'
   );
+
+  assert.equal(
+    transportPage.formatVehicleOccupancyLabel({ placa: '', lugares: null }, 3),
+    'Waiting (3/Waiting)'
+  );
 });
 
 test('formatVehicleOccupancyCount shows only the allocated and total seats', () => {
   assert.equal(
     transportPage.formatVehicleOccupancyCount({ placa: 'SGX1234A', lugares: 7 }, 3),
     '3/7'
+  );
+
+  assert.equal(
+    transportPage.formatVehicleOccupancyCount({ placa: 'SGX1234A', lugares: null }, 3),
+    '3/Waiting'
+  );
+});
+
+test('pending vehicle helpers localize missing text fields as Waiting without treating numeric zero as blank', () => {
+  assert.equal(transportPage.isPendingVehicleField(null), true);
+  assert.equal(transportPage.isPendingVehicleField('   '), true);
+  assert.equal(transportPage.isPendingVehicleField('SGX1234A'), false);
+  assert.equal(transportPage.isPendingVehicleField(0), false);
+  assert.equal(transportPage.formatPendingVehicleField(''), 'Waiting');
+  assert.equal(
+    transportPage.formatPendingVehicleField('van', (value) => String(value).toUpperCase()),
+    'VAN'
   );
 });
 
@@ -263,18 +285,73 @@ test('getDefaultVehicleFormValues returns the prefilled create-modal defaults', 
   });
 });
 
-test('vehicle modal markup includes the default places and tolerance values', () => {
+test('buildVehicleBasePayload keeps empty edit fields nullable without inventing defaults', () => {
+  const formData = new FormData();
+  formData.set('tipo', '');
+  formData.set('placa', '');
+  formData.set('color', 'Blue');
+  formData.set('lugares', '');
+  formData.set('tolerance', '0');
+
+  assert.deepEqual(transportPage.buildVehicleBasePayload(formData), {
+    tipo: null,
+    placa: null,
+    color: 'Blue',
+    lugares: null,
+    tolerance: 0,
+  });
+});
+
+test('resolveVehicleEditFocusField prioritizes pending base fields and then the first blank value', () => {
+  assert.equal(
+    transportPage.resolveVehicleEditFocusField({
+      pending_fields: ['lugares', 'placa'],
+      placa: null,
+      lugares: null,
+    }),
+    'placa'
+  );
+
+  assert.equal(
+    transportPage.resolveVehicleEditFocusField({
+      tipo: 'carro',
+      placa: 'ABC1234',
+      color: null,
+      lugares: 3,
+      tolerance: 5,
+    }),
+    'color'
+  );
+});
+
+test('vehicle modal markup keeps default places and tolerance values while allowing partial base fields', () => {
   const transportHtml = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/index.html'),
     'utf8'
   );
 
+  assert.match(transportHtml, /<option value=""><\/option>/);
   assert.match(transportHtml, /<option value="carro" selected>Car<\/option>/);
-  assert.match(transportHtml, /<input type="text" name="placa" maxlength="15" autocomplete="off" required \/>/);
-  assert.match(transportHtml, /<input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" required \/>/);
-  assert.match(transportHtml, /<input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" required \/>/);
+  assert.match(transportHtml, /<input type="text" name="placa" maxlength="15" autocomplete="off" \/>/);
+  assert.match(transportHtml, /<input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" \/>/);
+  assert.match(transportHtml, /<input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" \/>/);
   assert.match(transportHtml, /<input type="checkbox" name="every_monday" checked \/>/);
   assert.match(transportHtml, /<input type="checkbox" name="every_friday" checked \/>/);
+});
+
+test('transport pending placeholder translations and CSS are defined for vehicle fields', () => {
+  const transportI18n = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/i18n.js'),
+    'utf8'
+  );
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(transportI18n, /waiting:\s*"Waiting"/);
+  assert.match(transportI18n, /waitingAria:\s*"Vehicle field pending completion"/);
+  assert.match(transportCss, /\.transport-pending-value\s*\{[\s\S]*color:\s*var\(--transport-danger\);/);
 });
 
 test('transport topbar uses an inline red dashboard settings link below the allocation board title', () => {
@@ -324,22 +401,81 @@ test('transport page controller declares the topbar element before applying tran
   assert.match(transportScript, /if \(transportTopbar\) \{[\s\S]*transportTopbar\.setAttribute\("aria-label", t\("layout\.quickActions"\)\);/);
 });
 
-test('transport settings modal includes editable default seat counts for each vehicle type', () => {
+test('transport settings modal includes editable default seat counts, pricing controls, and currency actions', () => {
   const transportHtml = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/index.html'),
     'utf8'
   );
+  const transportI18n = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/i18n.js'),
+    'utf8'
+  );
 
   assert.match(transportHtml, /data-settings-vehicle-defaults-title/);
+  assert.match(transportHtml, /data-settings-price-variables-label/);
+  assert.match(transportHtml, /data-settings-price-currency/);
+  assert.match(transportHtml, /data-settings-price-rate-unit/);
+  assert.match(transportHtml, /data-settings-add-currency-button/);
+  assert.match(transportHtml, /data-settings-new-currency-code/);
+  assert.match(transportHtml, /data-settings-new-currency-label/);
+  assert.match(transportHtml, /data-settings-save-currency-button/);
   assert.match(transportHtml, /data-settings-default-seat="carro"/);
   assert.match(transportHtml, /data-settings-default-seat="minivan"/);
   assert.match(transportHtml, /data-settings-default-seat="van"/);
   assert.match(transportHtml, /data-settings-default-seat="onibus"/);
+  assert.match(transportHtml, /data-settings-default-price="carro"/);
+  assert.match(transportHtml, /data-settings-default-price="minivan"/);
+  assert.match(transportHtml, /data-settings-default-price="van"/);
+  assert.match(transportHtml, /data-settings-default-price="onibus"/);
   assert.match(transportHtml, /data-settings-default-tolerance-label/);
   assert.match(transportHtml, /data-settings-default-tolerance/);
   assert.match(transportHtml, /id="transportSettingsCarSeats"[\s\S]*value="3"/);
   assert.match(transportHtml, /id="transportSettingsBusSeats"[\s\S]*value="40"/);
   assert.match(transportHtml, /id="transportSettingsDefaultTolerance"[\s\S]*value="5"/);
+  assert.match(transportHtml, /id="transportSettingsCarPrice"/);
+  assert.match(transportHtml, /id="transportSettingsBusPrice"/);
+  assert.match(transportI18n, /priceVariables:\s*"Price Variables"/);
+  assert.match(transportI18n, /defaultPriceLabel:\s*"\{type\} default price:"/);
+  assert.match(transportI18n, /couldNotAddCurrency:\s*"Could not add currency\./);
+  assert.match(transportI18n, /currencyAlreadyExists:\s*"This currency code already exists\./);
+});
+
+test('transport settings pricing helpers normalize currency options and price defaults safely', () => {
+  assert.equal(transportPage.normalizeTransportCurrencyCode(' sgd '), 'SGD');
+  assert.equal(transportPage.normalizeTransportPriceRateUnit('week', 'day'), 'week');
+  assert.equal(transportPage.normalizeTransportPriceRateUnit('invalid', 'day'), 'day');
+  assert.deepEqual(
+    transportPage.resolveTransportCurrencyOptions([
+      { code: 'usd', display_label: 'US Dollar' },
+      { code: 'USD', display_label: 'Duplicate USD' },
+      { code: '', display_label: 'Ignored' },
+    ]),
+    [{ code: 'USD', display_label: 'US Dollar' }]
+  );
+  assert.deepEqual(
+    transportPage.resolveTransportVehiclePriceDefaults(
+      {
+        default_car_price: '12.5',
+        default_minivan_price: '',
+        default_van_price: null,
+        default_bus_price: 99,
+      },
+      {
+        carro: null,
+        minivan: 10,
+        van: 20,
+        onibus: 30,
+      }
+    ),
+    {
+      carro: 12.5,
+      minivan: null,
+      van: null,
+      onibus: 99,
+    }
+  );
+  assert.equal(transportPage.formatTransportPriceInputValue(12.5), '12.50');
+  assert.equal(transportPage.formatTransportCurrencyOptionLabel({ code: 'SGD', display_label: 'Singapore Dollar' }), 'SGD - Singapore Dollar');
 });
 
 test('applyTransportVehicleToleranceDefault updates the shared vehicle form tolerance default', () => {
@@ -392,7 +528,7 @@ test('shouldHighlightRequestName marks unassigned and cancelled rows for red-nam
   assert.equal(transportPage.shouldHighlightRequestName('confirmed'), false);
 });
 
-test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five lines', () => {
+test('buildVehiclePassengerAwarenessRows keeps only assigned passengers without blank filler rows', () => {
   assert.deepEqual(
     transportPage.buildVehiclePassengerAwarenessRows(
       [
@@ -404,14 +540,11 @@ test('buildVehiclePassengerAwarenessRows pads the vehicle details table to five 
     [
       { name: 'Alice Rider', awarenessState: 'pending' },
       { name: 'Bob Rider', awarenessState: 'aware' },
-      { name: '', awarenessState: null },
-      { name: '', awarenessState: null },
-      { name: '', awarenessState: null },
     ]
   );
 });
 
-test('buildVehiclePassengerAwarenessRows keeps overflow passengers while preserving the first five visible rows', () => {
+test('buildVehiclePassengerAwarenessRows caps the visible rows to the requested maximum', () => {
   assert.deepEqual(
     transportPage.buildVehiclePassengerAwarenessRows(
       [
@@ -430,9 +563,12 @@ test('buildVehiclePassengerAwarenessRows keeps overflow passengers while preserv
       { name: 'Carol Rider', awarenessState: 'pending' },
       { name: 'Daniel Rider', awarenessState: 'pending' },
       { name: 'Evelyn Rider', awarenessState: 'pending' },
-      { name: 'Frank Rider', awarenessState: 'pending' },
     ]
   );
+});
+
+test('buildVehiclePassengerAwarenessRows returns an empty list when no passengers are assigned', () => {
+  assert.deepEqual(transportPage.buildVehiclePassengerAwarenessRows([], 5), []);
 });
 
 test('transport page request section titles are rendered as links that control each user list', () => {
@@ -469,7 +605,7 @@ test('transport topbar removes route controls and keeps only the selected-date t
   assert.match(transportHtml, /data-route-time-input/);
   assert.doesNotMatch(transportScript, /const routeSelect = document\.querySelector\("\[data-route-select\]"\);/);
   assert.doesNotMatch(transportScript, /\brouteSelect\b/);
-  assert.match(transportScript, /const shouldShowRouteTime = state\.isAuthenticated;/);
+  assert.match(transportScript, /const shouldShowRouteTime = true;/);
   assert.match(transportScript, /routeTimePopover\.hidden = !shouldShowRouteTime;/);
   assert.match(transportCss, /\.transport-route-inline-time-label\s*\{[\s\S]*text-transform:\s*uppercase;[\s\S]*white-space:\s*nowrap;/);
 });
@@ -523,6 +659,22 @@ test('transport vehicle modal stays viewport-safe after adding the extra departu
   assert.match(
     transportCss,
     /@media \(max-width: 640px\) \{[\s\S]*\.transport-modal\s*\{[\s\S]*max-height:\s*calc\(100dvh - 24px\);/
+  );
+});
+
+test('transport settings modal widens on desktop and collapses pricing controls earlier on medium widths', () => {
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportCss,
+    /\.transport-settings-modal\s*\{[\s\S]*width:\s*min\(100%, 940px\);/
+  );
+  assert.match(
+    transportCss,
+    /@media \(max-width: 960px\) \{[\s\S]*\.transport-settings-row,[\s\S]*\.transport-settings-dual-row,[\s\S]*\.transport-settings-inline-controls,[\s\S]*\.transport-settings-add-currency-fields,[\s\S]*\.transport-vehicle-details-actions[\s\S]*grid-template-columns:\s*1fr;/
   );
 });
 
@@ -608,6 +760,21 @@ test('transport vehicle details panel inserts the delete button before the passe
   assert.match(transportScript, /detailsPanel\.insertBefore\(deleteButton, passengerTableShell\);/);
 });
 
+test('transport vehicle details expose a focused edit action for pending vehicles', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+
+  assert.match(transportScript, /function openVehicleEditModal\(vehicle\) \{/);
+  assert.match(
+    transportScript,
+    /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/vehicles\/\$\{encodeURIComponent\(String\(vehicleId\)\)\}`, \{[\s\S]*method:\s*"PUT"/
+  );
+  assert.match(transportScript, /Array\.isArray\(vehicle\.pending_fields\) && vehicle\.pending_fields\.length/);
+  assert.match(transportScript, /openVehicleEditModal\(vehicle\);/);
+});
+
 test('transport vehicle details render in a fixed overlay layer above the layout', () => {
   const transportCss = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/styles.css'),
@@ -645,6 +812,26 @@ test('transport vehicle details render in a fixed overlay layer above the layout
   assert.match(
     transportScript,
     /document\.addEventListener\("keydown", function \(event\) \{[\s\S]*event\.key !== "Escape"[\s\S]*closeExpandedVehicleDetails\(\{ restoreFocus: true \}\);/
+  );
+});
+
+test('transport vehicle details show a compact empty passenger message instead of padded blank rows', () => {
+  const transportScript = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/app.js'),
+    'utf8'
+  );
+  const transportCss = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/styles.css'),
+    'utf8'
+  );
+
+  assert.match(
+    transportScript,
+    /createNode\("p", "transport-vehicle-passenger-empty", t\("empty\.noPassengersAssigned"\)\)/
+  );
+  assert.match(
+    transportCss,
+    /\.transport-vehicle-passenger-empty\s*\{[\s\S]*text-align:\s*center;/
   );
 });
 
@@ -768,7 +955,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
     transportPage.canRequestBeDroppedOnVehicle(
       { id: 10, request_kind: 'regular' },
       'regular',
-      { id: 8, route_kind: null },
+      { id: 8, route_kind: null, is_ready_for_allocation: true },
       'home_to_work'
     ),
     true
@@ -777,7 +964,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
     transportPage.canRequestBeDroppedOnVehicle(
       { id: 10, request_kind: 'regular' },
       'weekend',
-      { id: 8, route_kind: null },
+      { id: 8, route_kind: null, is_ready_for_allocation: true },
       'home_to_work'
     ),
     false
@@ -786,7 +973,7 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
     transportPage.canRequestBeDroppedOnVehicle(
       { id: 10, request_kind: 'extra', assigned_vehicle: { id: 8 } },
       'extra',
-      { id: 8, route_kind: 'work_to_home' },
+      { id: 8, route_kind: 'work_to_home', is_ready_for_allocation: true },
       'work_to_home'
     ),
     false
@@ -795,10 +982,38 @@ test('canRequestBeDroppedOnVehicle only accepts compatible scope combinations an
     transportPage.canRequestBeDroppedOnVehicle(
       { id: 10, request_kind: 'extra' },
       'extra',
-      { id: 8, route_kind: 'work_to_home' },
+      { id: 8, route_kind: 'work_to_home', is_ready_for_allocation: true },
       'home_to_work'
     ),
     true
+  );
+  assert.equal(
+    transportPage.canRequestBeDroppedOnVehicle(
+      { id: 10, request_kind: 'regular' },
+      'regular',
+      { id: 8, route_kind: null, is_ready_for_allocation: false },
+      'home_to_work'
+    ),
+    false
+  );
+});
+
+test('vehicle allocation readiness helper falls back to required vehicle fields and exposes a stable warning message', () => {
+  assert.equal(
+    transportPage.isVehicleReadyForAllocation({ is_ready_for_allocation: false, tipo: 'carro', placa: 'SGX1001A', lugares: 4, tolerance: 5 }),
+    false
+  );
+  assert.equal(
+    transportPage.isVehicleReadyForAllocation({ tipo: 'carro', placa: 'SGX1001A', lugares: 4, tolerance: 5 }),
+    true
+  );
+  assert.equal(
+    transportPage.isVehicleReadyForAllocation({ tipo: null, placa: 'SGX1001A', lugares: 4, tolerance: 5 }),
+    false
+  );
+  assert.equal(
+    transportPage.getVehiclePendingAllocationMessage({ is_ready_for_allocation: false }),
+    'This vehicle is still missing required allocation data.'
   );
 });
 
@@ -883,6 +1098,103 @@ test('buildVehicleCreatePayload keeps dashboard dates for regular and weekend ve
   );
 });
 
+test('buildVehicleCreatePayload serializes empty extra base fields as null instead of fallback values', () => {
+  const extraFormData = new FormData();
+  extraFormData.set('service_scope', 'extra');
+  extraFormData.set('tipo', '');
+  extraFormData.set('placa', '   ');
+  extraFormData.set('color', '');
+  extraFormData.set('lugares', '');
+  extraFormData.set('tolerance', '');
+  extraFormData.set('service_date', '2026-05-02');
+  extraFormData.set('departure_time', '17:45');
+  extraFormData.set('route_kind', 'work_to_home');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(extraFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'extra',
+      service_date: '2026-05-02',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      departure_time: '17:45',
+      route_kind: 'work_to_home',
+    }
+  );
+});
+
+test('buildVehicleCreatePayload serializes empty weekend and regular base fields as null while preserving persistence selections', () => {
+  const weekendFormData = new FormData();
+  weekendFormData.set('service_scope', 'weekend');
+  weekendFormData.set('tipo', '');
+  weekendFormData.set('placa', '   ');
+  weekendFormData.set('color', '');
+  weekendFormData.set('lugares', '');
+  weekendFormData.set('tolerance', '');
+  weekendFormData.set('every_sunday', 'on');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(weekendFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'weekend',
+      service_date: '2026-04-18',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_saturday: false,
+      every_sunday: true,
+    }
+  );
+
+  const regularFormData = new FormData();
+  regularFormData.set('service_scope', 'regular');
+  regularFormData.set('tipo', '');
+  regularFormData.set('placa', '');
+  regularFormData.set('color', '');
+  regularFormData.set('lugares', '');
+  regularFormData.set('tolerance', '');
+  regularFormData.set('every_tuesday', 'on');
+
+  assert.deepEqual(
+    transportPage.buildVehicleCreatePayload(regularFormData, '2026-04-18', 'home_to_work'),
+    {
+      service_scope: 'regular',
+      service_date: '2026-04-18',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_monday: false,
+      every_tuesday: true,
+      every_wednesday: false,
+      every_thursday: false,
+      every_friday: false,
+    }
+  );
+});
+
+test('syncVehicleTypeDependentDefaults allows the type field to stay blank', () => {
+  const vehicleForm = {
+    elements: {
+      tipo: { value: 'carro' },
+      lugares: { value: '3' },
+      tolerance: { value: '5' },
+    },
+  };
+
+  transportPage.syncVehicleTypeDependentDefaults('', vehicleForm);
+
+  assert.equal(vehicleForm.elements.tipo.value, '');
+  assert.equal(vehicleForm.elements.lugares.value, '3');
+  assert.equal(vehicleForm.elements.tolerance.value, '5');
+});
+
 test('resolveVehicleModalOpenState prefills the extra modal service date and targets the date field for focus', () => {
   assert.deepEqual(
     transportPage.resolveVehicleModalOpenState('extra', '2026-05-02'),
@@ -925,6 +1237,76 @@ test('resolveVehicleCreateValidationError blocks extra submits without a departu
       service_date: '2026-05-02',
       departure_time: '17:45',
       route_kind: 'home_to_work',
+    }),
+    null
+  );
+});
+
+test('resolveVehicleCreateValidationError keeps weekend and regular requirements scoped to persistence selections', () => {
+  assert.deepEqual(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'weekend',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_saturday: false,
+      every_sunday: false,
+    }),
+    {
+      messageKey: 'warnings.weekendPersistence',
+      focusField: null,
+    }
+  );
+
+  assert.equal(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'weekend',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_saturday: true,
+      every_sunday: false,
+    }),
+    null
+  );
+
+  assert.deepEqual(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'regular',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_monday: false,
+      every_tuesday: false,
+      every_wednesday: false,
+      every_thursday: false,
+      every_friday: false,
+    }),
+    {
+      messageKey: 'warnings.regularPersistence',
+      focusField: null,
+    }
+  );
+
+  assert.equal(
+    transportPage.resolveVehicleCreateValidationError({
+      service_scope: 'regular',
+      tipo: null,
+      placa: null,
+      color: null,
+      lugares: null,
+      tolerance: null,
+      every_monday: false,
+      every_tuesday: false,
+      every_wednesday: false,
+      every_thursday: true,
+      every_friday: false,
     }),
     null
   );

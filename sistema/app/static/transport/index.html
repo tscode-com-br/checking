@@ -30,6 +30,34 @@
             </a>
           </div>
           <div class="transport-topbar-route-slot" data-route-slot>
+            <div class="transport-ai-menu-shell" data-ai-menu-shell>
+              <button
+                type="button"
+                class="transport-ai-trigger"
+                data-ai-menu-trigger
+                aria-label="Open AI menu"
+                aria-haspopup="menu"
+                aria-controls="transportAiMenu"
+                aria-expanded="false"
+              >
+                <span class="transport-ai-trigger-label">IA</span>
+              </button>
+              <div
+                id="transportAiMenu"
+                class="transport-ai-menu"
+                data-ai-menu
+                role="menu"
+                aria-label="AI actions"
+                hidden
+              >
+                <button type="button" class="transport-ai-menu-item" data-ai-menu-action="calculate-routes" role="menuitem">
+                  Calculate Routes
+                </button>
+                <button type="button" class="transport-ai-menu-item" data-ai-menu-action="implement-modifications" role="menuitem">
+                  Implement Modifications
+                </button>
+              </div>
+            </div>
             <label class="transport-route-inline-time" data-route-time-popover hidden>
               <span class="transport-route-inline-time-label" data-route-time-label>Work to Home Time:</span>
               <input
@@ -286,7 +314,7 @@
     </main>
 
     <div class="transport-modal-backdrop" data-vehicle-modal hidden>
-      <div class="transport-modal" role="dialog" aria-modal="true" aria-labelledby="transport-vehicle-modal-title">
+      <div class="transport-modal transport-vehicle-modal" role="dialog" aria-modal="true" aria-labelledby="transport-vehicle-modal-title">
         <div class="transport-modal-head">
           <div>
             <span class="transport-modal-kicker" data-modal-scope-label>Regular</span>
@@ -295,7 +323,7 @@
           <button type="button" class="transport-modal-close" data-close-vehicle-modal aria-label="Close vehicle form">×</button>
         </div>
 
-        <form class="transport-modal-form" data-vehicle-form>
+        <form class="transport-modal-form transport-vehicle-modal-form" data-vehicle-form>
           <input type="hidden" name="service_scope" value="regular" />
 
           <p class="transport-modal-note" data-modal-scope-note>
@@ -304,88 +332,105 @@
 
           <p class="transport-modal-feedback" data-vehicle-modal-feedback data-tone="error" role="alert" hidden></p>
 
-          <label class="transport-field">
-            <span>Type</span>
-            <select name="tipo" required>
-              <option value="carro" selected>Car</option>
-              <option value="minivan">Minivan</option>
-              <option value="van">Van</option>
-              <option value="onibus">Bus</option>
-            </select>
-          </label>
+          <div class="transport-vehicle-modal-section">
+            <div class="transport-vehicle-modal-grid transport-vehicle-modal-grid-primary">
+              <label class="transport-field transport-vehicle-field">
+                <span>Type</span>
+                <select name="tipo">
+                  <option value=""></option>
+                  <option value="carro" selected>Car</option>
+                  <option value="minivan">Minivan</option>
+                  <option value="van">Van</option>
+                  <option value="onibus">Bus</option>
+                </select>
+              </label>
 
-          <label class="transport-field">
-            <span>Plate</span>
-            <input type="text" name="placa" maxlength="15" autocomplete="off" required />
-          </label>
+              <label class="transport-field transport-vehicle-field">
+                <span>Plate</span>
+                <input type="text" name="placa" maxlength="15" autocomplete="off" />
+              </label>
 
-          <label class="transport-field">
-            <span>Color</span>
-            <input type="text" name="color" maxlength="40" autocomplete="off" required />
-          </label>
+              <label class="transport-field transport-vehicle-field">
+                <span>Color</span>
+                <input type="text" name="color" maxlength="40" autocomplete="off" />
+              </label>
 
-          <label class="transport-field">
-            <span>Places</span>
-            <input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" required />
-          </label>
+              <label class="transport-field transport-vehicle-field">
+                <span>Places</span>
+                <input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" />
+              </label>
 
-          <label class="transport-field">
-            <span>Tolerance (minutes)</span>
-            <input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" required />
-          </label>
+              <label class="transport-field transport-vehicle-field">
+                <span>Tolerance (minutes)</span>
+                <input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" />
+              </label>
+            </div>
+          </div>
 
-          <label class="transport-field" data-extra-service-date-field hidden>
-            <span>Departure Date</span>
-            <input type="date" name="service_date" />
-          </label>
+          <div class="transport-vehicle-modal-section transport-vehicle-modal-section-scope" data-extra-vehicle-section hidden>
+            <div class="transport-vehicle-modal-grid transport-vehicle-modal-grid-extra">
+              <label class="transport-field transport-vehicle-field" data-extra-service-date-field hidden>
+                <span>Departure Date</span>
+                <input type="date" name="service_date" />
+              </label>
 
-          <label class="transport-field" data-extra-departure-field hidden>
-            <span>Departure Time</span>
-            <input type="time" name="departure_time" />
-          </label>
+              <label class="transport-field transport-vehicle-field" data-extra-departure-field hidden>
+                <span>Departure Time</span>
+                <input type="time" name="departure_time" />
+              </label>
 
-          <label class="transport-field" data-extra-route-field hidden>
-            <span>Route</span>
-            <select name="route_kind">
-              <option value="home_to_work">Home to Work</option>
-              <option value="work_to_home">Work to Home</option>
-            </select>
-          </label>
+              <label class="transport-field transport-vehicle-field" data-extra-route-field hidden>
+                <span>Route</span>
+                <select name="route_kind">
+                  <option value="home_to_work">Home to Work</option>
+                  <option value="work_to_home">Work to Home</option>
+                </select>
+              </label>
+            </div>
+          </div>
 
-          <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
-            <input type="checkbox" name="every_saturday" />
-            <span>Every Saturday</span>
-          </label>
+          <div class="transport-vehicle-modal-section transport-vehicle-modal-section-scope" data-weekend-persistence-group hidden>
+            <div class="transport-vehicle-checkbox-grid transport-vehicle-checkbox-grid-weekend">
+              <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
+                <input type="checkbox" name="every_saturday" />
+                <span>Every Saturday</span>
+              </label>
 
-          <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
-            <input type="checkbox" name="every_sunday" />
-            <span>Every Sunday</span>
-          </label>
+              <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
+                <input type="checkbox" name="every_sunday" />
+                <span>Every Sunday</span>
+              </label>
+            </div>
+          </div>
 
-          <label class="transport-checkbox-field" data-regular-persistence-field hidden>
-            <input type="checkbox" name="every_monday" checked />
-            <span>Every Monday</span>
-          </label>
+          <div class="transport-vehicle-modal-section transport-vehicle-modal-section-scope" data-regular-persistence-group hidden>
+            <div class="transport-vehicle-checkbox-grid transport-vehicle-checkbox-grid-regular">
+              <label class="transport-checkbox-field" data-regular-persistence-field hidden>
+                <input type="checkbox" name="every_monday" checked />
+                <span>Every Monday</span>
+              </label>
 
-          <label class="transport-checkbox-field" data-regular-persistence-field hidden>
-            <input type="checkbox" name="every_tuesday" checked />
-            <span>Every Tuesday</span>
-          </label>
+              <label class="transport-checkbox-field" data-regular-persistence-field hidden>
+                <input type="checkbox" name="every_tuesday" checked />
+                <span>Every Tuesday</span>
+              </label>
 
-          <label class="transport-checkbox-field" data-regular-persistence-field hidden>
-            <input type="checkbox" name="every_wednesday" checked />
-            <span>Every Wednesday</span>
-          </label>
+              <label class="transport-checkbox-field" data-regular-persistence-field hidden>
+                <input type="checkbox" name="every_wednesday" checked />
+                <span>Every Wednesday</span>
+              </label>
 
-          <label class="transport-checkbox-field" data-regular-persistence-field hidden>
-            <input type="checkbox" name="every_thursday" checked />
-            <span>Every Thursday</span>
-          </label>
+              <label class="transport-checkbox-field" data-regular-persistence-field hidden>
+                <input type="checkbox" name="every_thursday" checked />
+                <span>Every Thursday</span>
+              </label>
 
-          <label class="transport-checkbox-field" data-regular-persistence-field hidden>
-            <input type="checkbox" name="every_friday" checked />
-            <span>Every Friday</span>
-          </label>
+              <label class="transport-checkbox-field" data-regular-persistence-field hidden>
+                <input type="checkbox" name="every_friday" checked />
+                <span>Every Friday</span>
+              </label>
+            </div>
+          </div>
 
           <div class="transport-modal-actions">
             <button type="button" class="transport-secondary-button" data-close-vehicle-modal>Cancel</button>
@@ -411,114 +456,257 @@
         </div>
 
         <div class="transport-settings-modal-body">
-          <section class="transport-settings-section">
+          <section class="transport-settings-section transport-settings-section-preferences">
             <h3 class="transport-settings-section-title" data-settings-preferences-title>Preferences</h3>
+            <div class="transport-settings-section-body">
+              <label class="transport-settings-row" for="transportSettingsLanguage">
+                <span class="transport-settings-label" data-settings-language-label>Languages:</span>
+                <select id="transportSettingsLanguage" class="transport-settings-select" data-settings-language-select></select>
+              </label>
 
-            <label class="transport-settings-row" for="transportSettingsLanguage">
-              <span class="transport-settings-label" data-settings-language-label>Languages:</span>
-              <select id="transportSettingsLanguage" class="transport-settings-select" data-settings-language-select></select>
-            </label>
+              <label class="transport-settings-row" for="transportSettingsWorkToHomeTime">
+                <span class="transport-settings-label" data-settings-time-label>Work to Home Time:</span>
+                <input
+                  id="transportSettingsWorkToHomeTime"
+                  class="transport-settings-time-input"
+                  type="time"
+                  step="60"
+                  value="16:45"
+                  data-settings-work-to-home-time
+                />
+              </label>
 
-            <label class="transport-settings-row" for="transportSettingsWorkToHomeTime">
-              <span class="transport-settings-label" data-settings-time-label>Work to Home Time:</span>
-              <input
-                id="transportSettingsWorkToHomeTime"
-                class="transport-settings-time-input"
-                type="time"
-                step="60"
-                value="16:45"
-                data-settings-work-to-home-time
-              />
-            </label>
+              <label class="transport-settings-row" for="transportSettingsLastUpdateTime">
+                <span class="transport-settings-label" data-settings-last-update-label>Last Update Time:</span>
+                <input
+                  id="transportSettingsLastUpdateTime"
+                  class="transport-settings-time-input"
+                  type="time"
+                  step="60"
+                  value="16:00"
+                  data-settings-last-update-time
+                />
+              </label>
 
-            <label class="transport-settings-row" for="transportSettingsLastUpdateTime">
-              <span class="transport-settings-label" data-settings-last-update-label>Last Update Time:</span>
-              <input
-                id="transportSettingsLastUpdateTime"
-                class="transport-settings-time-input"
-                type="time"
-                step="60"
-                value="16:00"
-                data-settings-last-update-time
-              />
-            </label>
-
-            <p class="transport-settings-note" data-settings-time-note>
-              Base default for all dates. To change only the selected date, use the time field in the top bar; it updates Regular and Weekend lists only and resets on the next day.
-            </p>
+              <label class="transport-settings-row" for="transportSettingsDefaultTolerance">
+                <span class="transport-settings-label" data-settings-default-tolerance-label>Standard Tolerance:</span>
+                <input
+                  id="transportSettingsDefaultTolerance"
+                  class="transport-settings-number-input"
+                  type="number"
+                  min="0"
+                  max="240"
+                  value="5"
+                  data-settings-default-tolerance
+                />
+              </label>
+            </div>
           </section>
 
-          <section class="transport-settings-section">
+          <section class="transport-settings-section transport-settings-section-defaults">
             <h3 class="transport-settings-section-title" data-settings-vehicle-defaults-title>Vehicle Form Defaults</h3>
+            <div class="transport-settings-section-body">
+              <div class="transport-settings-subsection transport-settings-price-variables-group">
+                <div class="transport-settings-row transport-settings-wide-row transport-settings-price-variables-row">
+                  <span class="transport-settings-label" data-settings-price-variables-label>Price Variables:</span>
+                  <div class="transport-settings-price-variables-controls">
+                    <div class="transport-settings-inline-controls">
+                      <label class="transport-settings-subfield" for="transportSettingsPriceCurrency">
+                        <span class="transport-settings-subfield-label" data-settings-price-currency-label>Currency</span>
+                        <select
+                          id="transportSettingsPriceCurrency"
+                          class="transport-settings-select"
+                          data-settings-price-currency
+                        ></select>
+                      </label>
 
-            <label class="transport-settings-row" for="transportSettingsCarSeats">
-              <span class="transport-settings-label" data-settings-default-seat-label="carro">Car default places:</span>
-              <input
-                id="transportSettingsCarSeats"
-                class="transport-settings-number-input"
-                type="number"
-                min="1"
-                max="99"
-                value="3"
-                data-settings-default-seat="carro"
-              />
-            </label>
+                      <label class="transport-settings-subfield" for="transportSettingsPriceRateUnit">
+                        <span class="transport-settings-subfield-label" data-settings-price-rate-unit-label>Billing Unit</span>
+                        <select
+                          id="transportSettingsPriceRateUnit"
+                          class="transport-settings-select"
+                          data-settings-price-rate-unit
+                        >
+                          <option value="hour">Per hour</option>
+                          <option value="day" selected>Per day</option>
+                          <option value="week">Per week</option>
+                          <option value="month">Per month</option>
+                        </select>
+                      </label>
+                    </div>
 
-            <label class="transport-settings-row" for="transportSettingsMinivanSeats">
-              <span class="transport-settings-label" data-settings-default-seat-label="minivan">Minivan default places:</span>
-              <input
-                id="transportSettingsMinivanSeats"
-                class="transport-settings-number-input"
-                type="number"
-                min="1"
-                max="99"
-                value="6"
-                data-settings-default-seat="minivan"
-              />
-            </label>
+                    <button
+                      type="button"
+                      class="transport-secondary-button transport-settings-inline-button"
+                      data-settings-add-currency-button
+                    >
+                      Add currency
+                    </button>
+                  </div>
+                </div>
 
-            <label class="transport-settings-row" for="transportSettingsVanSeats">
-              <span class="transport-settings-label" data-settings-default-seat-label="van">Van default places:</span>
-              <input
-                id="transportSettingsVanSeats"
-                class="transport-settings-number-input"
-                type="number"
-                min="1"
-                max="99"
-                value="10"
-                data-settings-default-seat="van"
-              />
-            </label>
+                <div class="transport-settings-add-currency" data-settings-add-currency-panel hidden>
+                  <div class="transport-settings-add-currency-fields">
+                    <label class="transport-settings-subfield" for="transportSettingsNewCurrencyCode">
+                      <span class="transport-settings-subfield-label" data-settings-new-currency-code-label>Currency code</span>
+                      <input
+                        id="transportSettingsNewCurrencyCode"
+                        class="transport-settings-text-input"
+                        type="text"
+                        maxlength="12"
+                        autocomplete="off"
+                        data-settings-new-currency-code
+                      />
+                    </label>
 
-            <label class="transport-settings-row" for="transportSettingsBusSeats">
-              <span class="transport-settings-label" data-settings-default-seat-label="onibus">Bus default places:</span>
-              <input
-                id="transportSettingsBusSeats"
-                class="transport-settings-number-input"
-                type="number"
-                min="1"
-                max="99"
-                value="40"
-                data-settings-default-seat="onibus"
-              />
-            </label>
+                    <label class="transport-settings-subfield" for="transportSettingsNewCurrencyLabel">
+                      <span class="transport-settings-subfield-label" data-settings-new-currency-label-label>Currency label</span>
+                      <input
+                        id="transportSettingsNewCurrencyLabel"
+                        class="transport-settings-text-input"
+                        type="text"
+                        maxlength="80"
+                        autocomplete="off"
+                        data-settings-new-currency-label
+                      />
+                    </label>
+                  </div>
 
-            <label class="transport-settings-row" for="transportSettingsDefaultTolerance">
-              <span class="transport-settings-label" data-settings-default-tolerance-label>Standard Tolerance:</span>
-              <input
-                id="transportSettingsDefaultTolerance"
-                class="transport-settings-number-input"
-                type="number"
-                min="0"
-                max="240"
-                value="5"
-                data-settings-default-tolerance
-              />
-            </label>
+                  <div class="transport-settings-add-currency-actions">
+                    <button
+                      type="button"
+                      class="transport-secondary-button"
+                      data-settings-cancel-currency-button
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      class="transport-primary-button"
+                      data-settings-save-currency-button
+                    >
+                      Save currency
+                    </button>
+                  </div>
+                </div>
 
-            <p class="transport-settings-note" data-settings-vehicle-defaults-note>
-              These values prefill Places and Tolerance in the create vehicle form.
-            </p>
+              </div>
+
+              <div class="transport-settings-defaults-grid">
+                <div class="transport-settings-row transport-settings-dual-row transport-settings-default-card">
+                  <label class="transport-settings-dual-field" for="transportSettingsCarSeats">
+                    <span class="transport-settings-label" data-settings-default-seat-label="carro">Car default places:</span>
+                    <input
+                      id="transportSettingsCarSeats"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="1"
+                      max="99"
+                      value="3"
+                      data-settings-default-seat="carro"
+                    />
+                  </label>
+
+                  <label class="transport-settings-dual-field" for="transportSettingsCarPrice">
+                    <span class="transport-settings-label" data-settings-default-price-label="carro">Car default price:</span>
+                    <input
+                      id="transportSettingsCarPrice"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="0"
+                      max="9999999999.99"
+                      step="0.01"
+                      data-settings-default-price="carro"
+                    />
+                  </label>
+                </div>
+
+                <div class="transport-settings-row transport-settings-dual-row transport-settings-default-card">
+                  <label class="transport-settings-dual-field" for="transportSettingsMinivanSeats">
+                    <span class="transport-settings-label" data-settings-default-seat-label="minivan">Minivan default places:</span>
+                    <input
+                      id="transportSettingsMinivanSeats"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="1"
+                      max="99"
+                      value="6"
+                      data-settings-default-seat="minivan"
+                    />
+                  </label>
+
+                  <label class="transport-settings-dual-field" for="transportSettingsMinivanPrice">
+                    <span class="transport-settings-label" data-settings-default-price-label="minivan">Minivan default price:</span>
+                    <input
+                      id="transportSettingsMinivanPrice"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="0"
+                      max="9999999999.99"
+                      step="0.01"
+                      data-settings-default-price="minivan"
+                    />
+                  </label>
+                </div>
+
+                <div class="transport-settings-row transport-settings-dual-row transport-settings-default-card">
+                  <label class="transport-settings-dual-field" for="transportSettingsVanSeats">
+                    <span class="transport-settings-label" data-settings-default-seat-label="van">Van default places:</span>
+                    <input
+                      id="transportSettingsVanSeats"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="1"
+                      max="99"
+                      value="10"
+                      data-settings-default-seat="van"
+                    />
+                  </label>
+
+                  <label class="transport-settings-dual-field" for="transportSettingsVanPrice">
+                    <span class="transport-settings-label" data-settings-default-price-label="van">Van default price:</span>
+                    <input
+                      id="transportSettingsVanPrice"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="0"
+                      max="9999999999.99"
+                      step="0.01"
+                      data-settings-default-price="van"
+                    />
+                  </label>
+                </div>
+
+                <div class="transport-settings-row transport-settings-dual-row transport-settings-default-card">
+                  <label class="transport-settings-dual-field" for="transportSettingsBusSeats">
+                    <span class="transport-settings-label" data-settings-default-seat-label="onibus">Bus default places:</span>
+                    <input
+                      id="transportSettingsBusSeats"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="1"
+                      max="99"
+                      value="40"
+                      data-settings-default-seat="onibus"
+                    />
+                  </label>
+
+                  <label class="transport-settings-dual-field" for="transportSettingsBusPrice">
+                    <span class="transport-settings-label" data-settings-default-price-label="onibus">Bus default price:</span>
+                    <input
+                      id="transportSettingsBusPrice"
+                      class="transport-settings-number-input"
+                      type="number"
+                      min="0"
+                      max="9999999999.99"
+                      step="0.01"
+                      data-settings-default-price="onibus"
+                    />
+                  </label>
+                </div>
+              </div>
+
+            </div>
           </section>
 
           <div class="transport-modal-actions transport-settings-actions">

@@ -1,0 +1,460 @@
+catalog_name: "transport_dashboard_action_catalog"
+catalog_version: 1
+generated_from:
+  - "docs/descritivo_transport.md"
+  - "sistema/app/static/transport/functions/functions.md"
+  - "sistema/app/static/transport/functions/functions_by_capability.md"
+scope_note: "Catalogo curado de acoes operacionais do dashboard de transporte. Ele nao tenta transformar cada uma das 192 funcoes em uma acao independente; em vez disso, concentra as intencoes que fazem sentido para agentes, automacoes e orquestradores."
+conventions:
+  - "surface=api indica chamada HTTP ou SSE direta ao backend."
+  - "surface=composed-api indica fluxo de alto nivel apoiado por um endpoint existente e por coordenacao local de estado/UI."
+  - "surface=local-ui indica comportamento estritamente client-side, sem round-trip obrigatorio ao backend."
+  - "related_functions aponta para o inventario detalhado ja gerado no repositorio."
+actions:
+  - name: "bootstrap_transport_session"
+    surface: "api"
+    purpose: "Descobrir se ja existe sessao autenticada de transporte e sincronizar a pagina sem exigir novo login."
+    endpoint:
+      method: "GET"
+      path: "/api/transport/auth/session"
+    inputs: []
+    preconditions:
+      - "A pagina de transporte precisa estar carregada."
+      - "O backend precisa expor a sessao HTTP com SessionMiddleware ativo."
+    side_effects:
+      - "Atualiza state.isAuthenticated e state.authenticatedUser."
+      - "Pode iniciar o stream SSE se a sessao ainda for valida."
+      - "Desbloqueia dashboard, configuracoes e operacoes protegidas."
+    expected_result: "A UI entra no estado autenticado automaticamente quando o cookie de sessao ainda existe."
+    related_functions:
+      - "sistema/app/static/transport/functions/bootstrapTransportSession.md"
+      - "sistema/app/static/transport/functions/setAuthenticationState.md"
+      - "sistema/app/static/transport/functions/updateAuthControls.md"
+
+  - name: "verify_transport_credentials"
+    surface: "api"
+    purpose: "Validar chave e senha de transporte, abrir sessao autenticada e liberar o dashboard."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/auth/verify"
+    inputs:
+      - name: "key"
+        required: true
+        format: "4 caracteres alfanumericos apos normalizacao"
+        notes: "Passa por normalizeAuthKeyValue antes do envio."
+      - name: "password"
+        required: true
+        format: "string nao vazia"
+        notes: "Capturada no shell de autenticacao da barra superior."
+    preconditions:
+      - "A chave precisa normalizar para exatamente 4 caracteres."
+      - "A senha nao pode estar vazia."
+    side_effects:
+      - "Atualiza o estado autenticado e o usuario corrente."
+      - "Inicia atualizacao em tempo real quando a autenticacao e bem-sucedida."
+      - "Atualiza feedback visual de erro/sucesso na barra superior."
+    expected_result: "Sessao autenticada criada e UI pronta para carregar dashboard, veiculos e solicitacoes."
+    related_functions:
+      - "sistema/app/static/transport/functions/normalizeAuthKeyValue.md"
+      - "sistema/app/static/transport/functions/scheduleTransportVerification.md"
+      - "sistema/app/static/transport/functions/verifyTransportCredentials.md"
+      - "sistema/app/static/transport/functions/setAuthenticationState.md"
+
+  - name: "logout_transport_session"
+    surface: "api"
+    purpose: "Encerrar explicitamente a sessao de transporte e retornar a pagina ao estado bloqueado."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/auth/logout"
+    inputs: []
+    preconditions:
+      - "A sessao autenticada deve estar ativa no navegador."
+    side_effects:
+      - "Limpa autenticacao local e stream SSE."
+      - "Limpa dashboard, previews pendentes e estado expandido de veiculos."
+      - "Reverte controles protegidos para disabled."
+    expected_result: "Usuario desconectado, tela volta ao estado de acesso bloqueado."
+    related_functions:
+      - "sistema/app/static/transport/functions/clearTransportSession.md"
+      - "sistema/app/static/transport/functions/setAuthenticationState.md"
+      - "sistema/app/static/transport/functions/stopRealtimeUpdates.md"
+
+  - name: "fetch_dashboard_for_date_and_route"
+    surface: "api"
+    purpose: "Carregar o dashboard para uma data e rota selecionadas, incluindo requests, projetos e veiculos."
+    endpoint:
+      method: "GET"
+      path: "/api/transport/dashboard"
+    inputs:
+      - name: "service_date"
+        required: true
+        format: "YYYY-MM-DD"
+        notes: "Normalmente derivada de formatIsoDate(dateStore.getValue())."
+      - name: "route_kind"
+        required: true
+        format: "home_to_work|work_to_home"
+        notes: "Lida via getSelectedRouteKind()."
+    preconditions:
+      - "A sessao precisa estar autenticada."
+      - "A data selecionada deve estar resolvida no dateStore."
+    side_effects:
+      - "Atualiza state.dashboard."
+      - "Reconcilia visibilidade de projetos e rota selecionada."
+      - "Re-renderiza listas de requests, paineis de veiculos e mensagens de status."
+    expected_result: "A tela reflete a data e o trajeto correntes com os dados mais recentes do backend."
+    related_functions:
+      - "sistema/app/static/transport/functions/loadDashboard.md"
+      - "sistema/app/static/transport/functions/renderDashboard.md"
+      - "sistema/app/static/transport/functions/reconcileProjectVisibility.md"
+
+  - name: "subscribe_to_realtime_dashboard_updates"
+    surface: "api"
+    purpose: "Receber eventos SSE para disparar refresh silencioso do dashboard quando houver mudancas operacionais."
+    endpoint:
+      method: "SSE"
+      path: "/api/transport/stream"
+    inputs: []
+    preconditions:
+      - "Sessao autenticada ativa."
+      - "Navegador com suporte a EventSource."
+    side_effects:
+      - "Abre e fecha o canal SSE conforme o estado autenticado."
+      - "Aplica debounce de refresh para evitar rajadas de recarga."
+      - "Mantem state.realtimeConnected sincronizado."
+    expected_result: "Mudancas de backend chegam ao frontend e provocam refresh silencioso do dashboard corrente."
+    related_functions:
+      - "sistema/app/static/transport/functions/startRealtimeUpdates.md"
+      - "sistema/app/static/transport/functions/requestDashboardRefresh.md"
+      - "sistema/app/static/transport/functions/stopRealtimeUpdates.md"
+
+  - name: "fetch_transport_settings"
+    surface: "api"
+    purpose: "Carregar preferencias e defaults usados pelo modal de configuracoes e pelos formularios de veiculo."
+    endpoint:
+      method: "GET"
+      path: "/api/transport/settings"
+    inputs: []
+    preconditions:
+      - "Sessao autenticada ativa."
+    side_effects:
+      - "Atualiza horarios base e defaults de assentos/tolerancia."
+      - "Sincroniza os controles do modal de configuracoes."
+    expected_result: "Modal de configuracoes preenchido com os valores persistidos no backend."
+    related_functions:
+      - "sistema/app/static/transport/functions/loadTransportSettings.md"
+      - "sistema/app/static/transport/functions/syncSettingsControls.md"
+
+  - name: "save_transport_settings"
+    surface: "api"
+    purpose: "Persistir preferencias globais do dashboard, como horario base, last update e defaults de veiculo."
+    endpoint:
+      method: "PUT"
+      path: "/api/transport/settings"
+    inputs:
+      - name: "work_to_home_time"
+        required: true
+        format: "HH:MM"
+        notes: "Horario base para o trajeto work_to_home."
+      - name: "last_update_time"
+        required: true
+        format: "HH:MM"
+        notes: "Horario exibido como referencia operacional."
+      - name: "default_car_seats"
+        required: true
+        format: "int"
+        notes: "Padrao de assentos para carro."
+      - name: "default_minivan_seats"
+        required: true
+        format: "int"
+        notes: "Padrao de assentos para minivan."
+      - name: "default_van_seats"
+        required: true
+        format: "int"
+        notes: "Padrao de assentos para van."
+      - name: "default_bus_seats"
+        required: true
+        format: "int"
+        notes: "Padrao de assentos para onibus."
+      - name: "default_tolerance_minutes"
+        required: true
+        format: "int"
+        notes: "Tolerancia padrao aplicada aos veiculos."
+    preconditions:
+      - "Sessao autenticada ativa."
+      - "Os horarios precisam estar normalizados em HH:MM."
+    side_effects:
+      - "Atualiza estado local de forma otimista e pode reverter em caso de erro."
+      - "Recarrega silenciosamente o dashboard apos persistir."
+    expected_result: "Preferencias globais persistidas e refletidas imediatamente nos controles e fluxos derivados."
+    related_functions:
+      - "sistema/app/static/transport/functions/readTransportSettingsDraft.md"
+      - "sistema/app/static/transport/functions/saveTransportSettings.md"
+      - "sistema/app/static/transport/functions/loadDashboard.md"
+
+  - name: "save_selected_date_route_time"
+    surface: "api"
+    purpose: "Persistir o horario work_to_home especificamente para a data atualmente selecionada."
+    endpoint:
+      method: "PUT"
+      path: "/api/transport/date-settings"
+    inputs:
+      - name: "service_date"
+        required: true
+        format: "YYYY-MM-DD"
+        notes: "Derivada do dateStore e serializada para ISO local."
+      - name: "work_to_home_time"
+        required: true
+        format: "HH:MM"
+        notes: "Horario por data, nao o default global."
+    preconditions:
+      - "Sessao autenticada ativa."
+      - "Horario informado precisa ser valido em HH:MM."
+    side_effects:
+      - "Atualiza temporariamente o horario no estado local."
+      - "Recarrega silenciosamente o dashboard e reaplica os controles de rota."
+    expected_result: "Horario da rota work_to_home salvo para a data corrente e refletido na UI."
+    related_functions:
+      - "sistema/app/static/transport/functions/saveRouteTimeForSelectedDate.md"
+      - "sistema/app/static/transport/functions/syncRouteTimeControls.md"
+
+  - name: "create_vehicle_schedule"
+    surface: "api"
+    purpose: "Criar um veiculo em escopo regular, weekend ou extra, com regras de validacao dependentes do escopo."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/vehicles"
+    inputs:
+      - name: "tipo"
+        required: true
+        format: "carro|minivan|van|onibus"
+        notes: "Tipo usado para iconografia, defaults e exibicao."
+      - name: "placa"
+        required: true
+        format: "string"
+        notes: "Identificador visual do veiculo."
+      - name: "lugares"
+        required: true
+        format: "int"
+        notes: "Capacidade de assentos."
+      - name: "service_scope"
+        required: true
+        format: "regular|weekend|extra"
+        notes: "Define quais campos adicionais se tornam obrigatorios."
+      - name: "service_date"
+        required: false
+        format: "YYYY-MM-DD"
+        notes: "Obrigatorio para extra."
+      - name: "departure_time"
+        required: false
+        format: "HH:MM"
+        notes: "Obrigatorio para extra."
+      - name: "route_kind"
+        required: false
+        format: "home_to_work|work_to_home"
+        notes: "Usado para extra."
+    preconditions:
+      - "O modal de veiculo precisa estar aberto em um escopo valido."
+      - "Regras de persistencia por dias/escopo precisam ser satisfeitas."
+    side_effects:
+      - "Pode aplicar defaults de assentos e tolerancia antes do submit."
+      - "Fecha modal, recarrega dashboard e atualiza feedback do usuario em caso de sucesso."
+    expected_result: "Novo schedule de veiculo criado e visivel no painel correspondente apos recarga."
+    related_functions:
+      - "sistema/app/static/transport/functions/openVehicleModal.md"
+      - "sistema/app/static/transport/functions/buildVehicleCreatePayload.md"
+      - "sistema/app/static/transport/functions/resolveVehicleCreateValidationError.md"
+
+  - name: "delete_vehicle_schedule"
+    surface: "api"
+    purpose: "Remover um veiculo ja agendado da rota ou lista selecionada."
+    endpoint:
+      method: "DELETE"
+      path: "/api/transport/vehicles/{schedule_id}?service_date=YYYY-MM-DD"
+    inputs:
+      - name: "schedule_id"
+        required: true
+        format: "path int"
+        notes: "Identificador do schedule, nao do veiculo base."
+      - name: "service_date"
+        required: true
+        format: "query YYYY-MM-DD"
+        notes: "Necessario para a remocao contextualizada da agenda."
+    preconditions:
+      - "O veiculo precisa possuir schedule_id valido."
+    side_effects:
+      - "Dispara mensagem de sucesso ou erro."
+      - "Recarrega silenciosamente o dashboard apos remocao."
+    expected_result: "Veiculo some do painel e da tabela de gerenciamento do escopo correspondente."
+    related_functions:
+      - "sistema/app/static/transport/functions/removeVehicleFromRoute.md"
+      - "sistema/app/static/transport/functions/createVehicleManagementTable.md"
+      - "sistema/app/static/transport/functions/createVehicleDetailsPanel.md"
+
+  - name: "reject_transport_request"
+    surface: "api"
+    purpose: "Rejeitar explicitamente uma solicitacao de transporte para a data e rota resolvidas."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/requests/reject"
+    inputs:
+      - name: "request_id"
+        required: true
+        format: "int"
+        notes: "Identificador da request selecionada."
+      - name: "service_date"
+        required: true
+        format: "YYYY-MM-DD"
+        notes: "Data efetiva da solicitacao."
+      - name: "route_kind"
+        required: true
+        format: "home_to_work|work_to_home"
+        notes: "Resolvida por getRouteKindForRequestRow()."
+    preconditions:
+      - "A linha da request precisa existir e pertencer a uma data valida."
+    side_effects:
+      - "Exibe feedback de status."
+      - "Recarrega silenciosamente o dashboard para refletir o novo estado da request."
+    expected_result: "Request marcada como rejeitada e redistribuida visualmente nas listas apos recarga."
+    related_functions:
+      - "sistema/app/static/transport/functions/rejectRequestRow.md"
+      - "sistema/app/static/transport/functions/renderRequestTables.md"
+
+  - name: "assign_request_to_vehicle"
+    surface: "api"
+    purpose: "Persistir a alocacao de uma request em um veiculo para uma data e rota especificas."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/assignments"
+    inputs:
+      - name: "request_id"
+        required: true
+        format: "int"
+        notes: "Request a ser alocada."
+      - name: "service_date"
+        required: true
+        format: "YYYY-MM-DD"
+        notes: "Data do atendimento."
+      - name: "route_kind"
+        required: true
+        format: "home_to_work|work_to_home"
+        notes: "Rota resolvida a partir do contexto atual."
+      - name: "status"
+        required: true
+        format: "confirmed|pending"
+        notes: "confirmed fixa a request em um veiculo; pending devolve para fila."
+      - name: "vehicle_id"
+        required: false
+        format: "int"
+        notes: "Obrigatorio quando status=confirmed."
+    preconditions:
+      - "A request precisa ser compativel com o escopo e a rota do veiculo alvo."
+      - "O fluxo de drag and drop ou preview precisa ter resolvido route_kind corretamente."
+    side_effects:
+      - "Limpa preview pendente e estado de drag."
+      - "Recarrega silenciosamente o dashboard quando a API aceita a alteracao."
+    expected_result: "A request passa a aparecer no veiculo escolhido e sai da fila pendente correspondente."
+    related_functions:
+      - "sistema/app/static/transport/functions/submitAssignment.md"
+      - "sistema/app/static/transport/functions/handleVehicleDrop.md"
+      - "sistema/app/static/transport/functions/createVehicleDetailsPanel.md"
+
+  - name: "return_assignment_to_pending"
+    surface: "composed-api"
+    purpose: "Devolver uma request ja associada ao estado pendente usando o endpoint de assignments com status=pending."
+    endpoint:
+      method: "POST"
+      path: "/api/transport/assignments"
+    inputs:
+      - name: "request_id"
+        required: true
+        format: "int"
+        notes: "Request atualmente alocada."
+      - name: "service_date"
+        required: true
+        format: "YYYY-MM-DD"
+        notes: "Data efetiva da solicitacao."
+      - name: "route_kind"
+        required: true
+        format: "home_to_work|work_to_home"
+        notes: "Mantida para a devolucao correta da request."
+      - name: "status"
+        required: true
+        format: "pending"
+        notes: "Valor fixo nesse fluxo."
+    preconditions:
+      - "A request precisa existir e estar atualmente vinculada a um veiculo ou rota visiveis."
+    side_effects:
+      - "Limpa preview local pendente."
+      - "Re-renderiza listas e paineis apos a resposta."
+    expected_result: "A request volta para a fila pendente e deixa o painel do veiculo."
+    related_functions:
+      - "sistema/app/static/transport/functions/returnRequestRowToPending.md"
+      - "sistema/app/static/transport/functions/submitAssignment.md"
+
+  - name: "switch_transport_language_local"
+    surface: "local-ui"
+    purpose: "Trocar o idioma ativo do dashboard sem chamada de rede, reaplicando rotulos e renderizacao local."
+    endpoint: null
+    inputs:
+      - name: "language_code"
+        required: true
+        format: "codigo suportado em transportLanguages"
+        notes: "Persistido em localStorage."
+    preconditions:
+      - "O idioma precisa existir na configuracao local de i18n."
+    side_effects:
+      - "Persiste idioma ativo no localStorage."
+      - "Reaplica traducoes estaticas e re-renderiza dashboard se ele ja estiver carregado."
+    expected_result: "Toda a interface passa a exibir rotulos e mensagens no idioma selecionado."
+    related_functions:
+      - "sistema/app/static/transport/functions/switchTransportLanguage.md"
+      - "sistema/app/static/transport/functions/applyStaticTranslations.md"
+      - "sistema/app/static/transport/functions/setActiveLanguageCode.md"
+
+  - name: "filter_projects_locally"
+    surface: "local-ui"
+    purpose: "Controlar a visibilidade de projetos no cliente, afetando quais requests ficam visiveis nas colunas."
+    endpoint: null
+    inputs:
+      - name: "project_name"
+        required: true
+        format: "string existente em dashboard.projects"
+        notes: "Corresponde ao nome exibido na lista lateral."
+      - name: "visible"
+        required: true
+        format: "boolean"
+        notes: "Marca se o projeto permanece visivel."
+    preconditions:
+      - "O dashboard precisa ja ter sido carregado."
+    side_effects:
+      - "Atualiza state.projectVisibility."
+      - "Re-renderiza listas de requests e mantem paineis coerentes com o filtro atual."
+    expected_result: "Somente requests pertencentes aos projetos marcados permanecem visiveis."
+    related_functions:
+      - "sistema/app/static/transport/functions/renderProjectList.md"
+      - "sistema/app/static/transport/functions/isProjectVisible.md"
+      - "sistema/app/static/transport/functions/getVisibleRequestsForKind.md"
+
+  - name: "toggle_vehicle_view_mode_local"
+    surface: "local-ui"
+    purpose: "Alternar um painel de veiculos entre visualizacao em grade e tabela de gerenciamento."
+    endpoint: null
+    inputs:
+      - name: "scope"
+        required: true
+        format: "regular|weekend|extra"
+        notes: "Define o painel alvo."
+      - name: "view_mode"
+        required: true
+        format: "grid|table"
+        notes: "Modo desejado para exibicao do painel."
+    preconditions:
+      - "O container do escopo precisa existir na pagina."
+    side_effects:
+      - "Atualiza state.vehicleViewModes."
+      - "Re-renderiza o painel do escopo e sincroniza o estado visual do toggle."
+    expected_result: "O mesmo conjunto de veiculos passa a ser exibido em grade ou tabela, conforme o modo escolhido."
+    related_functions:
+      - "sistema/app/static/transport/functions/toggleVehicleViewMode.md"
+      - "sistema/app/static/transport/functions/setVehicleContainerViewMode.md"
+      - "sistema/app/static/transport/functions/renderVehiclePanels.md"

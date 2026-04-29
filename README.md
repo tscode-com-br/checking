@@ -44,6 +44,21 @@ Implementacao inicial do sistema de check-in/check-out com:
 6. Abrir painel admin:
    http://127.0.0.1:8000/admin
 
+### Preview local rapido do Transport fora do Compose
+Se o `.env` atual estiver apontando `DATABASE_URL` para `postgresql+psycopg://...@db:5432/...`, esse host `db` so existe dentro da rede Docker Compose e o boot local falhara com `getaddrinfo failed`.
+
+Para subir a API localmente no Windows sem depender do Postgres do Compose, use o helper abaixo, que sobrescreve `DATABASE_URL` para um SQLite de preview, aplica as migracoes e sobe o FastAPI:
+
+```powershell
+./scripts/start_local_preview_api.ps1 -Reload
+```
+
+Por padrao ele sobe em `http://127.0.0.1:8010`. Para manter a porta `8000`, rode:
+
+```powershell
+./scripts/start_local_preview_api.ps1 -Port 8000 -Reload
+```
+
 ## Repositorio e deploy automatico
 - Repositorio principal: `git@github.com:tscode-com-br/checking.git`
 - Repositorio alternativo por HTTPS: `https://github.com/tscode-com-br/checking.git`

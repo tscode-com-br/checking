@@ -127,6 +127,10 @@ from ..services.project_catalog import (
     resolve_default_project_name,
 )
 from ..services.time_utils import build_timezone_context, build_timezone_label, now_sgt
+from ..services.transport_vehicle_base import (
+    resolve_vehicle_for_user_transport_link,
+    sync_user_vehicle_reference,
+)
 from ..services.user_activity import (
     calculate_inactivity_days,
     has_exceeded_continuous_inactivity_window,
@@ -2635,6 +2639,7 @@ def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
             chave=r.chave,
             perfil=r.perfil,
             projeto=r.projeto,
+            vehicle_id=r.vehicle_id,
             workplace=r.workplace,
             placa=r.placa,
             end_rua=r.end_rua,
@@ -2655,6 +2660,8 @@ def upsert_user(
     payload.projeto = ensure_known_project(db, payload.projeto)
     payload_fields = set(getattr(payload, "model_fields_set", set()))
     placa_was_provided = "placa" in payload_fields
+    vehicle_id_was_provided = "vehicle_id" in payload_fields
+    vehicle_link_was_provided = placa_was_provided or vehicle_id_was_provided
     user = None
     linked_existing_user = False
     if payload.user_id is not None:
@@ -2681,10 +2688,22 @@ def upsert_user(
         if conflicting_rfid_user is not None and (user is None or conflicting_rfid_user.id != user.id):
             raise HTTPException(status_code=409, detail="Ja existe um usuario cadastrado com esse RFID")
 
-    if placa_was_provided and payload.placa is not None:
-        vehicle = db.execute(select(Vehicle).where(Vehicle.placa == payload.placa)).scalar_one_or_none()
-        if vehicle is None:
-            raise HTTPException(status_code=404, detail="Veiculo nao encontrado para a placa informada")
+    linked_vehicle = None
+    if vehicle_link_was_provided:
+        try:
+            linked_vehicle = resolve_vehicle_for_user_transport_link(
+                db,
+                vehicle_id=payload.vehicle_id if vehicle_id_was_provided else None,
+                plate=payload.placa if placa_was_provided else None,
+            )
+        except ValueError as exc:
+            if str(exc) == "Vehicle not found for the provided id.":
+                raise HTTPException(status_code=404, detail="Veiculo nao encontrado para o identificador informado") from exc
+            if str(exc) == "Vehicle not found for the provided plate.":
+                raise HTTPException(status_code=404, detail="Veiculo nao encontrado para a placa informada") from exc
+            if str(exc) == "The provided vehicle_id does not match the provided plate.":
+                raise HTTPException(status_code=409, detail="O veiculo informado nao corresponde a placa enviada") from exc
+            raise
 
     if payload.workplace is not None:
         workplace = db.execute(select(Workplace).where(Workplace.workplace == payload.workplace)).scalar_one_or_none()
@@ -2708,8 +2727,8 @@ def upsert_user(
         user.projeto = payload.projeto
         user.workplace = payload.workplace
         user.rfid = payload.rfid
-        if placa_was_provided:
-            user.placa = payload.placa
+        if vehicle_link_was_provided:
+            sync_user_vehicle_reference(user, linked_vehicle)
         user.end_rua = payload.end_rua
         user.zip = payload.zip
         user.cargo = payload.cargo
@@ -2735,7 +2754,8 @@ def upsert_user(
             perfil=normalize_user_profile(payload.perfil),
             projeto=payload.projeto,
             workplace=payload.workplace,
-            placa=payload.placa,
+            vehicle_id=linked_vehicle.id if linked_vehicle is not None else None,
+            placa=linked_vehicle.placa if linked_vehicle is not None else None,
             end_rua=payload.end_rua,
             zip=payload.zip,
             cargo=payload.cargo,
@@ -2769,7 +2789,8 @@ def upsert_user(
         details=(
             f"updated_by={current_admin.chave}; chave={payload.chave}; "
             f"nome={payload.nome}; perfil={normalize_user_profile(payload.perfil)}; linked_existing_user={linked_existing_user}; "
-            f"placa={(payload.placa if placa_was_provided else user.placa) or '-'}"
+            f"placa={(linked_vehicle.placa if vehicle_link_was_provided and linked_vehicle is not None else user.placa) or '-'}; "
+            f"vehicle_id={(linked_vehicle.id if vehicle_link_was_provided and linked_vehicle is not None else user.vehicle_id) or '-'}"
         ),
     )
     db.commit()

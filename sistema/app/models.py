@@ -1,6 +1,7 @@
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -47,6 +48,12 @@ class Workplace(Base):
     address: Mapped[str] = mapped_column(String(255), nullable=False)
     zip: Mapped[str] = mapped_column(String(10), nullable=False)
     country: Mapped[str] = mapped_column(String(80), nullable=False)
+    transport_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    boarding_point: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    transport_window_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    transport_window_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    service_restrictions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transport_work_to_home_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
 
 
 class User(Base):
@@ -61,7 +68,8 @@ class User(Base):
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)
-    placa: Mapped[str | None] = mapped_column(String(15), ForeignKey("vehicles.placa"), nullable=True)
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
+    placa: Mapped[str | None] = mapped_column(String(15), nullable=True)
     end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zip: Mapped[str | None] = mapped_column(String(10), nullable=True)
     cargo: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -76,19 +84,25 @@ class User(Base):
 class Vehicle(Base):
     __tablename__ = "vehicles"
     __table_args__ = (
-        UniqueConstraint("placa", name="uq_vehicles_placa"),
-        CheckConstraint("tipo IN ('carro', 'minivan', 'van', 'onibus')", name="ck_vehicles_tipo_allowed"),
-        CheckConstraint("lugares >= 1 AND lugares <= 99", name="ck_vehicles_lugares_range"),
-        CheckConstraint("tolerance >= 0 AND tolerance <= 240", name="ck_vehicles_tolerance_range"),
+        Index(
+            "ix_vehicles_placa_present_unique",
+            "placa",
+            unique=True,
+            sqlite_where=text("placa IS NOT NULL"),
+            postgresql_where=text("placa IS NOT NULL"),
+        ),
+        CheckConstraint("tipo IS NULL OR tipo IN ('carro', 'minivan', 'van', 'onibus')", name="ck_vehicles_tipo_allowed"),
+        CheckConstraint("lugares IS NULL OR (lugares >= 1 AND lugares <= 99)", name="ck_vehicles_lugares_range"),
+        CheckConstraint("tolerance IS NULL OR (tolerance >= 0 AND tolerance <= 240)", name="ck_vehicles_tolerance_range"),
         CheckConstraint("service_scope IN ('regular', 'weekend', 'extra')", name="ck_vehicles_service_scope_allowed"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    placa: Mapped[str] = mapped_column(String(15), nullable=False)
-    tipo: Mapped[str] = mapped_column(String(16), nullable=False)
+    placa: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    tipo: Mapped[str | None] = mapped_column(String(16), nullable=True)
     color: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    lugares: Mapped[int] = mapped_column(Integer, nullable=False)
-    tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    lugares: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tolerance: Mapped[int | None] = mapped_column(Integer, nullable=True)
     service_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="regular")
 
 
@@ -300,7 +314,25 @@ class MobileAppSettings(Base):
     transport_default_van_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     transport_default_bus_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
     transport_default_tolerance_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    transport_price_currency_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    transport_price_rate_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    transport_default_car_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    transport_default_minivan_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    transport_default_van_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    transport_default_bus_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     coordinate_update_frequency_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportCurrencyOption(Base):
+    __tablename__ = "transport_currency_options"
+    __table_args__ = (UniqueConstraint("code", name="uq_transport_currency_options_code"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(12), nullable=False)
+    display_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -1,3 +1,0 @@
-O sistema é composto por:
-
-1. API

@@ -48,6 +48,7 @@ from ..services.location_settings import (
 )
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
+from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
 from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
     acknowledge_transport_assignments,
@@ -243,7 +244,13 @@ def _create_web_transport_request_response(
     if created:
         db.commit()
         notify_admin_data_changed("event")
-        notify_transport_data_changed("event")
+        emit_transport_reevaluation_event(
+            event_type="transport_request_changed",
+            reason="event",
+            source="web_transport",
+            message="A web transport request changed the rider demand state.",
+            request_id=_transport_request.id,
+        )
 
     return WebTransportActionResponse(
         ok=True,
@@ -486,7 +493,12 @@ def update_web_transport_address(
     user.zip = payload.zip
     db.commit()
     notify_admin_data_changed("register")
-    notify_transport_data_changed("register")
+    emit_transport_reevaluation_event(
+        event_type="transport_user_context_changed",
+        reason="register",
+        source="web_transport",
+        message="A rider transport address changed and may affect future planning.",
+    )
     return WebTransportActionResponse(
         ok=True,
         message="Endereco atualizado com sucesso.",
@@ -523,7 +535,13 @@ def cancel_web_transport_request(
     cancel_transport_request_and_assignments(db, transport_request=transport_request)
     db.commit()
     notify_admin_data_changed("event")
-    notify_transport_data_changed("event")
+    emit_transport_reevaluation_event(
+        event_type="transport_request_changed",
+        reason="event",
+        source="web_transport",
+        message="A web transport request was cancelled and the day demand changed.",
+        request_id=transport_request.id,
+    )
     return WebTransportActionResponse(
         ok=True,
         message="Solicitacao de transporte cancelada.",

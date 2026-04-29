@@ -62,7 +62,7 @@ As regras abaixo não devem ser flexibilizadas durante a execução:
 - o comportamento de sessão por cookie, hoje usado pela SPA, deve ser mantido no app Kotlin;
 - a captura de coordenadas GPS deve seguir a estratégia atual da SPA: janela curta por gatilho, melhor amostra por precisão, limite de precisão vindo do backend e fallback manual especial quando a resposta for `accuracy_too_low`;
 - os textos visíveis ao usuário devem seguir exatamente a mesma redação da SPA, salvo correções ortográficas previamente aprovadas;
-- a navegação principal deve permanecer orientada ao modo retrato, reproduzindo o comportamento da aplicação web.
+- a navegação principal deve seguir a responsividade atual da SPA, sem reintroduzir um overlay de paisagem que já não existe mais no webapp.
 
 ## 3. Fontes de Verdade Confirmadas
 
@@ -115,7 +115,7 @@ Os arquivos abaixo foram verificados e devem fundamentar a implementação:
 A SPA não é apenas um formulário de check-in/check-out. Ela já implementa uma experiência completa com:
 
 - shell visual com cabeçalho, logotipo, fundo com marca d’água e card central responsivo;
-- bloqueio de uso em paisagem com overlay específico e tentativa de trava em retrato;
+- sincronização de métricas de viewport sem overlay dedicado de bloqueio em paisagem;
 - histórico resumido com destaque visual para a atividade mais recente;
 - área de notificações em duas linhas, com tonalidades distintas por estado;
 - captura de geolocalização sob demanda por janela curta, com atualização manual e atualização em eventos de ciclo de vida;
@@ -178,8 +178,8 @@ O aplicativo Kotlin deverá reproduzir, no mínimo, os seguintes blocos funciona
 - fundo com gradiente claro e marca d’água da Petrobras ao centro;
 - card principal centralizado com largura responsiva;
 - comportamento mobile-first;
-- uso prioritário em retrato;
-- overlay de paisagem com os mesmos textos da SPA.
+- uso mobile-first com shell responsivo em retrato e paisagem;
+- sem reintroduzir overlay dedicado de paisagem, já removido da SPA atual.
 
 ### 5.2. Card de histórico
 
@@ -1263,7 +1263,7 @@ Nota de revisão pós-alteração da SPA (2026-04-26): a etapa 17.12 registrou o
 - [x] Validar se será necessário forçar orientação em nível de activity ou apenas reproduzir o overlay da SPA.
 - [x] Garantir que a decisão adotada preserve a experiência funcional da SPA.
 
-Nota de execução 17.13 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/portrait-lock/portrait-lock-overlay.md`. O app ganhou um guard de orientação no topo da árvore Compose com `PortraitLockOverlay`, `resolvePortraitLockUiState(...)` e `rememberPortraitLockUiState()`, espelhando a estratégia da SPA de detectar paisagem e ocultar o chrome principal enquanto o aparelho estiver fora do retrato. `MainActivity` passou a esconder header e shell quando o overlay estiver ativo, e `CheckingAppFrame` ganhou um slot `overlayContent` para suportar sobreposições em tela cheia sem quebrar a fundação visual da 17.11. A decisão técnica desta fase foi não forçar orientação no nível da `Activity` nem do manifesto, preservando o comportamento funcional da SPA, que usa overlay como garantia visual e não uma trava rígida de runtime. A etapa foi validada com teste focal da regra de orientação e compilação da nova UI.
+Nota de execução 17.13 (2026-04-25): etapa concluída em `checking_kotlin_new/docs/portrait-lock/portrait-lock-overlay.md`. O app ganhou um guard de orientação no topo da árvore Compose com `PortraitLockOverlay`, `resolvePortraitLockUiState(...)` e `rememberPortraitLockUiState()`, espelhando a estratégia da SPA de detectar paisagem e ocultar o chrome principal enquanto o aparelho estiver fora do retrato. `MainActivity` passou a esconder header e shell quando o overlay estiver ativo, e `CheckingAppFrame` ganhou um slot `overlayContent` para suportar sobreposições em tela cheia sem quebrar a fundação visual da 17.11. A decisão técnica desta fase foi não forçar orientação no nível da `Activity` nem do manifesto, preservando o comportamento funcional da SPA, que usa overlay como garantia visual e não uma trava rígida de runtime. A etapa foi validada com teste focal da regra de orientação e compilação da nova UI. Atualização 17.40 (2026-04-28): a SPA atual removeu esse overlay dedicado, e o app Kotlin novo acompanhou essa mudança desativando o guard sem reabrir a fundação visual.
 
 ### 17.14. Estado inicial bloqueado e resolução da chave
 
@@ -1537,132 +1537,150 @@ Nota de execução 17.33 (2026-04-26): etapa concluída em `checking_kotlin_new/
 
 ### 17.34. Construtor de solicitação regular, weekend e extra
 
-- [ ] Implementar o modo `regular` com os dias úteis permitidos.
-- [ ] Implementar o modo `weekend` com os dias de fim de semana permitidos.
-- [ ] Implementar o modo `extra` com data e hora.
-- [ ] Implementar subtítulos e textos equivalentes aos da SPA.
-- [ ] Implementar botão `Solicitar` com estado `Solicitando...`.
-- [ ] Implementar validações locais coerentes com a SPA antes do envio.
-- [ ] Plugar `POST /api/web/transport/vehicle-request` como endpoint principal.
-- [ ] Tratar `/api/web/transport/request` apenas como alias de compatibilidade, se necessário.
-- [ ] Recarregar o estado do transporte após criação ou reaproveitamento de solicitação ativa.
+- [x] Implementar o modo `regular` com os dias úteis permitidos.
+- [x] Implementar o modo `weekend` com os dias de fim de semana permitidos.
+- [x] Implementar o modo `extra` com data e hora.
+- [x] Implementar subtítulos e textos equivalentes aos da SPA.
+- [x] Implementar botão `Solicitar` com estado `Solicitando...`.
+- [x] Implementar validações locais coerentes com a SPA antes do envio.
+- [x] Plugar `POST /api/web/transport/vehicle-request` como endpoint principal.
+- [x] Tratar `/api/web/transport/request` apenas como alias de compatibilidade, se necessário.
+- [x] Recarregar o estado do transporte após criação ou reaproveitamento de solicitação ativa.
+
+Nota de execução 17.34 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/transport/transport-request-builder-submit.md`. O app Kotlin novo passou a submeter o construtor de transporte para `regular`, `weekend` e `extra` usando `POST /api/web/transport/vehicle-request`, com validações locais equivalentes às da SPA para `selected_weekdays`, `requested_date`, `requested_time` e `chave` válida. O `SessionGateViewModel` agora monta `WebTransportRequestCreate`, usa horário atual do aparelho para `regular`/`weekend`, abre `extra` com data atual e `18:00`, reaplica `payload.state` no retorno e fecha o builder quando a solicitação é criada ou reaproveitada. A validação focal foi executada com `.\gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.data.remote.WebCheckApiServiceTest"`, seguida da suíte ampla `.\gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.35. Histórico de solicitações de transporte
 
-- [ ] Renderizar lista completa de solicitações retornadas pelo backend, e não apenas a ativa.
-- [ ] Garantir ordenação visual coerente com o estado retornado pela API.
-- [ ] Implementar badges, estados e rótulos equivalentes aos do webapp.
-- [ ] Implementar o botão local `Realizado` quando elegível.
-- [ ] Implementar lógica de dismiss apenas para cartões `realized` ou `cancelled`.
-- [ ] Implementar persistência local de `dismissed_request_ids`.
-- [ ] Implementar persistência local de `realized_request_ids`.
-- [ ] Garantir que o estado local sobreviva ao fechamento e à reabertura da tela.
-- [ ] Garantir que o estado local não seja limpo prematuramente.
-- [ ] Garantir que o estado local seja limpo quando o reset protegido da sessão realmente ocorrer.
+- [x] Renderizar apenas a solicitação visível mais atual, independentemente do status.
+- [x] Garantir ordenação visual coerente com o estado retornado pela API.
+- [x] Implementar badges, estados e rótulos equivalentes aos do webapp.
+- [x] Implementar o botão local `Realizado` quando elegível.
+- [x] Implementar lógica de dismiss apenas para cartões `realized` ou `cancelled`.
+- [x] Implementar persistência local de `dismissed_request_ids`.
+- [x] Implementar persistência local de `realized_request_ids`.
+- [x] Garantir que o estado local sobreviva ao fechamento e à reabertura da tela.
+- [x] Garantir que o estado local não seja limpo prematuramente.
+- [x] Garantir que o reset protegido limpe apenas o estado em memória da tela, preservando a persistência local por `chave`.
+
+Nota de execução 17.35 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/transport/transport-request-history-local-state.md`. O app Kotlin novo passou a reconciliar o histórico de transporte com os overrides locais persistidos por `chave`, normalizando o payload remoto para manter apenas a solicitação visível mais atual no card do histórico, sem perder a fila local de solicitações ainda não ocultadas. O `SessionGateViewModel` agora ordena o histórico por recência (`created_at`, com `request_id` como desempate), reaplica os overrides locais de `realized` e `dismissed`, persiste a limpeza de ids obsoletos e mantém o card superior sincronizado após reload, atualização de endereço e criação de solicitação. A UI nativa ganhou ações locais `Realizado` e `Ocultar` para o card atual quando elegíveis, enquanto o reset protegido continua limpando apenas o estado em memória da tela, preservando a persistência keyed definida na etapa 17.15. A validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.36. Normalizações de status de transporte
 
-- [ ] Implementar normalização de `realized` da API para `confirmed` no fluxo local, como a SPA faz.
-- [ ] Implementar normalização de solicitações inativas para `cancelled`, salvo override local de `realized`.
-- [ ] Garantir que a UI não volte indevidamente um item já marcado localmente como realizado.
-- [ ] Garantir que `pending` e `confirmed` permaneçam visíveis.
-- [ ] Garantir que cartões `cancelled` e `realized` possam ser ocultados localmente.
+- [x] Implementar normalização de `realized` da API para `confirmed` no fluxo local, como a SPA faz.
+- [x] Implementar normalização de solicitações inativas para `cancelled`, salvo override local de `realized`.
+- [x] Garantir que a UI não volte indevidamente um item já marcado localmente como realizado.
+- [x] Garantir que `pending` e `confirmed` permaneçam visíveis.
+- [x] Garantir que cartões `cancelled` e `realized` possam ser ocultados localmente.
+
+Nota de execução 17.36 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/transport/transport-request-status-normalization.md`. A camada de modelos do app Kotlin novo passou a reproduzir a regra da SPA para histórico de transporte: itens ativos com `status=realized` entram no fluxo local como `confirmed`, enquanto qualquer solicitação inativa passa a `cancelled` antes da reconciliação do histórico. O `SessionGateViewModel` manteve a reaplicação posterior de `realized_request_ids`, preservando a marcação local apenas quando o item segue elegível no payload normalizado e evitando que a UI reverta indevidamente um cartão já concluído localmente. A cobertura foi reforçada com testes de modelo e owner para `realized` ativo, `realized` inativo, limpeza de overrides obsoletos e manutenção da visibilidade de `pending`/`confirmed`; a validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.domain.model.WebApiModelsTest" --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.37. Ações do histórico de transporte
 
-- [ ] Implementar cancelamento via `POST /api/web/transport/cancel`.
-- [ ] Implementar ciência via `POST /api/web/transport/acknowledge`.
-- [ ] Implementar o gesto ou ação equivalente ao dismiss da SPA.
-- [ ] Implementar o pop-up ou diálogo de detalhe da solicitação.
-- [ ] Garantir que o detalhe exponha veículo, placa, cor, horários e demais campos equivalentes ao webapp.
+- [x] Implementar cancelamento via `POST /api/web/transport/cancel`.
+- [x] Implementar ciência via `POST /api/web/transport/acknowledge`.
+- [x] Implementar o gesto ou ação equivalente ao dismiss da SPA.
+- [x] Implementar o pop-up ou diálogo de detalhe da solicitação.
+- [x] Garantir que o detalhe exponha veículo, placa, cor, horários e demais campos equivalentes ao webapp.
+
+Nota de execução 17.37 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/transport/transport-request-history-actions.md`. O app Kotlin novo passou a abrir um detalhe da solicitação ao tocar no card atual, expondo mensagens, veículo, placa, cor, data e horário com a mesma matriz de campos da SPA para `pending`, `confirmed`, `realized` e itens inativos. O `SessionGateViewModel` agora controla cancelamento via `POST /api/web/transport/cancel`, ciência via `POST /api/web/transport/acknowledge`, elegibilidade de ações por status e a limpeza consistente do detalhe e dos busy flags após cada mutation. A UI nativa ganhou suporte a clique para abrir detalhe, `combinedClickable` com long-press como equivalente ao dismiss da SPA e o fallback explícito por botão `Ocultar`, preservando o histórico local keyed por `chave` das etapas anteriores. A validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.data.remote.WebCheckApiServiceTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.38. SSE de transporte e fallback de polling
 
-- [ ] Escolher a biblioteca ou abordagem de SSE para Android compatível com o restante da stack.
-- [ ] Implementar o cliente SSE de `GET /api/web/transport/stream?chave=...`.
-- [ ] Garantir envio automático dos cookies de sessão no handshake da conexão SSE.
-- [ ] Abrir a conexão apenas ao entrar na tela de transporte.
-- [ ] Fechar a conexão ao sair da tela de transporte.
-- [ ] Implementar keep-alive e reconexão segura.
-- [ ] Implementar polling de fallback a cada 10 segundos.
-- [ ] Implementar debounce de refresh em tempo real equivalente ao webapp.
-- [ ] Garantir que SSE e polling não gerem duplicidade de atualização ou regressão visual.
+- [x] Escolher a biblioteca ou abordagem de SSE para Android compatível com o restante da stack.
+- [x] Implementar o cliente SSE de `GET /api/web/transport/stream?chave=...`.
+- [x] Garantir envio automático dos cookies de sessão no handshake da conexão SSE.
+- [x] Abrir a conexão apenas ao entrar na tela de transporte.
+- [x] Fechar a conexão ao sair da tela de transporte.
+- [x] Implementar keep-alive e reconexão segura.
+- [x] Implementar polling de fallback a cada 10 segundos.
+- [x] Implementar debounce de refresh em tempo real equivalente ao webapp.
+- [x] Garantir que SSE e polling não gerem duplicidade de atualização ou regressão visual.
+
+Nota de execução 17.38 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/transport/transport-realtime-sse-polling.md`. O app Kotlin novo passou a reutilizar a stack existente de OkHttp SSE com o mesmo `CookieJar` e a mesma invalidação de sessão já usada nas chamadas HTTP, expondo o stream `GET /api/web/transport/stream?chave=...` por um datasource dedicado. O `SessionGateViewModel` agora abre a observação apenas enquanto a overlay de transporte estiver ativa, fecha toda a infraestrutura ao sair da tela, aplica debounce de 220 ms equivalente ao webapp, mantém polling de fallback a cada 10 segundos e reage com reconexão segura quando o stream falha sem reabrir a tela. A cobertura foi reforçada com testes focais do owner, do wrapper realtime e do cliente SSE de baixo nível, incluindo a regra de ignorar o payload inicial `{"reason":"connected"}` e de preservar o handshake autenticado por cookie.
 
 ### 17.39. Responsividade e precisão visual fina
 
-- [ ] Ajustar largura máxima do card em telas pequenas, médias e grandes.
-- [ ] Ajustar gaps verticais entre seções.
-- [ ] Ajustar padding interno dos cards.
-- [ ] Ajustar altura dos botões e inputs.
-- [ ] Ajustar cantos arredondados de cards, campos e botões.
-- [ ] Ajustar espaçamento e alinhamento do cabeçalho.
-- [ ] Ajustar o layout da linha de autenticação.
-- [ ] Ajustar a linha de projeto/local.
-- [ ] Ajustar a grade de opções de registro.
-- [ ] Ajustar a grade de opções de informe.
-- [ ] Ajustar o tamanho e o espaçamento dos chips de dias no transporte.
-- [ ] Ajustar o crescimento da lista de histórico de transporte dentro do espaço restante da tela.
-- [ ] Ajustar estados de foco e de teclado aberto em telas pequenas.
-- [ ] Ajustar as opacidades, cores e bordas dos estados de atenção e pending.
+- [x] Ajustar largura máxima do card em telas pequenas, médias e grandes.
+- [x] Ajustar gaps verticais entre seções.
+- [x] Ajustar padding interno dos cards.
+- [x] Ajustar altura dos botões e inputs.
+- [x] Ajustar cantos arredondados de cards, campos e botões.
+- [x] Ajustar espaçamento e alinhamento do cabeçalho.
+- [x] Ajustar o layout da linha de autenticação.
+- [x] Ajustar a linha de projeto/local.
+- [x] Ajustar a grade de opções de registro.
+- [x] Ajustar a grade de opções de informe.
+- [x] Ajustar o tamanho e o espaçamento dos chips de dias no transporte.
+- [x] Ajustar o crescimento da lista de histórico de transporte dentro do espaço restante da tela.
+- [x] Ajustar estados de foco e de teclado aberto em telas pequenas.
+- [x] Ajustar as opacidades, cores e bordas dos estados de atenção e pending.
+
+Nota de execução 17.39 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/visual-foundation/responsive-fine-tuning.md`. Os tokens de `CheckingTheme` passaram a diferenciar viewport compacto e desktop para largura máxima, padding, alturas e raios, sem reabrir a base visual da 17.11. O shell principal ganhou breakpoints locais para empilhar a linha de autenticação, a linha `Projeto`/`Local` e as grades de `Registro` e `Informe` em larguras estreitas, além de `imePadding()` para preservar foco e teclado em telas pequenas. A overlay de transporte recebeu card height responsivo, resumo de endereço e campos empilháveis, chips de dias mais compactos e altura mínima explícita para o histórico ocupar o espaço restante do card. A cobertura focal foi reforçada com testes de tokens, breakpoints do shell e layout do transporte antes da validação ampla do módulo.
 
 ### 17.40. Textos, ortografia e consistência de linguagem
 
-- [ ] Conferir que todos os textos visíveis reproduzem os textos atuais da SPA.
-- [ ] Conferir capitalização consistente em `Último Check-In`, `Último Check-Out`, `Projeto`, `Local`, `Registro`, `Informe`, `Alterar`, `Voltar`, `Enviar` e `Registrar`.
-- [ ] Conferir acentuação correta em `Solicitação`, `Ciência`, `Precisão`, `Localização` e demais termos exibidos ao usuário.
-- [ ] Conferir textos específicos do fluxo GPS revisado: `Buscando precisão suficiente...`, `Precisão atual`, `Precisao insuficiente`, `Precisao Insuficiente` e `Limite`.
-- [ ] Conferir que o título atual da SPA, `Checking Web`, esteja refletido onde o app Kotlin reproduzir a marca do shell.
-- [ ] Conferir que as mensagens de erro e ajuda não perderam o sentido original do webapp.
-- [ ] Conferir que o overlay de paisagem use o mesmo texto da SPA.
+- [x] Conferir que todos os textos visíveis reproduzem os textos atuais da SPA.
+- [x] Conferir capitalização consistente em `Último Check-In`, `Último Check-Out`, `Projeto`, `Local`, `Registro`, `Informe`, `Alterar`, `Voltar`, `Enviar` e `Registrar`.
+- [x] Conferir acentuação correta em `Solicitação`, `Ciência`, `Precisão`, `Localização` e demais termos exibidos ao usuário.
+- [x] Conferir textos específicos do fluxo GPS revisado: `Buscando precisão suficiente...`, `Precisão atual`, `Precisao insuficiente`, `Precisao Insuficiente` e `Limite`.
+- [x] Conferir que o título atual da SPA, `Checking Web`, esteja refletido onde o app Kotlin reproduzir a marca do shell.
+- [x] Conferir que as mensagens de erro e ajuda não perderam o sentido original do webapp.
+- [x] Conferir que o comportamento em paisagem reflita a SPA atual, que não exibe mais overlay dedicado.
+
+Nota de execução 17.40 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/visual-foundation/text-language-consistency.md`. O shell Kotlin foi realinhado aos textos atuais da SPA para cabeçalho, histórico, placeholders de localização, nota de autocadastro e rótulo de atualização de localização, enquanto a overlay de transporte passou a reproduzir a cópia atual de ciência com o botão em caixa alta. O owner também perdeu o último fallback ASCII visível e o guard de paisagem foi desativado para acompanhar o webapp atual, que já não renderiza mais overlay dedicado. A validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.check.CheckShellUiStateTest" --tests "com.br.checkingnative.ui.check.PortraitLockUiStateTest" --tests "com.br.checkingnative.ui.transport.TransportScreenStateTest" --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.41. Testes unitários de lógica
 
-- [ ] Criar testes para sanitização de `chave`.
-- [ ] Criar testes para quebra de notificação em linha primária/secundária.
-- [ ] Criar testes para decisão do rótulo do botão lateral de autenticação.
-- [ ] Criar testes para cálculo da atividade mais recente do histórico.
-- [ ] Criar testes para restauração de projeto e senha por `chave`.
-- [ ] Criar testes para normalização de status de transporte.
-- [ ] Criar testes para elegibilidade de `Realizado` local.
-- [ ] Criar testes para elegibilidade de dismiss do cartão de transporte.
-- [ ] Criar testes para as regras de atividades automáticas derivadas de `automatic-activities.js`.
-- [ ] Criar testes para planos de captura GPS por gatilho, incluindo janela `0-5000 ms` e janela `3000-7000 ms`.
-- [ ] Criar testes para seleção da melhor amostra por menor precisão e desempate por timestamp.
-- [ ] Criar testes para encerramento antecipado da janela quando a precisão alvo for atingida.
-- [ ] Criar testes para timeout sem amostras válidas.
-- [ ] Criar testes para montagem de texto `Precisão atual X m / Limite Y m`.
-- [ ] Criar testes para fallback manual `accuracy_too_low` com e sem `Atividades Automáticas`.
-- [ ] Criar testes para a opção sintética `Precisao Insuficiente`, garantindo que ela nunca apareça no fluxo sem permissão GPS.
-- [ ] Criar testes para submit manual usando o local manual durante `accuracy_too_low` e o local resolvido quando a localização GPS estiver utilizável.
+- [x] Criar testes para sanitização de `chave`.
+- [x] Criar testes para quebra de notificação em linha primária/secundária.
+- [x] Criar testes para decisão do rótulo do botão lateral de autenticação.
+- [x] Criar testes para cálculo da atividade mais recente do histórico.
+- [x] Criar testes para restauração de projeto e senha por `chave`.
+- [x] Criar testes para normalização de status de transporte.
+- [x] Criar testes para elegibilidade de `Realizado` local.
+- [x] Criar testes para elegibilidade de dismiss do cartão de transporte.
+- [x] Criar testes para as regras de atividades automáticas derivadas de `automatic-activities.js`.
+- [x] Criar testes para planos de captura GPS por gatilho, incluindo janela `0-5000 ms` e janela `3000-7000 ms`.
+- [x] Criar testes para seleção da melhor amostra por menor precisão e desempate por timestamp.
+- [x] Criar testes para encerramento antecipado da janela quando a precisão alvo for atingida.
+- [x] Criar testes para timeout sem amostras válidas.
+- [x] Criar testes para montagem de texto `Precisão atual X m / Limite Y m`.
+- [x] Criar testes para fallback manual `accuracy_too_low` com e sem `Atividades Automáticas`.
+- [x] Criar testes para a opção sintética `Precisao Insuficiente`, garantindo que ela nunca apareça no fluxo sem permissão GPS.
+- [x] Criar testes para submit manual usando o local manual durante `accuracy_too_low` e o local resolvido quando a localização GPS estiver utilizável.
+
+Nota de execução 17.41 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/session-gate/session-gate-logic-unit-tests.md`. A fase consolidou a cobertura lógica que já vinha sendo construída desde 17.16, 17.29, 17.31, 17.35 e 17.36, sem reabrir comportamento de produção. `CheckShellUiStateTest` passou a cobrir explicitamente a sanitização de `chave`, o caso de último `Check-Out` como atividade mais recente e a garantia de que `Precisao Insuficiente` nunca é injetado no seletor manual quando não há permissão GPS. `SessionGateViewModelTest` ganhou cobertura explícita para o texto de progresso `Precisão atual X m / Limite Y m` enquanto a janela de captura ainda está aberta e para o timeout sem amostras válidas, enquanto as suítes já existentes de owner, datasource de localização e modelos continuam cobrindo regras automáticas, planos de captura, melhor amostra, fallback `accuracy_too_low`, restauração keyed e normalização de transporte. A validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.ui.check.CheckShellUiStateTest" --tests "com.br.checkingnative.ui.session.SessionGateViewModelTest" --tests "com.br.checkingnative.ui.session.SessionGateDeviceLocationDataSourceTest" --tests "com.br.checkingnative.domain.model.WebApiModelsTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.42. Testes de integração e contrato HTTP
 
-- [ ] Testar `GET /api/web/auth/status` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/auth/register-password` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/auth/register-user` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/auth/login` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/auth/logout` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/auth/change-password` a partir do app Kotlin.
-- [ ] Testar `GET /api/web/projects` a partir do app Kotlin.
-- [ ] Testar `PUT /api/web/project` a partir do app Kotlin.
-- [ ] Testar `GET /api/web/check/state` a partir do app Kotlin.
-- [ ] Testar `GET /api/web/check/locations` a partir do app Kotlin.
-- [ ] Testar que `GET /api/web/check/locations` mapeia `location_accuracy_threshold_meters`.
-- [ ] Testar `POST /api/web/check/location` a partir do app Kotlin.
-- [ ] Testar que `POST /api/web/check/location` envia latitude, longitude e `accuracy_meters` da melhor amostra selecionada.
-- [ ] Testar as respostas `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations` mantendo `accuracy_threshold_meters`.
-- [ ] Testar `POST /api/web/check` a partir do app Kotlin.
-- [ ] Testar que `POST /api/web/check` aceita `local = "Precisao Insuficiente"` no fluxo manual de fallback por precisão.
-- [ ] Testar `GET /api/web/transport/state` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/transport/address` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/transport/vehicle-request` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/transport/cancel` a partir do app Kotlin.
-- [ ] Testar `POST /api/web/transport/acknowledge` a partir do app Kotlin.
-- [ ] Testar `GET /api/web/transport/stream` a partir do app Kotlin.
-- [ ] Testar tratamento de `401` em fluxos protegidos.
-- [ ] Testar tratamento de `404` em fluxos de chave inexistente e senha ausente.
-- [ ] Testar tratamento de `409` nos fluxos que o backend usa para conflito.
-- [ ] Testar tratamento de `422` para validações de payload.
+- [x] Testar `GET /api/web/auth/status` a partir do app Kotlin.
+- [x] Testar `POST /api/web/auth/register-password` a partir do app Kotlin.
+- [x] Testar `POST /api/web/auth/register-user` a partir do app Kotlin.
+- [x] Testar `POST /api/web/auth/login` a partir do app Kotlin.
+- [x] Testar `POST /api/web/auth/logout` a partir do app Kotlin.
+- [x] Testar `POST /api/web/auth/change-password` a partir do app Kotlin.
+- [x] Testar `GET /api/web/projects` a partir do app Kotlin.
+- [x] Testar `PUT /api/web/project` a partir do app Kotlin.
+- [x] Testar `GET /api/web/check/state` a partir do app Kotlin.
+- [x] Testar `GET /api/web/check/locations` a partir do app Kotlin.
+- [x] Testar que `GET /api/web/check/locations` mapeia `location_accuracy_threshold_meters`.
+- [x] Testar `POST /api/web/check/location` a partir do app Kotlin.
+- [x] Testar que `POST /api/web/check/location` envia latitude, longitude e `accuracy_meters` da melhor amostra selecionada.
+- [x] Testar as respostas `matched`, `accuracy_too_low`, `outside_workplace`, `not_in_known_location` e `no_known_locations` mantendo `accuracy_threshold_meters`.
+- [x] Testar `POST /api/web/check` a partir do app Kotlin.
+- [x] Testar que `POST /api/web/check` aceita `local = "Precisao Insuficiente"` no fluxo manual de fallback por precisão.
+- [x] Testar `GET /api/web/transport/state` a partir do app Kotlin.
+- [x] Testar `POST /api/web/transport/address` a partir do app Kotlin.
+- [x] Testar `POST /api/web/transport/vehicle-request` a partir do app Kotlin.
+- [x] Testar `POST /api/web/transport/cancel` a partir do app Kotlin.
+- [x] Testar `POST /api/web/transport/acknowledge` a partir do app Kotlin.
+- [x] Testar `GET /api/web/transport/stream` a partir do app Kotlin.
+- [x] Testar tratamento de `401` em fluxos protegidos.
+- [x] Testar tratamento de `404` em fluxos de chave inexistente e senha ausente.
+- [x] Testar tratamento de `409` nos fluxos que o backend usa para conflito.
+- [x] Testar tratamento de `422` para validações de payload.
+
+Nota de execução 17.42 (2026-04-28): etapa concluída em `checking_kotlin_new/docs/backend-contracts/http-contract-integration-tests.md`. A cobertura de contrato HTTP foi fechada no boundary real do app Kotlin com `MockWebServer`, sem alterar código de produção. `WebCheckApiServiceTest` passou a cobrir explicitamente `GET /api/web/auth/status`, `POST /api/web/auth/register-password`, `POST /api/web/auth/login`, `POST /api/web/auth/logout`, `POST /api/web/auth/change-password`, `PUT /api/web/project`, `GET /api/web/check/state`, o submit manual com `local = "Precisao Insuficiente"`, as respostas restantes de `POST /api/web/check/location` e os tratamentos de `401`, `404` e `422`; o `409` continuou coberto pelo fluxo de conflito já existente em transporte. `WebTransportStreamClientTest` permaneceu como teste dedicado do `GET /api/web/transport/stream`, validando handshake SSE, cabeçalho `Accept` e cookie de sessão compartilhado. A validação focal foi executada com `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.data.remote.WebCheckApiServiceTest"` e `./gradlew.bat :app:testDebugUnitTest --tests "com.br.checkingnative.data.remote.WebTransportStreamClientTest"`, seguida da suíte ampla `./gradlew.bat :app:testDebugUnitTest`.
 
 ### 17.43. Testes instrumentados de UI e screenshot
 
