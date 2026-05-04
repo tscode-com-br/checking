@@ -53,6 +53,20 @@ Situação 6:
 - A aplicação web 'Checking Web' atualiza a localização do usuário para uma localização diferente da que foi registrada no check-in imediatamente anterior.
 - Nesta situação, a aplicação web 'Checking Web' deve realizar um novo check-in do usuário, apenas para atualizar sua localização.
 
+Situação 7:
+- A aplicação web 'Checking Web' já está em primeiro plano;
+- A última atividade do usuário foi um check-out;
+- A checkbox 'Atividades Automáticas' está marcada;
+- A aplicação web 'Checking Web' atualiza a localização do usuário e percebe que ele está na localização 'Zona de CheckOut';
+- A aplicação web 'Checking Web', então, não toma nenhuma ação, pois a última atividade já foi um check-out;
+- Em seguida, o usuário pressiona o botão 'Atualizar' apenas para atualizar a sua localização;
+- A aplicação web 'Checking Web' atualiza a localização do usuário para uma destas duas condições:
+- Variante 7A: alguma localização cadastrada na API diferente de 'Zona de CheckOut';
+- Variante 7B: nenhuma localização cadastrada na API, mas o usuário também não está a mais de 2 km distante de alguma coordenada cadastrada na API, desconsiderando a localização 'Zona de CheckOut' nesta verificação. Ou seja, o usuário continua próximo do local de trabalho;
+- A aplicação web 'Checking Web' percebe que o usuário saiu da 'Zona de CheckOut';
+- Nesta situação, a aplicação web 'Checking Web' deve realizar imediatamente um check-in do usuário;
+- Ao realizar esse check-in, a aplicação web 'Checking Web' atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
+
 
 
 

@@ -94,6 +94,8 @@ def _build_project_row(row) -> ProjectRow:
             country_name=row.country_name,
             timezone_name=row.timezone_name,
         ),
+        address=str(row.address or "").strip(),
+        zip_code=str(row.zip_code or "").strip(),
     )
 
 
@@ -1118,6 +1120,9 @@ def _reset_transport_request_assignments_to_pending(
     transport_request: TransportRequest,
     response_message: str | None,
     admin_user_id: int | None,
+    service_date: date | None = None,
+    route_kind: str | None = None,
+    pending_reset_scope: str = "all_assignments",
 ) -> None:
     from .transport_assignment_operations import _reset_transport_request_assignments_to_pending as reset_transport_request_assignments_to_pending_impl
 
@@ -1126,6 +1131,9 @@ def _reset_transport_request_assignments_to_pending(
         transport_request=transport_request,
         response_message=response_message,
         admin_user_id=admin_user_id,
+        service_date=service_date,
+        route_kind=route_kind,
+        pending_reset_scope=pending_reset_scope,
     )
 
 
@@ -1139,6 +1147,7 @@ def upsert_transport_assignment_with_persistence(
     vehicle: Vehicle | None,
     response_message: str | None,
     admin_user_id: int | None,
+    pending_reset_scope: str = "all_assignments",
 ) -> tuple[TransportAssignment, bool]:
     from .transport_assignment_operations import upsert_transport_assignment_with_persistence as upsert_transport_assignment_with_persistence_impl
 
@@ -1151,6 +1160,7 @@ def upsert_transport_assignment_with_persistence(
         vehicle=vehicle,
         response_message=response_message,
         admin_user_id=admin_user_id,
+        pending_reset_scope=pending_reset_scope,
     )
 
 
@@ -1282,7 +1292,11 @@ def _build_recurring_assignment_template_index(
 ) -> dict[tuple[int, int], tuple[TransportAssignment, Vehicle]]:
     recurring_assignment_templates: dict[tuple[int, int], tuple[TransportAssignment, Vehicle]] = {}
 
-    for assignment in sorted(assignments, key=lambda row: (row.updated_at, row.id), reverse=True):
+    for assignment in sorted(
+        assignments,
+        key=lambda row: (row.updated_at.replace(tzinfo=None), row.id),
+        reverse=True,
+    ):
         if assignment.status != "confirmed" or assignment.vehicle_id is None:
             continue
 

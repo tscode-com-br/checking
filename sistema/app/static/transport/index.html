@@ -50,11 +50,28 @@
                 aria-label="AI actions"
                 hidden
               >
-                <button type="button" class="transport-ai-menu-item" data-ai-menu-action="calculate-routes" role="menuitem">
+                <button
+                  type="button"
+                  class="transport-ai-menu-item"
+                  data-ai-menu-action="calculate-routes"
+                  role="menuitem"
+                  aria-haspopup="dialog"
+                  aria-controls="transport-ai-agent-modal"
+                >
                   Calculate Routes
                 </button>
                 <button type="button" class="transport-ai-menu-item" data-ai-menu-action="implement-modifications" role="menuitem">
                   Implement Modifications
+                </button>
+                <button
+                  type="button"
+                  class="transport-ai-menu-item"
+                  data-ai-menu-action="settings"
+                  role="menuitem"
+                  aria-haspopup="dialog"
+                  aria-controls="transport-ai-settings-modal"
+                >
+                  AI Settings
                 </button>
               </div>
             </div>
@@ -437,6 +454,344 @@
             <button type="submit" class="transport-primary-button">Save Vehicle</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div class="transport-modal-backdrop" data-ai-agent-modal hidden>
+      <div
+        class="transport-modal transport-ai-agent-modal"
+        id="transport-ai-agent-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transport-ai-agent-modal-title"
+        aria-describedby="transport-ai-agent-modal-note transport-ai-agent-modal-feedback"
+      >
+        <div class="transport-modal-head">
+          <div>
+            <h2 id="transport-ai-agent-modal-title" class="transport-modal-title transport-ai-agent-modal-title">Ajustes para o Agente de IA</h2>
+          </div>
+          <button type="button" class="transport-modal-close" data-close-ai-agent-modal aria-label="Fechar ajustes do agente de IA">×</button>
+        </div>
+
+        <div class="transport-ai-agent-modal-body">
+          <p id="transport-ai-agent-modal-note" class="transport-modal-note transport-ai-agent-modal-note" data-ai-agent-modal-note>
+            Quando os projetos forem carregados, a IA usará endereço, ZIP Code e país vindos de Admin &gt; Projetos.
+          </p>
+
+          <div class="transport-settings-section transport-ai-agent-settings-group">
+            <label class="transport-settings-row" for="transportAiAgentEarliestBoarding">
+              <span class="transport-settings-label" data-ai-agent-early-boarding-label>Embarque Mais Cedo:</span>
+              <input
+                id="transportAiAgentEarliestBoarding"
+                class="transport-settings-time-input"
+                type="time"
+                step="60"
+                data-ai-agent-earliest-boarding
+                value="06:50"
+              />
+            </label>
+
+            <label class="transport-settings-row" for="transportAiAgentArrivalAtWork">
+              <span class="transport-settings-label" data-ai-agent-arrival-label>Horário de Chegada no Trabalho:</span>
+              <input
+                id="transportAiAgentArrivalAtWork"
+                class="transport-settings-time-input"
+                type="time"
+                step="60"
+                data-ai-agent-arrival-at-work
+                value="07:45"
+              />
+            </label>
+          </div>
+
+          <div
+            id="transport-ai-agent-modal-feedback"
+            class="transport-modal-feedback transport-ai-agent-modal-feedback"
+            data-ai-agent-feedback
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            hidden
+          ></div>
+
+          <div class="transport-modal-actions transport-ai-agent-actions">
+            <button type="button" class="transport-secondary-button" data-ai-agent-cancel data-close-ai-agent-modal>Cancelar</button>
+            <button type="button" class="transport-primary-button" data-ai-agent-submit>Solicitar Rotas</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="transport-modal-backdrop" data-ai-settings-modal hidden>
+      <div
+        class="transport-modal transport-ai-settings-modal"
+        id="transport-ai-settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transport-ai-settings-modal-title"
+        aria-describedby="transport-ai-settings-modal-note transport-ai-settings-modal-feedback"
+      >
+        <div class="transport-modal-head">
+          <div>
+            <h2 id="transport-ai-settings-modal-title" class="transport-modal-title transport-ai-settings-modal-title">AI Settings</h2>
+          </div>
+          <button type="button" class="transport-modal-close" data-close-ai-settings-modal aria-label="Close AI settings">×</button>
+        </div>
+
+        <div class="transport-ai-settings-modal-body">
+          <div class="transport-settings-section transport-ai-settings-group">
+            <label class="transport-settings-row" for="transportAiSettingsProvider">
+              <span class="transport-settings-label" data-ai-settings-provider-label>Provider:</span>
+              <select
+                id="transportAiSettingsProvider"
+                class="transport-settings-select"
+                data-ai-settings-provider
+              >
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+              </select>
+            </label>
+
+            <p id="transport-ai-settings-modal-note" class="transport-modal-note transport-ai-settings-provider-note" data-ai-settings-provider-note>
+              OpenAI -&gt; gpt-5.4-2026-03-05 | reasoning: high
+            </p>
+
+            <label class="transport-settings-row" for="transportAiSettingsApiKey">
+              <span class="transport-settings-label" data-ai-settings-api-key-label>API Key:</span>
+              <input
+                id="transportAiSettingsApiKey"
+                class="transport-settings-text-input"
+                type="password"
+                autocomplete="off"
+                data-ai-settings-api-key
+                placeholder="Paste API key"
+              />
+            </label>
+
+            <p class="transport-ai-settings-api-key-hint" data-ai-settings-api-key-hint hidden></p>
+          </div>
+
+          <div
+            id="transport-ai-settings-modal-feedback"
+            class="transport-modal-feedback transport-ai-settings-modal-feedback"
+            data-ai-settings-feedback
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            hidden
+          ></div>
+
+          <div class="transport-modal-actions transport-ai-settings-actions">
+            <button type="button" class="transport-secondary-button" data-ai-settings-cancel data-close-ai-settings-modal>Cancel</button>
+            <button type="button" class="transport-primary-button" data-ai-settings-save>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="transport-modal-backdrop" data-ai-changes-modal hidden>
+      <div
+        class="transport-modal transport-ai-changes-modal"
+        id="transport-ai-changes-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transport-ai-changes-modal-title"
+        aria-describedby="transport-ai-changes-modal-summary"
+      >
+        <div class="transport-modal-head">
+          <div>
+            <h2 id="transport-ai-changes-modal-title" class="transport-modal-title transport-ai-changes-modal-title" data-ai-changes-title>Alterações</h2>
+          </div>
+          <button type="button" class="transport-modal-close" data-close-ai-changes-modal aria-label="Fechar alterações">×</button>
+        </div>
+
+        <div class="transport-ai-changes-modal-body">
+          <section class="transport-ai-changes-hero" aria-labelledby="transport-ai-changes-modal-summary-heading">
+            <div class="transport-ai-changes-summary-shell" data-ai-changes-summary>
+              <div class="transport-ai-changes-section-head">
+                <p class="transport-modal-kicker transport-ai-changes-kicker">AI Review</p>
+                <h3 id="transport-ai-changes-modal-summary-heading" class="transport-ai-changes-section-title">Summary</h3>
+              </div>
+              <p id="transport-ai-changes-modal-summary" class="transport-modal-feedback transport-ai-changes-status" data-ai-changes-status hidden></p>
+              <div class="transport-ai-changes-summary-grid" data-ai-changes-summary-grid>
+                <article class="transport-ai-changes-summary-card">
+                  <span class="transport-ai-changes-summary-label">Cost</span>
+                  <strong class="transport-ai-changes-summary-value">--</strong>
+                </article>
+                <article class="transport-ai-changes-summary-card">
+                  <span class="transport-ai-changes-summary-label">Vehicles</span>
+                  <strong class="transport-ai-changes-summary-value">--</strong>
+                </article>
+                <article class="transport-ai-changes-summary-card">
+                  <span class="transport-ai-changes-summary-label">Passengers</span>
+                  <strong class="transport-ai-changes-summary-value">--</strong>
+                </article>
+              </div>
+            </div>
+
+            <aside class="transport-ai-changes-side-note" aria-label="Review surface note">
+              <h3 class="transport-ai-changes-section-title">Review Surface</h3>
+              <p class="transport-ai-changes-side-copy">
+                This modal is prepared to show the executive summary, vehicle changes, passenger allocations, routes, and audit details once a suggestion is loaded.
+              </p>
+            </aside>
+          </section>
+
+          <div class="transport-ai-changes-tabs" data-ai-changes-tabs role="tablist" aria-label="AI suggestion sections">
+            <button
+              type="button"
+              class="transport-ai-changes-tab is-active"
+              id="transport-ai-changes-tab-summary"
+              data-ai-changes-tab="summary"
+              role="tab"
+              aria-selected="true"
+              aria-controls="transport-ai-changes-panel-summary"
+            >
+              Summary
+            </button>
+            <button
+              type="button"
+              class="transport-ai-changes-tab"
+              id="transport-ai-changes-tab-vehicles"
+              data-ai-changes-tab="vehicles"
+              role="tab"
+              aria-selected="false"
+              aria-controls="transport-ai-changes-panel-vehicles"
+              tabindex="-1"
+            >
+              Vehicles
+            </button>
+            <button
+              type="button"
+              class="transport-ai-changes-tab"
+              id="transport-ai-changes-tab-passengers"
+              data-ai-changes-tab="passengers"
+              role="tab"
+              aria-selected="false"
+              aria-controls="transport-ai-changes-panel-passengers"
+              tabindex="-1"
+            >
+              Passengers
+            </button>
+            <button
+              type="button"
+              class="transport-ai-changes-tab"
+              id="transport-ai-changes-tab-routes"
+              data-ai-changes-tab="routes"
+              role="tab"
+              aria-selected="false"
+              aria-controls="transport-ai-changes-panel-routes"
+              tabindex="-1"
+            >
+              Routes
+            </button>
+            <button
+              type="button"
+              class="transport-ai-changes-tab"
+              id="transport-ai-changes-tab-audit"
+              data-ai-changes-tab="audit"
+              role="tab"
+              aria-selected="false"
+              aria-controls="transport-ai-changes-panel-audit"
+              tabindex="-1"
+            >
+              Audit
+            </button>
+          </div>
+
+          <div class="transport-ai-changes-panels" data-ai-changes-content>
+            <section
+              id="transport-ai-changes-panel-summary"
+              class="transport-ai-changes-panel transport-ai-changes-panel-summary is-active"
+              data-ai-changes-panel="summary"
+              role="tabpanel"
+              aria-labelledby="transport-ai-changes-tab-summary"
+            >
+              <div class="transport-ai-changes-panel-head">
+                <h3 class="transport-ai-changes-section-title">Executive Summary</h3>
+              </div>
+              <div class="transport-ai-changes-panel-body transport-ai-changes-summary-panel" data-ai-changes-summary-panel>
+                <p class="transport-ai-changes-empty-state">
+                  Summary cards and high-level results will render here when the AI suggestion is loaded.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="transport-ai-changes-panel-vehicles"
+              class="transport-ai-changes-panel"
+              data-ai-changes-panel="vehicles"
+              role="tabpanel"
+              aria-labelledby="transport-ai-changes-tab-vehicles"
+            >
+              <div class="transport-ai-changes-panel-head">
+                <h3 class="transport-ai-changes-section-title">Vehicle Changes</h3>
+              </div>
+              <div class="transport-ai-changes-panel-body" data-ai-changes-vehicles>
+                <p class="transport-ai-changes-empty-state">
+                  Vehicle actions will appear in this panel once the review data is rendered.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="transport-ai-changes-panel-passengers"
+              class="transport-ai-changes-panel"
+              data-ai-changes-panel="passengers"
+              role="tabpanel"
+              aria-labelledby="transport-ai-changes-tab-passengers"
+            >
+              <div class="transport-ai-changes-panel-head">
+                <h3 class="transport-ai-changes-section-title">Passenger Allocations</h3>
+              </div>
+              <div class="transport-ai-changes-panel-body" data-ai-changes-passengers>
+                <p class="transport-ai-changes-empty-state">
+                  Passenger assignment changes and not-routed states will render here.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="transport-ai-changes-panel-routes"
+              class="transport-ai-changes-panel"
+              data-ai-changes-panel="routes"
+              role="tabpanel"
+              aria-labelledby="transport-ai-changes-tab-routes"
+            >
+              <div class="transport-ai-changes-panel-head">
+                <h3 class="transport-ai-changes-section-title">Routes</h3>
+              </div>
+              <div class="transport-ai-changes-panel-body" data-ai-changes-routes>
+                <p class="transport-ai-changes-empty-state">
+                  Ordered route stops and destination summaries will render in this area.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="transport-ai-changes-panel-audit"
+              class="transport-ai-changes-panel"
+              data-ai-changes-panel="audit"
+              role="tabpanel"
+              aria-labelledby="transport-ai-changes-tab-audit"
+            >
+              <div class="transport-ai-changes-panel-head">
+                <h3 class="transport-ai-changes-section-title">Audit</h3>
+              </div>
+              <div class="transport-ai-changes-panel-body" data-ai-changes-audit>
+                <p class="transport-ai-changes-empty-state">
+                  Prompt version, provider details, hashes, and other audit fields will render here.
+                </p>
+              </div>
+            </section>
+          </div>
+
+          <div class="transport-modal-actions transport-ai-changes-actions">
+            <button type="button" class="transport-secondary-button" data-ai-changes-cancel>Cancel</button>
+            <button type="button" class="transport-secondary-button" data-ai-changes-save>Save</button>
+            <button type="button" class="transport-primary-button" data-ai-changes-apply>Apply</button>
+          </div>
+        </div>
       </div>
     </div>
 

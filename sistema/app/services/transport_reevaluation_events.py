@@ -97,6 +97,13 @@ _TRANSPORT_REEVALUATION_CATALOG: tuple[TransportReevaluationCatalogEntry, ...] =
             "refresh_transport_state",
         ],
     ),
+    TransportReevaluationCatalogEntry(
+        event_type="transport_ai_route_calculation_changed",
+        description="A transport AI route-calculation lifecycle stage changed, updating review or audit state for the selected day.",
+        downstream_actions=[
+            "refresh_transport_state",
+        ],
+    ),
 )
 
 _TRANSPORT_REEVALUATION_CATALOG_INDEX = {

@@ -1,6 +1,18 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+TRANSPORT_AI_AGENT_MODES = ("agent", "deterministic")
+
+
+def normalize_transport_ai_agent_mode(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return TRANSPORT_AI_AGENT_MODES[0]
+    if normalized in TRANSPORT_AI_AGENT_MODES:
+        return normalized
+    return None
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -30,6 +42,26 @@ class Settings(BaseSettings):
     forms_timeout_seconds: int = 30
     forms_max_retries: int = 3
     forms_queue_enabled: bool = True
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5-2025-08-07"
+    openai_temperature: float | None = 0
+    openai_timeout_seconds: int = 120
+    openai_max_retries: int = 2
+    mapbox_access_token: str | None = None
+    mapbox_matrix_profile: str = "mapbox/driving-traffic"
+    mapbox_directions_profile: str = "mapbox/driving-traffic"
+    mapbox_timeout_seconds: int = 20
+    mapbox_max_retries: int = 2
+    mapbox_geocoding_permanent: bool = False
+    transport_ai_route_provider: str = "mapbox"
+    transport_ai_fake_matrix_asymmetric: bool = False
+    transport_ai_enabled: bool = False
+    transport_ai_agent_mode: str = "agent"
+    transport_ai_settings_encryption_key: str | None = None
+    transport_ai_max_passengers_per_run: int = 80
+    transport_ai_max_runtime_seconds: int = 180
+    transport_ai_route_cache_ttl_seconds: int = 3600
+    transport_ai_geocode_cache_ttl_days: int = 30
     event_archives_dir: str = "/app/data/event_archives"
     transport_exports_dir: str = "/app/data/transport_exports"
     serve_admin_site_in_api: bool = True

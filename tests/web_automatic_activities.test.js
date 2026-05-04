@@ -38,6 +38,21 @@ test('automatic check-in runs for a regular monitored location after checkout', 
   );
 });
 
+test('automatic check-in runs for a known location after checkout when leaving checkout zone', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Escritório Principal' },
+      {
+        current_action: 'checkout',
+        current_local: 'Zona de CheckOut',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      }
+    ),
+    true
+  );
+});
+
 test('automatic check-in after checkout requires a location change when current location is known', () => {
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(
@@ -53,7 +68,7 @@ test('automatic check-in after checkout requires a location change when current 
   );
 });
 
-test('automatic nearby-workplace check-in runs after checkout when no location is registered', () => {
+test('automatic nearby-workplace check-in runs after checkout when leaving checkout zone without a matched location', () => {
   assert.equal(
     automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
       {
@@ -97,6 +112,41 @@ test('automatic check-in does not repeat for the same current location', () => {
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(
       { resolved_local: 'Escritório Principal' },
+      {
+        current_action: 'checkin',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T09:00:00',
+        last_checkout_at: '2026-04-16T08:00:00',
+      }
+    ),
+    false
+  );
+});
+
+test('automatic check-in updates the recorded location after check-in when moving to another known location', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Almoxarifado' },
+      {
+        current_action: 'checkin',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T09:00:00',
+        last_checkout_at: '2026-04-16T08:00:00',
+      }
+    ),
+    true
+  );
+});
+
+test('automatic nearby-workplace check-in does not run while the user is already checked in near the workplace', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+      {
+        matched: false,
+        label: 'Localização não Cadastrada',
+        status: 'not_in_known_location',
+        nearest_workplace_distance_meters: 180,
+      },
       {
         current_action: 'checkin',
         current_local: 'Escritório Principal',

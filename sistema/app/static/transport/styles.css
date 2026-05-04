@@ -1824,6 +1824,12 @@ button {
   color: #ffe9b1;
 }
 
+.transport-modal-feedback[data-tone="info"] {
+  border-color: rgba(72, 212, 206, 0.28);
+  background: rgba(72, 212, 206, 0.08);
+  color: #d5fffc;
+}
+
 .transport-modal-feedback[data-tone="success"] {
   border-color: rgba(76, 209, 147, 0.34);
   background: rgba(76, 209, 147, 0.08);
@@ -1921,6 +1927,662 @@ button {
   width: min(100%, 940px);
   max-height: calc(100dvh - 20px);
   padding: 12px 14px;
+}
+
+.transport-ai-agent-modal {
+  width: min(100%, 560px);
+  max-height: calc(100dvh - 20px);
+  padding: 12px 14px;
+}
+
+.transport-ai-settings-modal {
+  width: min(100%, 520px);
+  max-height: calc(100dvh - 20px);
+  padding: 12px 14px;
+}
+
+.transport-ai-agent-modal .transport-modal-head {
+  gap: 10px;
+}
+
+.transport-ai-settings-modal .transport-modal-head {
+  gap: 10px;
+}
+
+.transport-ai-agent-modal .transport-modal-title {
+  font-size: 1.06rem;
+}
+
+.transport-ai-settings-modal .transport-modal-title {
+  font-size: 1.06rem;
+}
+
+.transport-ai-agent-modal .transport-modal-close {
+  width: 34px;
+  height: 34px;
+  font-size: 1.15rem;
+}
+
+.transport-ai-settings-modal .transport-modal-close {
+  width: 34px;
+  height: 34px;
+  font-size: 1.15rem;
+}
+
+.transport-ai-agent-modal-title {
+  margin-top: 0;
+}
+
+.transport-ai-settings-modal-title {
+  margin-top: 0;
+}
+
+.transport-ai-agent-modal-body {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.transport-ai-settings-modal-body {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.transport-ai-agent-modal-note {
+  margin-bottom: 0;
+}
+
+.transport-ai-settings-group {
+  gap: 10px;
+}
+
+.transport-ai-settings-group .transport-settings-row {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 6px;
+}
+
+.transport-ai-settings-provider-note {
+  margin-bottom: 0;
+}
+
+.transport-ai-settings-api-key-hint {
+  margin: 0;
+  color: var(--transport-text-soft);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.transport-ai-settings-api-key-hint[data-tone="warning"] {
+  color: #ffe9b1;
+}
+
+.transport-ai-agent-settings-group {
+  gap: 10px;
+}
+
+.transport-ai-agent-actions {
+  justify-content: flex-end;
+}
+
+.transport-ai-settings-actions {
+  justify-content: flex-end;
+}
+
+.transport-ai-changes-modal {
+  width: min(100%, 1120px);
+  max-height: calc(100dvh - 20px);
+  padding: 14px 16px;
+}
+
+.transport-ai-changes-modal .transport-modal-head {
+  gap: 10px;
+}
+
+.transport-ai-changes-modal .transport-modal-title {
+  font-size: 1.08rem;
+}
+
+.transport-ai-changes-modal .transport-modal-close {
+  width: 34px;
+  height: 34px;
+  font-size: 1.15rem;
+}
+
+.transport-ai-changes-modal-title {
+  margin-top: 0;
+}
+
+.transport-ai-changes-modal-body {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.transport-ai-changes-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.transport-ai-changes-summary-shell,
+.transport-ai-changes-side-note,
+.transport-ai-changes-panel {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.transport-ai-changes-side-note {
+  align-content: start;
+  background:
+    linear-gradient(180deg, rgba(72, 212, 206, 0.08), rgba(72, 212, 206, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.transport-ai-changes-kicker {
+  margin: 0;
+}
+
+.transport-ai-changes-section-head,
+.transport-ai-changes-panel-head {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.transport-ai-changes-section-title {
+  margin: 0;
+  color: var(--transport-text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transport-ai-changes-status {
+  min-width: 0;
+}
+
+.transport-ai-changes-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transport-ai-changes-summary-card {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.transport-ai-changes-summary-label {
+  color: var(--transport-text-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.transport-ai-changes-summary-value {
+  color: var(--transport-text);
+  font-size: 1.06rem;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-summary-note,
+.transport-ai-changes-objective-summary,
+.transport-ai-changes-executive-value,
+.transport-ai-changes-executive-note {
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-summary-note {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.transport-ai-changes-objective-summary {
+  margin: 0;
+  color: var(--transport-text);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.transport-ai-changes-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.transport-ai-changes-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--transport-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-badge.is-success {
+  border-color: rgba(72, 212, 206, 0.28);
+  background: rgba(72, 212, 206, 0.14);
+  color: #dcfffd;
+}
+
+.transport-ai-changes-badge.is-info {
+  border-color: rgba(118, 194, 255, 0.24);
+  background: rgba(118, 194, 255, 0.12);
+  color: #e5f4ff;
+}
+
+.transport-ai-changes-badge.is-warning {
+  border-color: rgba(255, 194, 82, 0.24);
+  background: rgba(255, 194, 82, 0.14);
+  color: #fff0c7;
+}
+
+.transport-ai-changes-badge.is-error {
+  border-color: rgba(255, 115, 115, 0.24);
+  background: rgba(255, 115, 115, 0.14);
+  color: #ffd3d3;
+}
+
+.transport-ai-changes-badge.is-neutral {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--transport-text-soft);
+}
+
+.transport-ai-changes-summary-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.transport-ai-changes-executive-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  min-width: 0;
+}
+
+.transport-ai-changes-executive-item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.transport-ai-changes-executive-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.transport-ai-changes-executive-value {
+  color: var(--transport-text);
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+
+.transport-ai-changes-executive-note {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.transport-ai-changes-side-copy,
+.transport-ai-changes-empty-state {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.transport-ai-changes-vehicle-list {
+  display: grid;
+  gap: 12px;
+}
+
+.transport-ai-changes-vehicle-item {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.transport-ai-changes-vehicle-item.is-sensitive {
+  border-color: rgba(255, 194, 82, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 194, 82, 0.1);
+}
+
+.transport-ai-changes-vehicle-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.transport-ai-changes-vehicle-title-block {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.transport-ai-changes-vehicle-title {
+  margin: 0;
+  color: var(--transport-text);
+  font-size: 0.98rem;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-vehicle-ref,
+.transport-ai-changes-vehicle-rationale,
+.transport-ai-changes-vehicle-field-note {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-vehicle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.transport-ai-changes-vehicle-field {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.transport-ai-changes-vehicle-field-value {
+  color: var(--transport-text);
+  font-size: 0.93rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-vehicle-field-value.is-changed {
+  color: #fff0c7;
+}
+
+.transport-ai-changes-vehicle-rationale {
+  padding-top: 2px;
+}
+
+.transport-ai-changes-panel-subtitle {
+  margin: 0;
+  color: var(--transport-text-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.transport-ai-changes-passenger-sections,
+.transport-ai-changes-passenger-list,
+.transport-ai-changes-route-list {
+  display: grid;
+  gap: 12px;
+}
+
+.transport-ai-changes-passenger-section {
+  display: grid;
+  gap: 10px;
+}
+
+.transport-ai-changes-passenger-item,
+.transport-ai-changes-route-item {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.transport-ai-changes-passenger-item.is-unallocated {
+  border-color: rgba(255, 115, 115, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 115, 115, 0.1);
+}
+
+.transport-ai-changes-passenger-head,
+.transport-ai-changes-route-head,
+.transport-ai-changes-stop-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.transport-ai-changes-passenger-title-block,
+.transport-ai-changes-route-title-block {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.transport-ai-changes-passenger-title,
+.transport-ai-changes-route-title,
+.transport-ai-changes-stop-title {
+  margin: 0;
+  color: var(--transport-text);
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-passenger-title,
+.transport-ai-changes-route-title {
+  font-size: 0.98rem;
+}
+
+.transport-ai-changes-passenger-ref,
+.transport-ai-changes-passenger-rationale,
+.transport-ai-changes-passenger-field-note,
+.transport-ai-changes-route-ref,
+.transport-ai-changes-route-field-note,
+.transport-ai-changes-route-empty-stops,
+.transport-ai-changes-stop-subtitle,
+.transport-ai-changes-stop-meta,
+.transport-ai-changes-stop-travel {
+  margin: 0;
+  color: var(--transport-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-passenger-grid,
+.transport-ai-changes-route-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.transport-ai-changes-passenger-field,
+.transport-ai-changes-route-field {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.transport-ai-changes-passenger-field-value,
+.transport-ai-changes-route-field-value,
+.transport-ai-changes-stop-time {
+  color: var(--transport-text);
+  font-size: 0.93rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.transport-ai-changes-passenger-rationale {
+  padding-top: 2px;
+}
+
+.transport-ai-changes-stop-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.transport-ai-changes-stop-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.transport-ai-changes-stop-item.is-destination {
+  border-color: rgba(72, 212, 206, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(72, 212, 206, 0.08);
+}
+
+.transport-ai-changes-stop-order {
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--transport-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.transport-ai-changes-stop-content {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.transport-ai-changes-stop-title {
+  font-size: 0.92rem;
+}
+
+.transport-ai-changes-tabs {
+  max-width: 100%;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(120px, 1fr);
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.transport-ai-changes-tab {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--transport-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.transport-ai-changes-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(72, 212, 206, 0.26);
+  color: var(--transport-text);
+}
+
+.transport-ai-changes-tab.is-active,
+.transport-ai-changes-tab[aria-selected="true"] {
+  border-color: rgba(72, 212, 206, 0.34);
+  background: rgba(72, 212, 206, 0.12);
+  color: #dcfffd;
+}
+
+.transport-ai-changes-tab:focus-visible {
+  outline: 2px solid rgba(72, 212, 206, 0.44);
+  outline-offset: 2px;
+}
+
+.transport-ai-changes-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.transport-ai-changes-panel-summary {
+  grid-column: 1 / -1;
+}
+
+.transport-ai-changes-panel-body {
+  min-width: 0;
+  min-height: 152px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+  overflow: auto;
+}
+
+.transport-ai-changes-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.transport-ai-changes-actions > * {
+  min-width: 120px;
 }
 
 .transport-settings-modal .transport-modal-head {
@@ -2209,6 +2871,8 @@ button {
 }
 
 @media (max-width: 960px) {
+  .transport-ai-settings-modal,
+  .transport-ai-agent-modal,
   .transport-settings-modal {
     width: min(100%, 640px);
   }
@@ -2319,6 +2983,28 @@ button {
     width: 86px;
   }
 
+  .transport-ai-changes-hero,
+  .transport-ai-changes-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transport-ai-changes-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .transport-ai-changes-executive-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transport-ai-changes-passenger-grid,
+  .transport-ai-changes-vehicle-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transport-ai-changes-route-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
 }
 
 @media (max-width: 640px) {
@@ -2383,5 +3069,44 @@ button {
 
   .transport-modal-backdrop {
     padding: 12px;
+  }
+
+  .transport-ai-changes-modal {
+    padding: 14px;
+  }
+
+  .transport-ai-changes-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transport-ai-changes-executive-grid {
+    gap: 12px;
+  }
+
+  .transport-ai-changes-tabs {
+    grid-auto-columns: minmax(148px, 1fr);
+  }
+
+  .transport-ai-changes-vehicle-head {
+    flex-direction: column;
+  }
+
+  .transport-ai-changes-passenger-head,
+  .transport-ai-changes-route-head {
+    flex-direction: column;
+  }
+
+  .transport-ai-changes-stop-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .transport-ai-changes-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transport-ai-changes-actions > * {
+    width: 100%;
   }
 }

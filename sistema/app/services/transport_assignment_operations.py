@@ -80,9 +80,18 @@ def _reset_transport_request_assignments_to_pending(
     transport_request: TransportRequest,
     response_message: str | None,
     admin_user_id: int | None,
+    service_date: date | None = None,
+    route_kind: str | None = None,
+    pending_reset_scope: str = "all_assignments",
 ) -> None:
     from .transport import _resolve_transport_assignment
     from .transport import now_sgt as transport_now_sgt
+
+    normalized_pending_reset_scope = str(pending_reset_scope or "all_assignments").strip().lower()
+    if normalized_pending_reset_scope not in {"all_assignments", "service_date_route"}:
+        raise ValueError(f"Unsupported pending reset scope: {pending_reset_scope!r}")
+    if normalized_pending_reset_scope == "service_date_route" and (service_date is None or route_kind is None):
+        raise ValueError("service_date and route_kind are required for service_date_route pending resets.")
 
     timestamp = transport_now_sgt()
     assignments = db.execute(
@@ -90,6 +99,10 @@ def _reset_transport_request_assignments_to_pending(
     ).scalars().all()
 
     for assignment in assignments:
+        if normalized_pending_reset_scope == "service_date_route" and (
+            assignment.service_date != service_date or assignment.route_kind != route_kind
+        ):
+            continue
         _resolve_transport_assignment(
             assignment,
             status="pending",
@@ -109,6 +122,7 @@ def upsert_transport_assignment_with_persistence(
     vehicle: Vehicle | None,
     response_message: str | None,
     admin_user_id: int | None,
+    pending_reset_scope: str = "all_assignments",
 ) -> tuple[TransportAssignment, bool]:
     existing_assignment = db.execute(
         select(TransportAssignment).where(
@@ -129,6 +143,9 @@ def upsert_transport_assignment_with_persistence(
                 transport_request=transport_request,
                 response_message=response_message,
                 admin_user_id=admin_user_id,
+                service_date=service_date,
+                route_kind=route_kind,
+                pending_reset_scope=pending_reset_scope,
             )
 
         assignment, _ = update_transport_assignment(

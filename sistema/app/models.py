@@ -16,6 +16,8 @@ class Project(Base):
     country_code: Mapped[str] = mapped_column(String(2), nullable=False)
     country_name: Mapped[str] = mapped_column(String(80), nullable=False)
     timezone_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    zip_code: Mapped[str] = mapped_column(String(32), nullable=False, default="")
 
 
 class ProjectAutoCheckoutDistance(Base):
@@ -325,6 +327,30 @@ class MobileAppSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class TransportAILlmSettings(Base):
+    __tablename__ = "transport_ai_llm_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "provider IN ('openai', 'deepseek')",
+            name="ck_transport_ai_llm_settings_provider_allowed",
+        ),
+        CheckConstraint(
+            "reasoning_effort IN ('high')",
+            name="ck_transport_ai_llm_settings_reasoning_effort_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False)
+    api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_key_last4: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    updated_by_admin_id: Mapped[int] = mapped_column(ForeignKey("admin_users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TransportCurrencyOption(Base):
     __tablename__ = "transport_currency_options"
     __table_args__ = (UniqueConstraint("code", name="uq_transport_currency_options_code"),)
@@ -335,6 +361,236 @@ class TransportCurrencyOption(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportAIRun(Base):
+    __tablename__ = "transport_ai_runs"
+    __table_args__ = (
+        Index("ix_transport_ai_runs_run_key", "run_key", unique=True),
+        Index(
+            "ix_transport_ai_runs_service_date_route_kind_created_at",
+            "service_date",
+            "route_kind",
+            "created_at",
+        ),
+        CheckConstraint(
+            "status IN ('requested', 'baseline_saved', 'passengers_reset', 'running', 'proposed', 'saved', 'applied', 'cancelled', 'failed')",
+            name="ck_transport_ai_runs_status_allowed",
+        ),
+        CheckConstraint(
+            "route_kind IN ('home_to_work', 'work_to_home')",
+            name="ck_transport_ai_runs_route_kind_allowed",
+        ),
+        CheckConstraint(
+            "llm_provider IS NULL OR llm_provider IN ('openai', 'deepseek')",
+            name="ck_transport_ai_runs_llm_provider_allowed",
+        ),
+        CheckConstraint(
+            "llm_reasoning_effort IS NULL OR llm_reasoning_effort IN ('high')",
+            name="ck_transport_ai_runs_llm_reasoning_effort_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    route_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("admin_users.id"), nullable=False)
+    earliest_boarding_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    arrival_at_work_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    llm_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    llm_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    llm_reasoning_effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    openai_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    route_provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    price_currency_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    price_rate_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    baseline_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    baseline_assignments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    baseline_vehicle_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    planning_input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    planning_input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    preflight_issues_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TransportAISuggestion(Base):
+    __tablename__ = "transport_ai_suggestions"
+    __table_args__ = (
+        Index("ix_transport_ai_suggestions_suggestion_key", "suggestion_key", unique=True),
+        Index(
+            "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at",
+            "service_date",
+            "route_kind",
+            "status",
+            "updated_at",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'shown', 'saved', 'discarded', 'applied', 'expired')",
+            name="ck_transport_ai_suggestions_status_allowed",
+        ),
+        CheckConstraint(
+            "route_kind IN ('home_to_work', 'work_to_home')",
+            name="ck_transport_ai_suggestions_route_kind_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    suggestion_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    run_id: Mapped[int] = mapped_column(ForeignKey("transport_ai_runs.id"), nullable=False)
+    service_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    route_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    proposal_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    agent_plan_json: Mapped[str] = mapped_column(Text, nullable=False)
+    transport_proposal_json: Mapped[str] = mapped_column(Text, nullable=False)
+    vehicle_actions_json: Mapped[str] = mapped_column(Text, nullable=False)
+    assignment_actions_json: Mapped[str] = mapped_column(Text, nullable=False)
+    route_itineraries_json: Mapped[str] = mapped_column(Text, nullable=False)
+    change_summary_json: Mapped[str] = mapped_column(Text, nullable=False)
+    cost_summary_json: Mapped[str] = mapped_column(Text, nullable=False)
+    validation_issues_json: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_model_response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TransportAIAppliedRouteStop(Base):
+    __tablename__ = "transport_ai_applied_route_stops"
+    __table_args__ = (
+        UniqueConstraint(
+            "suggestion_id",
+            "vehicle_id",
+            "stop_order",
+            name="uq_transport_ai_applied_route_stops_vehicle_order",
+        ),
+        CheckConstraint(
+            "vehicle_id >= 1",
+            name="ck_transport_ai_applied_route_stops_vehicle_id_positive",
+        ),
+        CheckConstraint(
+            "stop_order >= 1",
+            name="ck_transport_ai_applied_route_stops_stop_order_positive",
+        ),
+        CheckConstraint(
+            "stop_type IN ('pickup', 'destination')",
+            name="ck_transport_ai_applied_route_stops_type_allowed",
+        ),
+        CheckConstraint(
+            "request_id IS NULL OR request_id >= 1",
+            name="ck_transport_ai_applied_route_stops_request_id_positive",
+        ),
+        CheckConstraint(
+            "user_id IS NULL OR user_id >= 1",
+            name="ck_transport_ai_applied_route_stops_user_id_positive",
+        ),
+        CheckConstraint(
+            "longitude >= -180 AND longitude <= 180",
+            name="ck_transport_ai_applied_route_stops_longitude_range",
+        ),
+        CheckConstraint(
+            "latitude >= -90 AND latitude <= 90",
+            name="ck_transport_ai_applied_route_stops_latitude_range",
+        ),
+        CheckConstraint(
+            "duration_from_previous_seconds IS NULL OR duration_from_previous_seconds >= 0",
+            name="ck_transport_ai_applied_route_stops_duration_non_negative",
+        ),
+        CheckConstraint(
+            "distance_from_previous_meters IS NULL OR distance_from_previous_meters >= 0",
+            name="ck_transport_ai_applied_route_stops_distance_non_negative",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    suggestion_id: Mapped[int] = mapped_column(ForeignKey("transport_ai_suggestions.id"), nullable=False)
+    vehicle_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    stop_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    stop_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    passenger_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    project_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    zip_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    scheduled_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    duration_from_previous_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    distance_from_previous_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportAIRoutePoint(Base):
+    __tablename__ = "transport_ai_route_points"
+    __table_args__ = (
+        Index("ix_transport_ai_route_points_point_key", "point_key", unique=True),
+        CheckConstraint(
+            "point_type IN ('passenger_origin', 'project_destination')",
+            name="ck_transport_ai_route_points_type_allowed",
+        ),
+        CheckConstraint(
+            "longitude >= -180 AND longitude <= 180",
+            name="ck_transport_ai_route_points_longitude_range",
+        ),
+        CheckConstraint(
+            "latitude >= -90 AND latitude <= 90",
+            name="ck_transport_ai_route_points_latitude_range",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_transport_ai_route_points_confidence_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    point_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    point_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    zip_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    country_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    normalized_query: Mapped[str] = mapped_column(String(512), nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportAIRouteMatrix(Base):
+    __tablename__ = "transport_ai_route_matrices"
+    __table_args__ = (
+        Index("ix_transport_ai_route_matrices_matrix_key", "matrix_key", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    matrix_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    profile: Mapped[str] = mapped_column(String(80), nullable=False)
+    depart_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    coordinate_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sources_json: Mapped[str] = mapped_column(Text, nullable=False)
+    destinations_json: Mapped[str] = mapped_column(Text, nullable=False)
+    durations_json: Mapped[str] = mapped_column(Text, nullable=False)
+    distances_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class UserSyncEvent(Base):

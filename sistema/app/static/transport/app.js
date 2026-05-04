@@ -37,6 +37,27 @@
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
   const DEFAULT_VEHICLE_TOLERANCE_MINUTES = 5;
   const DEFAULT_TRANSPORT_PRICE_RATE_UNIT = "day";
+  const DEFAULT_AI_AGENT_SETTINGS = {
+    earliestBoardingTime: "06:50",
+    arrivalAtWorkTime: "07:45",
+  };
+  const DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER = "openai";
+  const TRANSPORT_AI_SETTINGS_PROVIDER_DEFAULTS = Object.freeze({
+    openai: Object.freeze({
+      provider: "openai",
+      label: "OpenAI",
+      resolvedModel: "gpt-5.4-2026-03-05",
+      reasoningEffort: "high",
+    }),
+    deepseek: Object.freeze({
+      provider: "deepseek",
+      label: "DeepSeek",
+      resolvedModel: "deepseek-v4-pro",
+      reasoningEffort: "high",
+    }),
+  });
+  const TRANSPORT_AI_SUMMARY_PLACEHOLDER = "--";
+  const TRANSPORT_AI_ROUTE_POLL_INTERVAL_MS = 1200;
   const MAX_TRANSPORT_PRICE_VALUE = 9999999999.99;
   const TRANSPORT_CURRENCY_CODE_PATTERN = /^[A-Z0-9]{2,12}$/;
   const TRANSPORT_PRICE_RATE_UNITS = ["hour", "day", "week", "month"];
@@ -808,11 +829,30 @@
     const messageKey = {
       "Invalid key or password.": "auth.invalidCredentials",
       "This user does not have transport access.": "auth.noAccess",
+      "Sessao de transporte invalida ou expirada": "status.sessionExpired",
       "Transport access granted.": "status.accessGranted",
       "Vehicle saved successfully.": "status.vehicleSaved",
       "Vehicle updated successfully.": "status.vehicleUpdated",
       "Vehicle deleted from the database.": "status.vehicleDeleted",
       "Transport request rejected successfully.": "status.requestRejected",
+      "Transport AI suggestion is ready for review.": "ai.agentSettingsReadyForReview",
+      "Transport AI suggestion was saved and is ready to be applied.": "ai.changesSaved",
+      "Transport AI suggestion was cancelled and the baseline was restored.": "ai.changesCancelled",
+      "Transport AI suggestion was applied.": "ai.changesApplied",
+      "The transport AI suggestion can no longer be saved.": "ai.changesSaveFailed",
+      "The transport AI suggestion cannot be saved because its payload is invalid.": "ai.changesSaveFailed",
+      "The transport AI suggestion was already applied and cannot be cancelled.": "ai.changesCancelFailed",
+      "The transport AI suggestion can no longer be cancelled.": "ai.changesCancelFailed",
+      "Transport AI baseline restore requires manual review.": "ai.changesCancelFailed",
+      "The transport AI suggestion can no longer be applied.": "ai.changesApplyFailed",
+      "The transport AI suggestion cannot be applied because its payload is invalid.": "ai.changesApplyFailed",
+      "The transport AI suggestion could not be materialized for apply.": "ai.changesApplyFailed",
+      "Transport AI settings encryption is unavailable.": "ai.settingsEncryptionUnavailable",
+      "Transport AI API key is required.": "ai.settingsKeyRequired",
+      "Transport AI API key is required when creating LLM settings.": "ai.settingsKeyRequired",
+      "Transport AI API key is required when changing the LLM provider.": "ai.settingsProviderKeyRequired",
+      "Transport AI API key is required when no encrypted key has been stored yet.": "ai.settingsKeyRequired",
+      "The configured Transport AI LLM provider is no longer supported. Select OpenAI or DeepSeek and save the AI settings again.": "ai.settingsProviderUnsupported",
       "Currency code already exists.": "warnings.currencyAlreadyExists",
       "departure_time is required for extra vehicles": "warnings.extraDepartureRequired",
       "The selected currency is not available.": "warnings.currencyNotAvailable",
@@ -1255,12 +1295,1534 @@
     return `${occupiedSeats}/${totalSeats}`;
   }
 
+  function parseTransportTimeToMinutes(value) {
+    const normalizedValue = String(value || "").trim();
+    const match = normalizedValue.match(/^(\d{2}):(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (
+      !Number.isInteger(hours)
+      || !Number.isInteger(minutes)
+      || hours < 0
+      || hours > 23
+      || minutes < 0
+      || minutes > 59
+    ) {
+      return null;
+    }
+
+    return (hours * 60) + minutes;
+  }
+
   function isValidTransportTimeValue(value) {
-    return /^\d{2}:\d{2}$/.test(String(value || "").trim());
+    return parseTransportTimeToMinutes(value) !== null;
   }
 
   function normalizeTransportTimeValue(value, fallbackValue) {
     return isValidTransportTimeValue(value) ? String(value || "").trim() : fallbackValue;
+  }
+
+  function getDefaultAiAgentSettings() {
+    return Object.assign({}, DEFAULT_AI_AGENT_SETTINGS);
+  }
+
+  function normalizeTransportAiSettingsProvider(value, fallbackValue) {
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (normalizedValue && Object.prototype.hasOwnProperty.call(TRANSPORT_AI_SETTINGS_PROVIDER_DEFAULTS, normalizedValue)) {
+      return normalizedValue;
+    }
+
+    const normalizedFallback = String(fallbackValue || DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER).trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(TRANSPORT_AI_SETTINGS_PROVIDER_DEFAULTS, normalizedFallback)) {
+      return normalizedFallback;
+    }
+
+    return DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
+  }
+
+  function resolveTransportAiSettingsProviderDefaults(provider) {
+    return TRANSPORT_AI_SETTINGS_PROVIDER_DEFAULTS[
+      normalizeTransportAiSettingsProvider(provider, DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER)
+    ];
+  }
+
+  function getDefaultTransportAiSettingsDraft() {
+    return {
+      provider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
+      apiKey: "",
+    };
+  }
+
+  function readAiAgentSettingsFieldValue(source, valueKey, inputKey, fallbackValue) {
+    if (source && typeof source === "object") {
+      if (Object.prototype.hasOwnProperty.call(source, valueKey)) {
+        return String(source[valueKey] == null ? "" : source[valueKey]).trim();
+      }
+
+      if (Object.prototype.hasOwnProperty.call(source, inputKey) && source[inputKey] && typeof source[inputKey] === "object") {
+        return String(source[inputKey].value == null ? "" : source[inputKey].value).trim();
+      }
+    }
+
+    return String(fallbackValue == null ? "" : fallbackValue).trim();
+  }
+
+  function readAiAgentSettingsDraft(source, fallbackValues) {
+    const defaults = Object.assign({}, getDefaultAiAgentSettings(), fallbackValues || {});
+    return {
+      earliestBoardingTime: readAiAgentSettingsFieldValue(
+        source,
+        "earliestBoardingTime",
+        "earliestBoardingInput",
+        defaults.earliestBoardingTime
+      ),
+      arrivalAtWorkTime: readAiAgentSettingsFieldValue(
+        source,
+        "arrivalAtWorkTime",
+        "arrivalAtWorkInput",
+        defaults.arrivalAtWorkTime
+      ),
+    };
+  }
+
+  function validateAiAgentSettingsDraft(draft) {
+    const normalizedDraft = readAiAgentSettingsDraft(draft, getDefaultAiAgentSettings());
+    const earliestBoardingMinutes = parseTransportTimeToMinutes(normalizedDraft.earliestBoardingTime);
+    if (earliestBoardingMinutes === null) {
+      return {
+        ok: false,
+        messageKey: "ai.agentSettingsInvalidTimes",
+        field: "earliestBoardingTime",
+        draft: normalizedDraft,
+      };
+    }
+
+    const arrivalAtWorkMinutes = parseTransportTimeToMinutes(normalizedDraft.arrivalAtWorkTime);
+    if (arrivalAtWorkMinutes === null || earliestBoardingMinutes >= arrivalAtWorkMinutes) {
+      return {
+        ok: false,
+        messageKey: "ai.agentSettingsInvalidTimes",
+        field: "arrivalAtWorkTime",
+        draft: normalizedDraft,
+      };
+    }
+
+    return {
+      ok: true,
+      messageKey: "",
+      field: "",
+      draft: normalizedDraft,
+    };
+  }
+
+  function readTransportAiSettingsDraft(source, fallbackValues) {
+    const defaults = Object.assign({}, getDefaultTransportAiSettingsDraft(), fallbackValues || {});
+    return {
+      provider: normalizeTransportAiSettingsProvider(
+        readAiAgentSettingsFieldValue(source, "provider", "providerInput", defaults.provider),
+        defaults.provider
+      ),
+      apiKey: readAiAgentSettingsFieldValue(source, "apiKey", "apiKeyInput", defaults.apiKey),
+    };
+  }
+
+  function buildTransportAiSettingsProviderNote(provider) {
+    const providerDefaults = resolveTransportAiSettingsProviderDefaults(provider);
+    return t("ai.settingsProviderNote", {
+      provider: providerDefaults.label,
+      model: providerDefaults.resolvedModel,
+      reasoningEffort: providerDefaults.reasoningEffort,
+    });
+  }
+
+  function buildTransportAiSettingsUpdatePayload(draft) {
+    const normalizedDraft = readTransportAiSettingsDraft(draft, getDefaultTransportAiSettingsDraft());
+    const normalizedApiKey = String(normalizedDraft.apiKey || "").trim();
+    return {
+      provider: normalizedDraft.provider,
+      api_key: normalizedApiKey || null,
+    };
+  }
+
+  function buildTransportAiRouteCalculationPayload(serviceDate, routeKind, draft) {
+    const normalizedDraft = readAiAgentSettingsDraft(draft, getDefaultAiAgentSettings());
+    return {
+      service_date: String(serviceDate || "").trim(),
+      route_kind: String(routeKind || "home_to_work").trim() || "home_to_work",
+      earliest_boarding_time: normalizedDraft.earliestBoardingTime,
+      arrival_at_work_time: normalizedDraft.arrivalAtWorkTime,
+    };
+  }
+
+  function shouldContinuePollingAiRouteRun(runStatus) {
+    const normalizedStatus = String(runStatus && runStatus.status || "").trim().toLowerCase();
+    return Boolean(
+      runStatus
+      && runStatus.run_key
+      && runStatus.ok !== false
+      && !runStatus.suggestion_ready
+      && ["requested", "baseline_saved", "passengers_reset", "running"].includes(normalizedStatus)
+    );
+  }
+
+  function getTransportAiSuggestionKey(runStatusResponse) {
+    const normalizedResponse = runStatusResponse && typeof runStatusResponse === "object"
+      ? runStatusResponse
+      : {};
+    const topLevelSuggestionKey = String(normalizedResponse.suggestion_key || "").trim();
+    if (topLevelSuggestionKey) {
+      return topLevelSuggestionKey;
+    }
+
+    const suggestion = normalizedResponse.suggestion && typeof normalizedResponse.suggestion === "object"
+      ? normalizedResponse.suggestion
+      : null;
+    return suggestion ? String(suggestion.suggestion_key || "").trim() : "";
+  }
+
+  function buildTransportAiSuggestionCommandUrl(apiPrefix, suggestionKey, actionName) {
+    const normalizedApiPrefix = String(apiPrefix || "").trim();
+    const normalizedSuggestionKey = String(suggestionKey || "").trim();
+    const normalizedAction = String(actionName || "").trim().toLowerCase();
+    if (!normalizedApiPrefix || !normalizedSuggestionKey || !normalizedAction) {
+      return "";
+    }
+
+    return `${normalizedApiPrefix}/ai/suggestions/${encodeURIComponent(normalizedSuggestionKey)}/${encodeURIComponent(normalizedAction)}`;
+  }
+
+  function buildTransportAiLatestSuggestionUrl(apiPrefix, serviceDate, routeKind) {
+    const normalizedApiPrefix = String(apiPrefix || "").trim();
+    const normalizedServiceDate = String(serviceDate || "").trim();
+    const normalizedRouteKind = String(routeKind || "").trim() || "home_to_work";
+    if (!normalizedApiPrefix || !normalizedServiceDate) {
+      return "";
+    }
+
+    return `${normalizedApiPrefix}/ai/suggestions/latest?service_date=${encodeURIComponent(normalizedServiceDate)}&route_kind=${encodeURIComponent(normalizedRouteKind)}`;
+  }
+
+  function shouldRefreshDashboardAfterAiSuggestionCommand(actionName) {
+    const normalizedAction = String(actionName || "").trim().toLowerCase();
+    return normalizedAction === "cancel" || normalizedAction === "apply";
+  }
+
+  function resolveAiChangesCommandState(runStatusResponse, options) {
+    const normalizedResponse = runStatusResponse && typeof runStatusResponse === "object"
+      ? runStatusResponse
+      : {};
+    const resolvedOptions = options || {};
+    const suggestionKey = getTransportAiSuggestionKey(normalizedResponse);
+    const isPending = Boolean(resolvedOptions.isPending);
+    const pendingAction = String(resolvedOptions.pendingAction || "").trim().toLowerCase();
+    const isAuthenticated = resolvedOptions.isAuthenticated !== false;
+
+    return {
+      suggestionKey,
+      isPending,
+      pendingAction,
+      canCancel: Boolean(isAuthenticated && suggestionKey && !isPending && normalizedResponse.can_cancel_restore === true),
+      canSave: Boolean(isAuthenticated && suggestionKey && !isPending && normalizedResponse.can_save === true),
+      canApply: Boolean(isAuthenticated && suggestionKey && !isPending && normalizedResponse.can_apply === true),
+    };
+  }
+
+  function getAiChangesActionCopy(actionName) {
+    const normalizedAction = String(actionName || "").trim().toLowerCase();
+    if (normalizedAction === "cancel") {
+      return {
+        idleKey: "ai.changesCancel",
+        busyKey: "ai.changesCancelling",
+        successKey: "ai.changesCancelled",
+        errorKey: "ai.changesCancelFailed",
+      };
+    }
+    if (normalizedAction === "save") {
+      return {
+        idleKey: "ai.changesSave",
+        busyKey: "ai.changesSaving",
+        successKey: "ai.changesSaved",
+        errorKey: "ai.changesSaveFailed",
+      };
+    }
+    if (normalizedAction === "apply") {
+      return {
+        idleKey: "ai.changesApply",
+        busyKey: "ai.changesApplying",
+        successKey: "ai.changesApplied",
+        errorKey: "ai.changesApplyFailed",
+      };
+    }
+    return null;
+  }
+
+  function formatTransportCurrencyAmount(value, currencyCode, options) {
+    const formatOptions = options || {};
+    const placeholder = String(formatOptions.placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) {
+      return placeholder;
+    }
+
+    const resolvedLanguageCode = resolveLanguageCode(formatOptions.languageCode || getActiveLanguageCode());
+    const locale = getLanguageConfig(resolvedLanguageCode).locale || "en-US";
+    const normalizedCurrencyCode = normalizeTransportCurrencyCode(currencyCode);
+    if (isValidTransportCurrencyCode(normalizedCurrencyCode)) {
+      try {
+        return new Intl.NumberFormat(locale, {
+          style: "currency",
+          currency: normalizedCurrencyCode,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(parsedValue);
+      } catch (error) {}
+    }
+
+    const numericText = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(parsedValue);
+    return normalizedCurrencyCode ? `${numericText} ${normalizedCurrencyCode}` : numericText;
+  }
+
+  function formatTransportAiCompactText(value, fallbackValue) {
+    const normalizedValue = String(value == null ? "" : value).trim();
+    return normalizedValue || fallbackValue;
+  }
+
+  function formatTransportAiCountText(value, singularLabel, pluralLabel, fallbackValue) {
+    if (!Number.isFinite(Number(value))) {
+      return fallbackValue;
+    }
+
+    const normalizedCount = Math.max(0, Math.round(Number(value)));
+    return `${normalizedCount} ${normalizedCount === 1 ? singularLabel : pluralLabel}`;
+  }
+
+  function formatTransportAiComparison(currentValue, nextValue, fallbackValue) {
+    const placeholder = fallbackValue || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const currentText = Number.isFinite(Number(currentValue))
+      ? String(Math.max(0, Math.round(Number(currentValue))))
+      : placeholder;
+    const nextText = Number.isFinite(Number(nextValue))
+      ? String(Math.max(0, Math.round(Number(nextValue))))
+      : placeholder;
+    return `${currentText} -> ${nextText}`;
+  }
+
+  function formatTransportAiTimeWindow(earliestValue, arrivalValue, fallbackValue) {
+    const placeholder = fallbackValue || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const earliestText = isValidTransportTimeValue(earliestValue) ? String(earliestValue).trim() : placeholder;
+    const arrivalText = isValidTransportTimeValue(arrivalValue) ? String(arrivalValue).trim() : placeholder;
+    return `${earliestText} -> ${arrivalText}`;
+  }
+
+  function humanizeTransportAiStatus(value, fallbackValue) {
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (!normalizedValue) {
+      return fallbackValue || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    }
+
+    return normalizedValue
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map(function (token) {
+        return token.charAt(0).toUpperCase() + token.slice(1);
+      })
+      .join(" ");
+  }
+
+  function resolveTransportAiStatusTone(status) {
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    if (["proposed", "shown", "saved", "applied"].includes(normalizedStatus)) {
+      return "success";
+    }
+    if (["requested", "baseline_saved", "passengers_reset", "running"].includes(normalizedStatus)) {
+      return "info";
+    }
+    if (["cancelled", "discarded", "expired"].includes(normalizedStatus)) {
+      return "warning";
+    }
+    if (["failed"].includes(normalizedStatus)) {
+      return "error";
+    }
+    return "neutral";
+  }
+
+  function normalizeAiChangesBadgeTone(value) {
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    if (["success", "info", "warning", "error", "neutral"].includes(normalizedValue)) {
+      return normalizedValue;
+    }
+    return resolveTransportAiStatusTone(normalizedValue);
+  }
+
+  function resolveAiChangesCostDeltaDetails(deltaValue, currencyCode, options) {
+    const detailOptions = options || {};
+    const placeholder = String(detailOptions.placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const parsedDelta = Number(deltaValue);
+    if (!Number.isFinite(parsedDelta)) {
+      return {
+        valueText: placeholder,
+        label: "Pending",
+        direction: "neutral",
+        badgeText: "Cost Pending",
+        tone: "neutral",
+      };
+    }
+
+    if (parsedDelta < 0) {
+      const savingsText = formatTransportCurrencyAmount(Math.abs(parsedDelta), currencyCode, { placeholder });
+      return {
+        valueText: savingsText,
+        label: "Savings",
+        direction: "savings",
+        badgeText: `Savings ${savingsText}`,
+        tone: "success",
+      };
+    }
+
+    if (parsedDelta > 0) {
+      const increaseText = formatTransportCurrencyAmount(parsedDelta, currencyCode, { placeholder });
+      return {
+        valueText: increaseText,
+        label: "Increase",
+        direction: "increase",
+        badgeText: `Increase ${increaseText}`,
+        tone: "warning",
+      };
+    }
+
+    const unchangedText = formatTransportCurrencyAmount(0, currencyCode, { placeholder });
+    return {
+      valueText: unchangedText,
+      label: "No Change",
+      direction: "neutral",
+      badgeText: "No Cost Change",
+      tone: "neutral",
+    };
+  }
+
+  function buildAiChangesSummaryViewModel(runStatusResponse, fallbackCurrencyCode) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const costSummary = plan.cost_summary && typeof plan.cost_summary === "object" ? plan.cost_summary : {};
+    const changeSummary = plan.change_summary && typeof plan.change_summary === "object" ? plan.change_summary : {};
+    const passengerAllocations = Array.isArray(plan.passenger_allocations) ? plan.passenger_allocations.filter(Boolean) : [];
+    const routeItineraries = Array.isArray(plan.route_itineraries) ? plan.route_itineraries.filter(Boolean) : [];
+    const validationIssues = Array.isArray(plan.validation_issues) ? plan.validation_issues.filter(Boolean) : [];
+    const blockingIssueCount = validationIssues.reduce(function (count, issue) {
+      return count + (issue && issue.blocking !== false ? 1 : 0);
+    }, 0);
+    const priceCurrencyCode = normalizeTransportCurrencyCode(costSummary.price_currency_code || fallbackCurrencyCode);
+    const priceRateUnitText = formatTransportAiCompactText(costSummary.price_rate_unit, placeholder);
+    const currentCostText = formatTransportCurrencyAmount(costSummary.current_total_estimated_cost, priceCurrencyCode, { placeholder });
+    const suggestedCostText = formatTransportCurrencyAmount(costSummary.suggested_total_estimated_cost, priceCurrencyCode, { placeholder });
+    const deltaDetails = resolveAiChangesCostDeltaDetails(costSummary.estimated_cost_delta, priceCurrencyCode, { placeholder });
+    const vehicleComparisonText = formatTransportAiComparison(
+      costSummary.current_vehicle_count,
+      costSummary.suggested_vehicle_count,
+      placeholder
+    );
+    const allocatedPassengersText = formatTransportAiCountText(passengerAllocations.length, "allocated", "allocated", placeholder);
+    const issueCountText = formatTransportAiCountText(validationIssues.length, "issue", "issues", placeholder);
+    const blockingIssueText = formatTransportAiCountText(blockingIssueCount, "blocking", "blocking", placeholder);
+    const routeCountText = formatTransportAiCountText(routeItineraries.length, "route", "routes", placeholder);
+    const totalVehicleActionsText = formatTransportAiCountText(changeSummary.total_vehicle_actions, "action", "actions", placeholder);
+    const createCountText = Number.isFinite(Number(changeSummary.create_count)) && Number(changeSummary.create_count) > 0
+      ? formatTransportAiCountText(changeSummary.create_count, "create", "create", placeholder)
+      : "";
+    const updateCountText = Number.isFinite(Number(changeSummary.update_count)) && Number(changeSummary.update_count) > 0
+      ? formatTransportAiCountText(changeSummary.update_count, "update", "update", placeholder)
+      : "";
+    const removeCountText = Number.isFinite(Number(changeSummary.remove_from_day_count)) && Number(changeSummary.remove_from_day_count) > 0
+      ? formatTransportAiCountText(changeSummary.remove_from_day_count, "remove", "remove", placeholder)
+      : "";
+    const currentRouteKind = response.route_kind || plan.route_kind || "";
+    const routeKindText = currentRouteKind ? getRouteKindLabel(currentRouteKind) : placeholder;
+    const serviceDateText = formatTransportAiCompactText(response.service_date || plan.service_date, placeholder);
+    const timeWindowText = formatTransportAiTimeWindow(plan.earliest_boarding_time, plan.arrival_at_work_time, placeholder);
+    const routeProviderText = formatTransportAiCompactText(response.route_provider || suggestion.route_provider, placeholder);
+    const modelText = formatTransportAiCompactText(response.openai_model || suggestion.openai_model, placeholder);
+    const promptVersionText = formatTransportAiCompactText(suggestion.prompt_version || plan.prompt_version, placeholder);
+    const objectiveSummary = formatTransportAiCompactText(
+      plan.objective_summary || localizeTransportApiMessage(response.message) || response.message,
+      placeholder
+    );
+    const actionSummarySegments = [totalVehicleActionsText, createCountText, updateCountText, removeCountText].filter(Boolean);
+    const actionSummaryText = actionSummarySegments.length ? actionSummarySegments.join(" | ") : placeholder;
+    const statusBadges = [];
+    if (response.status) {
+      statusBadges.push({
+        text: `Run ${humanizeTransportAiStatus(response.status, placeholder)}`,
+        tone: resolveTransportAiStatusTone(response.status),
+      });
+    }
+    if (suggestion.status) {
+      statusBadges.push({
+        text: `Suggestion ${humanizeTransportAiStatus(suggestion.status, placeholder)}`,
+        tone: resolveTransportAiStatusTone(suggestion.status),
+      });
+    }
+    if (currentRouteKind) {
+      statusBadges.push({
+        text: routeKindText,
+        tone: "neutral",
+      });
+    }
+    if (validationIssues.length) {
+      statusBadges.push({
+        text: issueCountText,
+        tone: blockingIssueCount ? "warning" : "info",
+      });
+    }
+
+    return {
+      placeholder,
+      objectiveSummary,
+      cost: {
+        currentText: currentCostText,
+        suggestedText: suggestedCostText,
+        deltaText: deltaDetails.valueText,
+        deltaLabel: deltaDetails.label,
+        deltaDirection: deltaDetails.direction,
+        deltaBadgeText: deltaDetails.badgeText,
+        deltaTone: deltaDetails.tone,
+        rateUnitText: priceRateUnitText,
+        currencyCode: priceCurrencyCode || placeholder,
+      },
+      vehicles: {
+        comparisonText: vehicleComparisonText,
+        actionSummaryText,
+      },
+      passengers: {
+        allocatedText: allocatedPassengersText,
+        issueText: issueCountText,
+        blockingIssueText,
+      },
+      window: {
+        displayText: timeWindowText,
+        routeKindText,
+        serviceDateText,
+      },
+      runtime: {
+        routeProviderText,
+        modelText,
+        promptVersionText,
+      },
+      statusBadges,
+      topCards: [
+        {
+          label: "Suggested Cost",
+          value: suggestedCostText,
+          note: `Current ${currentCostText} | ${priceRateUnitText}`,
+          badges: [{ text: deltaDetails.badgeText, tone: deltaDetails.tone }],
+        },
+        {
+          label: "Vehicles",
+          value: vehicleComparisonText,
+          note: actionSummaryText,
+          badges: totalVehicleActionsText !== placeholder
+            ? [{ text: totalVehicleActionsText, tone: "info" }]
+            : [],
+        },
+        {
+          label: "Passengers",
+          value: allocatedPassengersText,
+          note: `${issueCountText} | ${routeCountText}`,
+          badges: validationIssues.length
+            ? [{ text: blockingIssueCount ? blockingIssueText : "Ready", tone: blockingIssueCount ? "warning" : "success" }]
+            : [{ text: "Ready", tone: "success" }],
+        },
+      ],
+      detailItems: [
+        {
+          label: "Current Cost",
+          value: currentCostText,
+          note: `Currency ${priceCurrencyCode || placeholder} | Rate ${priceRateUnitText}`,
+        },
+        {
+          label: "Suggested Cost",
+          value: suggestedCostText,
+          note: `${routeCountText} in plan`,
+        },
+        {
+          label: "Cost Delta",
+          value: deltaDetails.valueText,
+          note: deltaDetails.badgeText,
+          badge: { text: deltaDetails.label, tone: deltaDetails.tone },
+        },
+        {
+          label: "Vehicles",
+          value: vehicleComparisonText,
+          note: actionSummaryText,
+        },
+        {
+          label: "Passengers",
+          value: allocatedPassengersText,
+          note: `${issueCountText} | ${blockingIssueText}`,
+        },
+        {
+          label: "Window",
+          value: timeWindowText,
+          note: `${routeKindText} | ${serviceDateText}`,
+        },
+        {
+          label: "Route Provider",
+          value: routeProviderText,
+          note: `Prompt ${promptVersionText}`,
+        },
+        {
+          label: "Model",
+          value: modelText,
+          note: `Suggestion ${humanizeTransportAiStatus(suggestion.status, placeholder)}`,
+        },
+      ],
+    };
+  }
+
+  function createAiChangesBadgeElement(badge) {
+    const badgeConfig = badge && typeof badge === "object" ? badge : {};
+    const badgeElement = createNode(
+      "span",
+      `transport-ai-changes-badge is-${normalizeAiChangesBadgeTone(badgeConfig.tone)}`,
+      formatTransportAiCompactText(badgeConfig.text, TRANSPORT_AI_SUMMARY_PLACEHOLDER)
+    );
+    return badgeElement;
+  }
+
+  function getTransportAiVehicleActionLabel(actionType) {
+    const normalizedActionType = String(actionType || "").trim().toLowerCase();
+    return {
+      keep: "Keep",
+      create: "Add",
+      update: "Update",
+      remove_from_day: "Remove From Day",
+    }[normalizedActionType] || humanizeTransportAiStatus(normalizedActionType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function resolveTransportAiVehicleActionTone(actionType) {
+    const normalizedActionType = String(actionType || "").trim().toLowerCase();
+    if (normalizedActionType === "create") {
+      return "success";
+    }
+    if (normalizedActionType === "update") {
+      return "warning";
+    }
+    if (normalizedActionType === "remove_from_day") {
+      return "error";
+    }
+    return "neutral";
+  }
+
+  function getTransportAiVehicleTypeLabel(vehicleType) {
+    const normalizedVehicleType = String(vehicleType || "").trim().toLowerCase();
+    return {
+      carro: "Car",
+      minivan: "Minivan",
+      van: "Van",
+      onibus: "Bus",
+    }[normalizedVehicleType] || humanizeTransportAiStatus(normalizedVehicleType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function getTransportAiVehicleScopeLabel(serviceScope) {
+    const normalizedScope = String(serviceScope || "").trim().toLowerCase();
+    return {
+      regular: "Regular List",
+      weekend: "Weekend List",
+      extra: "Extra List",
+    }[normalizedScope] || humanizeTransportAiStatus(normalizedScope, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function readTransportAiVehicleActionState(actionState) {
+    return actionState && typeof actionState === "object" ? actionState : {};
+  }
+
+  function hasTransportAiVehicleActionField(actionState, fieldName) {
+    return Boolean(
+      actionState
+      && typeof actionState === "object"
+      && Object.prototype.hasOwnProperty.call(actionState, fieldName)
+    );
+  }
+
+  function getTransportAiVehicleActionValue(actionState, fieldName) {
+    const normalizedState = readTransportAiVehicleActionState(actionState);
+    return hasTransportAiVehicleActionField(normalizedState, fieldName)
+      ? normalizedState[fieldName]
+      : undefined;
+  }
+
+  function formatTransportAiVehicleIdentifier(value, fallbackValue) {
+    const normalizedValue = String(value == null ? "" : value).trim();
+    return normalizedValue || fallbackValue || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+  }
+
+  function formatTransportAiVehicleFieldText(fieldName, value, options) {
+    const formatOptions = options || {};
+    const placeholder = String(formatOptions.placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+      return placeholder;
+    }
+
+    if (fieldName === "vehicle_type") {
+      return getTransportAiVehicleTypeLabel(value);
+    }
+    if (fieldName === "service_scope") {
+      return getTransportAiVehicleScopeLabel(value);
+    }
+    if (fieldName === "capacity") {
+      return Number.isFinite(Number(value)) ? String(Math.max(0, Math.round(Number(value)))) : placeholder;
+    }
+    if (fieldName === "estimated_cost") {
+      return formatTransportCurrencyAmount(value, formatOptions.currencyCode, { placeholder });
+    }
+    if (fieldName === "identifier") {
+      return formatTransportAiVehicleIdentifier(value, placeholder);
+    }
+
+    return formatTransportAiCompactText(value, placeholder);
+  }
+
+  function buildTransportAiVehicleFieldDisplay(actionType, beforeText, afterText, options) {
+    const displayOptions = options || {};
+    const placeholder = String(displayOptions.placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const normalizedBeforeText = formatTransportAiCompactText(beforeText, placeholder);
+    const normalizedAfterText = formatTransportAiCompactText(afterText, placeholder);
+
+    if (actionType === "keep") {
+      return {
+        valueText: normalizedAfterText,
+        changed: false,
+      };
+    }
+
+    if (actionType === "create") {
+      const createBeforeText = displayOptions.preserveBeforeForCreate && normalizedBeforeText !== placeholder
+        ? normalizedBeforeText
+        : placeholder;
+      return {
+        valueText: `${createBeforeText} -> ${normalizedAfterText}`,
+        changed: normalizedAfterText !== placeholder || createBeforeText !== placeholder,
+      };
+    }
+
+    if (actionType === "remove_from_day") {
+      const removedText = String(displayOptions.removedText || "Removed from selected day").trim() || "Removed from selected day";
+      return {
+        valueText: `${normalizedBeforeText} -> ${removedText}`,
+        changed: true,
+      };
+    }
+
+    if (normalizedBeforeText !== normalizedAfterText) {
+      return {
+        valueText: `${normalizedBeforeText} -> ${normalizedAfterText}`,
+        changed: true,
+      };
+    }
+
+    return {
+      valueText: normalizedAfterText,
+      changed: false,
+    };
+  }
+
+  function resolveTransportAiVehicleCostPair(action, currencyCode, placeholder) {
+    const normalizedAction = action && typeof action === "object" ? action : {};
+    const beforeState = readTransportAiVehicleActionState(normalizedAction.before);
+    const afterState = readTransportAiVehicleActionState(normalizedAction.after);
+    const costPlaceholder = placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const beforeCost = parsePositiveNumber(
+      getTransportAiVehicleActionValue(beforeState, "estimated_cost"),
+      null
+    );
+    const afterCostFromState = parsePositiveNumber(
+      getTransportAiVehicleActionValue(afterState, "estimated_cost"),
+      null
+    );
+    const costDelta = Number(normalizedAction.cost_delta);
+    const hasCostDelta = Number.isFinite(costDelta);
+    let resolvedBeforeCost = beforeCost;
+    let resolvedAfterCost = afterCostFromState;
+    const actionType = String(normalizedAction.action_type || "").trim().toLowerCase();
+
+    if (actionType === "create") {
+      if (resolvedBeforeCost === null) {
+        resolvedBeforeCost = 0;
+      }
+      if (resolvedAfterCost === null && hasCostDelta) {
+        resolvedAfterCost = Math.max(0, resolvedBeforeCost + costDelta);
+      }
+    }
+
+    if (actionType === "remove_from_day") {
+      if (resolvedAfterCost === null) {
+        resolvedAfterCost = 0;
+      }
+      if (resolvedBeforeCost === null && hasCostDelta) {
+        resolvedBeforeCost = Math.max(0, resolvedAfterCost - costDelta);
+      }
+    }
+
+    if (resolvedBeforeCost === null && resolvedAfterCost !== null && hasCostDelta) {
+      resolvedBeforeCost = Math.max(0, resolvedAfterCost - costDelta);
+    }
+    if (resolvedAfterCost === null && resolvedBeforeCost !== null && hasCostDelta) {
+      resolvedAfterCost = Math.max(0, resolvedBeforeCost + costDelta);
+    }
+    if (resolvedBeforeCost === null && resolvedAfterCost === null && actionType === "keep") {
+      resolvedBeforeCost = 0;
+      resolvedAfterCost = 0;
+    }
+
+    return {
+      beforeText: resolvedBeforeCost === null
+        ? costPlaceholder
+        : formatTransportCurrencyAmount(resolvedBeforeCost, currencyCode, { placeholder: costPlaceholder }),
+      afterText: resolvedAfterCost === null
+        ? costPlaceholder
+        : formatTransportCurrencyAmount(resolvedAfterCost, currencyCode, { placeholder: costPlaceholder }),
+      deltaText: hasCostDelta
+        ? `${costDelta > 0 ? "+" : costDelta < 0 ? "-" : ""}${formatTransportCurrencyAmount(Math.abs(costDelta), currencyCode, { placeholder: costPlaceholder })}`
+        : costPlaceholder,
+    };
+  }
+
+  function buildAiVehicleChangesViewModel(runStatusResponse, fallbackCurrencyCode) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const vehicleActions = Array.isArray(plan.vehicle_actions) ? plan.vehicle_actions.filter(Boolean) : [];
+    const priceCurrencyCode = normalizeTransportCurrencyCode(
+      (plan.cost_summary && plan.cost_summary.price_currency_code)
+      || fallbackCurrencyCode
+    );
+    const items = vehicleActions.map(function (action) {
+      const beforeState = readTransportAiVehicleActionState(action.before);
+      const afterState = readTransportAiVehicleActionState(action.after);
+      const actionType = String(action.action_type || "").trim().toLowerCase();
+      const vehicleId = Number.isFinite(Number(action.vehicle_id)) ? Math.max(0, Math.round(Number(action.vehicle_id))) : null;
+      const identifierBefore = formatTransportAiVehicleIdentifier(
+        getTransportAiVehicleActionValue(beforeState, "plate")
+        || getTransportAiVehicleActionValue(beforeState, "vehicle_ref")
+        || getTransportAiVehicleActionValue(beforeState, "client_vehicle_key"),
+        placeholder
+      );
+      const identifierAfter = formatTransportAiVehicleIdentifier(
+        getTransportAiVehicleActionValue(afterState, "plate")
+        || getTransportAiVehicleActionValue(afterState, "vehicle_ref")
+        || getTransportAiVehicleActionValue(afterState, "client_vehicle_key")
+        || action.client_vehicle_key,
+        placeholder
+      );
+      const titleText = actionType === "create"
+        ? identifierAfter
+        : identifierBefore !== placeholder
+          ? identifierBefore
+          : identifierAfter;
+      const titleSuffix = vehicleId ? `Vehicle ${vehicleId}` : action.client_vehicle_key;
+      const actionTone = resolveTransportAiVehicleActionTone(actionType);
+      const costPair = resolveTransportAiVehicleCostPair(action, priceCurrencyCode, placeholder);
+      const fieldRows = [
+        {
+          label: "Type",
+          ...buildTransportAiVehicleFieldDisplay(
+            actionType,
+            formatTransportAiVehicleFieldText("vehicle_type", getTransportAiVehicleActionValue(beforeState, "vehicle_type"), { placeholder }),
+            formatTransportAiVehicleFieldText(
+              "vehicle_type",
+              hasTransportAiVehicleActionField(afterState, "vehicle_type")
+                ? getTransportAiVehicleActionValue(afterState, "vehicle_type")
+                : getTransportAiVehicleActionValue(beforeState, "vehicle_type"),
+              { placeholder }
+            ),
+            { placeholder }
+          ),
+        },
+        {
+          label: "Seats",
+          ...buildTransportAiVehicleFieldDisplay(
+            actionType,
+            formatTransportAiVehicleFieldText("capacity", getTransportAiVehicleActionValue(beforeState, "capacity"), { placeholder }),
+            formatTransportAiVehicleFieldText(
+              "capacity",
+              hasTransportAiVehicleActionField(afterState, "capacity")
+                ? getTransportAiVehicleActionValue(afterState, "capacity")
+                : getTransportAiVehicleActionValue(beforeState, "capacity"),
+              { placeholder }
+            ),
+            { placeholder }
+          ),
+        },
+        {
+          label: "Identifier",
+          ...buildTransportAiVehicleFieldDisplay(actionType, identifierBefore, identifierAfter, { placeholder }),
+        },
+        {
+          label: "List",
+          ...buildTransportAiVehicleFieldDisplay(
+            actionType,
+            formatTransportAiVehicleFieldText("service_scope", getTransportAiVehicleActionValue(beforeState, "service_scope") || action.service_scope, { placeholder }),
+            formatTransportAiVehicleFieldText(
+              "service_scope",
+              hasTransportAiVehicleActionField(afterState, "service_scope")
+                ? getTransportAiVehicleActionValue(afterState, "service_scope")
+                : getTransportAiVehicleActionValue(beforeState, "service_scope") || action.service_scope,
+              { placeholder }
+            ),
+            { placeholder }
+          ),
+        },
+        {
+          label: "Cost",
+          ...buildTransportAiVehicleFieldDisplay(actionType, costPair.beforeText, costPair.afterText, {
+            placeholder,
+            preserveBeforeForCreate: true,
+          }),
+          note: costPair.deltaText !== placeholder ? `Delta ${costPair.deltaText}` : placeholder,
+        },
+      ];
+      const sensitiveChange = actionType === "remove_from_day"
+        || fieldRows.some(function (fieldRow) {
+          return fieldRow.changed && ["Type", "Seats", "Identifier", "List"].includes(fieldRow.label);
+        });
+      const badges = [
+        { text: getTransportAiVehicleActionLabel(actionType), tone: actionTone },
+        { text: getTransportAiVehicleScopeLabel(action.service_scope), tone: "neutral" },
+      ];
+      if (sensitiveChange) {
+        badges.push({ text: "Sensitive Change", tone: actionType === "remove_from_day" ? "error" : "warning" });
+      }
+
+      return {
+        actionKey: formatTransportAiCompactText(action.action_key, placeholder),
+        actionType,
+        actionLabel: getTransportAiVehicleActionLabel(actionType),
+        actionTone,
+        isSensitive: sensitiveChange,
+        titleText: formatTransportAiCompactText(titleText, placeholder),
+        subtitleText: formatTransportAiCompactText(titleSuffix, placeholder),
+        rationaleText: formatTransportAiCompactText(action.rationale, placeholder),
+        badges,
+        fieldRows,
+      };
+    });
+
+    return {
+      placeholder,
+      emptyMessage: "Vehicle actions will appear in this panel once the review data is rendered.",
+      items,
+    };
+  }
+
+  function renderAiVehicleChanges(options) {
+    const renderOptions = options || {};
+    const viewModel = buildAiVehicleChangesViewModel(
+      renderOptions.runStatusResponse,
+      renderOptions.fallbackCurrencyCode
+    );
+    if (typeof document === "undefined") {
+      return viewModel;
+    }
+
+    const vehiclesPanelElement = renderOptions.vehiclesPanelElement;
+    if (!vehiclesPanelElement) {
+      return viewModel;
+    }
+
+    clearElement(vehiclesPanelElement);
+    if (!viewModel.items.length) {
+      vehiclesPanelElement.appendChild(createNode("p", "transport-ai-changes-empty-state", viewModel.emptyMessage));
+      return viewModel;
+    }
+
+    const listElement = createNode("div", "transport-ai-changes-vehicle-list");
+    viewModel.items.forEach(function (item) {
+      const itemElement = createNode(
+        "article",
+        `transport-ai-changes-vehicle-item${item.isSensitive ? " is-sensitive" : ""}`
+      );
+      const headElement = createNode("div", "transport-ai-changes-vehicle-head");
+      const titleBlockElement = createNode("div", "transport-ai-changes-vehicle-title-block");
+      titleBlockElement.appendChild(createNode("h4", "transport-ai-changes-vehicle-title", item.titleText));
+      titleBlockElement.appendChild(createNode("p", "transport-ai-changes-vehicle-ref", item.subtitleText));
+      headElement.appendChild(titleBlockElement);
+
+      const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+      item.badges.forEach(function (badge) {
+        badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+      });
+      headElement.appendChild(badgeRowElement);
+      itemElement.appendChild(headElement);
+
+      const gridElement = createNode("div", "transport-ai-changes-vehicle-grid");
+      item.fieldRows.forEach(function (fieldRow) {
+        const fieldElement = createNode("div", "transport-ai-changes-vehicle-field");
+        fieldElement.appendChild(createNode("span", "transport-ai-changes-summary-label", fieldRow.label));
+        fieldElement.appendChild(
+          createNode(
+            "strong",
+            `transport-ai-changes-vehicle-field-value${fieldRow.changed ? " is-changed" : ""}`,
+            fieldRow.valueText
+          )
+        );
+        fieldElement.appendChild(createNode("p", "transport-ai-changes-vehicle-field-note", fieldRow.note || item.actionKey));
+        gridElement.appendChild(fieldElement);
+      });
+      itemElement.appendChild(gridElement);
+      itemElement.appendChild(createNode("p", "transport-ai-changes-vehicle-rationale", item.rationaleText));
+      listElement.appendChild(itemElement);
+    });
+    vehiclesPanelElement.appendChild(listElement);
+    return viewModel;
+  }
+
+  function getTransportAiPassengerRequestKindLabel(requestKind) {
+    const normalizedRequestKind = String(requestKind || "").trim().toLowerCase();
+    return {
+      regular: "Regular",
+      weekend: "Weekend",
+      extra: "Extra",
+    }[normalizedRequestKind] || humanizeTransportAiStatus(normalizedRequestKind, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function getTransportAiRouteKindLabel(routeKind) {
+    const normalizedRouteKind = String(routeKind || "").trim().toLowerCase();
+    return {
+      home_to_work: "Home To Work",
+      work_to_home: "Work To Home",
+    }[normalizedRouteKind] || humanizeTransportAiStatus(normalizedRouteKind, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function getTransportAiStopTypeLabel(stopType) {
+    const normalizedStopType = String(stopType || "").trim().toLowerCase();
+    return {
+      pickup: "Pickup",
+      destination: "Destination",
+    }[normalizedStopType] || humanizeTransportAiStatus(normalizedStopType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function formatTransportAiDuration(durationSeconds, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const totalSeconds = Number(durationSeconds);
+    if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+      return normalizedPlaceholder;
+    }
+
+    const totalMinutes = Math.max(0, Math.round(totalSeconds / 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours && minutes) {
+      return `${hours}h ${minutes}m`;
+    }
+    if (hours) {
+      return `${hours}h`;
+    }
+    return `${totalMinutes} min`;
+  }
+
+  function formatTransportAiDistance(distanceMeters, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const totalMeters = Number(distanceMeters);
+    if (!Number.isFinite(totalMeters) || totalMeters < 0) {
+      return normalizedPlaceholder;
+    }
+
+    if (totalMeters >= 1000) {
+      const kilometers = totalMeters / 1000;
+      return `${kilometers.toFixed(kilometers >= 10 ? 0 : 1)} km`;
+    }
+    return `${Math.round(totalMeters)} m`;
+  }
+
+  function buildTransportAiRouteStopTravelText(stop, placeholder) {
+    const normalizedStop = stop && typeof stop === "object" ? stop : {};
+    const travelParts = [];
+    const durationText = formatTransportAiDuration(
+      normalizedStop.duration_from_previous_seconds,
+      placeholder
+    );
+    const distanceText = formatTransportAiDistance(
+      normalizedStop.distance_from_previous_meters,
+      placeholder
+    );
+    if (durationText !== placeholder) {
+      travelParts.push(durationText);
+    }
+    if (distanceText !== placeholder) {
+      travelParts.push(distanceText);
+    }
+    return travelParts.length ? `From previous ${travelParts.join(" · ")}` : placeholder;
+  }
+
+  function buildAiPassengerAllocationsViewModel(runStatusResponse) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const passengerAllocations = Array.isArray(plan.passenger_allocations)
+      ? plan.passenger_allocations.filter(Boolean)
+      : [];
+    const routeItineraries = Array.isArray(plan.route_itineraries)
+      ? plan.route_itineraries.filter(Boolean)
+      : [];
+    const validationIssues = Array.isArray(plan.validation_issues)
+      ? plan.validation_issues.filter(Boolean)
+      : [];
+    const itineraryByVehicleRef = routeItineraries.reduce(function (collection, itinerary) {
+      const vehicleRef = String(itinerary && itinerary.vehicle_ref || "").trim();
+      if (vehicleRef) {
+        collection[vehicleRef] = itinerary;
+      }
+      return collection;
+    }, {});
+    const allocatedRequestIds = new Set();
+    const items = passengerAllocations.slice().sort(function (leftItem, rightItem) {
+      const leftPickupTime = String(leftItem && leftItem.scheduled_pickup_time || "").trim();
+      const rightPickupTime = String(rightItem && rightItem.scheduled_pickup_time || "").trim();
+      if (leftPickupTime !== rightPickupTime) {
+        return leftPickupTime.localeCompare(rightPickupTime);
+      }
+      const leftPickupOrder = Number(leftItem && leftItem.pickup_order);
+      const rightPickupOrder = Number(rightItem && rightItem.pickup_order);
+      if (leftPickupOrder !== rightPickupOrder) {
+        return leftPickupOrder - rightPickupOrder;
+      }
+      return Number(leftItem && leftItem.request_id) - Number(rightItem && rightItem.request_id);
+    }).map(function (allocation) {
+      const requestId = Number.isFinite(Number(allocation.request_id))
+        ? Math.max(0, Math.round(Number(allocation.request_id)))
+        : null;
+      if (requestId) {
+        allocatedRequestIds.add(requestId);
+      }
+      const itinerary = itineraryByVehicleRef[String(allocation.vehicle_ref || "").trim()] || null;
+      const vehicleText = formatTransportAiVehicleIdentifier(
+        itinerary && (itinerary.plate || itinerary.client_vehicle_key || itinerary.vehicle_ref)
+          ? itinerary.plate || itinerary.client_vehicle_key || itinerary.vehicle_ref
+          : allocation.vehicle_ref,
+        placeholder
+      );
+      const projectName = formatTransportAiCompactText(allocation.project_name, placeholder);
+      const requestKindLabel = getTransportAiPassengerRequestKindLabel(allocation.request_kind);
+      const routeKindLabel = getTransportAiRouteKindLabel(allocation.route_kind);
+      const pickupOrder = Number.isFinite(Number(allocation.pickup_order))
+        ? Math.max(0, Math.round(Number(allocation.pickup_order))) + 1
+        : null;
+
+      return {
+        requestId,
+        titleText: formatTransportAiCompactText(allocation.nome, placeholder),
+        subtitleText: formatTransportAiCompactText(
+          [projectName, formatTransportAiCompactText(allocation.chave, "")].filter(Boolean).join(" · "),
+          placeholder
+        ),
+        rationaleText: formatTransportAiCompactText(allocation.rationale, placeholder),
+        badges: [
+          { text: requestKindLabel, tone: "neutral" },
+          { text: routeKindLabel, tone: "info" },
+        ],
+        fieldRows: [
+          {
+            label: "Project",
+            valueText: projectName,
+            note: requestId ? `Request #${requestId}` : placeholder,
+          },
+          {
+            label: "Request Kind",
+            valueText: requestKindLabel,
+            note: routeKindLabel,
+          },
+          {
+            label: "Vehicle",
+            valueText: vehicleText,
+            note: formatTransportAiCompactText(allocation.vehicle_ref, placeholder),
+          },
+          {
+            label: "Pickup Order",
+            valueText: pickupOrder === null ? placeholder : `#${pickupOrder}`,
+            note: itinerary && itinerary.route_key
+              ? formatTransportAiCompactText(itinerary.route_key, placeholder)
+              : placeholder,
+          },
+          {
+            label: "Pickup",
+            valueText: formatTransportAiCompactText(allocation.scheduled_pickup_time, placeholder),
+            note: formatTransportAiCompactText(allocation.service_date, placeholder),
+          },
+          {
+            label: "Arrival",
+            valueText: formatTransportAiCompactText(allocation.projected_arrival_time, placeholder),
+            note: itinerary && itinerary.project_name
+              ? formatTransportAiCompactText(itinerary.project_name, placeholder)
+              : projectName,
+          },
+        ],
+      };
+    });
+
+    const unallocatedItems = validationIssues.filter(function (issue) {
+      const requestId = Number(issue && issue.request_id);
+      return Number.isFinite(requestId) && !allocatedRequestIds.has(Math.max(0, Math.round(requestId)));
+    }).map(function (issue) {
+      const requestId = Number.isFinite(Number(issue.request_id))
+        ? Math.max(0, Math.round(Number(issue.request_id)))
+        : null;
+      return {
+        requestId,
+        titleText: requestId ? `Request #${requestId}` : "Pending Request",
+        subtitleText: formatTransportAiCompactText(issue.code, placeholder),
+        messageText: formatTransportAiCompactText(issue.message, placeholder),
+        badges: [
+          { text: issue.blocking === false ? "Needs Review" : "Not Routed", tone: issue.blocking === false ? "warning" : "error" },
+        ],
+      };
+    });
+
+    return {
+      placeholder,
+      emptyMessage: "Passenger allocations will appear in this panel once the review data is rendered.",
+      allocatedTitle: "Allocated Passengers",
+      unallocatedTitle: "Not Routed",
+      items,
+      unallocatedItems,
+    };
+  }
+
+  function renderAiPassengerAllocations(options) {
+    const renderOptions = options || {};
+    const viewModel = buildAiPassengerAllocationsViewModel(renderOptions.runStatusResponse);
+    if (typeof document === "undefined") {
+      return viewModel;
+    }
+
+    const passengersPanelElement = renderOptions.passengersPanelElement;
+    if (!passengersPanelElement) {
+      return viewModel;
+    }
+
+    clearElement(passengersPanelElement);
+    if (!viewModel.items.length && !viewModel.unallocatedItems.length) {
+      passengersPanelElement.appendChild(createNode("p", "transport-ai-changes-empty-state", viewModel.emptyMessage));
+      return viewModel;
+    }
+
+    const sectionListElement = createNode("div", "transport-ai-changes-passenger-sections");
+    if (viewModel.items.length) {
+      const allocatedSectionElement = createNode("section", "transport-ai-changes-passenger-section");
+      allocatedSectionElement.appendChild(
+        createNode("h4", "transport-ai-changes-panel-subtitle", viewModel.allocatedTitle)
+      );
+      const allocatedListElement = createNode("div", "transport-ai-changes-passenger-list");
+      viewModel.items.forEach(function (item) {
+        const itemElement = createNode("article", "transport-ai-changes-passenger-item");
+        const headElement = createNode("div", "transport-ai-changes-passenger-head");
+        const titleBlockElement = createNode("div", "transport-ai-changes-passenger-title-block");
+        titleBlockElement.appendChild(createNode("h4", "transport-ai-changes-passenger-title", item.titleText));
+        titleBlockElement.appendChild(createNode("p", "transport-ai-changes-passenger-ref", item.subtitleText));
+        headElement.appendChild(titleBlockElement);
+
+        const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+        item.badges.forEach(function (badge) {
+          badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+        });
+        headElement.appendChild(badgeRowElement);
+        itemElement.appendChild(headElement);
+
+        const gridElement = createNode("div", "transport-ai-changes-passenger-grid");
+        item.fieldRows.forEach(function (fieldRow) {
+          const fieldElement = createNode("div", "transport-ai-changes-passenger-field");
+          fieldElement.appendChild(createNode("span", "transport-ai-changes-summary-label", fieldRow.label));
+          fieldElement.appendChild(createNode("strong", "transport-ai-changes-passenger-field-value", fieldRow.valueText));
+          fieldElement.appendChild(createNode("p", "transport-ai-changes-passenger-field-note", fieldRow.note));
+          gridElement.appendChild(fieldElement);
+        });
+        itemElement.appendChild(gridElement);
+        itemElement.appendChild(createNode("p", "transport-ai-changes-passenger-rationale", item.rationaleText));
+        allocatedListElement.appendChild(itemElement);
+      });
+      allocatedSectionElement.appendChild(allocatedListElement);
+      sectionListElement.appendChild(allocatedSectionElement);
+    }
+
+    if (viewModel.unallocatedItems.length) {
+      const unallocatedSectionElement = createNode("section", "transport-ai-changes-passenger-section");
+      unallocatedSectionElement.appendChild(
+        createNode("h4", "transport-ai-changes-panel-subtitle", viewModel.unallocatedTitle)
+      );
+      const unallocatedListElement = createNode("div", "transport-ai-changes-passenger-list");
+      viewModel.unallocatedItems.forEach(function (item) {
+        const itemElement = createNode("article", "transport-ai-changes-passenger-item is-unallocated");
+        const headElement = createNode("div", "transport-ai-changes-passenger-head");
+        const titleBlockElement = createNode("div", "transport-ai-changes-passenger-title-block");
+        titleBlockElement.appendChild(createNode("h4", "transport-ai-changes-passenger-title", item.titleText));
+        titleBlockElement.appendChild(createNode("p", "transport-ai-changes-passenger-ref", item.subtitleText));
+        headElement.appendChild(titleBlockElement);
+
+        const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+        item.badges.forEach(function (badge) {
+          badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+        });
+        headElement.appendChild(badgeRowElement);
+        itemElement.appendChild(headElement);
+        itemElement.appendChild(createNode("p", "transport-ai-changes-passenger-rationale", item.messageText));
+        unallocatedListElement.appendChild(itemElement);
+      });
+      unallocatedSectionElement.appendChild(unallocatedListElement);
+      sectionListElement.appendChild(unallocatedSectionElement);
+    }
+
+    passengersPanelElement.appendChild(sectionListElement);
+    return viewModel;
+  }
+
+  function buildAiRouteItinerariesViewModel(runStatusResponse, fallbackCurrencyCode) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const routeItineraries = Array.isArray(plan.route_itineraries)
+      ? plan.route_itineraries.filter(Boolean)
+      : [];
+    const priceCurrencyCode = normalizeTransportCurrencyCode(
+      (plan.cost_summary && plan.cost_summary.price_currency_code)
+      || fallbackCurrencyCode
+    );
+    const items = routeItineraries.slice().sort(function (leftItem, rightItem) {
+      const leftArrival = String(leftItem && leftItem.projected_arrival_time || "").trim();
+      const rightArrival = String(rightItem && rightItem.projected_arrival_time || "").trim();
+      if (leftArrival !== rightArrival) {
+        return leftArrival.localeCompare(rightArrival);
+      }
+      return String(leftItem && leftItem.route_key || "").localeCompare(String(rightItem && rightItem.route_key || ""));
+    }).map(function (itinerary) {
+      const vehicleTitle = formatTransportAiVehicleIdentifier(
+        itinerary.plate || itinerary.client_vehicle_key || itinerary.vehicle_ref,
+        placeholder
+      );
+      const stops = (Array.isArray(itinerary.stops) ? itinerary.stops : []).slice().sort(function (leftStop, rightStop) {
+        return Number(leftStop && leftStop.stop_order) - Number(rightStop && rightStop.stop_order);
+      }).map(function (stop) {
+        const stopAddress = formatTransportAiCompactText(stop.address, placeholder);
+        const stopZipCode = formatTransportAiCompactText(stop.zip_code, placeholder);
+        return {
+          stopOrder: Number.isFinite(Number(stop.stop_order)) ? Math.max(0, Math.round(Number(stop.stop_order))) : null,
+          stopType: String(stop.stop_type || "").trim().toLowerCase(),
+          stopTypeLabel: getTransportAiStopTypeLabel(stop.stop_type),
+          scheduledTimeText: formatTransportAiCompactText(stop.scheduled_time, placeholder),
+          titleText: formatTransportAiCompactText(
+            stop.stop_type === "destination" ? stop.project_name : stop.passenger_name,
+            placeholder
+          ),
+          subtitleText: formatTransportAiCompactText(`${stopAddress} · ${stopZipCode}`, placeholder),
+          metaText: formatTransportAiCompactText(
+            [stop.project_name, stop.country_code].filter(Boolean).join(" · "),
+            placeholder
+          ),
+          travelText: buildTransportAiRouteStopTravelText(stop, placeholder),
+          isDestination: String(stop.stop_type || "").trim().toLowerCase() === "destination",
+        };
+      });
+
+      return {
+        routeKey: formatTransportAiCompactText(itinerary.route_key, placeholder),
+        titleText: vehicleTitle,
+        subtitleText: formatTransportAiCompactText(
+          [itinerary.project_name, itinerary.country_name || itinerary.country_code].filter(Boolean).join(" · "),
+          placeholder
+        ),
+        badges: [
+          { text: getTransportAiVehicleScopeLabel(itinerary.service_scope), tone: "neutral" },
+          { text: getTransportAiVehicleTypeLabel(itinerary.vehicle_type), tone: "info" },
+        ],
+        fieldRows: [
+          {
+            label: "Project",
+            valueText: formatTransportAiCompactText(itinerary.project_name, placeholder),
+            note: formatTransportAiCompactText(itinerary.partition_key, placeholder),
+          },
+          {
+            label: "Arrival",
+            valueText: formatTransportAiCompactText(itinerary.projected_arrival_time, placeholder),
+            note: getTransportAiRouteKindLabel(itinerary.route_kind),
+          },
+          {
+            label: "Duration",
+            valueText: formatTransportAiDuration(itinerary.total_duration_seconds, placeholder),
+            note: formatTransportAiDistance(itinerary.total_distance_meters, placeholder),
+          },
+          {
+            label: "Cost",
+            valueText: formatTransportCurrencyAmount(itinerary.estimated_cost, priceCurrencyCode, { placeholder }),
+            note: formatTransportAiCompactText(itinerary.vehicle_ref, placeholder),
+          },
+        ],
+        stopItems: stops,
+      };
+    });
+
+    return {
+      placeholder,
+      emptyMessage: "Route itineraries will appear in this panel once the review data is rendered.",
+      emptyStopsMessage: "No stops were generated for this route.",
+      items,
+    };
+  }
+
+  function renderAiRouteItineraries(options) {
+    const renderOptions = options || {};
+    const viewModel = buildAiRouteItinerariesViewModel(
+      renderOptions.runStatusResponse,
+      renderOptions.fallbackCurrencyCode
+    );
+    if (typeof document === "undefined") {
+      return viewModel;
+    }
+
+    const routesPanelElement = renderOptions.routesPanelElement;
+    if (!routesPanelElement) {
+      return viewModel;
+    }
+
+    clearElement(routesPanelElement);
+    if (!viewModel.items.length) {
+      routesPanelElement.appendChild(createNode("p", "transport-ai-changes-empty-state", viewModel.emptyMessage));
+      return viewModel;
+    }
+
+    const listElement = createNode("div", "transport-ai-changes-route-list");
+    viewModel.items.forEach(function (item) {
+      const itemElement = createNode("article", "transport-ai-changes-route-item");
+      const headElement = createNode("div", "transport-ai-changes-route-head");
+      const titleBlockElement = createNode("div", "transport-ai-changes-route-title-block");
+      titleBlockElement.appendChild(createNode("h4", "transport-ai-changes-route-title", item.titleText));
+      titleBlockElement.appendChild(createNode("p", "transport-ai-changes-route-ref", item.subtitleText));
+      headElement.appendChild(titleBlockElement);
+
+      const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+      item.badges.forEach(function (badge) {
+        badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+      });
+      headElement.appendChild(badgeRowElement);
+      itemElement.appendChild(headElement);
+
+      const gridElement = createNode("div", "transport-ai-changes-route-grid");
+      item.fieldRows.forEach(function (fieldRow) {
+        const fieldElement = createNode("div", "transport-ai-changes-route-field");
+        fieldElement.appendChild(createNode("span", "transport-ai-changes-summary-label", fieldRow.label));
+        fieldElement.appendChild(createNode("strong", "transport-ai-changes-route-field-value", fieldRow.valueText));
+        fieldElement.appendChild(createNode("p", "transport-ai-changes-route-field-note", fieldRow.note));
+        gridElement.appendChild(fieldElement);
+      });
+      itemElement.appendChild(gridElement);
+
+      if (!item.stopItems.length) {
+        itemElement.appendChild(createNode("p", "transport-ai-changes-route-empty-stops", viewModel.emptyStopsMessage));
+      } else {
+        const stopListElement = createNode("ol", "transport-ai-changes-stop-list");
+        item.stopItems.forEach(function (stopItem) {
+          const stopElement = createNode(
+            "li",
+            `transport-ai-changes-stop-item${stopItem.isDestination ? " is-destination" : ""}`
+          );
+          stopElement.appendChild(createNode(
+            "span",
+            "transport-ai-changes-stop-order",
+            stopItem.stopOrder === null ? "--" : String(stopItem.stopOrder + 1)
+          ));
+
+          const contentElement = createNode("div", "transport-ai-changes-stop-content");
+          const topElement = createNode("div", "transport-ai-changes-stop-top");
+          topElement.appendChild(createNode("strong", "transport-ai-changes-stop-time", stopItem.scheduledTimeText));
+          topElement.appendChild(createAiChangesBadgeElement({
+            text: stopItem.stopTypeLabel,
+            tone: stopItem.isDestination ? "success" : "neutral",
+          }));
+          contentElement.appendChild(topElement);
+          contentElement.appendChild(createNode("h5", "transport-ai-changes-stop-title", stopItem.titleText));
+          contentElement.appendChild(createNode("p", "transport-ai-changes-stop-subtitle", stopItem.subtitleText));
+          contentElement.appendChild(createNode("p", "transport-ai-changes-stop-meta", stopItem.metaText));
+          contentElement.appendChild(createNode("p", "transport-ai-changes-stop-travel", stopItem.travelText));
+          stopElement.appendChild(contentElement);
+          stopListElement.appendChild(stopElement);
+        });
+        itemElement.appendChild(stopListElement);
+      }
+
+      listElement.appendChild(itemElement);
+    });
+    routesPanelElement.appendChild(listElement);
+    return viewModel;
+  }
+
+  function renderAiChangesSummary(options) {
+    const renderOptions = options || {};
+    const viewModel = buildAiChangesSummaryViewModel(
+      renderOptions.runStatusResponse,
+      renderOptions.fallbackCurrencyCode
+    );
+    if (typeof document === "undefined") {
+      return viewModel;
+    }
+
+    const summaryGridElement = renderOptions.summaryGridElement;
+    const summaryPanelElement = renderOptions.summaryPanelElement;
+
+    if (summaryGridElement) {
+      clearElement(summaryGridElement);
+      viewModel.topCards.forEach(function (card) {
+        const cardElement = createNode("article", "transport-ai-changes-summary-card");
+        cardElement.appendChild(createNode("span", "transport-ai-changes-summary-label", card.label));
+        cardElement.appendChild(createNode("strong", "transport-ai-changes-summary-value", card.value));
+        cardElement.appendChild(createNode("p", "transport-ai-changes-summary-note", card.note));
+        if (Array.isArray(card.badges) && card.badges.length) {
+          const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+          card.badges.forEach(function (badge) {
+            badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+          });
+          cardElement.appendChild(badgeRowElement);
+        }
+        summaryGridElement.appendChild(cardElement);
+      });
+    }
+
+    if (summaryPanelElement) {
+      clearElement(summaryPanelElement);
+      summaryPanelElement.appendChild(createNode("p", "transport-ai-changes-objective-summary", viewModel.objectiveSummary));
+
+      if (viewModel.statusBadges.length) {
+        const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+        viewModel.statusBadges.forEach(function (badge) {
+          badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+        });
+        summaryPanelElement.appendChild(badgeRowElement);
+      }
+
+      const detailsGridElement = createNode("div", "transport-ai-changes-executive-grid");
+      viewModel.detailItems.forEach(function (item) {
+        const itemElement = createNode("article", "transport-ai-changes-executive-item");
+        const headElement = createNode("div", "transport-ai-changes-executive-head");
+        headElement.appendChild(createNode("span", "transport-ai-changes-summary-label", item.label));
+        if (item.badge) {
+          headElement.appendChild(createAiChangesBadgeElement(item.badge));
+        }
+        itemElement.appendChild(headElement);
+        itemElement.appendChild(createNode("strong", "transport-ai-changes-executive-value", item.value));
+        itemElement.appendChild(createNode("p", "transport-ai-changes-executive-note", item.note));
+        detailsGridElement.appendChild(itemElement);
+      });
+      summaryPanelElement.appendChild(detailsGridElement);
+    }
+
+    return viewModel;
   }
 
   function getEffectiveWorkToHomeDepartureTime(dashboard, fallbackTime) {
@@ -1452,6 +3014,33 @@
       currencyCreateOpen: false,
       currencyCreateSaving: false,
       routeTimeSaving: false,
+      aiRouteRunKey: null,
+      aiRouteRunStatus: null,
+      aiRouteSuggestion: null,
+      aiRoutePollingTimer: null,
+      aiRouteRequestPending: false,
+      aiLatestSuggestionLoading: false,
+      aiChangesCommandPending: false,
+      aiChangesPendingAction: "",
+      aiAgentSettingsDraft: getDefaultAiAgentSettings(),
+      aiAgentFeedbackMessage: "",
+      aiAgentFeedbackKey: "",
+      aiAgentFeedbackValues: null,
+      aiAgentFeedbackTone: "info",
+      aiSettingsDraft: getDefaultTransportAiSettingsDraft(),
+      aiSettingsLoading: false,
+      aiSettingsSaving: false,
+      aiSettingsLoadedProvider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
+      aiSettingsHasApiKey: false,
+      aiSettingsApiKeyHint: "",
+      aiSettingsFeedbackMessage: "",
+      aiSettingsFeedbackKey: "",
+      aiSettingsFeedbackValues: null,
+      aiSettingsFeedbackTone: "info",
+      aiChangesSummaryMessage: "",
+      aiChangesSummaryKey: "",
+      aiChangesSummaryValues: null,
+      aiChangesSummaryTone: "success",
       aiMenuOpen: false,
       expandedVehiclePositionFrame: null,
       requestSectionCollapsedByKind: {
@@ -1470,6 +3059,35 @@
     const projectListContainer = document.querySelector("[data-project-list]");
     const settingsTrigger = document.querySelector("[data-open-settings-modal]");
     const settingsModal = document.querySelector("[data-settings-modal]");
+    const aiSettingsModal = document.querySelector("[data-ai-settings-modal]");
+    const aiSettingsModalTitle = document.getElementById("transport-ai-settings-modal-title");
+    const aiSettingsProviderLabel = document.querySelector("[data-ai-settings-provider-label]");
+    const aiSettingsProviderInput = document.querySelector("[data-ai-settings-provider]");
+    const aiSettingsProviderNote = document.querySelector("[data-ai-settings-provider-note]");
+    const aiSettingsApiKeyLabel = document.querySelector("[data-ai-settings-api-key-label]");
+    const aiSettingsApiKeyInput = document.querySelector("[data-ai-settings-api-key]");
+    const aiSettingsApiKeyHint = document.querySelector("[data-ai-settings-api-key-hint]");
+    const aiSettingsFeedback = document.querySelector("[data-ai-settings-feedback]");
+    const aiAgentModal = document.querySelector("[data-ai-agent-modal]");
+    const aiAgentModalTitle = document.getElementById("transport-ai-agent-modal-title");
+    const aiAgentModalNote = document.querySelector("[data-ai-agent-modal-note]");
+    const aiAgentEarliestBoardingLabel = document.querySelector("[data-ai-agent-early-boarding-label]");
+    const aiAgentArrivalLabel = document.querySelector("[data-ai-agent-arrival-label]");
+    const aiAgentEarliestBoardingInput = document.querySelector("[data-ai-agent-earliest-boarding]");
+    const aiAgentArrivalAtWorkInput = document.querySelector("[data-ai-agent-arrival-at-work]");
+    const aiAgentFeedback = document.querySelector("[data-ai-agent-feedback]");
+    const aiChangesModal = document.querySelector("[data-ai-changes-modal]");
+    const aiChangesModalTitle = document.querySelector("[data-ai-changes-title]");
+    const aiChangesSummary = document.querySelector("[data-ai-changes-status]")
+      || document.querySelector("[data-ai-changes-summary]");
+    const aiChangesSummaryGrid = document.querySelector("[data-ai-changes-summary-grid]");
+    const aiChangesSummaryPanel = document.querySelector("[data-ai-changes-summary-panel]");
+    const aiChangesVehiclesPanel = document.querySelector("[data-ai-changes-vehicles]");
+    const aiChangesPassengersPanel = document.querySelector("[data-ai-changes-passengers]");
+    const aiChangesRoutesPanel = document.querySelector("[data-ai-changes-routes]");
+    const aiChangesCancelButton = document.querySelector("[data-ai-changes-cancel]");
+    const aiChangesSaveButton = document.querySelector("[data-ai-changes-save]");
+    const aiChangesApplyButton = document.querySelector("[data-ai-changes-apply]");
     const settingsPreferencesTitle = document.querySelector("[data-settings-preferences-title]");
     const settingsVehicleDefaultsTitle = document.querySelector("[data-settings-vehicle-defaults-title]");
     const settingsLanguageLabel = document.querySelector("[data-settings-language-label]");
@@ -1545,6 +3163,7 @@
     const aiMenu = document.querySelector("[data-ai-menu]");
     const aiCalculateRoutesButton = document.querySelector('[data-ai-menu-action="calculate-routes"]');
     const aiImplementModificationsButton = document.querySelector('[data-ai-menu-action="implement-modifications"]');
+    const aiSettingsMenuButton = document.querySelector('[data-ai-menu-action="settings"]');
     const authKeyInput = document.querySelector("[data-transport-auth-key]");
     const authPasswordInput = document.querySelector("[data-transport-auth-password]");
     const authKeyShell = document.querySelector('[data-transport-auth-shell="key"]');
@@ -1608,6 +3227,18 @@
       }
       if (state.aiMenuOpen) {
         closeAiMenu({ restoreFocus: true });
+        return;
+      }
+      if (aiSettingsModal && !aiSettingsModal.hidden) {
+        closeAiSettingsModal({ restoreFocus: true });
+        return;
+      }
+      if (aiAgentModal && !aiAgentModal.hidden) {
+        closeAiAgentSettingsModal({ restoreFocus: true });
+        return;
+      }
+      if (aiChangesModal && !aiChangesModal.hidden) {
+        closeAiChangesModal({ restoreFocus: true });
         return;
       }
       if (!state.expandedVehicleKey && !state.pendingAssignmentPreview) {
@@ -1792,6 +3423,9 @@
       if (aiImplementModificationsButton) {
         aiImplementModificationsButton.textContent = t("ai.implementModifications");
       }
+      if (aiSettingsMenuButton) {
+        aiSettingsMenuButton.textContent = t("ai.settingsMenuLabel");
+      }
       if (authLabels[0]) {
         authLabels[0].textContent = t("auth.key");
       }
@@ -1836,6 +3470,73 @@
         settingsTrigger.textContent = t("settings.dashboardLink");
         settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
       }
+      if (aiSettingsModalTitle) {
+        aiSettingsModalTitle.textContent = t("ai.settingsTitle");
+      }
+      if (aiSettingsProviderLabel) {
+        aiSettingsProviderLabel.textContent = t("ai.settingsProvider");
+      }
+      if (aiSettingsApiKeyLabel) {
+        aiSettingsApiKeyLabel.textContent = t("ai.settingsApiKey");
+      }
+      if (aiSettingsApiKeyInput) {
+        aiSettingsApiKeyInput.placeholder = t("ai.settingsApiKeyPlaceholder");
+      }
+      document.querySelectorAll("[data-close-ai-settings-modal]").forEach(function (buttonElement) {
+        if (buttonElement.classList.contains("transport-modal-close")) {
+          buttonElement.setAttribute("aria-label", t("ai.settingsCloseAria"));
+          return;
+        }
+        buttonElement.textContent = t("ai.settingsCancel");
+      });
+      document.querySelectorAll("[data-ai-settings-save]").forEach(function (buttonElement) {
+        buttonElement.textContent = t("ai.settingsSave");
+      });
+      if (aiAgentModalTitle) {
+        aiAgentModalTitle.textContent = t("ai.agentSettingsTitle");
+      }
+      if (aiAgentEarliestBoardingLabel) {
+        aiAgentEarliestBoardingLabel.textContent = t("ai.agentSettingsEarliestBoarding");
+      }
+      if (aiAgentArrivalLabel) {
+        aiAgentArrivalLabel.textContent = t("ai.agentSettingsArrivalAtWork");
+      }
+      if (aiAgentModalNote) {
+        const projectCount = getProjectRows().filter(function (projectRow) {
+          return projectRow && projectRow.name;
+        }).length;
+        aiAgentModalNote.textContent = projectCount
+          ? t("ai.agentSettingsNoteReady", { count: projectCount })
+          : t("ai.agentSettingsNotePending");
+      }
+      document.querySelectorAll("[data-close-ai-agent-modal]").forEach(function (buttonElement) {
+        if (buttonElement.classList.contains("transport-modal-close")) {
+          buttonElement.setAttribute("aria-label", t("ai.agentSettingsCloseAria"));
+          return;
+        }
+        buttonElement.textContent = buttonElement.hasAttribute("data-ai-agent-cancel")
+          ? t("ai.agentSettingsCancel")
+          : t("ai.agentSettingsClose");
+      });
+      document.querySelectorAll("[data-ai-agent-submit]").forEach(function (buttonElement) {
+        buttonElement.textContent = t("ai.agentSettingsSubmit");
+      });
+      syncAiSettingsControls({ preserveInputs: true });
+      if (aiChangesModalTitle) {
+        aiChangesModalTitle.textContent = t("ai.changesTitle");
+      }
+      document.querySelectorAll("[data-close-ai-changes-modal]").forEach(function (buttonElement) {
+        if (buttonElement.classList.contains("transport-modal-close")) {
+          buttonElement.setAttribute("aria-label", t("ai.changesCloseAria"));
+        }
+      });
+      syncAiAgentSettingsControls({ preserveInputs: true });
+      syncAiChangesSummaryCopy();
+      syncAiChangesSummaryRender();
+      syncAiVehicleChangesRender();
+      syncAiPassengerAllocationsRender();
+      syncAiRouteItinerariesRender();
+      syncAiChangesControls();
 
       syncVehicleModalCopy(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
       document.querySelectorAll("[data-close-vehicle-modal]").forEach(function (buttonElement) {
@@ -2362,6 +4063,255 @@
       }
     }
 
+    function syncAiAgentSettingsControls(options) {
+      const syncOptions = options || {};
+      const hasActiveRun = state.aiRouteRequestPending
+        || state.aiRoutePollingTimer !== null
+        || shouldContinuePollingAiRouteRun(state.aiRouteRunStatus);
+      const activeDraft = readAiAgentSettingsDraft(undefined, state.aiAgentSettingsDraft || getDefaultAiAgentSettings());
+
+      if (!syncOptions.preserveInputs) {
+        if (aiAgentEarliestBoardingInput) {
+          aiAgentEarliestBoardingInput.value = activeDraft.earliestBoardingTime;
+        }
+        if (aiAgentArrivalAtWorkInput) {
+          aiAgentArrivalAtWorkInput.value = activeDraft.arrivalAtWorkTime;
+        }
+      }
+
+      if (aiAgentEarliestBoardingInput) {
+        aiAgentEarliestBoardingInput.disabled = hasActiveRun;
+      }
+      if (aiAgentArrivalAtWorkInput) {
+        aiAgentArrivalAtWorkInput.disabled = hasActiveRun;
+      }
+
+      document.querySelectorAll("[data-ai-agent-cancel]").forEach(function (buttonElement) {
+        buttonElement.disabled = hasActiveRun;
+        buttonElement.textContent = t("ai.agentSettingsCancel");
+      });
+      document.querySelectorAll("[data-ai-agent-submit]").forEach(function (buttonElement) {
+        buttonElement.disabled = !state.isAuthenticated || hasActiveRun;
+        buttonElement.textContent = hasActiveRun
+          ? t("ai.agentSettingsSubmitting")
+          : t("ai.agentSettingsSubmit");
+      });
+
+      if (aiAgentModal) {
+        aiAgentModal.setAttribute("aria-busy", hasActiveRun ? "true" : "false");
+      }
+
+      if (!aiAgentFeedback) {
+        return;
+      }
+
+      const feedbackMessage = state.aiAgentFeedbackKey
+        ? t(state.aiAgentFeedbackKey, state.aiAgentFeedbackValues || undefined)
+        : String(state.aiAgentFeedbackMessage || "").trim();
+      if (!feedbackMessage) {
+        aiAgentFeedback.hidden = true;
+        aiAgentFeedback.textContent = "";
+        aiAgentFeedback.dataset.tone = state.aiAgentFeedbackTone || "info";
+        return;
+      }
+
+      aiAgentFeedback.hidden = false;
+      aiAgentFeedback.textContent = feedbackMessage;
+      aiAgentFeedback.dataset.tone = state.aiAgentFeedbackTone || "info";
+    }
+
+    function syncAiSettingsControls(options) {
+      const syncOptions = options || {};
+      const activeDraft = readTransportAiSettingsDraft(undefined, state.aiSettingsDraft || getDefaultTransportAiSettingsDraft());
+      const selectedProvider = normalizeTransportAiSettingsProvider(
+        activeDraft.provider,
+        state.aiSettingsLoadedProvider || DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER
+      );
+      const controlsDisabled = !state.isAuthenticated || state.aiSettingsLoading || state.aiSettingsSaving;
+      const apiKeyValue = String(activeDraft.apiKey || "").trim();
+
+      if (!syncOptions.preserveInputs) {
+        if (aiSettingsProviderInput) {
+          aiSettingsProviderInput.value = selectedProvider;
+        }
+        if (aiSettingsApiKeyInput) {
+          aiSettingsApiKeyInput.value = activeDraft.apiKey;
+        }
+      }
+
+      if (aiSettingsProviderInput) {
+        aiSettingsProviderInput.disabled = controlsDisabled;
+      }
+      if (aiSettingsApiKeyInput) {
+        aiSettingsApiKeyInput.disabled = controlsDisabled;
+      }
+      if (aiSettingsProviderNote) {
+        aiSettingsProviderNote.textContent = buildTransportAiSettingsProviderNote(selectedProvider);
+      }
+      if (aiSettingsApiKeyHint) {
+        let hintMessage = "";
+        let hintTone = "info";
+        if (!apiKeyValue) {
+          if (state.aiSettingsHasApiKey && selectedProvider === state.aiSettingsLoadedProvider && state.aiSettingsApiKeyHint) {
+            hintMessage = t("ai.settingsApiKeyHint", { hint: state.aiSettingsApiKeyHint });
+          } else if (state.aiSettingsHasApiKey && selectedProvider !== state.aiSettingsLoadedProvider) {
+            hintMessage = t("ai.settingsProviderChangeRequiresKey");
+            hintTone = "warning";
+          } else if (!state.aiSettingsHasApiKey) {
+            hintMessage = t("ai.settingsApiKeyMissing");
+          }
+        }
+
+        aiSettingsApiKeyHint.hidden = !hintMessage;
+        aiSettingsApiKeyHint.textContent = hintMessage;
+        aiSettingsApiKeyHint.dataset.tone = hintTone;
+      }
+
+      document.querySelectorAll("[data-close-ai-settings-modal]").forEach(function (buttonElement) {
+        buttonElement.disabled = state.aiSettingsSaving;
+      });
+      document.querySelectorAll("[data-ai-settings-save]").forEach(function (buttonElement) {
+        buttonElement.disabled = controlsDisabled;
+      });
+
+      if (aiSettingsModal) {
+        aiSettingsModal.setAttribute(
+          "aria-busy",
+          state.aiSettingsLoading || state.aiSettingsSaving ? "true" : "false"
+        );
+      }
+
+      if (!aiSettingsFeedback) {
+        return;
+      }
+
+      const feedbackMessage = state.aiSettingsFeedbackKey
+        ? t(state.aiSettingsFeedbackKey, state.aiSettingsFeedbackValues || undefined)
+        : String(state.aiSettingsFeedbackMessage || "").trim();
+      if (!feedbackMessage) {
+        aiSettingsFeedback.hidden = true;
+        aiSettingsFeedback.textContent = "";
+        aiSettingsFeedback.dataset.tone = state.aiSettingsFeedbackTone || "info";
+        return;
+      }
+
+      aiSettingsFeedback.hidden = false;
+      aiSettingsFeedback.textContent = feedbackMessage;
+      aiSettingsFeedback.dataset.tone = state.aiSettingsFeedbackTone || "info";
+    }
+
+    function syncAiChangesControls() {
+      const commandState = resolveAiChangesCommandState(
+        state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        {
+          isAuthenticated: state.isAuthenticated,
+          isPending: state.aiChangesCommandPending,
+          pendingAction: state.aiChangesPendingAction,
+        }
+      );
+
+      if (aiChangesCancelButton) {
+        aiChangesCancelButton.disabled = !commandState.canCancel;
+        aiChangesCancelButton.textContent = t(
+          commandState.isPending && commandState.pendingAction === "cancel"
+            ? "ai.changesCancelling"
+            : "ai.changesCancel"
+        );
+      }
+      if (aiChangesSaveButton) {
+        aiChangesSaveButton.disabled = !commandState.canSave;
+        aiChangesSaveButton.textContent = t(
+          commandState.isPending && commandState.pendingAction === "save"
+            ? "ai.changesSaving"
+            : "ai.changesSave"
+        );
+      }
+      if (aiChangesApplyButton) {
+        aiChangesApplyButton.disabled = !commandState.canApply;
+        aiChangesApplyButton.textContent = t(
+          commandState.isPending && commandState.pendingAction === "apply"
+            ? "ai.changesApplying"
+            : "ai.changesApply"
+        );
+      }
+
+      document.querySelectorAll("[data-close-ai-changes-modal]").forEach(function (buttonElement) {
+        buttonElement.disabled = commandState.isPending;
+      });
+
+      if (aiChangesModal) {
+        aiChangesModal.setAttribute("aria-busy", commandState.isPending ? "true" : "false");
+      }
+    }
+
+    function syncAiChangesSummaryCopy() {
+      if (!aiChangesSummary) {
+        return;
+      }
+
+      const summaryMessage = state.aiChangesSummaryKey
+        ? t(state.aiChangesSummaryKey, state.aiChangesSummaryValues || undefined)
+        : String(state.aiChangesSummaryMessage || "").trim();
+      if (!summaryMessage) {
+        aiChangesSummary.hidden = true;
+        aiChangesSummary.textContent = "";
+        aiChangesSummary.dataset.tone = state.aiChangesSummaryTone || "success";
+        return;
+      }
+
+      aiChangesSummary.hidden = false;
+      aiChangesSummary.textContent = summaryMessage;
+      aiChangesSummary.dataset.tone = state.aiChangesSummaryTone || "success";
+    }
+
+    function syncAiChangesSummaryRender() {
+      if ((!aiChangesSummaryGrid && !aiChangesSummaryPanel) || (!state.aiRouteRunStatus && !state.aiRouteSuggestion)) {
+        return;
+      }
+
+      renderAiChangesSummary({
+        runStatusResponse: state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        fallbackCurrencyCode: state.priceCurrencyCode,
+        summaryGridElement: aiChangesSummaryGrid,
+        summaryPanelElement: aiChangesSummaryPanel,
+      });
+    }
+
+    function syncAiVehicleChangesRender() {
+      if (!aiChangesVehiclesPanel || (!state.aiRouteRunStatus && !state.aiRouteSuggestion)) {
+        return;
+      }
+
+      renderAiVehicleChanges({
+        runStatusResponse: state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        fallbackCurrencyCode: state.priceCurrencyCode,
+        vehiclesPanelElement: aiChangesVehiclesPanel,
+      });
+    }
+
+    function syncAiPassengerAllocationsRender() {
+      if (!aiChangesPassengersPanel || (!state.aiRouteRunStatus && !state.aiRouteSuggestion)) {
+        return;
+      }
+
+      renderAiPassengerAllocations({
+        runStatusResponse: state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        passengersPanelElement: aiChangesPassengersPanel,
+      });
+    }
+
+    function syncAiRouteItinerariesRender() {
+      if (!aiChangesRoutesPanel || (!state.aiRouteRunStatus && !state.aiRouteSuggestion)) {
+        return;
+      }
+
+      renderAiRouteItineraries({
+        runStatusResponse: state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        fallbackCurrencyCode: state.priceCurrencyCode,
+        routesPanelElement: aiChangesRoutesPanel,
+      });
+    }
+
     function readTransportSettingsDraft() {
       return {
         workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
@@ -2444,6 +4394,9 @@
       if (aiMenu) {
         aiMenu.hidden = !state.aiMenuOpen;
       }
+      if (aiImplementModificationsButton) {
+        aiImplementModificationsButton.disabled = !state.isAuthenticated || state.aiLatestSuggestionLoading;
+      }
     }
 
     function closeAiMenu(options) {
@@ -2463,6 +4416,7 @@
     function openAiMenu() {
       state.aiMenuOpen = true;
       syncAiMenuControls();
+      syncAiChangesSummaryRender();
     }
 
     function toggleAiMenu() {
@@ -2567,6 +4521,7 @@
         requestUserButton.hidden = state.isAuthenticated;
       }
       syncSettingsControls();
+      syncAiAgentSettingsControls({ preserveInputs: true });
       syncRouteTimeControls();
     }
 
@@ -2595,6 +4550,13 @@
       if (state.realtimeRefreshTimer !== null) {
         globalScope.clearTimeout(state.realtimeRefreshTimer);
         state.realtimeRefreshTimer = null;
+      }
+    }
+
+    function clearPendingAiRoutePolling() {
+      if (state.aiRoutePollingTimer !== null) {
+        globalScope.clearTimeout(state.aiRoutePollingTimer);
+        state.aiRoutePollingTimer = null;
       }
     }
 
@@ -2652,7 +4614,14 @@
         }
       } else {
         stopRealtimeUpdates();
+        clearPendingAiRoutePolling();
+        state.aiRouteRequestPending = false;
+        state.aiRouteRunStatus = null;
+        state.aiRouteRunKey = null;
+        state.aiRouteSuggestion = null;
       }
+
+      syncAiAgentSettingsControls({ preserveInputs: true });
 
       if (authKeyInput) {
         if (nextOptions.resetInputs) {
@@ -3192,15 +5161,26 @@
       });
     }
 
-    [aiCalculateRoutesButton, aiImplementModificationsButton].forEach(function (buttonElement) {
-      if (!buttonElement) {
-        return;
-      }
-      buttonElement.addEventListener("click", function (event) {
+    if (aiCalculateRoutesButton) {
+      aiCalculateRoutesButton.addEventListener("click", function (event) {
         event.preventDefault();
-        closeAiMenu();
+        openAiAgentSettingsModal();
       });
-    });
+    }
+
+    if (aiImplementModificationsButton) {
+      aiImplementModificationsButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        void loadLatestAiSuggestion();
+      });
+    }
+
+    if (aiSettingsMenuButton) {
+      aiSettingsMenuButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        openAiSettingsModal();
+      });
+    }
 
     document.addEventListener("click", function (event) {
       if (!state.aiMenuOpen || !aiMenuShell) {
@@ -3222,6 +5202,120 @@
     document.querySelectorAll("[data-close-settings-modal]").forEach(function (buttonElement) {
       buttonElement.addEventListener("click", closeSettingsModal);
     });
+
+    document.querySelectorAll("[data-close-ai-settings-modal]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", closeAiSettingsModal);
+    });
+    document.querySelectorAll("[data-ai-settings-save]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        void saveTransportAiSettings();
+      });
+    });
+
+    document.querySelectorAll("[data-close-ai-agent-modal]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", closeAiAgentSettingsModal);
+    });
+    document.querySelectorAll("[data-close-ai-changes-modal]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", closeAiChangesModal);
+    });
+    document.querySelectorAll("[data-ai-changes-cancel]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        void cancelAiSuggestion();
+      });
+    });
+    document.querySelectorAll("[data-ai-changes-save]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        void saveAiSuggestion();
+      });
+    });
+    document.querySelectorAll("[data-ai-changes-apply]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        void applyAiSuggestion();
+      });
+    });
+    document.querySelectorAll("[data-ai-agent-submit]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        void requestAiRoutes();
+      });
+    });
+
+    [aiAgentEarliestBoardingInput, aiAgentArrivalAtWorkInput].forEach(function (inputElement) {
+      if (!inputElement) {
+        return;
+      }
+      inputElement.addEventListener("input", function () {
+        state.aiAgentSettingsDraft = readAiAgentSettingsDraft(
+          {
+            earliestBoardingInput: aiAgentEarliestBoardingInput,
+            arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+          },
+          state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
+        );
+        if (state.aiAgentFeedbackMessage) {
+          clearAiAgentFeedback();
+          return;
+        }
+        syncAiAgentSettingsControls({ preserveInputs: true });
+      });
+    });
+
+    if (aiSettingsProviderInput) {
+      aiSettingsProviderInput.addEventListener("change", function () {
+        state.aiSettingsDraft = readTransportAiSettingsDraft(
+          {
+            providerInput: aiSettingsProviderInput,
+            apiKeyInput: aiSettingsApiKeyInput,
+          },
+          state.aiSettingsDraft || getDefaultTransportAiSettingsDraft()
+        );
+        if (state.aiSettingsFeedbackMessage || state.aiSettingsFeedbackKey) {
+          clearAiSettingsFeedback();
+          return;
+        }
+        syncAiSettingsControls({ preserveInputs: true });
+      });
+    }
+
+    if (aiSettingsApiKeyInput) {
+      aiSettingsApiKeyInput.addEventListener("input", function () {
+        state.aiSettingsDraft = readTransportAiSettingsDraft(
+          {
+            providerInput: aiSettingsProviderInput,
+            apiKeyInput: aiSettingsApiKeyInput,
+          },
+          state.aiSettingsDraft || getDefaultTransportAiSettingsDraft()
+        );
+        if (state.aiSettingsFeedbackMessage || state.aiSettingsFeedbackKey) {
+          clearAiSettingsFeedback();
+          return;
+        }
+        syncAiSettingsControls({ preserveInputs: true });
+      });
+    }
+
+    if (aiSettingsModal) {
+      aiSettingsModal.addEventListener("click", function (event) {
+        if (event.target === aiSettingsModal) {
+          closeAiSettingsModal();
+        }
+      });
+    }
+
+    if (aiAgentModal) {
+      aiAgentModal.addEventListener("click", function (event) {
+        if (event.target === aiAgentModal) {
+          closeAiAgentSettingsModal();
+        }
+      });
+    }
+
+    if (aiChangesModal) {
+      aiChangesModal.addEventListener("click", function (event) {
+        if (event.target === aiChangesModal) {
+          closeAiChangesModal();
+        }
+      });
+    }
 
     if (settingsModal) {
       settingsModal.addEventListener("click", function (event) {
@@ -3369,11 +5463,161 @@
       setVehicleModalFeedback("", "error");
     }
 
+    function setAiAgentFeedback(message, tone, options) {
+      const feedbackOptions = options || {};
+      state.aiAgentFeedbackKey = String(feedbackOptions.key || "").trim();
+      state.aiAgentFeedbackValues = feedbackOptions.values && typeof feedbackOptions.values === "object"
+        ? Object.assign({}, feedbackOptions.values)
+        : null;
+      state.aiAgentFeedbackMessage = state.aiAgentFeedbackKey
+        ? ""
+        : String(message || "").trim();
+      state.aiAgentFeedbackTone = tone || "info";
+      syncAiAgentSettingsControls({ preserveInputs: true });
+    }
+
+    function clearAiAgentFeedback() {
+      setAiAgentFeedback("", "info");
+    }
+
+    function setAiSettingsFeedback(message, tone, options) {
+      const feedbackOptions = options || {};
+      state.aiSettingsFeedbackKey = String(feedbackOptions.key || "").trim();
+      state.aiSettingsFeedbackValues = feedbackOptions.values && typeof feedbackOptions.values === "object"
+        ? Object.assign({}, feedbackOptions.values)
+        : null;
+      state.aiSettingsFeedbackMessage = state.aiSettingsFeedbackKey
+        ? ""
+        : String(message || "").trim();
+      state.aiSettingsFeedbackTone = tone || "info";
+      syncAiSettingsControls({ preserveInputs: true });
+    }
+
+    function clearAiSettingsFeedback() {
+      setAiSettingsFeedback("", "info");
+    }
+
+    function setAiChangesSummary(message, tone, options) {
+      const summaryOptions = options || {};
+      state.aiChangesSummaryKey = String(summaryOptions.key || "").trim();
+      state.aiChangesSummaryValues = summaryOptions.values && typeof summaryOptions.values === "object"
+        ? Object.assign({}, summaryOptions.values)
+        : null;
+      state.aiChangesSummaryMessage = state.aiChangesSummaryKey
+        ? ""
+        : String(message || "").trim();
+      state.aiChangesSummaryTone = tone || "success";
+      syncAiChangesSummaryCopy();
+    }
+
+    function clearAiChangesSummary() {
+      setAiChangesSummary("", "success");
+    }
+
+    function runAiSuggestionCommand(actionName) {
+      const normalizedAction = String(actionName || "").trim().toLowerCase();
+      const actionCopy = getAiChangesActionCopy(normalizedAction);
+      if (!actionCopy) {
+        return Promise.resolve(null);
+      }
+
+      if (!state.isAuthenticated) {
+        setAiChangesSummary("", "warning", { key: "status.locked" });
+        setStatus(getTransportLockedMessage(), "warning");
+        syncAiChangesControls();
+        return Promise.resolve(null);
+      }
+
+      const commandState = resolveAiChangesCommandState(
+        state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        {
+          isAuthenticated: state.isAuthenticated,
+          isPending: state.aiChangesCommandPending,
+          pendingAction: state.aiChangesPendingAction,
+        }
+      );
+      const isCommandAvailable = normalizedAction === "cancel"
+        ? commandState.canCancel
+        : normalizedAction === "save"
+          ? commandState.canSave
+          : commandState.canApply;
+      if (!commandState.suggestionKey || !isCommandAvailable) {
+        return Promise.resolve(null);
+      }
+
+      state.aiChangesCommandPending = true;
+      state.aiChangesPendingAction = normalizedAction;
+      setAiChangesSummary("", "info", { key: actionCopy.busyKey });
+      syncAiChangesControls();
+
+      return requestJson(
+        buildTransportAiSuggestionCommandUrl(TRANSPORT_API_PREFIX, commandState.suggestionKey, normalizedAction),
+        { method: "POST" }
+      )
+        .then(function (response) {
+          state.aiRouteRunKey = response && response.run_key
+            ? response.run_key
+            : state.aiRouteRunKey;
+          state.aiRouteRunStatus = response || null;
+          state.aiRouteSuggestion = response && response.suggestion ? response.suggestion : null;
+
+          const resolvedMessage = localizeTransportApiMessage(response && response.message)
+            || String(response && response.message || "").trim();
+          const successMessage = resolvedMessage || t(actionCopy.successKey);
+
+          closeAiChangesModal({ force: true });
+          setStatus(successMessage, "success");
+          if (shouldRefreshDashboardAfterAiSuggestionCommand(normalizedAction)) {
+            requestDashboardRefresh({ announce: false });
+          }
+          return response || null;
+        })
+        .catch(function (error) {
+          if (error && error.payload && typeof error.payload === "object") {
+            state.aiRouteRunKey = error.payload.run_key || state.aiRouteRunKey;
+            state.aiRouteRunStatus = error.payload;
+            state.aiRouteSuggestion = error.payload.suggestion ? error.payload.suggestion : state.aiRouteSuggestion;
+          }
+
+          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+            || String(
+              (error && error.payload && error.payload.message)
+              || (error && error.message)
+              || ""
+            ).trim();
+          setAiChangesSummary(resolvedMessage, "error", resolvedMessage
+            ? undefined
+            : { key: actionCopy.errorKey });
+          handleProtectedRequestError(error, resolvedMessage || t(actionCopy.errorKey));
+          return null;
+        })
+        .finally(function () {
+          state.aiChangesCommandPending = false;
+          state.aiChangesPendingAction = "";
+          syncAiChangesControls();
+        });
+    }
+
+    function cancelAiSuggestion() {
+      return runAiSuggestionCommand("cancel");
+    }
+
+    function saveAiSuggestion() {
+      return runAiSuggestionCommand("save");
+    }
+
+    function applyAiSuggestion() {
+      return runAiSuggestionCommand("apply");
+    }
+
     function openSettingsModal() {
       if (!settingsModal) {
         return;
       }
       closeAiMenu();
+      closeAiSettingsModal({ force: true });
+      closeAiChangesModal();
+      closeAiAgentSettingsModal();
       closeExpandedVehicleDetails({ render: false });
       if (state.isAuthenticated && !state.settingsLoaded) {
         void loadTransportSettings({ silent: true });
@@ -3396,6 +5640,453 @@
         if (typeof settingsTrigger.focus === "function") {
           settingsTrigger.focus();
         }
+      }
+    }
+
+    function loadTransportAiSettings() {
+      if (!state.isAuthenticated) {
+        state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+        state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
+        state.aiSettingsHasApiKey = false;
+        state.aiSettingsApiKeyHint = "";
+        setAiSettingsFeedback("", "warning", { key: "status.locked" });
+        syncAiSettingsControls();
+        return Promise.resolve(null);
+      }
+
+      state.aiSettingsLoading = true;
+      setAiSettingsFeedback("", "info", { key: "ai.settingsLoading" });
+      syncAiSettingsControls({ preserveInputs: true });
+      return requestJson(`${TRANSPORT_API_PREFIX}/ai/settings`)
+        .then(function (response) {
+          const normalizedProvider = normalizeTransportAiSettingsProvider(
+            response && response.provider,
+            DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER
+          );
+          state.aiSettingsDraft = readTransportAiSettingsDraft(
+            {
+              provider: normalizedProvider,
+              apiKey: "",
+            },
+            getDefaultTransportAiSettingsDraft()
+          );
+          state.aiSettingsLoadedProvider = normalizedProvider;
+          state.aiSettingsHasApiKey = Boolean(response && response.has_api_key);
+          state.aiSettingsApiKeyHint = String(response && response.api_key_hint || "").trim();
+          clearAiSettingsFeedback();
+          return response || null;
+        })
+        .catch(function (error) {
+          const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsLoadFailed"));
+          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+            || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsLoadFailed"));
+          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
+          return null;
+        })
+        .finally(function () {
+          state.aiSettingsLoading = false;
+          syncAiSettingsControls();
+        });
+    }
+
+    function saveTransportAiSettings() {
+      if (!state.isAuthenticated) {
+        setAiSettingsFeedback("", "warning", { key: "status.locked" });
+        setStatus(getTransportLockedMessage(), "warning");
+        syncAiSettingsControls({ preserveInputs: true });
+        return Promise.resolve(null);
+      }
+
+      const draft = readTransportAiSettingsDraft(
+        {
+          providerInput: aiSettingsProviderInput,
+          apiKeyInput: aiSettingsApiKeyInput,
+        },
+        state.aiSettingsDraft || getDefaultTransportAiSettingsDraft()
+      );
+      state.aiSettingsDraft = draft;
+      state.aiSettingsSaving = true;
+      setAiSettingsFeedback("", "info", { key: "ai.settingsSaving" });
+      syncAiSettingsControls({ preserveInputs: true });
+
+      return requestJson(`${TRANSPORT_API_PREFIX}/ai/settings`, {
+        method: "PUT",
+        body: JSON.stringify(buildTransportAiSettingsUpdatePayload(draft)),
+      })
+        .then(function (response) {
+          state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+          state.aiSettingsLoadedProvider = normalizeTransportAiSettingsProvider(
+            response && response.provider,
+            draft.provider
+          );
+          state.aiSettingsHasApiKey = Boolean(response && response.has_api_key);
+          state.aiSettingsApiKeyHint = String(response && response.api_key_hint || "").trim();
+          clearAiSettingsFeedback();
+          setStatus(t("ai.settingsSaved"), "success");
+          closeAiSettingsModal({ force: true, restoreFocus: true });
+          return response || null;
+        })
+        .catch(function (error) {
+          const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsSaveFailed"));
+          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+            || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsSaveFailed"));
+          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
+          return null;
+        })
+        .finally(function () {
+          state.aiSettingsSaving = false;
+          syncAiSettingsControls({ preserveInputs: true });
+        });
+    }
+
+    function openAiSettingsModal() {
+      if (!aiSettingsModal) {
+        return;
+      }
+      closeAiMenu();
+      closeAiChangesModal({ force: true });
+      closeAiAgentSettingsModal({ force: true });
+      closeExpandedVehicleDetails({ render: false });
+      state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+      state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
+      state.aiSettingsHasApiKey = false;
+      state.aiSettingsApiKeyHint = "";
+      clearAiSettingsFeedback();
+      applyStaticTranslations();
+      syncAiSettingsControls();
+      aiSettingsModal.hidden = false;
+      if (aiSettingsProviderInput && typeof aiSettingsProviderInput.focus === "function") {
+        aiSettingsProviderInput.focus();
+      }
+      void loadTransportAiSettings();
+    }
+
+    function closeAiSettingsModal(options) {
+      if (!aiSettingsModal) {
+        return;
+      }
+      const closeOptions = options || {};
+      if (!closeOptions.force && state.aiSettingsSaving) {
+        return;
+      }
+
+      state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+      state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
+      state.aiSettingsHasApiKey = false;
+      state.aiSettingsApiKeyHint = "";
+      clearAiSettingsFeedback();
+      aiSettingsModal.hidden = true;
+      if (
+        closeOptions.restoreFocus
+        && aiMenuTrigger
+        && typeof aiMenuTrigger.focus === "function"
+      ) {
+        aiMenuTrigger.focus();
+      }
+    }
+
+    function focusAiAgentSettingsField(fieldName) {
+      const fieldElement = fieldName === "arrivalAtWorkTime"
+        ? aiAgentArrivalAtWorkInput
+        : aiAgentEarliestBoardingInput;
+      if (fieldElement && typeof fieldElement.focus === "function") {
+        fieldElement.focus();
+      }
+    }
+
+    function openAiChangesModal(runStatusResponse) {
+      state.aiRouteRunStatus = runStatusResponse || state.aiRouteRunStatus;
+      state.aiRouteRunKey = runStatusResponse && runStatusResponse.run_key
+        ? runStatusResponse.run_key
+        : state.aiRouteRunKey;
+      state.aiRouteSuggestion = runStatusResponse && runStatusResponse.suggestion
+        ? runStatusResponse.suggestion
+        : state.aiRouteSuggestion;
+      state.aiChangesCommandPending = false;
+      state.aiChangesPendingAction = "";
+
+      const readyMessage = localizeTransportApiMessage(runStatusResponse && runStatusResponse.message)
+        || String(runStatusResponse && runStatusResponse.message || "").trim();
+
+      closeAiSettingsModal({ force: true });
+      closeAiAgentSettingsModal({ force: true });
+      setAiChangesSummary(readyMessage, "success", readyMessage
+        ? undefined
+        : { key: "ai.agentSettingsReadyForReview" });
+      if (aiChangesModal) {
+        applyStaticTranslations();
+        aiChangesModal.hidden = false;
+        const closeButton = aiChangesModal.querySelector("[data-close-ai-changes-modal]");
+        if (closeButton && typeof closeButton.focus === "function") {
+          closeButton.focus();
+        }
+      }
+      setStatus(readyMessage || t("ai.agentSettingsReadyForReview"), "success");
+    }
+
+    function closeAiChangesModal(options) {
+      if (!aiChangesModal) {
+        return;
+      }
+      const closeOptions = options || {};
+      if (!closeOptions.force && state.aiChangesCommandPending) {
+        return;
+      }
+      aiChangesModal.hidden = true;
+      clearAiChangesSummary();
+      if (
+        closeOptions.restoreFocus
+        && aiMenuTrigger
+        && typeof aiMenuTrigger.focus === "function"
+      ) {
+        aiMenuTrigger.focus();
+      }
+    }
+
+    function loadLatestAiSuggestion() {
+      closeAiMenu();
+
+      if (!state.isAuthenticated) {
+        setStatus(getTransportLockedMessage(), "warning");
+        syncAiMenuControls();
+        return Promise.resolve(null);
+      }
+
+      const latestSuggestionUrl = buildTransportAiLatestSuggestionUrl(
+        TRANSPORT_API_PREFIX,
+        getCurrentServiceDateIso(),
+        getSelectedRouteKind()
+      );
+      if (!latestSuggestionUrl) {
+        setStatus(t("ai.loadLatestSuggestionFailed"), "error");
+        return Promise.resolve(null);
+      }
+
+      state.aiLatestSuggestionLoading = true;
+      syncAiMenuControls();
+
+      return requestJson(latestSuggestionUrl)
+        .then(function (response) {
+          state.aiRouteRunKey = response && response.run_key ? response.run_key : state.aiRouteRunKey;
+          state.aiRouteRunStatus = response || null;
+          state.aiRouteSuggestion = response && response.suggestion ? response.suggestion : null;
+          openAiChangesModal(response);
+          return response || null;
+        })
+        .catch(function (error) {
+          if (error && Number(error.status) === 404) {
+            setStatus(t("ai.noSavedSuggestion"), "info");
+            return null;
+          }
+
+          handleProtectedRequestError(
+            error,
+            localizeTransportApiMessage(error && error.message) || t("ai.loadLatestSuggestionFailed")
+          );
+          return null;
+        })
+        .finally(function () {
+          state.aiLatestSuggestionLoading = false;
+          syncAiMenuControls();
+        });
+    }
+
+    function queueAiRouteRunPoll(runKey, delayMs) {
+      clearPendingAiRoutePolling();
+      if (!runKey) {
+        syncAiAgentSettingsControls({ preserveInputs: true });
+        return;
+      }
+
+      state.aiRoutePollingTimer = globalScope.setTimeout(function () {
+        state.aiRoutePollingTimer = null;
+        void pollAiRouteRun(runKey);
+      }, Math.max(0, Number(delayMs) || 0));
+      syncAiAgentSettingsControls({ preserveInputs: true });
+    }
+
+    function pollAiRouteRun(runKey) {
+      const normalizedRunKey = String(runKey || "").trim();
+      if (!normalizedRunKey) {
+        return Promise.resolve(null);
+      }
+
+      clearPendingAiRoutePolling();
+      return requestJson(`${TRANSPORT_API_PREFIX}/ai/route-calculations/${encodeURIComponent(normalizedRunKey)}`)
+        .then(function (response) {
+          state.aiRouteRunKey = response && response.run_key ? response.run_key : normalizedRunKey;
+          state.aiRouteRunStatus = response || null;
+          state.aiRouteSuggestion = response && response.suggestion ? response.suggestion : null;
+
+          const responseMessage = localizeTransportApiMessage(response && response.message)
+            || String(response && response.message || "").trim();
+          if (response && response.suggestion_ready && response.suggestion) {
+            setAiAgentFeedback(responseMessage, "success", responseMessage
+              ? undefined
+              : { key: "ai.agentSettingsReadyForReview" });
+            requestDashboardRefresh({ announce: false });
+            openAiChangesModal(response);
+            return response;
+          }
+
+          if (!response || response.ok === false || String(response.status || "").trim().toLowerCase() === "failed") {
+            setAiAgentFeedback(responseMessage, "error", responseMessage
+              ? undefined
+              : { key: "ai.routeCalculationFailed" });
+            return response || null;
+          }
+
+          setAiAgentFeedback(responseMessage, shouldContinuePollingAiRouteRun(response) ? "warning" : "success", responseMessage
+            ? undefined
+            : { key: "ai.agentSettingsSubmitting" });
+          if (shouldContinuePollingAiRouteRun(response)) {
+            queueAiRouteRunPoll(state.aiRouteRunKey, TRANSPORT_AI_ROUTE_POLL_INTERVAL_MS);
+          }
+          return response;
+        })
+        .catch(function (error) {
+          const fallbackErrorMessage = t("ai.routeCalculationFailed");
+          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+            || String(error && error.message || "").trim();
+          setAiAgentFeedback(resolvedMessage, "error", resolvedMessage
+            ? undefined
+            : { key: "ai.routeCalculationFailed" });
+          handleProtectedRequestError(error, resolvedMessage || fallbackErrorMessage);
+          return null;
+        })
+        .finally(function () {
+          syncAiAgentSettingsControls({ preserveInputs: true });
+        });
+    }
+
+    function requestAiRoutes() {
+      if (!state.isAuthenticated) {
+        setAiAgentFeedback("", "warning", { key: "status.locked" });
+        setStatus(getTransportLockedMessage(), "warning");
+        syncAiAgentSettingsControls({ preserveInputs: true });
+        return Promise.resolve(null);
+      }
+
+      const draft = readAiAgentSettingsDraft(
+        {
+          earliestBoardingInput: aiAgentEarliestBoardingInput,
+          arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+        },
+        state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
+      );
+      state.aiAgentSettingsDraft = draft;
+
+      const validation = validateAiAgentSettingsDraft(draft);
+      if (!validation.ok) {
+        setAiAgentFeedback("", "error", { key: validation.messageKey });
+        focusAiAgentSettingsField(validation.field);
+        return Promise.resolve(null);
+      }
+
+      state.aiAgentSettingsDraft = validation.draft;
+      state.aiRouteRunKey = null;
+      state.aiRouteRunStatus = null;
+      state.aiRouteSuggestion = null;
+      state.aiRouteRequestPending = true;
+      clearPendingAiRoutePolling();
+      setAiAgentFeedback("", "info", { key: "ai.agentSettingsSubmitting" });
+      syncAiAgentSettingsControls({ preserveInputs: true });
+
+      const payload = buildTransportAiRouteCalculationPayload(
+        getCurrentServiceDateIso(),
+        getSelectedRouteKind(),
+        validation.draft
+      );
+
+      return requestJson(`${TRANSPORT_API_PREFIX}/ai/route-calculations`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+        .then(function (response) {
+          state.aiRouteRunKey = response && response.run_key ? response.run_key : null;
+          state.aiRouteRunStatus = response || null;
+          state.aiRouteSuggestion = null;
+          requestDashboardRefresh({ announce: false });
+
+          const responseMessage = localizeTransportApiMessage(response && response.message)
+            || String(response && response.message || "").trim();
+          setAiAgentFeedback(responseMessage, response && response.suggestion_ready ? "success" : "warning", responseMessage
+            ? undefined
+            : { key: "ai.agentSettingsSubmitting" });
+
+          if (state.aiRouteRunKey) {
+            return pollAiRouteRun(state.aiRouteRunKey);
+          }
+          return response || null;
+        })
+        .catch(function (error) {
+          const fallbackErrorMessage = t("ai.routeCalculationFailed");
+          state.aiRouteRunKey = error && error.payload && error.payload.run_key
+            ? error.payload.run_key
+            : null;
+          state.aiRouteRunStatus = error && error.payload ? error.payload : null;
+          state.aiRouteSuggestion = null;
+          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+            || String(
+              (error && error.payload && error.payload.message)
+              || (error && error.message)
+              || ""
+            ).trim();
+          setAiAgentFeedback(resolvedMessage, "error", resolvedMessage
+            ? undefined
+            : { key: "ai.routeCalculationFailed" });
+          handleProtectedRequestError(error, resolvedMessage || fallbackErrorMessage);
+          return null;
+        })
+        .finally(function () {
+          state.aiRouteRequestPending = false;
+          syncAiAgentSettingsControls({ preserveInputs: true });
+        });
+    }
+
+    function openAiAgentSettingsModal() {
+      if (!aiAgentModal) {
+        return;
+      }
+      closeAiMenu();
+      closeAiChangesModal();
+      closeAiSettingsModal({ force: true });
+      closeExpandedVehicleDetails({ render: false });
+      state.aiAgentSettingsDraft = getDefaultAiAgentSettings();
+      clearAiAgentFeedback();
+      applyStaticTranslations();
+      syncAiAgentSettingsControls();
+      aiAgentModal.hidden = false;
+      if (aiAgentEarliestBoardingInput && typeof aiAgentEarliestBoardingInput.focus === "function") {
+        aiAgentEarliestBoardingInput.focus();
+        return;
+      }
+      if (aiAgentArrivalAtWorkInput && typeof aiAgentArrivalAtWorkInput.focus === "function") {
+        aiAgentArrivalAtWorkInput.focus();
+      }
+    }
+
+    function closeAiAgentSettingsModal(options) {
+      if (!aiAgentModal) {
+        return;
+      }
+      const closeOptions = options || {};
+      const hasActiveRun = state.aiRouteRequestPending
+        || state.aiRoutePollingTimer !== null
+        || shouldContinuePollingAiRouteRun(state.aiRouteRunStatus);
+      if (!closeOptions.force && hasActiveRun) {
+        return;
+      }
+
+      state.aiAgentSettingsDraft = getDefaultAiAgentSettings();
+      clearAiAgentFeedback();
+      aiAgentModal.hidden = true;
+      if (
+        closeOptions.restoreFocus
+        && aiMenuTrigger
+        && typeof aiMenuTrigger.focus === "function"
+      ) {
+        aiMenuTrigger.focus();
       }
     }
 
@@ -4614,10 +7305,12 @@
             setStatus(t("status.dashboardUpdated"), "info");
           }
           renderDashboard();
+          applyStaticTranslations();
         })
         .catch(function (error) {
           state.dashboard = null;
           clearDashboard();
+          applyStaticTranslations();
           if (error && Number(error.status) === 401) {
             clearTransportSession(getTransportSessionExpiredMessage());
             return;
@@ -4675,11 +7368,13 @@
     formatIsoDate,
     getEffectiveWorkToHomeDepartureTime,
     getTransportDateState,
+    getDefaultAiAgentSettings,
     getVehicleDepartureTime,
     getVehiclePendingAllocationMessage,
     getOrdinalSuffix,
     isPendingVehicleField,
     isVehicleReadyForAllocation,
+    isValidTransportTimeValue,
     formatPendingVehicleField,
     formatVehicleOccupancyLabel,
     formatVehicleOccupancyCount,
@@ -4687,12 +7382,16 @@
     getDefaultVehicleSeatCount,
     getDefaultVehicleToleranceMinutes,
     formatTransportCurrencyOptionLabel,
+    formatTransportCurrencyAmount,
     formatTransportPriceInputValue,
     normalizeTransportCurrencyCode,
     normalizeTransportPriceRateUnit,
     applyTransportVehicleToleranceDefault,
     resolveTransportCurrencyOptions,
     resolveTransportVehiclePriceDefaults,
+    getActiveTransportLanguageCode: getActiveLanguageCode,
+    setActiveTransportLanguageCode: setActiveLanguageCode,
+    translateTransportText: t,
     buildVehicleBasePayload,
     resolveVehicleEditFocusField,
     syncVehicleTypeDependentDefaults,
@@ -4709,7 +7408,26 @@
     resolveVehicleModalOpenState,
     resolveVehicleCreateValidationError,
     resolveVehicleSaveReloadDate,
+    readAiAgentSettingsDraft,
+    validateAiAgentSettingsDraft,
+    buildTransportAiSettingsUpdatePayload,
+    buildTransportAiRouteCalculationPayload,
+    shouldContinuePollingAiRouteRun,
+    getTransportAiSuggestionKey,
+    buildTransportAiLatestSuggestionUrl,
+    buildTransportAiSuggestionCommandUrl,
+    getDefaultTransportAiSettingsDraft,
+    normalizeTransportAiSettingsProvider,
+    readTransportAiSettingsDraft,
+    resolveTransportAiSettingsProviderDefaults,
+    shouldRefreshDashboardAfterAiSuggestionCommand,
+    resolveAiChangesCommandState,
+    renderAiChangesSummary,
+    renderAiVehicleChanges,
+    renderAiPassengerAllocations,
+    renderAiRouteItineraries,
     parsePositiveNumber,
+    parseTransportTimeToMinutes,
     resolvePanelSizes,
     resolveResizeConfig,
     resolveVehicleDetailsPosition,

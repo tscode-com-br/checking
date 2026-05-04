@@ -39,6 +39,8 @@ const reportsStatus = document.getElementById("reportsStatus");
 const projectEditorTitle = document.getElementById("projectEditorTitle");
 const projectEditorHelp = document.getElementById("projectEditorHelp");
 const projectNameInput = document.getElementById("projectNameInput");
+const projectAddressInput = document.getElementById("projectAddressInput");
+const projectZipCodeInput = document.getElementById("projectZipCodeInput");
 const projectCountrySelect = document.getElementById("projectCountrySelect");
 const projectTimezoneInput = document.getElementById("projectTimezoneInput");
 const projectCustomCountryInput = document.getElementById("projectCustomCountryInput");
@@ -211,6 +213,8 @@ function setProjectCatalog(rows) {
         country_name: String(row.country_name ?? "").trim(),
         timezone_name: String(row.timezone_name ?? "").trim(),
         timezone_label: String(row.timezone_label ?? "").trim(),
+        address: normalizeProjectMetadataText(row.address),
+        zip_code: normalizeProjectMetadataText(row.zip_code),
       }))
     : [];
 }
@@ -226,6 +230,10 @@ function normalizeProjectCountryName(value) {
 
 function normalizeProjectTimezoneName(value) {
   return String(value ?? "").trim();
+}
+
+function normalizeProjectMetadataText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
 function normalizeProjectCountryCode(value) {
@@ -402,12 +410,16 @@ function syncProjectEditorState(options = {}) {
   if (projectNameInput) {
     if (isEditing) {
       projectNameInput.value = editingProject.name;
-      projectNameInput.disabled = true;
-      projectNameInput.readOnly = true;
     } else {
       projectNameInput.disabled = false;
       projectNameInput.readOnly = false;
     }
+  }
+  if (projectAddressInput && isEditing) {
+    projectAddressInput.value = editingProject.address || "";
+  }
+  if (projectZipCodeInput && isEditing) {
+    projectZipCodeInput.value = editingProject.zip_code || "";
   }
   if (projectCustomCountryInput) {
     projectCustomCountryInput.value = "";
@@ -418,8 +430,8 @@ function syncProjectEditorState(options = {}) {
   }
   if (projectEditorHelp) {
     projectEditorHelp.textContent = isEditing
-      ? "Nesta etapa, a edição altera país e fuso horário. O nome do projeto permanece bloqueado."
-      : "Informe o nome do projeto, escolha um país da lista ou cadastre um novo e defina o fuso horário desejado.";
+      ? "Nesta etapa, a edição permite alterar nome, endereço, ZIP Code, país e fuso horário."
+      : "Informe o nome do projeto, endereço, ZIP Code, país e fuso horário desejados.";
   }
   if (saveProjectButton) {
     saveProjectButton.textContent = isEditing ? "Salvar Alteração" : "Salvar Projeto";
@@ -429,7 +441,7 @@ function syncProjectEditorState(options = {}) {
   }
 
   if (focus) {
-    const field = isEditing ? projectCountrySelect : projectNameInput;
+    const field = projectNameInput;
     if (field) {
       field.focus();
     }
@@ -441,6 +453,12 @@ function resetProjectEditor(options = {}) {
   projectEditorProjectId = null;
   if (projectNameInput) {
     projectNameInput.value = "";
+  }
+  if (projectAddressInput) {
+    projectAddressInput.value = "";
+  }
+  if (projectZipCodeInput) {
+    projectZipCodeInput.value = "";
   }
   if (projectCustomCountryInput) {
     projectCustomCountryInput.value = "";
@@ -3530,6 +3548,8 @@ function makeProjectRow(project) {
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
     <td>${escapeHtml(project.country_name || "-")}</td>
+    <td>${escapeHtml(project.address || "-")}</td>
+    <td>${escapeHtml(project.zip_code || "-")}</td>
     <td>${escapeHtml(formatTimeZoneLabel(project.timezone_label))}</td>
     <td class="pending-actions user-actions">
       <button type="button" class="secondary-button" data-project-edit="${project.id}">Editar</button>
@@ -3811,7 +3831,7 @@ async function loadProjects() {
 
   body.innerHTML = "";
   if (!rows.length) {
-    renderEmptyStateRow("projectsBody", 4, "Nenhum projeto cadastrado.");
+    renderEmptyStateRow("projectsBody", 6, "Nenhum projeto cadastrado.");
     return rows;
   }
 
@@ -3840,6 +3860,8 @@ async function saveProject() {
   }
 
   const projectName = String(projectNameInput ? projectNameInput.value : "").trim();
+  const projectAddress = normalizeProjectMetadataText(projectAddressInput ? projectAddressInput.value : "");
+  const projectZipCode = normalizeProjectMetadataText(projectZipCodeInput ? projectZipCodeInput.value : "");
   const customCountryName = normalizeProjectCountryName(projectCustomCountryInput ? projectCustomCountryInput.value : "");
   const selectedCountry = getSelectedProjectCountryOption();
   const countryName = customCountryName || normalizeProjectCountryName(selectedCountry ? selectedCountry.name : "");
@@ -3876,6 +3898,8 @@ async function saveProject() {
 
   const projectPayload = {
     name: projectName,
+    address: projectAddress,
+    zip_code: projectZipCode,
     country_code: countryCode,
     country_name: countryName,
     timezone_name: timezoneName,

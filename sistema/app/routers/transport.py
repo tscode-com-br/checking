@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import TransportRequest, User, Vehicle, Workplace
+from ..models import Project, TransportRequest, User, Vehicle, Workplace
 from ..schemas import (
     AdminActionResponse,
+    ProjectRow,
     TransportAssignmentUpsert,
     TransportAuthVerifyRequest,
     TransportCurrencyCreateRequest,
@@ -64,7 +65,9 @@ from ..services.location_settings import (
     upsert_transport_work_to_home_time,
     upsert_transport_work_to_home_time_for_date,
 )
+from ..services.project_catalog import list_projects
 from ..services.time_utils import now_sgt
+from ..services.time_utils import build_timezone_label
 from ..services.transport import (
     build_transport_list_export,
     build_transport_operational_plan_export,
@@ -115,6 +118,22 @@ def build_workplace_row(workplace: Workplace) -> WorkplaceRow:
         transport_window_end=workplace.transport_window_end,
         service_restrictions=workplace.service_restrictions,
         transport_work_to_home_time=workplace.transport_work_to_home_time,
+    )
+
+
+def build_project_row(project: Project) -> ProjectRow:
+    return ProjectRow(
+        id=project.id,
+        name=project.name,
+        country_code=project.country_code,
+        country_name=project.country_name,
+        timezone_name=project.timezone_name,
+        timezone_label=build_timezone_label(
+            country_name=project.country_name,
+            timezone_name=project.timezone_name,
+        ),
+        address=str(project.address or "").strip(),
+        zip_code=str(project.zip_code or "").strip(),
     )
 
 
@@ -201,6 +220,11 @@ def get_transport_dashboard(
 ) -> TransportDashboardResponse:
     resolved_date = service_date or now_sgt().date()
     return build_transport_dashboard(db, service_date=resolved_date, route_kind=route_kind)
+
+
+@router.get("/projects", response_model=list[ProjectRow], dependencies=[Depends(require_transport_session)])
+def list_transport_projects(db: Session = Depends(get_db)) -> list[ProjectRow]:
+    return [build_project_row(project) for project in list_projects(db)]
 
 
 @router.get(

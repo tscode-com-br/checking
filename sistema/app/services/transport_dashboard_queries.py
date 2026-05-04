@@ -23,6 +23,8 @@ def _build_project_row(row) -> ProjectRow:
             country_name=row.country_name,
             timezone_name=row.timezone_name,
         ),
+        address=str(row.address or "").strip(),
+        zip_code=str(row.zip_code or "").strip(),
     )
 
 

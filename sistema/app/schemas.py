@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from .models import ManagedLocation
 from .services.admin_project_scope import normalize_admin_monitored_project_names
@@ -274,6 +274,12 @@ def _validate_web_password(value: str, field_name: str) -> str:
 
 def _normalize_project_value(value: str) -> str:
     return normalize_project_name(value)
+
+
+def _normalize_optional_project_metadata_text(value: object) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().split())
 
 
 def _normalize_admin_monitored_projects_value(value: object) -> list[str] | None:
@@ -873,6 +879,8 @@ class ProjectRow(BaseModel):
     country_name: str
     timezone_name: str
     timezone_label: str
+    address: str
+    zip_code: str
 
 
 class ProjectCreate(BaseModel):
@@ -880,6 +888,8 @@ class ProjectCreate(BaseModel):
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     country_name: str | None = Field(default=None, min_length=2, max_length=80)
     timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
+    address: str = Field(default="", max_length=255)
+    zip_code: str = Field(default="", max_length=32)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -904,6 +914,11 @@ class ProjectCreate(BaseModel):
         if value is None or not str(value).strip():
             return None
         return normalize_project_timezone_name(value)
+
+    @field_validator("address", "zip_code", mode="before")
+    @classmethod
+    def validate_optional_metadata_text(cls, value: object) -> str:
+        return _normalize_optional_project_metadata_text(value)
 
     @model_validator(mode="after")
     def normalize_country_payload(self):
@@ -923,6 +938,8 @@ class ProjectUpdate(BaseModel):
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     country_name: str | None = Field(default=None, min_length=2, max_length=80)
     timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
+    address: str = Field(default="", max_length=255)
+    zip_code: str = Field(default="", max_length=32)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -947,6 +964,11 @@ class ProjectUpdate(BaseModel):
         if value is None or not str(value).strip():
             return None
         return normalize_project_timezone_name(value)
+
+    @field_validator("address", "zip_code", mode="before")
+    @classmethod
+    def validate_optional_metadata_text(cls, value: object) -> str:
+        return _normalize_optional_project_metadata_text(value)
 
     @model_validator(mode="after")
     def normalize_country_payload(self):
@@ -1519,6 +1541,869 @@ class TransportProposalValidationIssue(BaseModel):
         return normalized
 
 
+class TransportAIPreflightIssue(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=500)
+    blocking: bool = True
+    setting_name: str | None = Field(default=None, max_length=80)
+
+    @field_validator("code")
+    @classmethod
+    def validate_issue_code(cls, value: str) -> str:
+        normalized = value.strip().lower().replace(" ", "_")
+        if not normalized:
+            raise ValueError("Issue code is required")
+        return normalized
+
+    @field_validator("setting_name", mode="before")
+    @classmethod
+    def validate_setting_name(cls, value: str | None) -> str | None:
+        return _normalize_optional_compact_text(value, "A configuracao", max_length=80)
+
+
+class TransportAIPreflightCheckResult(BaseModel):
+    ok: bool
+    issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+
+
+class TransportAgentRouteRequest(BaseModel):
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    earliest_boarding_time: str = Field(min_length=5, max_length=5)
+    arrival_at_work_time: str = Field(min_length=5, max_length=5)
+
+    @field_validator("earliest_boarding_time", "arrival_at_work_time", mode="before")
+    @classmethod
+    def validate_transport_agent_route_request_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @model_validator(mode="after")
+    def validate_transport_agent_route_request(self) -> TransportAgentRouteRequest:
+        if self.route_kind != "home_to_work":
+            raise ValueError("Transport AI route calculations currently support only home_to_work")
+        if self.earliest_boarding_time >= self.arrival_at_work_time:
+            raise ValueError("The earliest boarding time must be earlier than the arrival time")
+        return self
+
+
+class TransportAgentRunStartResponse(BaseModel):
+    ok: bool
+    run_key: str | None = Field(default=None, min_length=1, max_length=120)
+    suggestion_key: str | None = Field(default=None, min_length=1, max_length=120)
+    status: str | None = Field(default=None, min_length=1, max_length=24)
+    message: str = Field(min_length=1, max_length=500)
+    issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+    can_cancel_restore: bool = False
+    suggestion_ready: bool = False
+
+    @field_validator("run_key", "suggestion_key", "status", mode="before")
+    @classmethod
+    def validate_transport_agent_run_start_optional_text(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=120)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_transport_agent_run_start_message(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "A mensagem", max_length=500)
+        if normalized is None:
+            raise ValueError("The route calculation response message is required")
+        return normalized
+
+
+class TransportAgentRunIssue(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=500)
+    blocking: bool = True
+    source: Literal[
+        "run_preflight",
+        "suggestion_validation",
+        "proposal_validation",
+        "proposal_apply",
+    ]
+    setting_name: str | None = Field(default=None, max_length=80)
+    request_id: int | None = Field(default=None, ge=1)
+    vehicle_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("code")
+    @classmethod
+    def validate_transport_agent_run_issue_code(cls, value: str) -> str:
+        normalized = value.strip().lower().replace(" ", "_")
+        if not normalized:
+            raise ValueError("Issue code is required")
+        return normalized
+
+    @field_validator("setting_name", mode="before")
+    @classmethod
+    def validate_transport_agent_run_issue_setting_name(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "A configuracao", max_length=80)
+
+
+class TransportAgentPlanningVehicleTypeConfig(BaseModel):
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"]
+    default_capacity: int | None = Field(default=None, ge=1)
+    default_price: float | None = Field(default=None, ge=0)
+    capacity_setting_name: str = Field(min_length=1, max_length=80)
+    price_setting_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("capacity_setting_name", "price_setting_name", mode="before")
+    @classmethod
+    def validate_config_setting_name(cls, value: str) -> str:
+        normalized = _normalize_optional_compact_text(value, "A configuracao", max_length=80)
+        if normalized is None:
+            raise ValueError("The planning config setting name is required")
+        return normalized
+
+
+class TransportAgentPlanningSettings(BaseModel):
+    work_to_home_time: str = Field(min_length=5, max_length=5)
+    last_update_time: str = Field(min_length=5, max_length=5)
+    default_tolerance_minutes: int = Field(ge=0)
+    price_currency_code: str | None = Field(default=None, max_length=12)
+    price_rate_unit: str = Field(min_length=1, max_length=16)
+    vehicle_type_configs: list[TransportAgentPlanningVehicleTypeConfig] = Field(default_factory=list)
+
+    @field_validator("work_to_home_time", "last_update_time", mode="before")
+    @classmethod
+    def validate_planning_setting_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportAgentPlanningLimits(BaseModel):
+    earliest_boarding_time: str = Field(min_length=5, max_length=5)
+    arrival_at_work_time: str = Field(min_length=5, max_length=5)
+    max_passengers_per_run: int = Field(ge=0)
+    max_runtime_seconds: int = Field(ge=0)
+
+    @field_validator("earliest_boarding_time", "arrival_at_work_time", mode="before")
+    @classmethod
+    def validate_planning_limit_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+
+class TransportAgentPlanningRequest(BaseModel):
+    request_id: int = Field(ge=1)
+    request_kind: Literal["regular", "weekend", "extra"]
+    service_date: date
+    requested_time: str = Field(min_length=5, max_length=5)
+    user_id: int = Field(ge=1)
+    chave: str = Field(min_length=1, max_length=4)
+    nome: str = Field(min_length=1, max_length=180)
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=2)
+    country_name: str = Field(min_length=2, max_length=80)
+    workplace: str | None = Field(default=None, max_length=120)
+    origin_address: str = Field(min_length=1, max_length=255)
+    origin_zip_code: str = Field(min_length=1, max_length=32)
+
+    @field_validator("requested_time", mode="before")
+    @classmethod
+    def validate_planning_request_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator(
+        "chave",
+        "nome",
+        "project_name",
+        "country_code",
+        "country_name",
+        "workplace",
+        "origin_address",
+        "origin_zip_code",
+        mode="before",
+    )
+    @classmethod
+    def validate_planning_request_text(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "O texto", max_length=255)
+
+
+class TransportAgentPlanningVehicle(BaseModel):
+    vehicle_id: int = Field(ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    service_scope: Literal["regular", "weekend", "extra"]
+    route_kind: Literal["home_to_work", "work_to_home"] | None = None
+    departure_time: str | None = Field(default=None, min_length=5, max_length=5)
+    plate: str | None = Field(default=None, max_length=15)
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"] | None = None
+    effective_capacity: int | None = Field(default=None, ge=1)
+    default_capacity: int | None = Field(default=None, ge=1)
+    default_price: float | None = Field(default=None, ge=0)
+    assigned_count: int = Field(ge=0)
+    pending_fields: list[str] = Field(default_factory=list)
+    is_ready_for_allocation: bool
+
+    @field_validator("departure_time", mode="before")
+    @classmethod
+    def validate_planning_vehicle_departure_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_transport_time(value)
+
+    @field_validator("plate", mode="before")
+    @classmethod
+    def validate_planning_vehicle_plate(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "A placa", max_length=15)
+
+
+class TransportAgentPlanningPartition(BaseModel):
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=2)
+    country_name: str = Field(min_length=2, max_length=80)
+    destination_project: ProjectRow
+    requests: list[TransportAgentPlanningRequest] = Field(default_factory=list)
+    candidate_vehicles: list[TransportAgentPlanningVehicle] = Field(default_factory=list)
+
+
+class TransportAgentPlanningInput(BaseModel):
+    planning_input_hash: str = Field(min_length=64, max_length=64)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    snapshot_key: str = Field(min_length=1, max_length=180)
+    captured_at: datetime
+    limits: TransportAgentPlanningLimits
+    settings: TransportAgentPlanningSettings
+    projects_by_name: dict[str, ProjectRow] = Field(default_factory=dict)
+    requests_by_scope: dict[str, list[TransportAgentPlanningRequest]] = Field(default_factory=dict)
+    vehicles_by_scope: dict[str, list[TransportAgentPlanningVehicle]] = Field(default_factory=dict)
+    partitions: list[TransportAgentPlanningPartition] = Field(default_factory=list)
+    preflight_issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+    total_requests: int = Field(ge=0)
+    total_candidate_vehicles: int = Field(ge=0)
+
+    @field_validator("planning_input_hash", mode="before")
+    @classmethod
+    def validate_planning_input_hash(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("The planning input hash must be a 64-character hex digest")
+        return normalized
+
+
+class TransportAgentResolvedRoutePoint(BaseModel):
+    point_type: Literal["passenger_origin", "project_destination"]
+    partition_key: str = Field(min_length=1, max_length=180)
+    source_id: int = Field(ge=1)
+    request_id: int | None = Field(default=None, ge=1)
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    label: str = Field(min_length=1, max_length=180)
+    address: str = Field(min_length=1, max_length=255)
+    zip_code: str = Field(min_length=1, max_length=32)
+    normalized_query: str = Field(min_length=1, max_length=400)
+    formatted_address: str = Field(min_length=1, max_length=255)
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    provider: str = Field(min_length=1, max_length=40)
+    provider_place_id: str | None = Field(default=None, max_length=255)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    cached: bool = False
+
+
+class TransportAgentResolvedRoutePointsPartition(BaseModel):
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    destination_point: TransportAgentResolvedRoutePoint | None = None
+    passenger_points: list[TransportAgentResolvedRoutePoint] = Field(default_factory=list)
+
+
+class TransportAgentResolvedRoutePointsResult(BaseModel):
+    planning_input_hash: str = Field(min_length=64, max_length=64)
+    provider: str = Field(min_length=1, max_length=40)
+    partitions: list[TransportAgentResolvedRoutePointsPartition] = Field(default_factory=list)
+    issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+    total_resolved_points: int = Field(ge=0)
+
+    @field_validator("planning_input_hash", mode="before")
+    @classmethod
+    def validate_resolved_route_points_hash(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("The planning input hash must be a 64-character hex digest")
+        return normalized
+
+
+class TransportAgentRouteMatrixPartition(BaseModel):
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    points: list[TransportAgentResolvedRoutePoint] = Field(default_factory=list)
+    destination_index: int = Field(default=0, ge=0)
+    cached: bool = False
+    durations_seconds: list[list[int | None]] = Field(default_factory=list)
+    distances_meters: list[list[int | None]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_route_matrix_partition(self) -> TransportAgentRouteMatrixPartition:
+        point_count = len(self.points)
+        if point_count == 0:
+            if self.durations_seconds or self.distances_meters:
+                raise ValueError("Route matrix partitions without points must not contain matrix values")
+            return self
+
+        if self.destination_index >= point_count:
+            raise ValueError("destination_index must point to an existing route point")
+        if self.points[self.destination_index].point_type != "project_destination":
+            raise ValueError("destination_index must reference the project destination point")
+
+        for field_name, matrix in (
+            ("durations_seconds", self.durations_seconds),
+            ("distances_meters", self.distances_meters),
+        ):
+            if len(matrix) != point_count:
+                raise ValueError(f"{field_name} row count must match points length ({point_count})")
+            for row in matrix:
+                if len(row) != point_count:
+                    raise ValueError(f"{field_name} column count must match points length ({point_count})")
+
+        return self
+
+
+class TransportAgentRouteMatricesResult(BaseModel):
+    planning_input_hash: str = Field(min_length=64, max_length=64)
+    provider: str = Field(min_length=1, max_length=40)
+    profile: str = Field(min_length=1, max_length=80)
+    partitions: list[TransportAgentRouteMatrixPartition] = Field(default_factory=list)
+    issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+    total_matrices: int = Field(ge=0)
+
+    @field_validator("planning_input_hash", mode="before")
+    @classmethod
+    def validate_route_matrices_hash(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("The planning input hash must be a 64-character hex digest")
+        return normalized
+
+
+class TransportAgentVehicleCandidatePenaltyConfig(BaseModel):
+    keep_existing: int = Field(default=0, ge=0)
+    create_virtual: int = Field(default=50, ge=0)
+    update_existing: int = Field(default=100, ge=0)
+    remove_existing_from_day: int = Field(default=150, ge=0)
+    change_existing_type: int = Field(default=300, ge=0)
+
+
+class TransportAgentVehicleCandidate(BaseModel):
+    candidate_key: str = Field(min_length=1, max_length=180)
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    candidate_type: Literal["existing", "virtual"]
+    recommended_action_type: Literal["keep", "create"]
+    available_action_types: list[Literal["keep", "create", "update", "remove_from_day"]] = Field(min_length=1)
+    client_vehicle_key: str | None = Field(default=None, max_length=64)
+    vehicle_id: int | None = Field(default=None, ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    service_scope: Literal["regular", "weekend", "extra"]
+    route_kind: Literal["home_to_work", "work_to_home"]
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"]
+    plate: str | None = Field(default=None, max_length=15)
+    capacity: int = Field(ge=1)
+    default_capacity: int | None = Field(default=None, ge=1)
+    default_price: float = Field(ge=0)
+    estimated_cost: float = Field(ge=0)
+    change_penalty: int = Field(ge=0)
+    update_penalty: int | None = Field(default=None, ge=0)
+    remove_from_day_penalty: int | None = Field(default=None, ge=0)
+    change_vehicle_type_penalty: int | None = Field(default=None, ge=0)
+    assigned_count: int = Field(default=0, ge=0)
+    pending_fields: list[str] = Field(default_factory=list)
+    is_ready_for_allocation: bool = True
+
+
+class TransportAgentVehicleCandidatesPartition(BaseModel):
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    candidates: list[TransportAgentVehicleCandidate] = Field(default_factory=list)
+
+
+class TransportAgentVehicleCandidatesResult(BaseModel):
+    planning_input_hash: str = Field(min_length=64, max_length=64)
+    penalties: TransportAgentVehicleCandidatePenaltyConfig
+    partitions: list[TransportAgentVehicleCandidatesPartition] = Field(default_factory=list)
+    total_candidates: int = Field(ge=0)
+
+    @field_validator("planning_input_hash", mode="before")
+    @classmethod
+    def validate_vehicle_candidates_hash(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("The planning input hash must be a 64-character hex digest")
+        return normalized
+
+
+class TransportAgentSolvedRoutePassenger(BaseModel):
+    request_id: int = Field(ge=1)
+    user_id: int = Field(ge=1)
+    chave: str = Field(min_length=1, max_length=80)
+    nome: str = Field(min_length=1, max_length=255)
+    pickup_order: int = Field(ge=0)
+    scheduled_pickup_time: str | None = Field(default=None, min_length=5, max_length=5)
+
+    @field_validator("scheduled_pickup_time", mode="before")
+    @classmethod
+    def validate_solved_route_passenger_pickup_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_transport_time(value)
+
+
+class TransportAgentSolvedRoute(BaseModel):
+    route_key: str = Field(min_length=1, max_length=255)
+    partition_key: str = Field(min_length=1, max_length=180)
+    vehicle_candidate_key: str = Field(min_length=1, max_length=180)
+    vehicle_unit_key: str = Field(min_length=1, max_length=220)
+    candidate_type: Literal["existing", "virtual"]
+    recommended_action_type: Literal["keep", "create"]
+    client_vehicle_key: str | None = Field(default=None, max_length=96)
+    vehicle_id: int | None = Field(default=None, ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    service_scope: Literal["regular", "weekend", "extra"]
+    route_kind: Literal["home_to_work", "work_to_home"]
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"]
+    plate: str | None = Field(default=None, max_length=15)
+    capacity: int = Field(ge=1)
+    request_ids: list[int] = Field(default_factory=list)
+    pickup_order_request_ids: list[int] = Field(default_factory=list)
+    passengers: list[TransportAgentSolvedRoutePassenger] = Field(default_factory=list)
+    projected_arrival_time: str | None = Field(default=None, min_length=5, max_length=5)
+    estimated_cost: float = Field(ge=0)
+    change_penalty: int = Field(ge=0)
+    total_duration_seconds: int = Field(ge=0)
+    total_distance_meters: int = Field(ge=0)
+
+    @field_validator("projected_arrival_time", mode="before")
+    @classmethod
+    def validate_solved_route_arrival_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_transport_time(value)
+
+
+class TransportAgentPartitionSolveResult(BaseModel):
+    planning_input_hash: str = Field(min_length=64, max_length=64)
+    partition_key: str = Field(min_length=1, max_length=180)
+    request_kind: Literal["regular", "weekend", "extra"]
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    algorithm_used: Literal["ortools", "heuristic"]
+    routes: list[TransportAgentSolvedRoute] = Field(default_factory=list)
+    unallocated_request_ids: list[int] = Field(default_factory=list)
+    issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
+    total_estimated_cost: float = Field(ge=0)
+    total_change_penalty: int = Field(ge=0)
+    total_duration_seconds: int = Field(ge=0)
+    total_distance_meters: int = Field(ge=0)
+    total_vehicles_used: int = Field(ge=0)
+    is_feasible: bool = True
+
+    @field_validator("planning_input_hash", mode="before")
+    @classmethod
+    def validate_partition_solve_hash(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("The planning input hash must be a 64-character hex digest")
+        return normalized
+
+
+class TransportAgentVehicleAction(BaseModel):
+    action_key: str = Field(min_length=1, max_length=180)
+    action_type: Literal["keep", "create", "update", "remove_from_day"]
+    service_scope: Literal["regular", "weekend", "extra"]
+    vehicle_id: int | None = Field(default=None, ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    client_vehicle_key: str = Field(min_length=1, max_length=96)
+    before: dict[str, object] | None = None
+    after: dict[str, object] = Field(default_factory=dict)
+    rationale: str = Field(min_length=1, max_length=500)
+    cost_delta: float | None = None
+
+    @field_validator("action_key", "client_vehicle_key", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_action_key(cls, value: object) -> str:
+        normalized = _normalize_optional_compact_text(value, "A chave da acao", max_length=180)
+        if normalized is None:
+            raise ValueError("The vehicle action key is required")
+        return normalized
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_action_rationale(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "A justificativa", max_length=500)
+        if normalized is None:
+            raise ValueError("The vehicle action rationale is required")
+        return normalized
+
+
+class TransportAgentPassengerAllocation(BaseModel):
+    request_id: int = Field(ge=1)
+    request_kind: Literal["regular", "weekend", "extra"]
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    vehicle_ref: str = Field(min_length=1, max_length=120)
+    user_id: int = Field(ge=1)
+    chave: str = Field(min_length=1, max_length=80)
+    nome: str = Field(min_length=1, max_length=255)
+    project_name: str = Field(min_length=1, max_length=120)
+    pickup_order: int = Field(ge=0)
+    scheduled_pickup_time: str = Field(min_length=5, max_length=5)
+    projected_arrival_time: str = Field(min_length=5, max_length=5)
+    rationale: str = Field(min_length=1, max_length=500)
+
+    @field_validator("vehicle_ref", mode="before")
+    @classmethod
+    def validate_transport_agent_passenger_allocation_vehicle_ref(cls, value: object) -> str:
+        normalized = _normalize_optional_compact_text(value, "A referencia do veiculo", max_length=120)
+        if normalized is None:
+            raise ValueError("The vehicle reference is required")
+        if not normalized.startswith("existing:") and not normalized.startswith("new:"):
+            raise ValueError("The vehicle reference must start with 'existing:' or 'new:'")
+        return normalized
+
+    @field_validator("scheduled_pickup_time", "projected_arrival_time", mode="before")
+    @classmethod
+    def validate_transport_agent_passenger_allocation_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("chave", "nome", "project_name", "rationale", mode="before")
+    @classmethod
+    def validate_transport_agent_passenger_allocation_text(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "O texto", max_length=500)
+        if normalized is None:
+            raise ValueError("The passenger allocation text value is required")
+        return normalized
+
+
+class TransportAgentRouteStop(BaseModel):
+    stop_order: int = Field(ge=0)
+    stop_type: Literal["pickup", "destination"]
+    request_id: int | None = Field(default=None, ge=1)
+    user_id: int | None = Field(default=None, ge=1)
+    passenger_name: str | None = Field(default=None, max_length=255)
+    project_name: str = Field(min_length=1, max_length=120)
+    address: str = Field(min_length=1, max_length=255)
+    zip_code: str = Field(min_length=1, max_length=32)
+    country_code: str = Field(min_length=2, max_length=3)
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    scheduled_time: str = Field(min_length=5, max_length=5)
+    duration_from_previous_seconds: int | None = Field(default=None, ge=0)
+    distance_from_previous_meters: int | None = Field(default=None, ge=0)
+
+    @field_validator("scheduled_time", mode="before")
+    @classmethod
+    def validate_transport_agent_route_stop_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("passenger_name", mode="before")
+    @classmethod
+    def validate_transport_agent_route_stop_passenger_name(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "O passageiro", max_length=255)
+
+    @field_validator("project_name", "address", "zip_code", "country_code", mode="before")
+    @classmethod
+    def validate_transport_agent_route_stop_text(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "O texto", max_length=255)
+        if normalized is None:
+            raise ValueError("The route stop text value is required")
+        return normalized
+
+
+class TransportAgentVehicleItinerary(BaseModel):
+    route_key: str = Field(min_length=1, max_length=255)
+    partition_key: str = Field(min_length=1, max_length=180)
+    vehicle_ref: str = Field(min_length=1, max_length=120)
+    service_scope: Literal["regular", "weekend", "extra"]
+    route_kind: Literal["home_to_work", "work_to_home"]
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"]
+    vehicle_id: int | None = Field(default=None, ge=1)
+    schedule_id: int | None = Field(default=None, ge=1)
+    client_vehicle_key: str | None = Field(default=None, max_length=96)
+    plate: str | None = Field(default=None, max_length=15)
+    project_name: str = Field(min_length=1, max_length=120)
+    country_code: str = Field(min_length=2, max_length=3)
+    country_name: str = Field(min_length=2, max_length=80)
+    estimated_cost: float = Field(ge=0)
+    total_duration_seconds: int = Field(ge=0)
+    total_distance_meters: int = Field(ge=0)
+    projected_arrival_time: str = Field(min_length=5, max_length=5)
+    stops: list[TransportAgentRouteStop] = Field(default_factory=list)
+
+    @field_validator("route_key", "partition_key", "vehicle_ref", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_itinerary_key(cls, value: object) -> str:
+        normalized = _normalize_optional_compact_text(value, "A chave", max_length=255)
+        if normalized is None:
+            raise ValueError("The itinerary key is required")
+        return normalized
+
+    @field_validator("project_name", "country_code", "country_name", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_itinerary_text(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "O texto", max_length=255)
+        if normalized is None:
+            raise ValueError("The itinerary text value is required")
+        return normalized
+
+    @field_validator("projected_arrival_time", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_itinerary_arrival_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("client_vehicle_key", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_itinerary_client_key(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "A chave do veiculo", max_length=96)
+
+    @field_validator("plate", mode="before")
+    @classmethod
+    def validate_transport_agent_vehicle_itinerary_plate(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "A placa", max_length=15)
+
+
+class TransportAgentCostSummary(BaseModel):
+    price_currency_code: str | None = Field(default=None, max_length=12)
+    price_rate_unit: str = Field(min_length=1, max_length=16)
+    current_total_estimated_cost: float = Field(ge=0)
+    suggested_total_estimated_cost: float = Field(ge=0)
+    estimated_cost_delta: float
+    current_vehicle_count: int = Field(ge=0)
+    suggested_vehicle_count: int = Field(ge=0)
+
+    @field_validator("price_currency_code", mode="before")
+    @classmethod
+    def validate_transport_agent_cost_summary_currency(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "A moeda", max_length=12)
+
+    @field_validator("price_rate_unit", mode="before")
+    @classmethod
+    def validate_transport_agent_cost_summary_rate_unit(cls, value: object) -> str:
+        normalized = _normalize_optional_compact_text(value, "A unidade", max_length=16)
+        if normalized is None:
+            raise ValueError("The price rate unit is required")
+        return normalized
+
+
+class TransportAgentChangeSummaryByVehicleType(BaseModel):
+    vehicle_type: Literal["carro", "minivan", "van", "onibus"]
+    keep_count: int = Field(default=0, ge=0)
+    create_count: int = Field(default=0, ge=0)
+    update_count: int = Field(default=0, ge=0)
+    remove_from_day_count: int = Field(default=0, ge=0)
+    total_count: int = Field(default=0, ge=0)
+
+
+class TransportAgentChangeSummary(BaseModel):
+    total_vehicle_actions: int = Field(ge=0)
+    keep_count: int = Field(default=0, ge=0)
+    create_count: int = Field(default=0, ge=0)
+    update_count: int = Field(default=0, ge=0)
+    remove_from_day_count: int = Field(default=0, ge=0)
+    by_vehicle_type: list[TransportAgentChangeSummaryByVehicleType] = Field(default_factory=list)
+
+
+class TransportAgentPlan(BaseModel):
+    plan_key: str = Field(min_length=1, max_length=120)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    earliest_boarding_time: str = Field(min_length=5, max_length=5)
+    arrival_at_work_time: str = Field(min_length=5, max_length=5)
+    objective_summary: str = Field(min_length=1, max_length=500)
+    vehicle_actions: list[TransportAgentVehicleAction] = Field(default_factory=list)
+    passenger_allocations: list[TransportAgentPassengerAllocation] = Field(default_factory=list)
+    route_itineraries: list[TransportAgentVehicleItinerary] = Field(default_factory=list)
+    cost_summary: TransportAgentCostSummary
+    change_summary: TransportAgentChangeSummary
+    validation_issues: list[TransportProposalValidationIssue] = Field(default_factory=list)
+
+    @field_validator("plan_key", mode="before")
+    @classmethod
+    def validate_transport_agent_plan_key(cls, value: object) -> str:
+        normalized = _normalize_optional_compact_text(value, "A chave do plano", max_length=120)
+        if normalized is None:
+            raise ValueError("The plan key is required")
+        return normalized
+
+    @field_validator("earliest_boarding_time", "arrival_at_work_time", mode="before")
+    @classmethod
+    def validate_transport_agent_plan_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("objective_summary", mode="before")
+    @classmethod
+    def validate_transport_agent_plan_objective_summary(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "O resumo do objetivo", max_length=500)
+        if normalized is None:
+            raise ValueError("The objective summary is required")
+        return normalized
+
+
+class TransportAgentRunSuggestion(BaseModel):
+    suggestion_key: str = Field(min_length=1, max_length=120)
+    proposal_key: str | None = Field(default=None, min_length=1, max_length=120)
+    status: str = Field(min_length=1, max_length=24)
+    prompt_version: str = Field(min_length=1, max_length=120)
+    created_at: datetime
+    updated_at: datetime
+    saved_at: datetime | None = None
+    applied_at: datetime | None = None
+    discarded_at: datetime | None = None
+    plan: TransportAgentPlan
+
+    @field_validator("suggestion_key", "proposal_key", "status", "prompt_version", mode="before")
+    @classmethod
+    def validate_transport_agent_run_suggestion_text(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=120)
+
+
+class TransportAgentRunStatusResponse(BaseModel):
+    ok: bool
+    run_key: str = Field(min_length=1, max_length=120)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    status: str = Field(min_length=1, max_length=24)
+    llm_provider: str = Field(min_length=1, max_length=40)
+    llm_model: str = Field(min_length=1, max_length=120)
+    llm_reasoning_effort: str = Field(min_length=1, max_length=40)
+    message: str = Field(min_length=1, max_length=500)
+    issues: list[TransportAgentRunIssue] = Field(default_factory=list)
+    suggestion_key: str | None = Field(default=None, min_length=1, max_length=120)
+    suggestion_ready: bool = False
+    can_save: bool = False
+    can_apply: bool = False
+    can_cancel_restore: bool = False
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    suggestion: TransportAgentRunSuggestion | None = None
+
+    @field_validator(
+        "run_key",
+        "status",
+        "llm_provider",
+        "llm_model",
+        "llm_reasoning_effort",
+        "suggestion_key",
+        mode="before",
+    )
+    @classmethod
+    def validate_transport_agent_run_status_text(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=120)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def validate_transport_agent_run_status_message(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, "A mensagem", max_length=500)
+        if normalized is None:
+            raise ValueError("The route calculation status message is required")
+        return normalized
+
+
+class TransportAIRunDiagnosticsEntry(BaseModel):
+    run_key: str = Field(min_length=1, max_length=120)
+    service_date: date
+    route_kind: Literal["home_to_work", "work_to_home"]
+    status: str = Field(min_length=1, max_length=24)
+    llm_provider: str = Field(min_length=1, max_length=40)
+    llm_model: str = Field(min_length=1, max_length=120)
+    llm_reasoning_effort: str = Field(min_length=1, max_length=40)
+    openai_model: str = Field(min_length=1, max_length=120)
+    route_provider: str = Field(min_length=1, max_length=40)
+    suggestion_key: str | None = Field(default=None, min_length=1, max_length=120)
+    suggestion_status: str | None = Field(default=None, min_length=1, max_length=24)
+    prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    error_code: str | None = Field(default=None, min_length=1, max_length=64)
+    error_message: str | None = Field(default=None, max_length=500)
+    preflight_issue_codes: list[str] = Field(default_factory=list)
+    validation_issue_codes: list[str] = Field(default_factory=list)
+    blocking_issue_count: int = Field(default=0, ge=0)
+    approximate_model_call_cost: float | None = Field(default=None, ge=0)
+    approximate_model_call_cost_currency: str | None = Field(default=None, min_length=1, max_length=12)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    has_raw_model_response: bool = False
+
+    @field_validator(
+        "run_key",
+        "status",
+        "llm_provider",
+        "llm_model",
+        "llm_reasoning_effort",
+        "openai_model",
+        "route_provider",
+        "suggestion_key",
+        "suggestion_status",
+        "prompt_version",
+        "error_code",
+        "approximate_model_call_cost_currency",
+        mode="before",
+    )
+    @classmethod
+    def validate_transport_ai_diagnostics_compact_text(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=120)
+
+    @field_validator("error_message", mode="before")
+    @classmethod
+    def validate_transport_ai_diagnostics_message(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, "A mensagem", max_length=500)
+
+    @field_validator("preflight_issue_codes", "validation_issue_codes", mode="before")
+    @classmethod
+    def validate_transport_ai_diagnostics_codes(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if not isinstance(value, list):
+            raise ValueError("The diagnostics issue codes must be a list")
+        normalized_codes: list[str] = []
+        for item in value:
+            normalized = _normalize_optional_compact_text(item, "O codigo", max_length=64)
+            if normalized is None:
+                continue
+            normalized_codes.append(normalized)
+        return normalized_codes
+
+
+class TransportAIRunDiagnosticsResponse(BaseModel):
+    runs: list[TransportAIRunDiagnosticsEntry] = Field(default_factory=list)
+    count: int = Field(default=0, ge=0)
+    service_date: date | None = None
+    statuses: list[str] = Field(default_factory=list)
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("statuses", mode="before")
+    @classmethod
+    def validate_transport_ai_diagnostics_statuses(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        if not isinstance(value, list):
+            raise ValueError("The diagnostics statuses must be a list")
+        normalized_statuses: list[str] = []
+        for item in value:
+            normalized = _normalize_optional_compact_text(item, "O status", max_length=24)
+            if normalized is None:
+                continue
+            normalized_statuses.append(normalized)
+        return normalized_statuses
+
+
 class TransportProposalAuditContext(BaseModel):
     proposal_key: str = Field(min_length=1, max_length=120)
     proposal_origin: Literal["manual", "system", "agent"]
@@ -1698,6 +2583,30 @@ class TransportCurrencyOptionRow(BaseModel):
 
 
 TransportPriceRateUnit = Literal["hour", "day", "week", "month"]
+TransportAILlmProvider = Literal["openai", "deepseek"]
+
+
+class TransportAISettingsResponse(BaseModel):
+    provider: TransportAILlmProvider
+    resolved_model: str = Field(min_length=1, max_length=120)
+    reasoning_effort: str = Field(min_length=1, max_length=32)
+    has_api_key: bool = False
+    api_key_hint: str | None = Field(default=None, max_length=32)
+
+    @field_validator("resolved_model", "reasoning_effort", "api_key_hint", mode="before")
+    @classmethod
+    def validate_transport_ai_settings_response_text(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=120)
+
+
+class TransportAISettingsUpdateRequest(BaseModel):
+    provider: TransportAILlmProvider
+    api_key: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def validate_transport_ai_settings_api_key(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "A chave API", max_length=4096)
 
 
 class TransportSettingsResponse(BaseModel):
@@ -1738,6 +2647,8 @@ class TransportSettingsResponse(BaseModel):
 
 
 class TransportSettingsUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     work_to_home_time: str = Field(min_length=5, max_length=5)
     last_update_time: str = Field(min_length=5, max_length=5)
     default_car_seats: int = Field(ge=1, le=99)

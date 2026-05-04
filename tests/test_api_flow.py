@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from cryptography.fernet import Fernet
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
@@ -56,6 +57,7 @@ from sistema.app.models import (
     FormsSubmission,
     ManagedLocation,
     Project,
+    ProjectAutoCheckoutDistance,
     TransportCurrencyOption,
     TransportAssignment,
     TransportRequest,
@@ -1083,6 +1085,553 @@ def add_transport_schedule(
     return schedule
 
 
+def make_test_project_name(prefix: str = "TP") -> str:
+    normalized_prefix = "".join(character for character in str(prefix or "TP").upper() if character.isalnum())[:4]
+    if len(normalized_prefix) < 2:
+        normalized_prefix = f"{normalized_prefix}P"
+    return f"{normalized_prefix}{uuid.uuid4().hex[:4].upper()}"
+
+
+def create_transport_planning_project(
+    db,
+    *,
+    name: str,
+    country_code: str = "SG",
+    address: str,
+    zip_code: str,
+) -> Project:
+    project = Project(
+        name=str(name).strip().upper(),
+        address=str(address).strip(),
+        zip_code=str(zip_code).strip(),
+        **build_project_fields_for_country(country_code),
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+def create_transport_planning_user_with_request(
+    db,
+    *,
+    chave: str,
+    nome: str,
+    projeto: str,
+    request_kind: str,
+    requested_time: str,
+    home_address: str,
+    home_zip: str,
+    service_date: date,
+    workplace: str | None = None,
+    timestamp: datetime | None = None,
+) -> tuple[User, TransportRequest]:
+    effective_timestamp = timestamp or now_sgt()
+    user = User(
+        rfid=None,
+        nome=nome,
+        chave=chave,
+        projeto=str(projeto).strip().upper(),
+        workplace=workplace,
+        end_rua=str(home_address).strip(),
+        zip=str(home_zip).strip(),
+        local=None,
+        checkin=None,
+        time=None,
+        last_active_at=effective_timestamp,
+        inactivity_days=0,
+    )
+    db.add(user)
+    db.flush()
+
+    if request_kind == "regular":
+        recurrence_kind = "weekday"
+        selected_weekdays_json = json.dumps([0, 1, 2, 3, 4])
+        single_date = None
+    elif request_kind == "weekend":
+        recurrence_kind = "weekend"
+        selected_weekdays_json = None
+        single_date = None
+    elif request_kind == "extra":
+        recurrence_kind = "single_date"
+        selected_weekdays_json = None
+        single_date = service_date
+    else:
+        raise ValueError(f"Unsupported request kind for planning fixture: {request_kind}")
+
+    transport_request = TransportRequest(
+        user_id=user.id,
+        request_kind=request_kind,
+        recurrence_kind=recurrence_kind,
+        requested_time=requested_time,
+        selected_weekdays_json=selected_weekdays_json,
+        single_date=single_date,
+        created_via="test",
+        status="active",
+        created_at=effective_timestamp,
+        updated_at=effective_timestamp,
+        cancelled_at=None,
+    )
+    db.add(transport_request)
+    db.flush()
+    return user, transport_request
+
+
+def create_transport_planning_vehicle_with_schedules(
+    db,
+    *,
+    plate: str,
+    service_scope: str,
+    service_date: date,
+    vehicle_type: str | None = None,
+    color: str = "White",
+    seats: int | None = None,
+    tolerance: int | None = None,
+    weekday: int | None = None,
+    route_kinds: list[str] | None = None,
+    departure_time: str | None = None,
+) -> tuple[Vehicle, list[TransportVehicleSchedule]]:
+    resolved_vehicle_type = vehicle_type or ("carro" if service_scope == "extra" else "van")
+    resolved_seats = seats if seats is not None else (4 if service_scope == "extra" else 10)
+    resolved_tolerance = tolerance if tolerance is not None else 5
+    resolved_route_kinds = list(route_kinds or (["home_to_work"] if service_scope == "extra" else ["home_to_work", "work_to_home"]))
+
+    vehicle = Vehicle(
+        placa=plate,
+        tipo=resolved_vehicle_type,
+        color=color,
+        lugares=resolved_seats,
+        tolerance=resolved_tolerance,
+        service_scope=service_scope,
+    )
+    db.add(vehicle)
+    db.flush()
+
+    schedules: list[TransportVehicleSchedule] = []
+    for route_kind in resolved_route_kinds:
+        if service_scope == "regular":
+            recurrence_kind = "weekday"
+            schedule_service_date = None
+            schedule_weekday = None
+            schedule_departure_time = None
+        elif service_scope == "weekend":
+            recurrence_kind = "matching_weekday"
+            schedule_service_date = None
+            schedule_weekday = weekday if weekday is not None else 5
+            schedule_departure_time = None
+        elif service_scope == "extra":
+            recurrence_kind = "single_date"
+            schedule_service_date = service_date
+            schedule_weekday = None
+            schedule_departure_time = departure_time or "07:00"
+        else:
+            raise ValueError(f"Unsupported service scope for planning fixture: {service_scope}")
+
+        schedules.append(
+            add_transport_schedule(
+                db,
+                vehicle=vehicle,
+                service_scope=service_scope,
+                route_kind=route_kind,
+                recurrence_kind=recurrence_kind,
+                service_date=schedule_service_date,
+                weekday=schedule_weekday,
+                departure_time=schedule_departure_time,
+            )
+        )
+
+    return vehicle, schedules
+
+
+def clone_transport_settings_payload(db) -> dict[str, object]:
+    return json.loads(json.dumps(location_settings_module.get_transport_settings_payload(db)))
+
+
+def configure_transport_planning_settings(
+    db,
+    *,
+    work_to_home_time: str,
+    last_update_time: str,
+    default_car_seats: int,
+    default_minivan_seats: int,
+    default_van_seats: int,
+    default_bus_seats: int,
+    default_tolerance_minutes: int,
+    price_currency_code: str | None,
+    price_currency_label: str | None,
+    price_rate_unit: str,
+    default_car_price: float | None,
+    default_minivan_price: float | None,
+    default_van_price: float | None,
+    default_bus_price: float | None,
+) -> dict[str, object]:
+    previous_settings = clone_transport_settings_payload(db)
+    created_currency_code = None
+    normalized_currency_code = str(price_currency_code or "").strip().upper() or None
+
+    if normalized_currency_code is not None:
+        existing_currency = db.execute(
+            select(TransportCurrencyOption).where(TransportCurrencyOption.code == normalized_currency_code)
+        ).scalar_one_or_none()
+        if existing_currency is None:
+            location_settings_module.create_transport_currency_option(
+                db,
+                code=normalized_currency_code,
+                display_label=price_currency_label,
+            )
+            created_currency_code = normalized_currency_code
+
+    location_settings_module.upsert_transport_work_to_home_time(
+        db,
+        work_to_home_time=work_to_home_time,
+    )
+    location_settings_module.upsert_transport_last_update_time(
+        db,
+        last_update_time=last_update_time,
+    )
+    location_settings_module.upsert_transport_vehicle_default_seat_counts(
+        db,
+        default_car_seats=default_car_seats,
+        default_minivan_seats=default_minivan_seats,
+        default_van_seats=default_van_seats,
+        default_bus_seats=default_bus_seats,
+        default_tolerance_minutes=default_tolerance_minutes,
+    )
+    location_settings_module.upsert_transport_pricing_settings(
+        db,
+        price_currency_code=normalized_currency_code,
+        price_rate_unit=price_rate_unit,
+        default_car_price=default_car_price,
+        default_minivan_price=default_minivan_price,
+        default_van_price=default_van_price,
+        default_bus_price=default_bus_price,
+    )
+
+    return {
+        "previous": previous_settings,
+        "current": clone_transport_settings_payload(db),
+        "created_currency_code": created_currency_code,
+    }
+
+
+def restore_transport_planning_settings(db, settings_payload: dict[str, object] | None) -> None:
+    payload = dict(settings_payload or {})
+    normalized_currency_code = str(payload.get("price_currency_code") or "").strip().upper() or None
+    available_currencies = payload.get("available_currencies") or []
+    currency_row = next(
+        (row for row in available_currencies if row.get("code") == normalized_currency_code),
+        None,
+    )
+
+    if normalized_currency_code is not None:
+        existing_currency = db.execute(
+            select(TransportCurrencyOption).where(TransportCurrencyOption.code == normalized_currency_code)
+        ).scalar_one_or_none()
+        if existing_currency is None:
+            location_settings_module.create_transport_currency_option(
+                db,
+                code=normalized_currency_code,
+                display_label=currency_row.get("display_label") if currency_row else None,
+            )
+
+    location_settings_module.upsert_transport_work_to_home_time(
+        db,
+        work_to_home_time=str(payload.get("work_to_home_time") or "16:45"),
+    )
+    location_settings_module.upsert_transport_last_update_time(
+        db,
+        last_update_time=str(payload.get("last_update_time") or "16:00"),
+    )
+    location_settings_module.upsert_transport_vehicle_default_seat_counts(
+        db,
+        default_car_seats=int(payload.get("default_car_seats") or 3),
+        default_minivan_seats=int(payload.get("default_minivan_seats") or 6),
+        default_van_seats=int(payload.get("default_van_seats") or 10),
+        default_bus_seats=int(payload.get("default_bus_seats") or 40),
+        default_tolerance_minutes=int(payload.get("default_tolerance_minutes") or 5),
+    )
+    location_settings_module.upsert_transport_pricing_settings(
+        db,
+        price_currency_code=normalized_currency_code,
+        price_rate_unit=str(payload.get("price_rate_unit") or "day"),
+        default_car_price=payload.get("default_car_price"),
+        default_minivan_price=payload.get("default_minivan_price"),
+        default_van_price=payload.get("default_van_price"),
+        default_bus_price=payload.get("default_bus_price"),
+    )
+
+
+def create_transport_planning_fixture_bundle(
+    db,
+    *,
+    service_date: date,
+) -> dict[str, object]:
+    scenario_token = uuid.uuid4().hex[:4].upper()
+    weekend_service_date = service_date + timedelta(days=(5 - service_date.weekday()) % 7)
+    timestamp = now_sgt()
+
+    regular_project = create_transport_planning_project(
+        db,
+        name=make_test_project_name(f"RG{scenario_token}"),
+        country_code="SG",
+        address=f"{scenario_token} Regular Plant Road",
+        zip_code=f"10{scenario_token}",
+    )
+    weekend_project = create_transport_planning_project(
+        db,
+        name=make_test_project_name(f"WK{scenario_token}"),
+        country_code="MY",
+        address=f"{scenario_token} Weekend Terminal Avenue",
+        zip_code=f"50{scenario_token}",
+    )
+    extra_project = create_transport_planning_project(
+        db,
+        name=make_test_project_name(f"EX{scenario_token}"),
+        country_code="BR",
+        address=f"{scenario_token} Extra Logistics Boulevard",
+        zip_code=f"01{scenario_token}",
+    )
+
+    settings_context = configure_transport_planning_settings(
+        db,
+        work_to_home_time="17:25",
+        last_update_time="16:35",
+        default_car_seats=4,
+        default_minivan_seats=7,
+        default_van_seats=11,
+        default_bus_seats=45,
+        default_tolerance_minutes=8,
+        price_currency_code=f"TP{scenario_token}",
+        price_currency_label=f"Transport Planning {scenario_token}",
+        price_rate_unit="week",
+        default_car_price=120.5,
+        default_minivan_price=155.75,
+        default_van_price=240.0,
+        default_bus_price=515.25,
+    )
+
+    regular_vehicle, regular_schedules = create_transport_planning_vehicle_with_schedules(
+        db,
+        plate=f"RG{scenario_token}01",
+        service_scope="regular",
+        service_date=service_date,
+        vehicle_type="van",
+        color="Silver",
+        seats=11,
+        tolerance=8,
+    )
+    weekend_vehicle, weekend_schedules = create_transport_planning_vehicle_with_schedules(
+        db,
+        plate=f"WK{scenario_token}01",
+        service_scope="weekend",
+        service_date=service_date,
+        vehicle_type="minivan",
+        color="Black",
+        seats=7,
+        tolerance=10,
+        weekday=weekend_service_date.weekday(),
+    )
+    extra_vehicle, extra_schedules = create_transport_planning_vehicle_with_schedules(
+        db,
+        plate=f"EX{scenario_token}01",
+        service_scope="extra",
+        service_date=service_date,
+        vehicle_type="carro",
+        color="Red",
+        seats=4,
+        tolerance=6,
+        departure_time="07:05",
+    )
+
+    regular_user, regular_request = create_transport_planning_user_with_request(
+        db,
+        chave=make_test_key("R"),
+        nome=f"Regular Planning Rider {scenario_token}",
+        projeto=regular_project.name,
+        request_kind="regular",
+        requested_time="07:10",
+        home_address=f"{scenario_token} Regular Home Street",
+        home_zip=f"90{scenario_token}",
+        service_date=service_date,
+        timestamp=timestamp,
+    )
+    weekend_user, weekend_request = create_transport_planning_user_with_request(
+        db,
+        chave=make_test_key("W"),
+        nome=f"Weekend Planning Rider {scenario_token}",
+        projeto=weekend_project.name,
+        request_kind="weekend",
+        requested_time="08:15",
+        home_address=f"{scenario_token} Weekend Home Street",
+        home_zip=f"91{scenario_token}",
+        service_date=service_date,
+        timestamp=timestamp,
+    )
+    extra_user, extra_request = create_transport_planning_user_with_request(
+        db,
+        chave=make_test_key("E"),
+        nome=f"Extra Planning Rider {scenario_token}",
+        projeto=extra_project.name,
+        request_kind="extra",
+        requested_time="06:55",
+        home_address=f"{scenario_token} Extra Home Street",
+        home_zip=f"92{scenario_token}",
+        service_date=service_date,
+        timestamp=timestamp,
+    )
+
+    return {
+        "service_date": service_date.isoformat(),
+        "weekend_service_date": weekend_service_date.isoformat(),
+        "project_ids": [regular_project.id, weekend_project.id, extra_project.id],
+        "user_ids": [regular_user.id, weekend_user.id, extra_user.id],
+        "request_ids": [regular_request.id, weekend_request.id, extra_request.id],
+        "vehicle_ids": [regular_vehicle.id, weekend_vehicle.id, extra_vehicle.id],
+        "schedule_ids": [
+            *(schedule.id for schedule in regular_schedules),
+            *(schedule.id for schedule in weekend_schedules),
+            *(schedule.id for schedule in extra_schedules),
+        ],
+        "projects": {
+            "regular": {
+                "id": regular_project.id,
+                "name": regular_project.name,
+                "country_code": regular_project.country_code,
+                "country_name": regular_project.country_name,
+                "address": regular_project.address,
+                "zip_code": regular_project.zip_code,
+            },
+            "weekend": {
+                "id": weekend_project.id,
+                "name": weekend_project.name,
+                "country_code": weekend_project.country_code,
+                "country_name": weekend_project.country_name,
+                "address": weekend_project.address,
+                "zip_code": weekend_project.zip_code,
+            },
+            "extra": {
+                "id": extra_project.id,
+                "name": extra_project.name,
+                "country_code": extra_project.country_code,
+                "country_name": extra_project.country_name,
+                "address": extra_project.address,
+                "zip_code": extra_project.zip_code,
+            },
+        },
+        "requests": {
+            "regular": {
+                "id": regular_request.id,
+                "chave": regular_user.chave,
+                "nome": regular_user.nome,
+                "projeto": regular_user.projeto,
+                "end_rua": regular_user.end_rua,
+                "zip": regular_user.zip,
+                "service_date": service_date.isoformat(),
+            },
+            "weekend": {
+                "id": weekend_request.id,
+                "chave": weekend_user.chave,
+                "nome": weekend_user.nome,
+                "projeto": weekend_user.projeto,
+                "end_rua": weekend_user.end_rua,
+                "zip": weekend_user.zip,
+                "service_date": weekend_service_date.isoformat(),
+            },
+            "extra": {
+                "id": extra_request.id,
+                "chave": extra_user.chave,
+                "nome": extra_user.nome,
+                "projeto": extra_user.projeto,
+                "end_rua": extra_user.end_rua,
+                "zip": extra_user.zip,
+                "service_date": service_date.isoformat(),
+            },
+        },
+        "vehicles": {
+            "regular": {
+                "vehicle_id": regular_vehicle.id,
+                "placa": regular_vehicle.placa,
+                "service_scope": regular_vehicle.service_scope,
+            },
+            "weekend": {
+                "vehicle_id": weekend_vehicle.id,
+                "placa": weekend_vehicle.placa,
+                "service_scope": weekend_vehicle.service_scope,
+            },
+            "extra": {
+                "vehicle_id": extra_vehicle.id,
+                "placa": extra_vehicle.placa,
+                "service_scope": extra_vehicle.service_scope,
+            },
+        },
+        "settings_context": settings_context,
+    }
+
+
+def cleanup_transport_planning_fixture_bundle(db, fixture_bundle: dict[str, object] | None) -> None:
+    bundle = dict(fixture_bundle or {})
+    request_ids = [int(value) for value in bundle.get("request_ids") or []]
+    schedule_ids = [int(value) for value in bundle.get("schedule_ids") or []]
+    user_ids = [int(value) for value in bundle.get("user_ids") or []]
+    vehicle_ids = [int(value) for value in bundle.get("vehicle_ids") or []]
+    project_ids = [int(value) for value in bundle.get("project_ids") or []]
+    project_names = [project_payload["name"] for project_payload in (bundle.get("projects") or {}).values()]
+    settings_context = bundle.get("settings_context") or {}
+
+    restore_transport_planning_settings(db, settings_context.get("previous"))
+
+    if request_ids:
+        for assignment in db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id.in_(request_ids))
+        ).scalars().all():
+            db.delete(assignment)
+
+        for transport_request in db.execute(
+            select(TransportRequest).where(TransportRequest.id.in_(request_ids))
+        ).scalars().all():
+            db.delete(transport_request)
+
+    if schedule_ids:
+        for exception_row in db.execute(
+            select(TransportVehicleScheduleException).where(
+                TransportVehicleScheduleException.vehicle_schedule_id.in_(schedule_ids)
+            )
+        ).scalars().all():
+            db.delete(exception_row)
+
+        for schedule_row in db.execute(
+            select(TransportVehicleSchedule).where(TransportVehicleSchedule.id.in_(schedule_ids))
+        ).scalars().all():
+            db.delete(schedule_row)
+
+    if user_ids:
+        for user_row in db.execute(select(User).where(User.id.in_(user_ids))).scalars().all():
+            db.delete(user_row)
+
+    if vehicle_ids:
+        for vehicle_row in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars().all():
+            db.delete(vehicle_row)
+
+    if project_names:
+        for distance_row in db.execute(
+            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name.in_(project_names))
+        ).scalars().all():
+            db.delete(distance_row)
+
+    if project_ids:
+        for project_row in db.execute(select(Project).where(Project.id.in_(project_ids))).scalars().all():
+            db.delete(project_row)
+
+    created_currency_code = settings_context.get("created_currency_code")
+    if created_currency_code:
+        currency_row = db.execute(
+            select(TransportCurrencyOption).where(TransportCurrencyOption.code == created_currency_code)
+        ).scalar_one_or_none()
+        if currency_row is not None:
+            db.delete(currency_row)
+
+    db.commit()
+
+
 def set_user_checkin_state(*, chave: str, event_time: datetime, local: str = "Web") -> None:
     with SessionLocal() as db:
         user = get_user_by_chave(db, chave)
@@ -1286,10 +1835,18 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
         assert listed_p80["country_name"] == "Singapura"
         assert listed_p80["timezone_name"] == "Asia/Singapore"
         assert listed_p80["timezone_label"] == "Singapura (+8)"
+        assert listed_p80["address"] == ""
+        assert listed_p80["zip_code"] == ""
 
         created = client.post(
             "/api/admin/projects",
-            json={"name": "P90", "country_name": "China", "timezone_name": "Asia/Shanghai"},
+            json={
+                "name": "P90",
+                "country_name": "China",
+                "timezone_name": "Asia/Shanghai",
+                "address": "1 Jurong West Central 2",
+                "zip_code": "648886",
+            },
         )
         assert created.status_code == 200, created.text
         project_payload = created.json()
@@ -1298,6 +1855,8 @@ def test_admin_projects_catalog_lists_creates_and_blocks_linked_user_deletion():
         assert project_payload["country_name"] == "China"
         assert project_payload["timezone_name"] == "Asia/Shanghai"
         assert project_payload["timezone_label"] == "China (+8)"
+        assert project_payload["address"] == "1 Jurong West Central 2"
+        assert project_payload["zip_code"] == "648886"
 
         with SessionLocal() as db:
             db.add(
@@ -1340,14 +1899,26 @@ def test_admin_project_update_changes_country_metadata_without_renaming():
         ensure_admin_session(client)
         created = client.post(
             "/api/admin/projects",
-            json={"name": "P96", "country_name": "Singapura", "timezone_name": "Asia/Singapore"},
+            json={
+                "name": "P96",
+                "country_name": "Singapura",
+                "timezone_name": "Asia/Singapore",
+                "address": "10 Bayfront Avenue",
+                "zip_code": "018956",
+            },
         )
         assert created.status_code == 200, created.text
         project_payload = created.json()
 
         updated = client.put(
             f"/api/admin/projects/{project_payload['id']}",
-            json={"name": "P96", "country_name": "Brasil", "timezone_name": "America/Sao_Paulo"},
+            json={
+                "name": "P96",
+                "country_name": "Brasil",
+                "timezone_name": "America/Sao_Paulo",
+                "address": "Avenida Paulista 1000",
+                "zip_code": "01310-100",
+            },
         )
         assert updated.status_code == 200, updated.text
         updated_payload = updated.json()
@@ -1357,6 +1928,8 @@ def test_admin_project_update_changes_country_metadata_without_renaming():
         assert updated_payload["country_name"] == "Brasil"
         assert updated_payload["timezone_name"] == "America/Sao_Paulo"
         assert updated_payload["timezone_label"] == "Brasil (-3)"
+        assert updated_payload["address"] == "Avenida Paulista 1000"
+        assert updated_payload["zip_code"] == "01310-100"
 
     with SessionLocal() as db:
         project = db.execute(select(Project).where(Project.name == "P96")).scalar_one()
@@ -1364,6 +1937,136 @@ def test_admin_project_update_changes_country_metadata_without_renaming():
     assert project.country_code == "BR"
     assert project.country_name == "Brasil"
     assert project.timezone_name == "America/Sao_Paulo"
+    assert project.address == "Avenida Paulista 1000"
+    assert project.zip_code == "01310-100"
+
+
+def test_admin_project_update_renames_live_links_and_exposes_transport_project_payload():
+    source_project_name = f"Q{uuid.uuid4().hex[:3].upper()}"
+    target_project_name = f"R{uuid.uuid4().hex[:3].upper()}"
+    linked_user_key = make_test_key("U")
+    scoped_admin_key = make_test_key("S")
+    location_name = f"Projeto {source_project_name} Base"
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post(
+            "/api/admin/projects",
+            json={
+                "name": source_project_name,
+                "country_name": "Singapura",
+                "timezone_name": "Asia/Singapore",
+                "address": "Old Address 98",
+                "zip_code": "100098",
+            },
+        )
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+
+        with SessionLocal() as db:
+            db.add_all(
+                [
+                    User(
+                        rfid=None,
+                        nome="Usuario Projeto Renomeado",
+                        chave=linked_user_key,
+                        projeto=source_project_name,
+                        perfil=0,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                    ),
+                    User(
+                        rfid=None,
+                        nome="Admin Escopo Projeto Renomeado",
+                        chave=scoped_admin_key,
+                        projeto="P80",
+                        perfil=1,
+                        local=None,
+                        checkin=None,
+                        time=None,
+                        last_active_at=now_sgt(),
+                        inactivity_days=0,
+                        admin_monitored_projects_json=dump_admin_monitored_projects(["P80", source_project_name]),
+                    ),
+                    ProjectAutoCheckoutDistance(
+                        project_name=source_project_name,
+                        minimum_checkout_distance_meters=4321,
+                        created_at=now_sgt(),
+                        updated_at=now_sgt(),
+                    ),
+                ]
+            )
+            db.commit()
+
+        create_location = client.post(
+            "/api/admin/locations",
+            json={
+                "local": location_name,
+                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
+                "projects": ["P80", source_project_name],
+                "tolerance_meters": 150,
+            },
+        )
+        assert create_location.status_code == 200, create_location.text
+
+        updated = client.put(
+            f"/api/admin/projects/{project_payload['id']}",
+            json={
+                "name": target_project_name,
+                "country_name": "Malásia",
+                "timezone_name": "Asia/Kuala_Lumpur",
+                "address": "New Address 99",
+                "zip_code": "500099",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        updated_payload = updated.json()
+        assert updated_payload["id"] == project_payload["id"]
+        assert updated_payload["name"] == target_project_name
+        assert updated_payload["country_code"] == "MY"
+        assert updated_payload["country_name"] == "Malásia"
+        assert updated_payload["timezone_name"] == "Asia/Kuala_Lumpur"
+        assert updated_payload["address"] == "New Address 99"
+        assert updated_payload["zip_code"] == "500099"
+
+        transport_projects = client.get("/api/transport/projects")
+        assert transport_projects.status_code == 200, transport_projects.text
+        transport_project = next(row for row in transport_projects.json() if row["id"] == project_payload["id"])
+        assert transport_project["name"] == target_project_name
+        assert transport_project["country_name"] == "Malásia"
+        assert transport_project["address"] == "New Address 99"
+        assert transport_project["zip_code"] == "500099"
+
+        locations_response = client.get("/api/admin/locations")
+        assert locations_response.status_code == 200, locations_response.text
+        updated_location = next(row for row in locations_response.json()["items"] if row["local"] == location_name)
+        assert source_project_name not in updated_location["projects"]
+        assert set(updated_location["projects"]) == {"P80", target_project_name}
+
+    with SessionLocal() as db:
+        renamed_project = db.get(Project, project_payload["id"])
+        legacy_project = db.execute(select(Project).where(Project.name == source_project_name)).scalar_one_or_none()
+        renamed_user = find_user_by_chave(db, linked_user_key)
+        scoped_admin = find_user_by_chave(db, scoped_admin_key)
+        minimum_checkout_distance = db.execute(
+            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name == target_project_name)
+        ).scalar_one()
+        legacy_distance = db.execute(
+            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name == source_project_name)
+        ).scalar_one_or_none()
+
+    assert renamed_project is not None
+    assert renamed_project.name == target_project_name
+    assert renamed_project.address == "New Address 99"
+    assert renamed_project.zip_code == "500099"
+    assert legacy_project is None
+    assert renamed_user.projeto == target_project_name
+    assert extract_admin_monitored_projects(scoped_admin) == ["P80", target_project_name]
+    assert minimum_checkout_distance.minimum_checkout_distance_meters == 4321
+    assert legacy_distance is None
 
 
 def test_admin_project_create_accepts_custom_country_and_timezone_pair():
@@ -5753,6 +6456,89 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicle_registry"]] == ["EXT9001"]
     assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "confirmed"
     assert friday_work_to_home_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
+
+
+def test_transport_planning_fixture_bundle_supports_snapshot_and_settings_contracts():
+    friday = date(2026, 5, 1)
+
+    with SessionLocal() as db:
+        fixture_bundle = create_transport_planning_fixture_bundle(db, service_date=friday)
+        db.commit()
+
+    try:
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            snapshot_response = client.get(
+                "/api/transport/operational-snapshot",
+                params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+            )
+            settings_response = client.get("/api/transport/settings")
+
+        assert snapshot_response.status_code == 200, snapshot_response.text
+        assert settings_response.status_code == 200, settings_response.text
+
+        snapshot_payload = snapshot_response.json()
+        settings_payload = settings_response.json()
+
+        for project_payload in fixture_bundle["projects"].values():
+            project_row = next(
+                row for row in snapshot_payload["projects"] if row["id"] == project_payload["id"]
+            )
+            assert project_row["name"] == project_payload["name"]
+            assert project_row["country_code"] == project_payload["country_code"]
+            assert project_row["country_name"] == project_payload["country_name"]
+            assert project_row["address"] == project_payload["address"]
+            assert project_row["zip_code"] == project_payload["zip_code"]
+
+        regular_request = next(
+            row for row in snapshot_payload["regular_requests"] if row["id"] == fixture_bundle["requests"]["regular"]["id"]
+        )
+        weekend_request = next(
+            row for row in snapshot_payload["weekend_requests"] if row["id"] == fixture_bundle["requests"]["weekend"]["id"]
+        )
+        extra_request = next(
+            row for row in snapshot_payload["extra_requests"] if row["id"] == fixture_bundle["requests"]["extra"]["id"]
+        )
+
+        assert regular_request["projeto"] == fixture_bundle["requests"]["regular"]["projeto"]
+        assert regular_request["end_rua"] == fixture_bundle["requests"]["regular"]["end_rua"]
+        assert regular_request["zip"] == fixture_bundle["requests"]["regular"]["zip"]
+
+        assert weekend_request["projeto"] == fixture_bundle["requests"]["weekend"]["projeto"]
+        assert weekend_request["end_rua"] == fixture_bundle["requests"]["weekend"]["end_rua"]
+        assert weekend_request["zip"] == fixture_bundle["requests"]["weekend"]["zip"]
+
+        assert extra_request["projeto"] == fixture_bundle["requests"]["extra"]["projeto"]
+        assert extra_request["end_rua"] == fixture_bundle["requests"]["extra"]["end_rua"]
+        assert extra_request["zip"] == fixture_bundle["requests"]["extra"]["zip"]
+
+        assert any(
+            row["vehicle_id"] == fixture_bundle["vehicles"]["regular"]["vehicle_id"]
+            for row in snapshot_payload["regular_vehicle_registry"]
+        )
+        assert any(
+            row["vehicle_id"] == fixture_bundle["vehicles"]["weekend"]["vehicle_id"]
+            for row in snapshot_payload["weekend_vehicle_registry"]
+        )
+        assert any(
+            row["vehicle_id"] == fixture_bundle["vehicles"]["extra"]["vehicle_id"]
+            for row in snapshot_payload["extra_vehicle_registry"]
+        )
+
+        settings_current = fixture_bundle["settings_context"]["current"]
+        assert settings_payload["default_car_seats"] == settings_current["default_car_seats"]
+        assert settings_payload["default_minivan_seats"] == settings_current["default_minivan_seats"]
+        assert settings_payload["default_van_seats"] == settings_current["default_van_seats"]
+        assert settings_payload["default_bus_seats"] == settings_current["default_bus_seats"]
+        assert settings_payload["default_car_price"] == settings_current["default_car_price"]
+        assert settings_payload["default_minivan_price"] == settings_current["default_minivan_price"]
+        assert settings_payload["default_van_price"] == settings_current["default_van_price"]
+        assert settings_payload["default_bus_price"] == settings_current["default_bus_price"]
+        assert settings_payload["price_currency_code"] == settings_current["price_currency_code"]
+        assert settings_payload["price_rate_unit"] == settings_current["price_rate_unit"]
+    finally:
+        with SessionLocal() as db:
+            cleanup_transport_planning_fixture_bundle(db, fixture_bundle)
 
 
 def test_transport_operational_proposal_represents_decisions_without_applying_assignments():
@@ -11167,6 +11953,359 @@ def test_transport_operational_plan_export_includes_proposal_review_tabs(monkeyp
     assert saved_exports[0].is_file()
 
 
+def test_transport_operational_plan_export_includes_ai_suggestion_tabs_for_agent_proposal(monkeypatch):
+    from sistema.app.models import TransportAIRun
+    from sistema.app.schemas import TransportAgentPlan
+    from sistema.app.services.transport_ai_runs import (
+        create_transport_ai_suggestion_from_plan,
+        ensure_transport_ai_actor_admin_user,
+    )
+
+    fixed_now = datetime(2026, 4, 22, 16, 12, 10, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    export_dir = Path(settings.transport_exports_dir)
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+
+    with SessionLocal() as db:
+        admin_user = ensure_transport_ai_actor_admin_user(
+            db,
+            chave=ADMIN_LOGIN_CHAVE,
+            nome_completo="Transport Export Agent Admin",
+            ensured_at=fixed_now,
+        )
+
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
+        vehicle = Vehicle(placa="EXP4710", tipo="van", color="White", lugares=7, tolerance=8, service_scope="regular")
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        rider = User(
+            nome="Agent Export Rider",
+            chave="AX40",
+            projeto="P85",
+            end_rua="40 Agent Export Way",
+            zip="404040",
+            last_active_at=fixed_now,
+            inactivity_days=0,
+        )
+        db.add(rider)
+        db.flush()
+
+        request_row, _ = transport_service_module.upsert_transport_request(
+            db,
+            user=rider,
+            request_kind="regular",
+            requested_time="07:10",
+            requested_date=None,
+            created_via="web",
+        )
+        db.commit()
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+        run = TransportAIRun(
+            run_key="transport-ai-run:export-agent",
+            service_date=fixed_now.date(),
+            route_kind="home_to_work",
+            status="proposed",
+            actor_user_id=admin_user.id,
+            earliest_boarding_time="07:00",
+            arrival_at_work_time="08:00",
+            llm_provider="deepseek",
+            llm_model="deepseek-v4-pro",
+            llm_reasoning_effort="high",
+            openai_model="deepseek-v4-pro",
+            route_provider="mapbox",
+            price_currency_code="SGD",
+            price_rate_unit="trip",
+            baseline_snapshot_json=None,
+            baseline_assignments_json=None,
+            baseline_vehicle_state_json=None,
+            planning_input_json="{}",
+            planning_input_hash="0" * 64,
+            preflight_issues_json=None,
+            error_code=None,
+            error_message=None,
+            created_at=fixed_now,
+            updated_at=fixed_now,
+            completed_at=fixed_now,
+        )
+        db.add(run)
+        db.flush()
+
+        agent_plan = TransportAgentPlan.model_validate(
+            {
+                "plan_key": "transport-ai-plan:export-agent",
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+                "earliest_boarding_time": "07:00",
+                "arrival_at_work_time": "08:00",
+                "objective_summary": "Keep the existing van active and preserve the arrival window.",
+                "vehicle_actions": [
+                    {
+                        "action_key": "action:keep-exp4710",
+                        "action_type": "keep",
+                        "service_scope": "regular",
+                        "vehicle_id": vehicle_id,
+                        "schedule_id": None,
+                        "client_vehicle_key": "existing-exp4710",
+                        "before": {"plate": "EXP4710", "assigned_count": 0},
+                        "after": {"plate": "EXP4710", "assigned_count": 1},
+                        "rationale": "Keep the current van assigned because it already matches the route.",
+                        "cost_delta": 0,
+                    }
+                ],
+                "passenger_allocations": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": fixed_now.date().isoformat(),
+                        "route_kind": "home_to_work",
+                        "vehicle_ref": f"existing:{vehicle_id}",
+                        "user_id": rider.id,
+                        "chave": "AX40",
+                        "nome": "Agent Export Rider",
+                        "project_name": "P85",
+                        "pickup_order": 1,
+                        "scheduled_pickup_time": "07:10",
+                        "projected_arrival_time": "07:50",
+                        "rationale": "Board the rider on the existing van without changing the plan.",
+                    }
+                ],
+                "route_itineraries": [
+                    {
+                        "route_key": "route:exp4710",
+                        "partition_key": "partition:export-agent",
+                        "vehicle_ref": f"existing:{vehicle_id}",
+                        "service_scope": "regular",
+                        "route_kind": "home_to_work",
+                        "vehicle_type": "van",
+                        "vehicle_id": vehicle_id,
+                        "schedule_id": None,
+                        "client_vehicle_key": "existing-exp4710",
+                        "plate": "EXP4710",
+                        "project_name": "P85",
+                        "country_code": "SG",
+                        "country_name": "Singapore",
+                        "estimated_cost": 18.5,
+                        "total_duration_seconds": 2400,
+                        "total_distance_meters": 12500,
+                        "projected_arrival_time": "07:50",
+                        "stops": [
+                            {
+                                "stop_order": 1,
+                                "stop_type": "pickup",
+                                "request_id": request_id,
+                                "user_id": rider.id,
+                                "passenger_name": "Agent Export Rider",
+                                "project_name": "P85",
+                                "address": "40 Agent Export Way",
+                                "zip_code": "404040",
+                                "country_code": "SG",
+                                "longitude": 103.851959,
+                                "latitude": 1.29027,
+                                "scheduled_time": "07:10",
+                                "duration_from_previous_seconds": 0,
+                                "distance_from_previous_meters": 0,
+                            },
+                            {
+                                "stop_order": 2,
+                                "stop_type": "destination",
+                                "request_id": None,
+                                "user_id": None,
+                                "passenger_name": None,
+                                "project_name": "P85",
+                                "address": "Singapore HQ",
+                                "zip_code": "049213",
+                                "country_code": "SG",
+                                "longitude": 103.852,
+                                "latitude": 1.286,
+                                "scheduled_time": "07:50",
+                                "duration_from_previous_seconds": 2400,
+                                "distance_from_previous_meters": 12500,
+                            },
+                        ],
+                    }
+                ],
+                "cost_summary": {
+                    "price_currency_code": "SGD",
+                    "price_rate_unit": "trip",
+                    "current_total_estimated_cost": 18.5,
+                    "suggested_total_estimated_cost": 18.5,
+                    "estimated_cost_delta": 0,
+                    "current_vehicle_count": 1,
+                    "suggested_vehicle_count": 1,
+                },
+                "change_summary": {
+                    "total_vehicle_actions": 1,
+                    "keep_count": 1,
+                    "create_count": 0,
+                    "update_count": 0,
+                    "remove_from_day_count": 0,
+                    "by_vehicle_type": [
+                        {
+                            "vehicle_type": "van",
+                            "keep_count": 1,
+                            "create_count": 0,
+                            "update_count": 0,
+                            "remove_from_day_count": 0,
+                            "total_count": 1,
+                        }
+                    ],
+                },
+                "validation_issues": [
+                    {
+                        "code": "soft_overlap_warning",
+                        "message": "Pickup window overlaps the arrival buffer by a few minutes.",
+                        "blocking": False,
+                        "request_id": request_id,
+                        "vehicle_id": vehicle_id,
+                    }
+                ],
+            }
+        )
+        db.commit()
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        build_response = admin_client.post(
+            "/api/transport/proposals/build",
+            json={
+                "service_date": fixed_now.date().isoformat(),
+                "route_kind": "home_to_work",
+                "origin": "agent",
+                "captured_at": fixed_now.isoformat(),
+                "created_at": fixed_now.isoformat(),
+                "decisions": [
+                    {
+                        "request_id": request_id,
+                        "request_kind": "regular",
+                        "service_date": fixed_now.date().isoformat(),
+                        "route_kind": "home_to_work",
+                        "suggested_status": "confirmed",
+                        "vehicle_id": vehicle_id,
+                        "rationale": "Generated from the persisted AI suggestion.",
+                    }
+                ],
+            },
+        )
+        assert build_response.status_code == 200, build_response.text
+
+        approved_proposal_response = admin_client.post(
+            "/api/transport/proposals/approve",
+            json=build_response.json(),
+        )
+        assert approved_proposal_response.status_code == 200, approved_proposal_response.text
+        approved_proposal_payload = approved_proposal_response.json()["proposal"]
+
+    with SessionLocal() as db:
+        run = db.execute(select(TransportAIRun).where(TransportAIRun.run_key == "transport-ai-run:export-agent")).scalar_one()
+        suggestion = create_transport_ai_suggestion_from_plan(
+            db,
+            run=run,
+            plan=agent_plan,
+            prompt_version="transport-ai-export-v1",
+            suggestion_key="transport-ai-suggestion:export-agent",
+            proposal_key=approved_proposal_payload["proposal_key"],
+            status="saved",
+            created_at=fixed_now,
+        )
+        suggestion.transport_proposal_json = json.dumps(approved_proposal_payload, ensure_ascii=True, sort_keys=True)
+        suggestion.updated_at = fixed_now
+        suggestion.saved_at = fixed_now
+        db.commit()
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        exported = admin_client.post(
+            "/api/transport/exports/operational-plan",
+            json=approved_proposal_payload,
+        )
+
+    assert exported.status_code == 200, exported.text
+    workbook = load_workbook(io.BytesIO(exported.content))
+    assert workbook.sheetnames == [
+        "Transport List",
+        "Executive Summary",
+        "Vehicle Load",
+        "Snapshot Requests",
+        "Proposed Decisions",
+        "Exceptions",
+        "Audit Trail",
+        "AI Summary",
+        "AI Vehicle Actions",
+        "AI Itineraries",
+        "AI Issues",
+    ]
+
+    ai_summary_sheet = workbook["AI Summary"]
+    ai_summary_rows = {
+        row[0]: row[1]
+        for row in ai_summary_sheet.iter_rows(min_row=2, values_only=True)
+        if row[0] is not None
+    }
+    assert ai_summary_rows["Suggestion Key"] == "transport-ai-suggestion:export-agent"
+    assert ai_summary_rows["LLM Provider"] == "deepseek"
+    assert ai_summary_rows["LLM Model"] == "deepseek-v4-pro"
+    assert ai_summary_rows["LLM Reasoning Effort"] == "high"
+    assert ai_summary_rows["Objective Summary"] == "Keep the existing van active and preserve the arrival window."
+    assert ai_summary_rows["Total Vehicle Actions"] == 1
+    assert ai_summary_rows["Route Itineraries"] == 1
+    assert ai_summary_rows["Validation Issues"] == 1
+
+    ai_vehicle_actions_sheet = workbook["AI Vehicle Actions"]
+    assert [
+        ai_vehicle_actions_sheet["A2"].value,
+        ai_vehicle_actions_sheet["B2"].value,
+        ai_vehicle_actions_sheet["C2"].value,
+        ai_vehicle_actions_sheet["H2"].value,
+    ] == [
+        "action:keep-exp4710",
+        "keep",
+        "regular",
+        "Keep the current van assigned because it already matches the route.",
+    ]
+
+    ai_itineraries_sheet = workbook["AI Itineraries"]
+    itinerary_rows = list(ai_itineraries_sheet.iter_rows(min_row=2, values_only=True))
+    assert any(
+        row[0] == "route:exp4710" and row[9] == 1 and row[10] == "pickup" and row[12] == "Agent Export Rider"
+        for row in itinerary_rows
+    )
+    assert any(
+        row[0] == "route:exp4710" and row[9] == 2 and row[10] == "destination" and row[13] == "Singapore HQ"
+        for row in itinerary_rows
+    )
+
+    ai_issues_sheet = workbook["AI Issues"]
+    assert [
+        ai_issues_sheet["A2"].value,
+        ai_issues_sheet["B2"].value,
+        ai_issues_sheet["C2"].value,
+        ai_issues_sheet["D2"].value,
+        ai_issues_sheet["E2"].value,
+    ] == [
+        "soft_overlap_warning",
+        False,
+        request_id,
+        vehicle_id,
+        "Pickup window overlaps the arrival buffer by a few minutes.",
+    ]
+    workbook.close()
+
+
 def test_transport_operational_plan_export_supports_contract_built_proposal_audit_trail(monkeypatch):
     fixed_now = datetime(2026, 4, 22, 16, 20, 45, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
@@ -11408,6 +12547,68 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
         location_settings_module.upsert_transport_last_update_time(db, last_update_time="16:00")
         db.commit()
+
+
+def test_transport_settings_endpoint_keeps_ai_secret_on_dedicated_contract(monkeypatch):
+    monkeypatch.setattr(settings, "transport_ai_settings_encryption_key", Fernet.generate_key().decode("utf-8"))
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+
+        ai_settings_response = admin_client.put(
+            "/api/transport/ai/settings",
+            json={
+                "provider": "openai",
+                "api_key": "sk-separated-1234",
+            },
+        )
+        assert ai_settings_response.status_code == 200, ai_settings_response.text
+        assert ai_settings_response.json() == {
+            "provider": "openai",
+            "resolved_model": "gpt-5.4-2026-03-05",
+            "reasoning_effort": "high",
+            "has_api_key": True,
+            "api_key_hint": "***1234",
+        }
+
+        current_settings = admin_client.get("/api/transport/settings")
+        assert current_settings.status_code == 200, current_settings.text
+        current_settings_payload = current_settings.json()
+        assert "provider" not in current_settings_payload
+        assert "api_key" not in current_settings_payload
+        assert "api_key_hint" not in current_settings_payload
+        assert "resolved_model" not in current_settings_payload
+        assert "reasoning_effort" not in current_settings_payload
+
+        mixed_payload = {
+            "work_to_home_time": current_settings_payload["work_to_home_time"],
+            "last_update_time": current_settings_payload["last_update_time"],
+            "default_car_seats": current_settings_payload["default_car_seats"],
+            "default_minivan_seats": current_settings_payload["default_minivan_seats"],
+            "default_van_seats": current_settings_payload["default_van_seats"],
+            "default_bus_seats": current_settings_payload["default_bus_seats"],
+            "default_tolerance_minutes": current_settings_payload["default_tolerance_minutes"],
+            "price_currency_code": current_settings_payload["price_currency_code"],
+            "price_rate_unit": current_settings_payload["price_rate_unit"],
+            "default_car_price": current_settings_payload["default_car_price"],
+            "default_minivan_price": current_settings_payload["default_minivan_price"],
+            "default_van_price": current_settings_payload["default_van_price"],
+            "default_bus_price": current_settings_payload["default_bus_price"],
+            "provider": "deepseek",
+            "api_key": "sk-should-not-be-accepted",
+        }
+        rejected = admin_client.put("/api/transport/settings", json=mixed_payload)
+        assert rejected.status_code == 422, rejected.text
+        rejection_fields = {
+            tuple(item.get("loc") or ())[-1]
+            for item in rejected.json().get("detail", [])
+            if item.get("type") == "extra_forbidden"
+        }
+        assert rejection_fields == {"provider", "api_key"}
+
+        ai_settings_after_rejection = admin_client.get("/api/transport/ai/settings")
+        assert ai_settings_after_rejection.status_code == 200, ai_settings_after_rejection.text
+        assert ai_settings_after_rejection.json() == ai_settings_response.json()
 
 
 def test_transport_settings_currency_endpoint_rejects_duplicate_currency_code():
@@ -15412,3 +16613,570 @@ def test_mobile_forms_submit_uses_default_and_custom_local():
             assert user.local == "Base P80"
             assert queued is not None and queued.local == "Base P80"
             assert sync_event is not None and sync_event.local == "Base P80"
+
+
+def _transport_ai_api_regression_timestamp() -> datetime:
+    return datetime(2026, 5, 6, 8, 0, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+
+def _configure_transport_ai_api_regression_runtime(monkeypatch) -> None:
+    """Run transport AI API regressions with deterministic planning and the fake route provider."""
+
+    monkeypatch.setattr(settings, "transport_ai_enabled", True)
+    monkeypatch.setattr(settings, "transport_ai_agent_mode", "deterministic")
+    monkeypatch.setattr(settings, "transport_ai_route_provider", "fake")
+    monkeypatch.setattr(settings, "mapbox_access_token", "test-mapbox-token")
+
+
+def _create_transport_ai_api_regression_vehicle_candidate(
+    db,
+    *,
+    plate: str,
+    service_date: date,
+) -> tuple[Vehicle, list[TransportVehicleSchedule]]:
+    timestamp = _transport_ai_api_regression_timestamp()
+    vehicle = Vehicle(
+        placa=plate,
+        tipo="carro",
+        color="White",
+        lugares=4,
+        tolerance=0,
+        service_scope="extra",
+    )
+    db.add(vehicle)
+    db.flush()
+
+    schedule = TransportVehicleSchedule(
+        vehicle_id=vehicle.id,
+        service_scope="extra",
+        route_kind="home_to_work",
+        recurrence_kind="single_date",
+        service_date=service_date,
+        weekday=None,
+        departure_time="07:30",
+        is_active=True,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    db.add(schedule)
+    db.flush()
+    return vehicle, [schedule]
+
+
+def _create_transport_ai_api_regression_fixture(
+    db,
+    *,
+    service_date: date,
+    seed_existing_assignment: bool,
+) -> dict[str, object]:
+    """Build a documented AI API fixture that mirrors the proven isolated transport AI test data."""
+
+    from sistema.app.models import MobileAppSettings
+    from sistema.app.services.transport_ai_runs import ensure_transport_ai_actor_admin_user
+
+    timestamp = _transport_ai_api_regression_timestamp()
+    scenario_token = uuid.uuid4().hex[:6].upper()
+    settings_context = {
+        "previous": clone_transport_settings_payload(db),
+        "created_currency_code": None,
+    }
+
+    settings_row = db.get(MobileAppSettings, 1)
+    if settings_row is None:
+        settings_row = MobileAppSettings(
+            id=1,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        db.add(settings_row)
+
+    settings_row.transport_work_to_home_time = "16:45"
+    settings_row.transport_last_update_time = "16:00"
+    settings_row.transport_default_car_seats = 4
+    settings_row.transport_default_minivan_seats = 6
+    settings_row.transport_default_van_seats = 10
+    settings_row.transport_default_bus_seats = 40
+    settings_row.transport_default_tolerance_minutes = 5
+    settings_row.transport_price_currency_code = "SGD"
+    settings_row.transport_price_rate_unit = "day"
+    settings_row.transport_default_car_price = 15
+    settings_row.transport_default_minivan_price = 30
+    settings_row.transport_default_van_price = 45
+    settings_row.transport_default_bus_price = 70
+    settings_row.updated_at = timestamp
+    db.flush()
+
+    project = Project(
+        name=make_test_project_name(f"AI{scenario_token[:4]}"),
+        country_code="SG",
+        country_name="Singapore",
+        timezone_name="Asia/Singapore",
+        address="1 Marina Boulevard",
+        zip_code="018989",
+    )
+    db.add(project)
+    db.flush()
+
+    rider = User(
+        rfid=None,
+        chave=make_test_key("A"),
+        senha=None,
+        perfil=0,
+        admin_monitored_projects_json=None,
+        nome=f"Transport AI Regression Rider {scenario_token}",
+        projeto=project.name,
+        workplace=None,
+        vehicle_id=None,
+        placa=None,
+        end_rua="10 Bayfront Avenue",
+        zip="018956",
+        cargo=None,
+        email=None,
+        local=None,
+        checkin=None,
+        time=None,
+        last_active_at=timestamp,
+        inactivity_days=0,
+    )
+    db.add(rider)
+    db.flush()
+
+    request_row = TransportRequest(
+        user_id=rider.id,
+        request_kind="extra",
+        recurrence_kind="single_date",
+        requested_time="08:00",
+        selected_weekdays_json=None,
+        single_date=service_date,
+        created_via="admin",
+        status="active",
+        created_at=timestamp,
+        updated_at=timestamp,
+        cancelled_at=None,
+    )
+    db.add(request_row)
+    db.flush()
+
+    fixture_bundle: dict[str, object] = {
+        "project_ids": [project.id],
+        "user_ids": [rider.id],
+        "request_ids": [request_row.id],
+        "vehicle_ids": [],
+        "schedule_ids": [],
+        "projects": {
+            "primary": {
+                "id": project.id,
+                "name": project.name,
+            }
+        },
+        "requests": {
+            "primary": {
+                "id": request_row.id,
+                "chave": rider.chave,
+                "nome": rider.nome,
+                "projeto": rider.projeto,
+                "service_date": service_date.isoformat(),
+            }
+        },
+        "settings_context": settings_context,
+        "assignment_id": None,
+        "seed_vehicle_id": None,
+    }
+
+    if not seed_existing_assignment:
+        return fixture_bundle
+
+    actor_admin = ensure_transport_ai_actor_admin_user(
+        db,
+        chave=ADMIN_LOGIN_CHAVE,
+        nome_completo=str(settings.bootstrap_admin_name),
+        ensured_at=timestamp,
+    )
+    vehicle, schedules = _create_transport_ai_api_regression_vehicle_candidate(
+        db,
+        plate=f"AI{scenario_token[:4]}01",
+        service_date=service_date,
+    )
+    assignment = TransportAssignment(
+        request_id=request_row.id,
+        service_date=service_date,
+        route_kind="home_to_work",
+        vehicle_id=vehicle.id,
+        status="confirmed",
+        response_message="confirmed-for-transport-ai-api-regression",
+        acknowledged_by_user=False,
+        acknowledged_at=None,
+        assigned_by_admin_id=actor_admin.id,
+        created_at=timestamp,
+        updated_at=timestamp,
+        notified_at=None,
+    )
+    db.add(assignment)
+    db.flush()
+
+    fixture_bundle["vehicle_ids"] = [vehicle.id]
+    fixture_bundle["schedule_ids"] = [schedule.id for schedule in schedules]
+    fixture_bundle["assignment_id"] = assignment.id
+    fixture_bundle["seed_vehicle_id"] = vehicle.id
+    return fixture_bundle
+
+
+def _cleanup_transport_ai_api_regression_fixture(
+    db,
+    fixture_bundle: dict[str, object] | None,
+    *,
+    run_key: str | None,
+) -> None:
+    """Delete persisted AI artifacts before restoring the shared transport planning fixtures."""
+
+    from sistema.app.models import TransportAIAppliedRouteStop, TransportAIRun, TransportAISuggestion
+
+    if fixture_bundle is None:
+        db.commit()
+        transport_reevaluation_module.clear_transport_reevaluation_events()
+        return
+
+    bundle = dict(fixture_bundle)
+    request_ids = [int(value) for value in bundle.get("request_ids") or []]
+    static_vehicle_ids = {int(value) for value in bundle.get("vehicle_ids") or []}
+    dynamic_vehicle_ids: set[int] = set()
+
+    if request_ids:
+        assignments = db.execute(
+            select(TransportAssignment).where(TransportAssignment.request_id.in_(request_ids))
+        ).scalars().all()
+        for assignment in assignments:
+            if assignment.vehicle_id is None or assignment.vehicle_id in static_vehicle_ids:
+                continue
+            dynamic_vehicle_ids.add(int(assignment.vehicle_id))
+
+    if dynamic_vehicle_ids:
+        bundle["vehicle_ids"] = [*bundle.get("vehicle_ids", []), *sorted(dynamic_vehicle_ids)]
+        extra_schedule_ids = [
+            schedule.id
+            for schedule in db.execute(
+                select(TransportVehicleSchedule).where(TransportVehicleSchedule.vehicle_id.in_(sorted(dynamic_vehicle_ids)))
+            ).scalars().all()
+        ]
+        bundle["schedule_ids"] = [*bundle.get("schedule_ids", []), *extra_schedule_ids]
+
+    normalized_run_key = str(run_key or "").strip()
+    if normalized_run_key:
+        run = db.execute(
+            select(TransportAIRun).where(TransportAIRun.run_key == normalized_run_key)
+        ).scalar_one_or_none()
+        if run is not None:
+            suggestions = db.execute(
+                select(TransportAISuggestion).where(TransportAISuggestion.run_id == run.id)
+            ).scalars().all()
+            for suggestion in suggestions:
+                for applied_stop in db.execute(
+                    select(TransportAIAppliedRouteStop).where(TransportAIAppliedRouteStop.suggestion_id == suggestion.id)
+                ).scalars().all():
+                    db.delete(applied_stop)
+                db.delete(suggestion)
+            db.delete(run)
+
+    cleanup_transport_planning_fixture_bundle(db, bundle)
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+
+
+def _isolate_transport_ai_api_regression_requests(
+    db,
+    *,
+    keep_request_ids: list[int],
+) -> None:
+    timestamp = _transport_ai_api_regression_timestamp()
+    preserved_request_ids = {int(value) for value in keep_request_ids}
+
+    for request_row in db.execute(select(TransportRequest)).scalars().all():
+        if request_row.id in preserved_request_ids or request_row.status != "active":
+            continue
+        request_row.status = "cancelled"
+        request_row.cancelled_at = timestamp
+        request_row.updated_at = timestamp
+
+
+def _start_transport_ai_api_regression_run(
+    client: TestClient,
+    *,
+    service_date: date,
+) -> tuple[dict[str, object], dict[str, object]]:
+    start_response = client.post(
+        "/api/transport/ai/route-calculations",
+        json={
+            "service_date": service_date.isoformat(),
+            "route_kind": "home_to_work",
+            "earliest_boarding_time": "06:50",
+            "arrival_at_work_time": "07:45",
+        },
+    )
+    assert start_response.status_code == 201, start_response.text
+    start_payload = start_response.json()
+    assert start_payload["ok"] is True
+    assert start_payload["status"] == "proposed"
+    assert start_payload["suggestion_ready"] is True
+    assert start_payload["run_key"]
+    assert start_payload["suggestion_key"]
+
+    status_response = client.get(
+        f"/api/transport/ai/route-calculations/{start_payload['run_key']}"
+    )
+    assert status_response.status_code == 200, status_response.text
+    status_payload = status_response.json()
+    assert status_payload["ok"] is True
+    assert status_payload["status"] == "proposed"
+    assert status_payload["suggestion_ready"] is True
+    assert status_payload["suggestion_key"] == start_payload["suggestion_key"]
+    assert status_payload["suggestion"] is not None
+    assert status_payload["suggestion"]["status"] == "shown"
+    return start_payload, status_payload
+
+
+def test_transport_ai_api_flow_start_suggestion_save_latest_apply(monkeypatch):
+    from sistema.app.models import TransportAIAppliedRouteStop, TransportAIRun, TransportAISuggestion
+
+    _configure_transport_ai_api_regression_runtime(monkeypatch)
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+
+    service_date = date(2035, 2, 12)
+    fixture_bundle: dict[str, object] | None = None
+    run_key: str | None = None
+
+    try:
+        with SessionLocal() as db:
+            fixture_bundle = _create_transport_ai_api_regression_fixture(
+                db,
+                service_date=service_date,
+                seed_existing_assignment=False,
+            )
+            db.commit()
+
+        request_id = int(fixture_bundle["requests"]["primary"]["id"])
+
+        with SessionLocal() as db:
+            _isolate_transport_ai_api_regression_requests(db, keep_request_ids=[request_id])
+            db.commit()
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            start_payload, status_payload = _start_transport_ai_api_regression_run(
+                admin_client,
+                service_date=service_date,
+            )
+            run_key = str(start_payload["run_key"])
+            suggestion_key = str(status_payload["suggestion_key"])
+
+            save_response = admin_client.post(f"/api/transport/ai/suggestions/{suggestion_key}/save")
+            assert save_response.status_code == 200, save_response.text
+            save_payload = save_response.json()
+            assert save_payload["status"] == "saved"
+            assert save_payload["suggestion"]["status"] == "saved"
+            assert save_payload["can_apply"] is True
+            assert save_payload["can_cancel_restore"] is True
+
+            latest_response = admin_client.get(
+                "/api/transport/ai/suggestions/latest",
+                params={"service_date": service_date.isoformat(), "route_kind": "home_to_work"},
+            )
+            assert latest_response.status_code == 200, latest_response.text
+            latest_payload = latest_response.json()
+            assert latest_payload["run_key"] == run_key
+            assert latest_payload["suggestion_key"] == suggestion_key
+            assert latest_payload["status"] == "saved"
+            assert latest_payload["suggestion"]["status"] == "saved"
+
+            apply_response = admin_client.post(f"/api/transport/ai/suggestions/{suggestion_key}/apply")
+            assert apply_response.status_code == 200, apply_response.text
+            apply_payload = apply_response.json()
+            assert apply_payload["status"] == "applied"
+            assert apply_payload["suggestion"]["status"] == "applied"
+            assert apply_payload["can_apply"] is False
+            assert apply_payload["can_cancel_restore"] is False
+
+            latest_after_apply = admin_client.get(
+                "/api/transport/ai/suggestions/latest",
+                params={"service_date": service_date.isoformat(), "route_kind": "home_to_work"},
+            )
+            assert latest_after_apply.status_code == 404, latest_after_apply.text
+
+        with SessionLocal() as db:
+            run = db.execute(select(TransportAIRun).where(TransportAIRun.run_key == run_key)).scalar_one()
+            suggestion = db.execute(
+                select(TransportAISuggestion).where(TransportAISuggestion.suggestion_key == suggestion_key)
+            ).scalar_one()
+            assignment = db.execute(
+                select(TransportAssignment).where(
+                    TransportAssignment.request_id == request_id,
+                    TransportAssignment.service_date == service_date,
+                    TransportAssignment.route_kind == "home_to_work",
+                )
+            ).scalar_one()
+            vehicle = db.get(Vehicle, assignment.vehicle_id)
+            applied_route_stops = db.execute(
+                select(TransportAIAppliedRouteStop).where(TransportAIAppliedRouteStop.suggestion_id == suggestion.id)
+            ).scalars().all()
+
+        assert run.status == "applied"
+        assert suggestion.status == "applied"
+        assert assignment.status == "confirmed"
+        assert vehicle is not None
+        assert applied_route_stops
+    finally:
+        with SessionLocal() as db:
+            _cleanup_transport_ai_api_regression_fixture(db, fixture_bundle, run_key=run_key)
+
+
+def test_transport_ai_api_flow_start_suggestion_cancel_restore(monkeypatch):
+    from sistema.app.models import TransportAIRun, TransportAISuggestion
+
+    _configure_transport_ai_api_regression_runtime(monkeypatch)
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+
+    service_date = date(2035, 2, 13)
+    fixture_bundle: dict[str, object] | None = None
+    run_key: str | None = None
+
+    try:
+        with SessionLocal() as db:
+            fixture_bundle = _create_transport_ai_api_regression_fixture(
+                db,
+                service_date=service_date,
+                seed_existing_assignment=True,
+            )
+            db.commit()
+
+        seeded_assignment_id = int(fixture_bundle["assignment_id"])
+        seeded_vehicle_id = int(fixture_bundle["seed_vehicle_id"])
+        request_id = int(fixture_bundle["requests"]["primary"]["id"])
+
+        with SessionLocal() as db:
+            _isolate_transport_ai_api_regression_requests(db, keep_request_ids=[request_id])
+            db.commit()
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            start_payload, status_payload = _start_transport_ai_api_regression_run(
+                admin_client,
+                service_date=service_date,
+            )
+            run_key = str(start_payload["run_key"])
+            suggestion_key = str(status_payload["suggestion_key"])
+
+            with SessionLocal() as db:
+                pending_assignment = db.get(TransportAssignment, seeded_assignment_id)
+
+            assert pending_assignment is not None
+            assert pending_assignment.status == "pending"
+            assert pending_assignment.vehicle_id is None
+
+            cancel_response = admin_client.post(f"/api/transport/ai/suggestions/{suggestion_key}/cancel")
+            assert cancel_response.status_code == 200, cancel_response.text
+            cancel_payload = cancel_response.json()
+            assert cancel_payload["status"] == "cancelled"
+            assert cancel_payload["suggestion"]["status"] == "discarded"
+            assert cancel_payload["can_apply"] is False
+            assert cancel_payload["can_cancel_restore"] is False
+
+            latest_after_cancel = admin_client.get(
+                "/api/transport/ai/suggestions/latest",
+                params={"service_date": service_date.isoformat(), "route_kind": "home_to_work"},
+            )
+            assert latest_after_cancel.status_code == 404, latest_after_cancel.text
+
+        with SessionLocal() as db:
+            run = db.execute(select(TransportAIRun).where(TransportAIRun.run_key == run_key)).scalar_one()
+            suggestion = db.execute(
+                select(TransportAISuggestion).where(TransportAISuggestion.suggestion_key == suggestion_key)
+            ).scalar_one()
+            restored_assignment = db.get(TransportAssignment, seeded_assignment_id)
+
+        assert run.status == "cancelled"
+        assert suggestion.status == "discarded"
+        assert restored_assignment is not None
+        assert restored_assignment.status == "confirmed"
+        assert restored_assignment.vehicle_id == seeded_vehicle_id
+    finally:
+        with SessionLocal() as db:
+            _cleanup_transport_ai_api_regression_fixture(db, fixture_bundle, run_key=run_key)
+
+
+def test_transport_ai_api_flow_apply_blocks_when_request_drifts(monkeypatch):
+    from sistema.app.models import TransportAIRun, TransportAISuggestion
+
+    _configure_transport_ai_api_regression_runtime(monkeypatch)
+    transport_reevaluation_module.clear_transport_reevaluation_events()
+
+    service_date = date(2035, 2, 14)
+    fixture_bundle: dict[str, object] | None = None
+    run_key: str | None = None
+
+    try:
+        with SessionLocal() as db:
+            fixture_bundle = _create_transport_ai_api_regression_fixture(
+                db,
+                service_date=service_date,
+                seed_existing_assignment=False,
+            )
+            db.commit()
+
+        request_id = int(fixture_bundle["requests"]["primary"]["id"])
+
+        with SessionLocal() as db:
+            _isolate_transport_ai_api_regression_requests(db, keep_request_ids=[request_id])
+            db.commit()
+
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+            start_payload, status_payload = _start_transport_ai_api_regression_run(
+                admin_client,
+                service_date=service_date,
+            )
+            run_key = str(start_payload["run_key"])
+            suggestion_key = str(status_payload["suggestion_key"])
+
+            with SessionLocal() as db:
+                drift_vehicle, _ = _create_transport_ai_api_regression_vehicle_candidate(
+                    db,
+                    plate=f"DR{uuid.uuid4().hex[:6].upper()}",
+                    service_date=service_date,
+                )
+                pending_assignment = db.execute(
+                    select(TransportAssignment).where(
+                        TransportAssignment.request_id == request_id,
+                        TransportAssignment.service_date == service_date,
+                        TransportAssignment.route_kind == "home_to_work",
+                    )
+                ).scalar_one()
+                pending_assignment.status = "confirmed"
+                pending_assignment.vehicle_id = drift_vehicle.id
+                pending_assignment.updated_at = now_sgt()
+                db.commit()
+
+            apply_response = admin_client.post(f"/api/transport/ai/suggestions/{suggestion_key}/apply")
+            assert apply_response.status_code == 409, apply_response.text
+            apply_payload = apply_response.json()
+            assert apply_payload["status"] == "proposed"
+            assert apply_payload["suggestion"]["status"] == "shown"
+            assert any(issue["code"] == "request_not_pending" for issue in apply_payload["issues"])
+
+        with SessionLocal() as db:
+            run = db.execute(select(TransportAIRun).where(TransportAIRun.run_key == run_key)).scalar_one()
+            suggestion = db.execute(
+                select(TransportAISuggestion).where(TransportAISuggestion.suggestion_key == suggestion_key)
+            ).scalar_one()
+            drifted_assignment = db.execute(
+                select(TransportAssignment).where(
+                    TransportAssignment.request_id == request_id,
+                    TransportAssignment.service_date == service_date,
+                    TransportAssignment.route_kind == "home_to_work",
+                )
+            ).scalar_one()
+
+        assert run.status == "proposed"
+        assert suggestion.status == "shown"
+        assert drifted_assignment.status == "confirmed"
+        assert drifted_assignment.vehicle_id is not None
+    finally:
+        with SessionLocal() as db:
+            _cleanup_transport_ai_api_regression_fixture(db, fixture_bundle, run_key=run_key)

@@ -389,67 +389,69 @@
           <button id="saveProjectMinimumCheckoutDistancesButton" type="button" disabled>Salvar</button>
         </div>
 
-        <div class="cadastro-split-grid">
-          <div class="cadastro-side-panel">
-            <div class="section-header">
-              <h2>Administradores</h2>
-              <button id="refreshAdministratorsButton" type="button" class="secondary-button">Atualizar</button>
-            </div>
-            <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
-              <table class="responsive-table cadastro-table cadastro-admin-table">
-                <thead>
-                  <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Projetos</th><th>Acessos</th><th>Ações</th></tr>
-                </thead>
-                <tbody id="administratorsBody"></tbody>
-              </table>
-            </div>
-          </div>
+        <div class="section-header">
+          <h2>Administradores</h2>
+          <button id="refreshAdministratorsButton" type="button" class="secondary-button">Atualizar</button>
+        </div>
+        <div class="table-wrap cadastro-grid-wrap">
+          <table class="responsive-table cadastro-table cadastro-admin-table">
+            <thead>
+              <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Projetos</th><th>Acessos</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="administratorsBody"></tbody>
+          </table>
+        </div>
 
-          <div class="cadastro-side-panel">
-            <div class="section-header">
-              <h2>Projetos</h2>
-            </div>
-            <div class="project-editor-panel">
-              <div class="section-header">
-                <div>
-                  <h3 id="projectEditorTitle">Novo Projeto</h3>
-                  <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome do projeto, escolha um país da lista ou cadastre um novo e defina o fuso horário desejado.</p>
-                </div>
-              </div>
-              <div class="project-editor-grid">
-                <label class="presence-control-field" for="projectNameInput">
-                  <span>Nome do projeto</span>
-                  <input id="projectNameInput" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: P84" />
-                </label>
-                <label class="presence-control-field" for="projectCountrySelect">
-                  <span>País</span>
-                  <select id="projectCountrySelect"></select>
-                </label>
-                <label class="presence-control-field" for="projectTimezoneInput">
-                  <span>Fuso horário</span>
-                  <input id="projectTimezoneInput" type="text" list="projectTimezoneOptions" maxlength="64" autocomplete="off" placeholder="Ex.: Asia/Singapore" />
-                </label>
-                <label class="presence-control-field" for="projectCustomCountryInput">
-                  <span>Novo país</span>
-                  <input id="projectCustomCountryInput" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Chile" />
-                </label>
-              </div>
-              <datalist id="projectTimezoneOptions"></datalist>
-              <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
-                <button id="saveProjectButton" type="button">Salvar Projeto</button>
-                <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
-                <button id="addProjectButton" type="button" class="secondary-button">Limpar Formulário</button>
-              </div>
-            </div>
-            <div class="table-wrap cadastro-grid-wrap cadastro-split-table-wrap">
-              <table class="responsive-table cadastro-table cadastro-projects-table">
-                <thead>
-                  <tr><th>Nome do Projeto</th><th>País</th><th>Fuso horário</th><th>Ações</th></tr>
-                </thead>
-                <tbody id="projectsBody"></tbody>
-              </table>
+        <div class="section-header">
+          <h2>Projetos</h2>
+        </div>
+        <div class="project-editor-panel">
+          <div class="section-header">
+            <div>
+              <h3 id="projectEditorTitle">Novo Projeto</h3>
+              <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome do projeto, endereço, ZIP Code, país e fuso horário. Use Editar para alterar qualquer informação de um projeto já cadastrado.</p>
             </div>
           </div>
+          <div class="project-editor-grid">
+            <label class="presence-control-field" for="projectNameInput">
+              <span>Nome do projeto</span>
+              <input id="projectNameInput" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: P84" />
+            </label>
+            <label class="presence-control-field" for="projectAddressInput">
+              <span>Endereço</span>
+              <input id="projectAddressInput" type="text" maxlength="255" autocomplete="off" placeholder="Ex.: 10 Bayfront Avenue" />
+            </label>
+            <label class="presence-control-field" for="projectZipCodeInput">
+              <span>ZIP Code</span>
+              <input id="projectZipCodeInput" type="text" maxlength="32" autocomplete="off" placeholder="Ex.: 018956" />
+            </label>
+            <label class="presence-control-field" for="projectCountrySelect">
+              <span>País</span>
+              <select id="projectCountrySelect"></select>
+            </label>
+            <label class="presence-control-field" for="projectTimezoneInput">
+              <span>Fuso horário</span>
+              <input id="projectTimezoneInput" type="text" list="projectTimezoneOptions" maxlength="64" autocomplete="off" placeholder="Ex.: Asia/Singapore" />
+            </label>
+            <label class="presence-control-field" for="projectCustomCountryInput">
+              <span>Novo país</span>
+              <input id="projectCustomCountryInput" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Chile" />
+            </label>
+          </div>
+          <datalist id="projectTimezoneOptions"></datalist>
+          <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
+            <button id="saveProjectButton" type="button">Salvar Projeto</button>
+            <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
+            <button id="addProjectButton" type="button" class="secondary-button">Limpar Formulário</button>
+          </div>
+        </div>
+        <div class="table-wrap cadastro-grid-wrap">
+          <table class="responsive-table cadastro-table cadastro-projects-table">
+            <thead>
+              <tr><th>Nome do Projeto</th><th>País</th><th>Endereço</th><th>ZIP Code</th><th>Fuso horário</th><th>Ações</th></tr>
+            </thead>
+            <tbody id="projectsBody"></tbody>
+          </table>
         </div>
 
         <div class="section-header">

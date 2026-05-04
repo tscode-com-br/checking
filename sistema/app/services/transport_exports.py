@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime
 from io import BytesIO
+import json
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..models import TransportAssignment, TransportRequest, User, Vehicle
+from ..models import TransportAIRun, TransportAISuggestion, TransportAssignment, TransportRequest, User, Vehicle
 from ..schemas import TransportOperationalProposal, TransportOperationalSnapshot
 from .time_utils import now_sgt
 
@@ -377,6 +378,213 @@ def _build_audit_rows(proposal: TransportOperationalProposal) -> list[list[objec
     return rows
 
 
+def _load_transport_ai_export_dict(raw_value: str | None) -> dict[str, object]:
+    if not raw_value:
+        return {}
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _load_transport_ai_export_list(raw_value: str | None) -> list[dict[str, object]]:
+    if not raw_value:
+        return []
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _serialize_transport_export_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return value
+
+
+def _load_transport_ai_export_suggestion(
+    db: Session,
+    *,
+    proposal: TransportOperationalProposal | None,
+) -> TransportAISuggestion | None:
+    if proposal is None or proposal.origin != "agent":
+        return None
+
+    return db.execute(
+        select(TransportAISuggestion)
+        .where(TransportAISuggestion.proposal_key == proposal.proposal_key)
+        .order_by(TransportAISuggestion.updated_at.desc(), TransportAISuggestion.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _load_transport_ai_export_run(db: Session, *, suggestion: TransportAISuggestion | None) -> TransportAIRun | None:
+    if suggestion is None:
+        return None
+
+    return db.execute(
+        select(TransportAIRun)
+        .where(TransportAIRun.id == suggestion.run_id)
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _resolve_transport_ai_export_llm_fields(run: TransportAIRun | None) -> tuple[str | None, str | None, str | None]:
+    if run is None:
+        return None, None, None
+
+    llm_model = str(run.llm_model or run.openai_model or "").strip() or None
+    llm_provider = str(run.llm_provider or "").strip().lower() or ("openai" if llm_model else None)
+    llm_reasoning_effort = str(run.llm_reasoning_effort or "").strip().lower() or ("high" if llm_model else None)
+    return llm_provider, llm_model, llm_reasoning_effort
+
+
+def _build_transport_ai_summary_rows(suggestion: TransportAISuggestion, *, run: TransportAIRun | None = None) -> list[list[object]]:
+    plan_payload = _load_transport_ai_export_dict(suggestion.agent_plan_json)
+    cost_summary = _load_transport_ai_export_dict(suggestion.cost_summary_json)
+    change_summary = _load_transport_ai_export_dict(suggestion.change_summary_json)
+    passenger_allocations = _load_transport_ai_export_list(suggestion.assignment_actions_json)
+    route_itineraries = _load_transport_ai_export_list(suggestion.route_itineraries_json)
+    validation_issues = _load_transport_ai_export_list(suggestion.validation_issues_json)
+    llm_provider, llm_model, llm_reasoning_effort = _resolve_transport_ai_export_llm_fields(run)
+
+    return [
+        ["Campo/Field", "Valor/Value"],
+        ["Suggestion Key", suggestion.suggestion_key],
+        ["Suggestion Status", suggestion.status],
+        ["Proposal Key", suggestion.proposal_key],
+        ["Prompt Version", suggestion.prompt_version],
+        ["LLM Provider", llm_provider],
+        ["LLM Model", llm_model],
+        ["LLM Reasoning Effort", llm_reasoning_effort],
+        ["Suggestion Created At", suggestion.created_at.isoformat()],
+        ["Suggestion Updated At", suggestion.updated_at.isoformat()],
+        ["Suggestion Saved At", suggestion.saved_at.isoformat() if suggestion.saved_at is not None else None],
+        ["Suggestion Applied At", suggestion.applied_at.isoformat() if suggestion.applied_at is not None else None],
+        ["Suggestion Discarded At", suggestion.discarded_at.isoformat() if suggestion.discarded_at is not None else None],
+        ["Objective Summary", plan_payload.get("objective_summary")],
+        ["Current Estimated Cost", cost_summary.get("current_total_estimated_cost")],
+        ["Suggested Estimated Cost", cost_summary.get("suggested_total_estimated_cost")],
+        ["Estimated Cost Delta", cost_summary.get("estimated_cost_delta")],
+        ["Price Currency Code", cost_summary.get("price_currency_code")],
+        ["Price Rate Unit", cost_summary.get("price_rate_unit")],
+        ["Current Vehicle Count", cost_summary.get("current_vehicle_count")],
+        ["Suggested Vehicle Count", cost_summary.get("suggested_vehicle_count")],
+        ["Total Vehicle Actions", change_summary.get("total_vehicle_actions")],
+        ["Keep Actions", change_summary.get("keep_count")],
+        ["Create Actions", change_summary.get("create_count")],
+        ["Update Actions", change_summary.get("update_count")],
+        ["Remove From Day Actions", change_summary.get("remove_from_day_count")],
+        ["Passenger Allocations", len(passenger_allocations)],
+        ["Route Itineraries", len(route_itineraries)],
+        ["Validation Issues", len(validation_issues)],
+    ]
+
+
+def _build_transport_ai_vehicle_action_rows(suggestion: TransportAISuggestion) -> list[list[object]]:
+    rows: list[list[object]] = [[
+        "Action Key",
+        "Action Type",
+        "Scope",
+        "Vehicle ID",
+        "Schedule ID",
+        "Client Vehicle Key",
+        "Cost Delta",
+        "Rationale",
+        "Before",
+        "After",
+    ]]
+    vehicle_actions = _load_transport_ai_export_list(suggestion.vehicle_actions_json)
+    for action in sorted(vehicle_actions, key=lambda row: (str(row.get("action_type") or ""), str(row.get("action_key") or ""))):
+        rows.append(
+            [
+                action.get("action_key"),
+                action.get("action_type"),
+                action.get("service_scope"),
+                action.get("vehicle_id"),
+                action.get("schedule_id"),
+                action.get("client_vehicle_key"),
+                action.get("cost_delta"),
+                action.get("rationale"),
+                _serialize_transport_export_value(action.get("before")),
+                _serialize_transport_export_value(action.get("after")),
+            ]
+        )
+    return rows
+
+
+def _build_transport_ai_itinerary_rows(suggestion: TransportAISuggestion) -> list[list[object]]:
+    rows: list[list[object]] = [[
+        "Route Key",
+        "Vehicle Ref",
+        "Plate",
+        "Vehicle Type",
+        "Scope",
+        "Project",
+        "Country",
+        "Projected Arrival",
+        "Estimated Cost",
+        "Stop Order",
+        "Stop Type",
+        "Request ID",
+        "Passenger",
+        "Address",
+        "Scheduled Time",
+        "Duration From Previous",
+        "Distance From Previous",
+    ]]
+    itineraries = _load_transport_ai_export_list(suggestion.route_itineraries_json)
+    for itinerary in sorted(itineraries, key=lambda row: (str(row.get("route_key") or ""), str(row.get("vehicle_ref") or ""))):
+        stops = itinerary.get("stops") if isinstance(itinerary.get("stops"), list) else []
+        stop_rows = [stop for stop in stops if isinstance(stop, dict)] or [{}]
+        stop_rows.sort(key=lambda row: (int(row.get("stop_order") or 0), str(row.get("stop_type") or "")))
+        for stop in stop_rows:
+            rows.append(
+                [
+                    itinerary.get("route_key"),
+                    itinerary.get("vehicle_ref"),
+                    itinerary.get("plate"),
+                    itinerary.get("vehicle_type"),
+                    itinerary.get("service_scope"),
+                    itinerary.get("project_name"),
+                    itinerary.get("country_code"),
+                    itinerary.get("projected_arrival_time"),
+                    itinerary.get("estimated_cost"),
+                    stop.get("stop_order"),
+                    stop.get("stop_type"),
+                    stop.get("request_id"),
+                    stop.get("passenger_name"),
+                    stop.get("address"),
+                    stop.get("scheduled_time"),
+                    stop.get("duration_from_previous_seconds"),
+                    stop.get("distance_from_previous_meters"),
+                ]
+            )
+    return rows
+
+
+def _build_transport_ai_issue_rows(suggestion: TransportAISuggestion) -> list[list[object]]:
+    rows: list[list[object]] = [["Code", "Blocking", "Request ID", "Vehicle ID", "Message"]]
+    validation_issues = _load_transport_ai_export_list(suggestion.validation_issues_json)
+    for issue in validation_issues:
+        rows.append(
+            [
+                issue.get("code"),
+                issue.get("blocking"),
+                issue.get("request_id"),
+                issue.get("vehicle_id"),
+                issue.get("message"),
+            ]
+        )
+    return rows
+
+
 def build_transport_operational_plan_export(
     db: Session,
     *,
@@ -401,6 +609,8 @@ def build_transport_operational_plan_export(
         route_kind=selected_route_kind,
         captured_at=timestamp,
     )
+    ai_suggestion = _load_transport_ai_export_suggestion(db, proposal=proposal)
+    ai_run = _load_transport_ai_export_run(db, suggestion=ai_suggestion)
     export_rows = _collect_transport_list_rows(
         db,
         service_date=service_date,
@@ -446,6 +656,19 @@ def build_transport_operational_plan_export(
     if proposal is not None:
         audit_trail_sheet = workbook.create_sheet("Audit Trail")
         _append_sheet_rows(audit_trail_sheet, _build_audit_rows(proposal))
+
+    if ai_suggestion is not None:
+        ai_summary_sheet = workbook.create_sheet("AI Summary")
+        _append_sheet_rows(ai_summary_sheet, _build_transport_ai_summary_rows(ai_suggestion, run=ai_run))
+
+        ai_vehicle_actions_sheet = workbook.create_sheet("AI Vehicle Actions")
+        _append_sheet_rows(ai_vehicle_actions_sheet, _build_transport_ai_vehicle_action_rows(ai_suggestion))
+
+        ai_itineraries_sheet = workbook.create_sheet("AI Itineraries")
+        _append_sheet_rows(ai_itineraries_sheet, _build_transport_ai_itinerary_rows(ai_suggestion))
+
+        ai_issues_sheet = workbook.create_sheet("AI Issues")
+        _append_sheet_rows(ai_issues_sheet, _build_transport_ai_issue_rows(ai_suggestion))
 
     output = BytesIO()
     workbook.save(output)

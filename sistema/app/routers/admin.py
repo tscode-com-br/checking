@@ -19,6 +19,7 @@ from ..models import (
     ManagedLocation,
     PendingRegistration,
     Project,
+    ProjectAutoCheckoutDistance,
     Workplace,
     User,
     UserSyncEvent,
@@ -1124,6 +1125,8 @@ def build_project_row(project: Project) -> ProjectRow:
             country_name=project.country_name,
             timezone_name=project.timezone_name,
         ),
+        address=str(project.address or "").strip(),
+        zip_code=str(project.zip_code or "").strip(),
     )
 
 
@@ -1738,6 +1741,8 @@ def create_admin_project(
 
     project = Project(
         name=payload.name,
+        address=payload.address,
+        zip_code=payload.zip_code,
         **build_project_fields(
             country_code=payload.country_code,
             country_name=payload.country_name,
@@ -1755,7 +1760,8 @@ def create_admin_project(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; project_name={payload.name}; country_code={payload.country_code}; "
-            f"country_name={payload.country_name}; timezone_name={payload.timezone_name}"
+            f"country_name={payload.country_name}; timezone_name={payload.timezone_name}; "
+            f"address={payload.address or '-'}; zip_code={payload.zip_code or '-'}"
         ),
     )
     db.commit()
@@ -1775,20 +1781,96 @@ def update_admin_project(
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
 
-    if payload.name != project.name:
-        raise HTTPException(status_code=422, detail="Renomear projeto existente ainda nao e suportado.")
-
+    previous_name = project.name
     previous_country_code = project.country_code
     previous_country_name = project.country_name
     previous_timezone_name = project.timezone_name
+    previous_address = str(project.address or "").strip()
+    previous_zip_code = str(project.zip_code or "").strip()
     updated_fields = build_project_fields(
         country_code=payload.country_code,
         country_name=payload.country_name,
         timezone_name=payload.timezone_name,
     )
+    updated_user_links = 0
+    updated_location_links = 0
+    updated_admin_scopes = 0
+    recreated_minimum_checkout_distances = 0
+
+    if payload.name != previous_name:
+        existing_project = db.execute(
+            select(Project).where(Project.name == payload.name, Project.id != project_id)
+        ).scalar_one_or_none()
+        if existing_project is not None:
+            raise HTTPException(status_code=409, detail="Ja existe um projeto com esse nome.")
+
+        linked_users = db.execute(select(User).where(User.projeto == previous_name).order_by(User.id)).scalars().all()
+        updated_user_links = len(linked_users)
+        for linked_user in linked_users:
+            linked_user.projeto = payload.name
+
+        linked_locations = db.execute(select(ManagedLocation).order_by(ManagedLocation.id)).scalars().all()
+        for linked_location in linked_locations:
+            existing_projects = extract_location_projects(linked_location)
+            if previous_name not in existing_projects:
+                continue
+
+            linked_location.projects_json = dump_location_projects(
+                [payload.name if project_name == previous_name else project_name for project_name in existing_projects]
+            )
+            linked_location.updated_at = now_sgt()
+            updated_location_links += 1
+
+        for administrator in db.execute(select(User).order_by(User.id)).scalars().all():
+            if not user_has_admin_access(administrator):
+                continue
+
+            explicit_projects = extract_admin_monitored_projects(administrator)
+            if explicit_projects is None or previous_name not in explicit_projects:
+                continue
+
+            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(
+                [payload.name if project_name == previous_name else project_name for project_name in explicit_projects]
+            )
+            updated_admin_scopes += 1
+
+        existing_distance_rows = db.execute(
+            select(ProjectAutoCheckoutDistance)
+            .where(ProjectAutoCheckoutDistance.project_name == previous_name)
+            .order_by(ProjectAutoCheckoutDistance.id)
+        ).scalars().all()
+        preserved_distance_rows = [
+            {
+                "minimum_checkout_distance_meters": row.minimum_checkout_distance_meters,
+                "created_at": row.created_at,
+            }
+            for row in existing_distance_rows
+        ]
+        for row in existing_distance_rows:
+            db.delete(row)
+        if existing_distance_rows:
+            db.flush()
+
+        project.name = payload.name
+        if preserved_distance_rows:
+            db.flush()
+            current_time = now_sgt()
+            for row in preserved_distance_rows:
+                db.add(
+                    ProjectAutoCheckoutDistance(
+                        project_name=payload.name,
+                        minimum_checkout_distance_meters=row["minimum_checkout_distance_meters"],
+                        created_at=row["created_at"],
+                        updated_at=current_time,
+                    )
+                )
+            recreated_minimum_checkout_distances = len(preserved_distance_rows)
+
     project.country_code = updated_fields["country_code"]
     project.country_name = updated_fields["country_name"]
     project.timezone_name = updated_fields["timezone_name"]
+    project.address = payload.address
+    project.zip_code = payload.zip_code
 
     log_event(
         db,
@@ -1800,9 +1882,16 @@ def update_admin_project(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; project_id={project_id}; project_name={project.name}; "
+            f"project_name_old={previous_name}; "
             f"country_code={previous_country_code}->{project.country_code}; "
             f"country_name={previous_country_name}->{project.country_name}; "
-            f"timezone_name={previous_timezone_name}->{project.timezone_name}"
+            f"timezone_name={previous_timezone_name}->{project.timezone_name}; "
+            f"address={previous_address or '-'}->{project.address or '-'}; "
+            f"zip_code={previous_zip_code or '-'}->{project.zip_code or '-'}; "
+            f"updated_user_links={updated_user_links}; "
+            f"updated_location_links={updated_location_links}; "
+            f"updated_admin_scopes={updated_admin_scopes}; "
+            f"recreated_minimum_checkout_distances={recreated_minimum_checkout_distances}"
         ),
     )
     db.commit()

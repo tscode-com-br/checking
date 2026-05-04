@@ -14,6 +14,8 @@ const checkScript = fs.readFileSync(
   'utf8'
 );
 
+const checkAutomaticActivities = require('../sistema/app/static/check/automatic-activities.js');
+
 function extractObjectFreezeConstant(sourceText, constantName) {
   const pattern = new RegExp(`const ${constantName} = Object\\.freeze\\((\\{[\\s\\S]*?\\})\\);`);
   const match = sourceText.match(pattern);
@@ -716,6 +718,114 @@ function createManualRefreshSequenceHarness(overrides = {}) {
   };
 }
 
+function createManualRefreshAutomaticActivityHarness(overrides = {}) {
+  const context = {
+    Boolean,
+    Promise,
+    automaticCheckoutLocation: checkAutomaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
+    gpsLocationPermissionGranted: overrides.gpsLocationPermissionGranted !== undefined
+      ? Boolean(overrides.gpsLocationPermissionGranted)
+      : true,
+    latestHistoryState: null,
+    chaveInput: { value: overrides.chave || 'A123' },
+    __calls: {
+      runWithLockedUserInteraction: 0,
+      resolveCurrentLocation: [],
+      fetchWebState: [],
+      applyHistoryState: [],
+      submitAutomaticActivity: [],
+    },
+    __locationPayload: null,
+    __remoteState: overrides.remoteState || {
+      current_action: 'checkout',
+      current_local: 'Zona de CheckOut',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+    isUserInteractionLocked: overrides.isUserInteractionLocked || (() => false),
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    isAutomaticActivitiesEnabled: overrides.isAutomaticActivitiesEnabled || (() => true),
+    sanitizeChave: overrides.sanitizeChave || ((value) => String(value || '').trim().toUpperCase()),
+    runWithLockedUserInteraction: overrides.runWithLockedUserInteraction || (async (callback) => {
+      context.__calls.runWithLockedUserInteraction += 1;
+      return callback();
+    }),
+    resolveCurrentLocation: overrides.resolveCurrentLocation || (async (options) => {
+      context.__calls.resolveCurrentLocation.push(options);
+      return context.__locationPayload;
+    }),
+    fetchWebState: overrides.fetchWebState || (async (chave) => {
+      context.__calls.fetchWebState.push(chave);
+      return context.__remoteState;
+    }),
+    applyHistoryState: overrides.applyHistoryState || ((remoteState) => {
+      context.__calls.applyHistoryState.push(remoteState);
+    }),
+    shouldAttemptAutomaticLocationEvent:
+      overrides.shouldAttemptAutomaticLocationEvent
+      || ((locationPayload, remoteState) => (
+        checkAutomaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState)
+      )),
+    shouldAttemptAutomaticOutOfRangeCheckout:
+      overrides.shouldAttemptAutomaticOutOfRangeCheckout
+      || ((locationPayload, remoteState) => (
+        checkAutomaticActivities.shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState)
+      )),
+    shouldAttemptAutomaticNearbyWorkplaceCheckIn:
+      overrides.shouldAttemptAutomaticNearbyWorkplaceCheckIn
+      || ((locationPayload, remoteState) => (
+        checkAutomaticActivities.shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState)
+      )),
+    resolveAutomaticCheckInLocation:
+      overrides.resolveAutomaticCheckInLocation
+      || ((locationPayload) => checkAutomaticActivities.resolveAutomaticCheckInLocation(locationPayload)),
+    isCheckoutZoneLocationName:
+      overrides.isCheckoutZoneLocationName
+      || ((value) => checkAutomaticActivities.isCheckoutZoneLocationName(value)),
+    submitAutomaticActivity: overrides.submitAutomaticActivity || (async ({ action, local, suppressStatus }) => {
+      context.__calls.submitAutomaticActivity.push({ action, local, suppressStatus });
+      return {
+        state: {
+          current_action: action,
+          current_local: local,
+        },
+      };
+    }),
+  };
+
+  const moduleSource = [
+    `async ${extractFunctionSource(checkScript, 'runAutomaticActivitiesIfNeeded')}`,
+    `async ${extractFunctionSource(checkScript, 'runManualLocationRefreshSequence')}`,
+    `globalThis.__manualRefreshAutomaticActivityTestExports = {
+      async runManualLocationRefreshSequence() {
+        return runManualLocationRefreshSequence();
+      },
+      setLocationPayload(value) {
+        globalThis.__locationPayload = value;
+      },
+      setRemoteState(value) {
+        globalThis.__remoteState = value;
+      },
+      getSnapshot() {
+        return {
+          runWithLockedUserInteraction: globalThis.__calls.runWithLockedUserInteraction,
+          resolveCurrentLocation: globalThis.__calls.resolveCurrentLocation.slice(),
+          fetchWebState: globalThis.__calls.fetchWebState.slice(),
+          applyHistoryState: globalThis.__calls.applyHistoryState.slice(),
+          submitAutomaticActivity: globalThis.__calls.submitAutomaticActivity.slice(),
+          latestHistoryState: globalThis.latestHistoryState,
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-manual-refresh-automatic-activity.vm.js' });
+  return {
+    helpers: context.__manualRefreshAutomaticActivityTestExports,
+    context,
+  };
+}
+
 function toPlainValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -1274,4 +1384,162 @@ test('manual refresh should evaluate automatic activities after a changed locati
       status: 'matched',
     },
   }]);
+});
+
+test('manual refresh should submit an automatic location update after an active check-in moves to another known location', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkin',
+      current_local: 'Recepção',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    },
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Almoxarifado',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.fetchWebState, ['A123']);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: 'Almoxarifado',
+  }]);
+});
+
+test('manual refresh should submit automatic check-in after checkout when leaving checkout zone for a known location', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness();
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Escritório Principal',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.fetchWebState, ['A123']);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: 'Escritório Principal',
+  }]);
+});
+
+test('manual refresh should submit automatic check-in after checkout when leaving checkout zone for a nearby unregistered location', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness();
+
+  helpers.setLocationPayload({
+    matched: false,
+    status: 'not_in_known_location',
+    label: 'Localização não Cadastrada',
+    nearest_workplace_distance_meters: 180,
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: 'Localização não Cadastrada',
+  }]);
+});
+
+test('manual refresh should not submit automatic activity after checkout when the location remains checkout zone', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness();
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Zona de CheckOut',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+});
+
+test('manual refresh should not start a refresh sequence when the application is locked', async () => {
+  const { helpers } = createManualRefreshSequenceHarness({
+    isApplicationUnlocked: () => false,
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Escritório Principal',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 0);
+  assert.deepStrictEqual(snapshot.resolveCurrentLocation, []);
+  assert.deepStrictEqual(snapshot.runAutomaticActivitiesIfNeeded, []);
+});
+
+test('manual refresh should not submit automatic activity when automatic activities are disabled', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    isAutomaticActivitiesEnabled: () => false,
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Escritório Principal',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.equal(snapshot.resolveCurrentLocation.length, 1);
+  assert.deepStrictEqual(snapshot.fetchWebState, []);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+});
+
+test('manual refresh should not submit automatic activity when the key is invalid', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    chave: 'A1',
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Escritório Principal',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.equal(snapshot.resolveCurrentLocation.length, 1);
+  assert.deepStrictEqual(snapshot.fetchWebState, []);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+});
+
+test('manual refresh should not submit automatic activity after checkout when backend reports outside workplace', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness();
+
+  helpers.setLocationPayload({
+    matched: false,
+    status: 'outside_workplace',
+    minimum_checkout_distance_meters: 2500,
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
 });
