@@ -424,7 +424,7 @@ class TransportAISuggestion(Base):
     __table_args__ = (
         Index("ix_transport_ai_suggestions_suggestion_key", "suggestion_key", unique=True),
         Index(
-            "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at",
+            "ix_tai_suggestions_date_route_status_upd",
             "service_date",
             "route_kind",
             "status",

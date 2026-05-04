@@ -17,6 +17,9 @@ branch_labels = None
 depends_on = None
 
 
+SUGGESTIONS_STATUS_INDEX_NAME = "ix_tai_suggestions_date_route_status_upd"
+
+
 def _index_names(inspector, table_name: str) -> set[str]:
     try:
         return {index.get("name") for index in inspector.get_indexes(table_name)}
@@ -74,9 +77,9 @@ def upgrade() -> None:
             unique=True,
         )
 
-    if "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at" not in existing_indexes:
+    if SUGGESTIONS_STATUS_INDEX_NAME not in existing_indexes:
         op.create_index(
-            "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at",
+            SUGGESTIONS_STATUS_INDEX_NAME,
             "transport_ai_suggestions",
             ["service_date", "route_kind", "status", "updated_at"],
             unique=False,
@@ -91,9 +94,9 @@ def downgrade() -> None:
         return
 
     existing_indexes = _index_names(inspector, "transport_ai_suggestions")
-    if "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at" in existing_indexes:
+    if SUGGESTIONS_STATUS_INDEX_NAME in existing_indexes:
         op.drop_index(
-            "ix_transport_ai_suggestions_service_date_route_kind_status_updated_at",
+            SUGGESTIONS_STATUS_INDEX_NAME,
             table_name="transport_ai_suggestions",
         )
     if "ix_transport_ai_suggestions_suggestion_key" in existing_indexes:
