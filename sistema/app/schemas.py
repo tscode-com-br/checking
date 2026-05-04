@@ -1,6 +1,6 @@
 import re
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -1578,7 +1578,7 @@ class TransportAgentRouteRequest(BaseModel):
         return _normalize_transport_time(value)
 
     @model_validator(mode="after")
-    def validate_transport_agent_route_request(self) -> TransportAgentRouteRequest:
+    def validate_transport_agent_route_request(self) -> Self:
         if self.route_kind != "home_to_work":
             raise ValueError("Transport AI route calculations currently support only home_to_work")
         if self.earliest_boarding_time >= self.arrival_at_work_time:
