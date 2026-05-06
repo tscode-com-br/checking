@@ -1107,8 +1107,11 @@ input.inline, select.inline, textarea.inline {
 }
 
 .cadastro-tab {
-  display: grid;
   gap: 18px;
+}
+
+.cadastro-tab.active {
+  display: grid;
 }
 
 .cadastro-section-panel {
