@@ -71,9 +71,10 @@ fi
 require_single_app_worker() {
   local app_workers
   app_workers="$({ awk -F= '$1=="APP_WORKERS" { print $2 }' .env || true; } | tail -n 1 | tr -d '[:space:]')"
+  app_workers="${app_workers:-1}"
 
   if [ "$app_workers" != "1" ]; then
-    echo "APP_WORKERS=1 e obrigatorio no .env ate a validacao real de multiworker em tests/test_multiworker_realtime_postgres.py. Valor atual: ${app_workers:-unset}"
+    echo "APP_WORKERS deve resolver para 1 ate a validacao real de multiworker em tests/test_multiworker_realtime_postgres.py. Valor efetivo: $app_workers"
     exit 1
   fi
 }

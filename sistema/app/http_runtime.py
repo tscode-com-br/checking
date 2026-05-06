@@ -29,7 +29,7 @@ def build_http_server_command() -> list[str]:
         "--worker-class",
         "uvicorn.workers.UvicornWorker",
         "--workers",
-        _get_positive_integer_env("APP_WORKERS", 2),
+        _get_positive_integer_env("APP_WORKERS", 1),
         "--bind",
         f"{app_host}:{app_port}",
         "--keep-alive",
