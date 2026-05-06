@@ -7,8 +7,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -22,6 +24,7 @@ from .services.admin_auth import seed_default_admin
 from .services.admin_updates import start_realtime_brokers, stop_realtime_brokers
 from .services.event_archives import ensure_event_archives_dir
 from .services.project_catalog import seed_default_projects
+from .services.transport_ai_sanitization import sanitize_transport_ai_raw_value
 
 
 STATIC_SITE_FLAG_BY_NAME = {
@@ -237,6 +240,18 @@ app.add_middleware(
     same_site="lax",
     https_only=False,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_request_validation_error(request: Request, exc: RequestValidationError):
+    if str(request.url.path or "").strip() == "/api/transport/ai/settings":
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": sanitize_transport_ai_raw_value(exc.errors()),
+            },
+        )
+    return await request_validation_exception_handler(request, exc)
 
 
 app.include_router(health.router)

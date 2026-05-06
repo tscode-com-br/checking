@@ -14,7 +14,7 @@ _ROUTE_KIND_TO_LABEL = {
     "work_to_home": "Work to Home",
 }
 _TRANSPORT_VEHICLE_PENDING_FIELD_ORDER = ("tipo", "placa", "color", "lugares", "tolerance")
-_TRANSPORT_VEHICLE_READY_FIELD_ORDER = ("tipo", "placa", "lugares", "tolerance")
+_TRANSPORT_VEHICLE_READY_FIELD_ORDER = ("tipo", "lugares", "tolerance")
 
 
 def _resolve_vehicle_field_value(source: object, field_name: str) -> object:

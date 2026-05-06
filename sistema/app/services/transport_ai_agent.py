@@ -25,6 +25,7 @@ from ..schemas import (
     TransportAgentCostSummary,
     TransportAgentPlan,
     TransportAgentPlanningInput,
+    TransportAgentProjectLlmRuntimeSnapshot,
     TransportAgentPartitionSolveResult,
     TransportAgentResolvedRoutePointsResult,
     TransportAgentRouteMatricesResult,
@@ -43,6 +44,7 @@ from .transport_ai_planning import (
 from .transport_ai_llm_settings import (
     TRANSPORT_AI_LLM_DEFAULT_REASONING_EFFORT,
     TransportAILlmRuntimeSettings,
+    TransportAILlmSettingsValidationError,
 )
 from .transport_ai_runtime import resolve_transport_ai_shared_llm_runtime_context
 from .transport_ai_sanitization import (
@@ -1209,16 +1211,69 @@ def _build_transport_ai_raw_model_response_json(
 
 
 def _should_resolve_transport_ai_run_llm_runtime_settings(*, run: TransportAIRun, model: Any | None) -> bool:
-    if model is None:
-        return True
-    return any(
-        str(value or "").strip()
-        for value in (
-            run.llm_provider,
-            run.llm_model,
-            run.llm_reasoning_effort,
+    return True
+
+
+def _build_transport_ai_run_llm_snapshot_signature(
+    snapshots: list[TransportAgentProjectLlmRuntimeSnapshot],
+) -> list[tuple[int, str, str, str, tuple[str, ...]]]:
+    normalized_rows: list[tuple[int, str, str, str, tuple[str, ...]]] = []
+    for snapshot in snapshots:
+        normalized_rows.append(
+            (
+                int(snapshot.project_id),
+                str(snapshot.provider or "").strip().lower(),
+                str(snapshot.model_name or "").strip(),
+                str(snapshot.reasoning_effort or "").strip().lower(),
+                tuple(
+                    sorted(
+                        {
+                            str(partition_key).strip()
+                            for partition_key in snapshot.partition_keys
+                            if str(partition_key).strip()
+                        }
+                    )
+                ),
+            )
         )
-    )
+    return sorted(normalized_rows)
+
+
+def _validate_transport_ai_run_llm_snapshot_consistency(
+    *,
+    run: TransportAIRun,
+    planning_input: TransportAgentPlanningInput,
+    persisted_runtime_settings: TransportAILlmRuntimeSettings,
+    llm_runtime_projects: list[TransportAgentProjectLlmRuntimeSnapshot],
+) -> None:
+    if planning_input.llm_runtime_projects:
+        if _build_transport_ai_run_llm_snapshot_signature(
+            planning_input.llm_runtime_projects
+        ) != _build_transport_ai_run_llm_snapshot_signature(llm_runtime_projects):
+            raise TransportAILlmSettingsValidationError(
+                "Transport AI run LLM snapshot no longer matches the current project-specific AI settings. "
+                "Start a new run after saving consistent AI settings for the referenced projects."
+            )
+        return
+
+    snapshot_provider = str(run.llm_provider or "").strip().lower()
+    snapshot_model_name = str(run.llm_model or "").strip()
+    snapshot_reasoning_effort = str(run.llm_reasoning_effort or "").strip().lower()
+    if not any((snapshot_provider, snapshot_model_name, snapshot_reasoning_effort)):
+        return
+
+    if (
+        (snapshot_provider and snapshot_provider != persisted_runtime_settings.provider)
+        or (snapshot_model_name and snapshot_model_name != persisted_runtime_settings.model_name)
+        or (
+            snapshot_reasoning_effort
+            and snapshot_reasoning_effort != persisted_runtime_settings.reasoning_effort
+        )
+    ):
+        raise TransportAILlmSettingsValidationError(
+            "Transport AI run LLM snapshot no longer matches the current project-specific AI settings. "
+            "Start a new run after saving consistent AI settings for the referenced projects."
+        )
 
 
 def _resolve_transport_ai_run_llm_runtime_settings(
@@ -1233,25 +1288,20 @@ def _resolve_transport_ai_run_llm_runtime_settings(
         planning_input=planning_input,
         settings_obj=settings_obj,
     )
-    provider = str(run.llm_provider or persisted_runtime_settings.provider).strip().lower() or persisted_runtime_settings.provider
-    model_name = (
-        str(run.llm_model or run.openai_model or persisted_runtime_settings.model_name).strip()
-        or persisted_runtime_settings.model_name
+    _validate_transport_ai_run_llm_snapshot_consistency(
+        run=run,
+        planning_input=planning_input,
+        persisted_runtime_settings=persisted_runtime_settings,
+        llm_runtime_projects=llm_runtime_projects,
     )
-    reasoning_effort = (
-        str(run.llm_reasoning_effort or persisted_runtime_settings.reasoning_effort).strip().lower()
-        or persisted_runtime_settings.reasoning_effort
-    )
-    base_url = persisted_runtime_settings.base_url if provider == persisted_runtime_settings.provider else None
+
+    updated_planning_input = planning_input
+    if not planning_input.llm_runtime_projects:
+        updated_planning_input = planning_input.model_copy(update={"llm_runtime_projects": llm_runtime_projects})
+
     return (
-        TransportAILlmRuntimeSettings(
-            provider=provider,
-            model_name=model_name,
-            reasoning_effort=reasoning_effort,
-            api_key=persisted_runtime_settings.api_key,
-            base_url=base_url,
-        ),
-        planning_input.model_copy(update={"llm_runtime_projects": llm_runtime_projects}),
+        persisted_runtime_settings,
+        updated_planning_input,
     )
 
 

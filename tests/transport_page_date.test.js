@@ -825,6 +825,10 @@ function createFetchMock(options) {
   const projectListResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'projectListResponse')
     ? nextOptions.projectListResponse
     : (Array.isArray(dashboardResponse.projects) ? dashboardResponse.projects : []);
+  const projectListError = nextOptions.projectListError || null;
+  const projectListHandler = typeof nextOptions.projectListHandler === 'function'
+    ? nextOptions.projectListHandler
+    : null;
   const latestSuggestionResponse = nextOptions.latestSuggestionResponse;
   const commandResponses = nextOptions.commandResponses || {};
   const aiSettingsResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'aiSettingsResponse')
@@ -872,6 +876,12 @@ function createFetchMock(options) {
       return createFetchResponse({ ok: true }, 200);
     }
     if (request.method === 'GET' && request.url.includes('/projects')) {
+      if (projectListHandler) {
+        return projectListHandler(request);
+      }
+      if (projectListError) {
+        return createFetchResponse(projectListError.payload, projectListError.status);
+      }
       return createFetchResponse(projectListResponse, 200);
     }
     if (request.method === 'GET' && request.url.includes('/ai/settings')) {
@@ -2938,6 +2948,217 @@ test('transport ai settings modal opens from the AI menu, loads masked state, an
   });
 });
 
+test('transport ai settings modal shows bootstrap dashboard projects while the authoritative catalog is still loading', async () => {
+  const deferredProjectList = createDeferred();
+
+  await withTransportPageHarness(
+    {
+      dashboardResponse: {
+        selected_route: 'home_to_work',
+        selected_date: '2026-06-13',
+        projects: [
+          createTransportProjectRow(101, 'Project Atlas'),
+          createTransportProjectRow(202, 'Project Borealis'),
+        ],
+        regular_requests: [],
+        weekend_requests: [],
+        extra_requests: [],
+        regular_vehicles: [],
+        weekend_vehicles: [],
+        extra_vehicles: [],
+        regular_vehicle_registry: [],
+        weekend_vehicle_registry: [],
+        extra_vehicle_registry: [],
+        workplaces: [],
+      },
+      projectListHandler() {
+        return deferredProjectList.promise;
+      },
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        return createFetchResponse(
+          {
+            project_id: projectId,
+            project_name: 'Project Atlas',
+            provider: 'openai',
+            resolved_model: 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: '***1010',
+          },
+          200,
+        );
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.equal(projectField.value, '101');
+      assert.deepEqual(
+        projectField.children.map((element) => element.value),
+        ['', '101', '202'],
+      );
+      assert.equal(getElement('[data-ai-settings-provider]').disabled, true);
+      assert.equal(getElement('[data-ai-settings-save]').disabled, true);
+      assert.equal(
+        fetchCalls.filter((call) => call.method === 'GET' && call.url.includes('/projects')).length,
+        1,
+      );
+      assert.equal(
+        fetchCalls.filter((call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=')).length,
+        0,
+      );
+
+      deferredProjectList.resolve(
+        createFetchResponse(
+          [
+            createTransportProjectRow(101, 'Project Atlas'),
+            createTransportProjectRow(303, 'Project Ceres'),
+          ],
+          200,
+        )
+      );
+      await flushAsyncWork();
+
+      assert.deepEqual(
+        projectField.children.map((element) => element.value),
+        ['', '101', '303'],
+      );
+      assert.equal(projectField.value, '101');
+      assert.ok(fetchCalls.some((call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=101')));
+      assert.equal(getElement('[data-ai-settings-provider]').disabled, false);
+      assert.equal(getElement('[data-ai-settings-save]').disabled, false);
+    },
+  );
+});
+
+test('transport ai settings modal refreshes the project catalog authoritatively and preserves the selected project when it still exists', async () => {
+  await withTransportPageHarness(
+    {
+      dashboardResponse: {
+        selected_route: 'home_to_work',
+        selected_date: '2026-06-13',
+        projects: [
+          createTransportProjectRow(101, 'Project Atlas'),
+          createTransportProjectRow(202, 'Project Borealis'),
+        ],
+        regular_requests: [],
+        weekend_requests: [],
+        extra_requests: [],
+        regular_vehicles: [],
+        weekend_vehicles: [],
+        extra_vehicles: [],
+        regular_vehicle_registry: [],
+        weekend_vehicle_registry: [],
+        extra_vehicle_registry: [],
+        workplaces: [],
+      },
+      projectListResponse: [
+        createTransportProjectRow(101, 'Project Atlas'),
+        createTransportProjectRow(303, 'Project Ceres'),
+      ],
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        return createFetchResponse(
+          {
+            project_id: projectId,
+            project_name: projectId === 303 ? 'Project Ceres' : 'Project Atlas',
+            provider: 'openai',
+            resolved_model: 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: projectId === 303 ? '***3030' : '***1010',
+          },
+          200,
+        );
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectCalls = fetchCalls.filter((call) => call.method === 'GET' && call.url.includes('/projects'));
+      assert.equal(projectCalls.length, 1);
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.equal(projectField.value, '101');
+      assert.deepEqual(
+        projectField.children.map((element) => element.value),
+        ['', '101', '303'],
+      );
+
+      const settingsGetCall = fetchCalls.find(
+        (call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=101'),
+      );
+      assert.ok(settingsGetCall);
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+    },
+  );
+});
+
+test('transport ai settings modal recovers when dashboard projects are empty but the projects endpoint returns valid items', async () => {
+  await withTransportPageHarness(
+    {
+      dashboardResponse: {
+        selected_route: 'home_to_work',
+        selected_date: '2026-06-13',
+        projects: [],
+        regular_requests: [],
+        weekend_requests: [],
+        extra_requests: [],
+        regular_vehicles: [],
+        weekend_vehicles: [],
+        extra_vehicles: [],
+        regular_vehicle_registry: [],
+        weekend_vehicle_registry: [],
+        extra_vehicle_registry: [],
+        workplaces: [],
+      },
+      projectListResponse: [
+        createTransportProjectRow(101, 'Project Atlas'),
+        createTransportProjectRow(202, 'Project Borealis'),
+      ],
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        return createFetchResponse(
+          {
+            project_id: projectId,
+            project_name: projectId === 202 ? 'Project Borealis' : 'Project Atlas',
+            provider: projectId === 202 ? 'deepseek' : 'openai',
+            resolved_model: projectId === 202 ? 'deepseek-v4-pro' : 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: projectId === 202 ? '***2020' : '***1010',
+          },
+          200,
+        );
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.deepEqual(
+        projectField.children.map((element) => element.value),
+        ['', '101', '202'],
+      );
+      assert.equal(projectField.value, '101');
+      assert.ok(fetchCalls.some((call) => call.method === 'GET' && call.url.includes('/projects')));
+      assert.ok(fetchCalls.some((call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=101')));
+      assert.equal(getElement('[data-ai-settings-provider]').value, 'openai');
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+      assert.equal(getElement('[data-ai-settings-feedback]').hidden, true);
+      assert.equal(getElement('[data-ai-settings-save]').disabled, false);
+    },
+  );
+});
+
 test('transport ai settings save flow updates the provider note, posts the trimmed payload, and closes on success', async () => {
   await withTransportPageHarness(
     {
@@ -3005,6 +3226,100 @@ test('transport ai settings save errors keep the modal open with inline feedback
       assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
       assert.equal(getElement('[data-ai-settings-feedback]').hidden, false);
       assert.match(getElement('[data-ai-settings-feedback]').textContent, /requires a new api key/i);
+      assert.notEqual(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'Transport AI could not load the available projects.'
+      );
+    }
+  );
+});
+
+test('transport ai settings save stays blocked when no valid project is selected', async () => {
+  await withTransportPageHarness({}, async ({ getElement, fetchCalls, flushAsyncWork }) => {
+    getElement('[data-ai-menu-action="settings"]').click();
+    await flushAsyncWork();
+
+    const projectField = getElement('[data-ai-settings-project]');
+    projectField.value = '';
+    projectField.dispatchEvent(createFakeEvent('change', { target: projectField }));
+    await flushAsyncWork();
+
+    const saveButton = getElement('[data-ai-settings-save]');
+    assert.equal(saveButton.disabled, true);
+
+    saveButton.click();
+    await flushAsyncWork();
+
+    assert.equal(
+      fetchCalls.filter((call) => call.method === 'PUT' && call.url.includes('/ai/settings')).length,
+      0,
+    );
+    assert.equal(
+      getElement('[data-ai-settings-feedback]').textContent,
+      'Select a valid project before saving.',
+    );
+  });
+});
+
+test('transport ai settings save surfaces the missing project_id validation without generic field required text', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsPutError: {
+        status: 422,
+        payload: {
+          detail: [
+            {
+              type: 'missing',
+              loc: ['body', 'project_id'],
+              msg: 'Field required',
+            },
+          ],
+        },
+      },
+    },
+    async ({ getElement, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      getElement('[data-ai-settings-save]').click();
+      await flushAsyncWork();
+
+      assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
+      assert.equal(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'Select a valid project before saving.',
+      );
+    }
+  );
+});
+
+test('transport ai settings save differentiates a removed project from provider validation failures', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsPutError: {
+        status: 404,
+        payload: {
+          detail: 'Transport AI project does not exist.',
+        },
+      },
+    },
+    async ({ getElement, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      getElement('[data-ai-settings-save]').click();
+      await flushAsyncWork();
+
+      assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
+      assert.equal(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'The selected project was removed before the AI settings could be saved. Reload the project catalog and choose another project.',
+      );
+      assert.equal(getElement('[data-ai-settings-save]').disabled, true);
+      assert.notEqual(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'Changing provider requires a new API key.'
+      );
     }
   );
 });
@@ -3242,6 +3557,82 @@ test('transport ai settings modal switches projects, reloads isolated hints, and
   );
 });
 
+test('transport ai settings modal isolates provider, api key hint, and unsaved draft when switching projects', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        if (projectId === 202) {
+          return createFetchResponse(
+            {
+              project_id: 202,
+              project_name: 'Project Borealis',
+              provider: 'deepseek',
+              resolved_model: 'deepseek-v4-pro',
+              reasoning_effort: 'high',
+              has_api_key: true,
+              api_key_hint: '***2020',
+            },
+            200,
+          );
+        }
+
+        return createFetchResponse(
+          {
+            project_id: 101,
+            project_name: 'Project Atlas',
+            provider: 'openai',
+            resolved_model: 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: '***1010',
+          },
+          200,
+        );
+      },
+    },
+    async ({ getElement, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectField = getElement('[data-ai-settings-project]');
+      const providerField = getElement('[data-ai-settings-provider]');
+      const apiKeyField = getElement('[data-ai-settings-api-key]');
+
+      assert.equal(projectField.value, '101');
+      assert.equal(providerField.value, 'openai');
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+
+      apiKeyField.value = 'sk-atlas-draft';
+      apiKeyField.dispatchEvent(createFakeEvent('input', { target: apiKeyField }));
+
+      projectField.value = '202';
+      projectField.dispatchEvent(createFakeEvent('change', { target: projectField }));
+      await flushAsyncWork();
+
+      assert.equal(projectField.value, '202');
+      assert.equal(providerField.value, 'deepseek');
+      assert.match(getElement('[data-ai-settings-provider-note]').textContent, /deepseek-v4-pro/i);
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*2020/);
+      assert.equal(apiKeyField.value, '');
+
+      apiKeyField.value = 'sk-borealis-draft';
+      apiKeyField.dispatchEvent(createFakeEvent('input', { target: apiKeyField }));
+
+      projectField.value = '101';
+      projectField.dispatchEvent(createFakeEvent('change', { target: projectField }));
+      await flushAsyncWork();
+
+      assert.equal(projectField.value, '101');
+      assert.equal(providerField.value, 'openai');
+      assert.match(getElement('[data-ai-settings-provider-note]').textContent, /gpt-5\.4-2026-03-05/i);
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+      assert.equal(apiKeyField.value, '');
+    },
+  );
+});
+
 test('transport ai settings modal keeps the selected project and shows controlled feedback when a project switch load fails', async () => {
   await withTransportPageHarness(
     {
@@ -3299,6 +3690,43 @@ test('transport ai settings modal keeps the selected project and shows controlle
   );
 });
 
+test('transport ai settings modal keeps bootstrap projects visible but blocks save when the authoritative project catalog fails', async () => {
+  await withTransportPageHarness(
+    {
+      projectListError: {
+        status: 500,
+        payload: {},
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectCalls = fetchCalls.filter((call) => call.method === 'GET' && call.url.includes('/projects'));
+      const settingsGetCalls = fetchCalls.filter(
+        (call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id='),
+      );
+      assert.equal(projectCalls.length, 1);
+      assert.equal(settingsGetCalls.length, 0);
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.equal(projectField.disabled, false);
+      assert.equal(projectField.value, '101');
+      assert.deepEqual(
+        projectField.children.map((element) => element.value),
+        ['', '101', '202'],
+      );
+      assert.equal(getElement('[data-ai-settings-provider]').disabled, true);
+      assert.equal(getElement('[data-ai-settings-api-key]').disabled, true);
+      assert.equal(getElement('[data-ai-settings-save]').disabled, true);
+      assert.equal(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'Transport AI could not load the available projects.',
+      );
+    },
+  );
+});
+
 test('transport ai settings modal falls back to the projects endpoint and shows a controlled warning when no projects exist', async () => {
   await withTransportPageHarness(
     {
@@ -3333,6 +3761,33 @@ test('transport ai settings modal falls back to the projects endpoint and shows 
       );
     }
   );
+});
+
+test('transport ai settings fetch mock handles /ai/settings before the generic /settings route', async () => {
+  const aiSettingsPayload = {
+    project_id: 101,
+    project_name: 'Project Atlas',
+    provider: 'openai',
+    resolved_model: 'gpt-5.4-2026-03-05',
+    reasoning_effort: 'high',
+    has_api_key: true,
+    api_key_hint: '***1234',
+  };
+  const settingsPayload = {
+    work_to_home_time: '17:15',
+    last_update_time: '16:30',
+  };
+
+  const { fetch } = createFetchMock({
+    aiSettingsResponse: aiSettingsPayload,
+    settingsResponse: settingsPayload,
+  });
+
+  const aiSettingsResponse = await fetch('../api/transport/ai/settings?project_id=101');
+  const settingsResponse = await fetch('../api/transport/settings');
+
+  assert.deepEqual(JSON.parse(await aiSettingsResponse.text()), aiSettingsPayload);
+  assert.deepEqual(JSON.parse(await settingsResponse.text()), settingsPayload);
 });
 
 test('transport ai implement modifications renders the latest suggestion into the review modal panels', async () => {
@@ -3761,11 +4216,18 @@ test('transport settings modal widens on desktop and collapses pricing controls 
 });
 
 test('transport frontend uses base-relative asset and API paths so the /checking prefix keeps working', () => {
+  const transportIndex = fs.readFileSync(
+    path.join(__dirname, '../sistema/app/static/transport/index.html'),
+    'utf8'
+  );
   const transportScript = fs.readFileSync(
     path.join(__dirname, '../sistema/app/static/transport/app.js'),
     'utf8'
   );
 
+  assert.match(transportIndex, /href="styles\.css\?v=20260506b"/);
+  assert.match(transportIndex, /src="i18n\.js\?v=20260506b"/);
+  assert.match(transportIndex, /src="app\.js\?v=20260506b"/);
   assert.match(transportScript, /const TRANSPORT_ASSETS_PREFIX = "\.\.\/assets";/);
   assert.match(transportScript, /const TRANSPORT_API_PREFIX = "\.\.\/api\/transport";/);
   assert.match(transportScript, /new globalScope\.EventSource\(`\$\{TRANSPORT_API_PREFIX\}\/stream`\);/);
@@ -4087,6 +4549,10 @@ test('vehicle allocation readiness helper falls back to required vehicle fields 
   );
   assert.equal(
     transportPage.isVehicleReadyForAllocation({ tipo: 'carro', placa: 'SGX1001A', lugares: 4, tolerance: 5 }),
+    true
+  );
+  assert.equal(
+    transportPage.isVehicleReadyForAllocation({ tipo: 'carro', placa: null, color: null, lugares: 4, tolerance: 5 }),
     true
   );
   assert.equal(
@@ -4438,6 +4904,22 @@ test('formatApiErrorMessage extracts readable messages from FastAPI validation p
       422
     ),
     'Value error, route_kind is only allowed for extra vehicles'
+  );
+
+  assert.equal(
+    transportPage.formatApiErrorMessage(
+      {
+        detail: [
+          {
+            type: 'missing',
+            loc: ['body', 'project_id'],
+            msg: 'Field required',
+          },
+        ],
+      },
+      422
+    ),
+    'Transport AI project is required.'
   );
 
   assert.equal(

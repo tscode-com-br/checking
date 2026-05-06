@@ -152,14 +152,15 @@ def _create_transport_request(
 def _create_extra_vehicle_candidate(
     session: Session,
     *,
-    placa: str,
+    placa: str | None,
     service_date: date,
+    color: str | None = "white",
 ) -> Vehicle:
     timestamp = _fixture_timestamp()
     vehicle = Vehicle(
         placa=placa,
         tipo="carro",
-        color="white",
+        color=color,
         lugares=4,
         tolerance=0,
         service_scope="extra",
@@ -376,6 +377,78 @@ def test_solve_transport_plan_tool_returns_deterministic_plan_without_calling_ap
         assert first_result["total_routes"] == 1
         assert first_result["total_passenger_allocations"] == 2
         assert first_result["plan"]["vehicle_actions"][0]["action_type"] == "keep"
+    finally:
+        engine.dispose()
+
+
+def test_solve_transport_plan_tool_keeps_existing_vehicle_without_plate_and_color(tmp_path, monkeypatch):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_tools_partial_vehicle_solve.db")
+    try:
+        service_date = date(2026, 5, 6)
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            project = _create_project(session, name="PPLAN-PARTIAL", address="1 Marina Boulevard", zip_code="018989")
+            user_one = _create_user(
+                session,
+                chave="TB41",
+                nome="Tool Partial Worker One",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            user_two = _create_user(
+                session,
+                chave="TB42",
+                nome="Tool Partial Worker Two",
+                projeto=project.name,
+                address="25 Raffles Place",
+                zip_code="048621",
+            )
+            _create_transport_request(session, user_id=user_one.id, service_date=service_date)
+            _create_transport_request(session, user_id=user_two.id, service_date=service_date)
+            vehicle = _create_extra_vehicle_candidate(
+                session,
+                placa=None,
+                color=None,
+                service_date=service_date,
+            )
+            session.commit()
+
+            import sistema.app.services.transport_proposals as transport_proposals
+
+            monkeypatch.setattr(
+                transport_proposals,
+                "apply_transport_operational_proposal",
+                lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("apply must not be called by LangChain tools")),
+            )
+
+            context = _build_tool_context(
+                session,
+                service_date=service_date,
+                provider=FakeTransportRouteProvider(settings_obj=_build_planning_settings(), allow_synthetic_geocode=False),
+            )
+            tools_by_name = _build_tools_by_name(context)
+            planning_input_hash = tools_by_name["load_planning_input"].invoke({})["planning_input_hash"]
+
+            planning_input = context.state.planning_input
+            assert planning_input is not None
+            planning_vehicle = planning_input.partitions[0].candidate_vehicles[0]
+            assert planning_vehicle.vehicle_id == vehicle.id
+            assert planning_vehicle.plate is None
+            assert planning_vehicle.pending_fields == ["placa", "color"]
+            assert planning_vehicle.is_ready_for_allocation is True
+
+            tools_by_name["geocode_route_points"].invoke({"planning_input_hash": planning_input_hash})
+            tools_by_name["build_route_matrices"].invoke({"planning_input_hash": planning_input_hash})
+            result = tools_by_name["solve_transport_plan"].invoke({"planning_input_hash": planning_input_hash})
+
+        assert result["ok"] is True
+        assert result["total_routes"] == 1
+        assert result["total_passenger_allocations"] == 2
+        assert result["plan"]["vehicle_actions"][0]["action_type"] == "keep"
+        assert result["plan"]["vehicle_actions"][0]["vehicle_id"] == vehicle.id
+        assert result["plan"]["passenger_allocations"][0]["vehicle_ref"] == f"existing:{vehicle.id}"
+        assert result["plan"]["route_itineraries"][0]["plate"] is None
     finally:
         engine.dispose()
 

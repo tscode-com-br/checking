@@ -384,6 +384,51 @@ def test_transport_ai_run_status_returns_running_without_suggestion(tmp_path):
     _run_transport_ai_router_script(tmp_path, script=script)
 
 
+def test_transport_ai_settings_endpoint_returns_sanitized_422_when_project_id_is_missing(tmp_path):
+    script = textwrap.dedent(
+        """
+        from fastapi.testclient import TestClient
+
+        from sistema.app.main import app
+        from sistema.app.database import Base, engine
+
+
+        Base.metadata.create_all(bind=engine)
+
+        with TestClient(app) as client:
+            login = client.post(
+                '/api/transport/auth/verify',
+                json={'chave': 'HR70', 'senha': 'eAcacdLe2'},
+            )
+            assert login.status_code == 200, login.text
+            assert login.json()['authenticated'] is True
+
+            failed = client.put(
+                '/api/transport/ai/settings',
+                json={
+                    'provider': 'openai',
+                    'api_key': 'sk-super-secret-1234',
+                },
+            )
+            assert failed.status_code == 422, failed.text
+            assert 'sk-super-secret-1234' not in failed.text
+
+            payload = failed.json()
+            assert isinstance(payload['detail'], list)
+            assert payload['detail']
+            first_error = payload['detail'][0]
+            assert first_error['loc'] == ['body']
+            assert first_error['msg'] == 'Transport AI project is required.'
+            assert first_error['input']['provider'] == 'openai'
+            assert first_error['input']['api_key'] == '[REDACTED]'
+
+        print('transport-ai-settings-missing-project-sanitized-ok')
+        """
+    ).strip()
+
+    _run_transport_ai_router_script(tmp_path, script=script)
+
+
 def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_safely(tmp_path):
     script = textwrap.dedent(
         """
@@ -504,6 +549,186 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
                 assert audit_details['request_path'] == '/api/transport/ai/settings'
 
         print('transport-ai-settings-endpoints-ok')
+        """
+    ).strip()
+
+    _run_transport_ai_router_script(tmp_path, script=script)
+
+
+def test_transport_ai_settings_endpoint_returns_404_for_missing_project_update_without_leaking_secret(tmp_path):
+    script = textwrap.dedent(
+        """
+        from fastapi.testclient import TestClient
+        from sqlalchemy import select
+
+        from sistema.app.main import app
+        from sistema.app.database import Base, SessionLocal, engine
+        from sistema.app.models import TransportAIProjectLlmSettings
+
+
+        Base.metadata.create_all(bind=engine)
+
+        with TestClient(app) as client:
+            login = client.post(
+                '/api/transport/auth/verify',
+                json={'chave': 'HR70', 'senha': 'eAcacdLe2'},
+            )
+            assert login.status_code == 200, login.text
+            assert login.json()['authenticated'] is True
+
+            missing_project = client.put(
+                '/api/transport/ai/settings',
+                json={
+                    'project_id': 9999,
+                    'provider': 'openai',
+                    'api_key': 'sk-missing-project-1234',
+                },
+            )
+            assert missing_project.status_code == 404, missing_project.text
+            assert missing_project.json()['detail'] == 'Transport AI project does not exist.'
+            assert 'sk-missing-project-1234' not in missing_project.text
+
+            with SessionLocal() as session:
+                persisted_rows = session.execute(select(TransportAIProjectLlmSettings)).scalars().all()
+                assert persisted_rows == []
+
+        print('transport-ai-settings-missing-project-update-ok')
+        """
+    ).strip()
+
+    _run_transport_ai_router_script(tmp_path, script=script)
+
+
+def test_transport_ai_settings_endpoint_keeps_project_rows_isolated_and_rolls_back_failed_provider_change(tmp_path):
+    script = textwrap.dedent(
+        """
+        from fastapi.testclient import TestClient
+        from sqlalchemy import select
+
+        from sistema.app.main import app
+        from sistema.app.database import Base, SessionLocal, engine
+        from sistema.app.models import Project, TransportAILlmSettings, TransportAIProjectLlmSettings
+        from sistema.app.routers import transport_ai as transport_ai_router_module
+        from sistema.app.services.transport_ai_llm_settings import TransportAILlmSettingsValidationError
+
+
+        Base.metadata.create_all(bind=engine)
+
+        with SessionLocal() as session:
+            project_a = Project(
+                name='Transport AI Isolated Project A',
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='201 Project Avenue',
+                zip_code='018995',
+            )
+            project_b = Project(
+                name='Transport AI Isolated Project B',
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='202 Project Avenue',
+                zip_code='018996',
+            )
+            session.add(project_a)
+            session.add(project_b)
+            session.commit()
+            project_a_id = project_a.id
+            project_b_id = project_b.id
+
+        original_upsert = transport_ai_router_module.upsert_transport_ai_llm_settings
+
+        with TestClient(app) as client:
+            login = client.post(
+                '/api/transport/auth/verify',
+                json={'chave': 'HR70', 'senha': 'eAcacdLe2'},
+            )
+            assert login.status_code == 200, login.text
+            assert login.json()['authenticated'] is True
+
+            saved_a = client.put(
+                '/api/transport/ai/settings',
+                json={
+                    'project_id': project_a_id,
+                    'provider': 'openai',
+                    'api_key': 'sk-project-a-1234',
+                },
+            )
+            assert saved_a.status_code == 200, saved_a.text
+
+            saved_b = client.put(
+                '/api/transport/ai/settings',
+                json={
+                    'project_id': project_b_id,
+                    'provider': 'deepseek',
+                    'api_key': 'deepseek-project-b-9876',
+                },
+            )
+            assert saved_b.status_code == 200, saved_b.text
+
+            def _mutating_failure(db, *, project_id, provider, api_key, actor_admin_user_id):
+                persisted = transport_ai_router_module.get_transport_ai_llm_settings(db, project_id=project_id)
+                assert persisted is not None
+                persisted.provider = 'deepseek'
+                persisted.model_name = 'deepseek-v4-pro'
+                persisted.reasoning_effort = 'high'
+                persisted.api_key_last4 = '0000'
+                persisted.api_key_ciphertext = 'leaked-ciphertext-0000'
+                db.flush()
+                raise TransportAILlmSettingsValidationError(
+                    'Transport AI API key is required when changing the LLM provider.'
+                )
+
+            transport_ai_router_module.upsert_transport_ai_llm_settings = _mutating_failure
+            try:
+                failed_change = client.put(
+                    '/api/transport/ai/settings',
+                    json={
+                        'project_id': project_a_id,
+                        'provider': 'deepseek',
+                        'api_key': None,
+                    },
+                )
+            finally:
+                transport_ai_router_module.upsert_transport_ai_llm_settings = original_upsert
+
+            assert failed_change.status_code == 409, failed_change.text
+            assert failed_change.json()['detail'] == 'Transport AI API key is required when changing the LLM provider.'
+
+            fetched_a = client.get('/api/transport/ai/settings', params={'project_id': project_a_id})
+            fetched_b = client.get('/api/transport/ai/settings', params={'project_id': project_b_id})
+            assert fetched_a.status_code == 200, fetched_a.text
+            assert fetched_b.status_code == 200, fetched_b.text
+            assert fetched_a.json()['provider'] == 'openai'
+            assert fetched_a.json()['api_key_hint'] == '***1234'
+            assert fetched_b.json()['provider'] == 'deepseek'
+            assert fetched_b.json()['api_key_hint'] == '***9876'
+
+            with SessionLocal() as session:
+                project_rows = session.execute(
+                    select(TransportAIProjectLlmSettings)
+                    .order_by(TransportAIProjectLlmSettings.project_id.asc())
+                ).scalars().all()
+                legacy_rows = session.execute(select(TransportAILlmSettings)).scalars().all()
+
+                assert [row.project_id for row in project_rows] == [project_a_id, project_b_id]
+                assert legacy_rows == []
+
+                project_a_settings = project_rows[0]
+                project_b_settings = project_rows[1]
+
+                assert project_a_settings.provider == 'openai'
+                assert project_a_settings.api_key_last4 == '1234'
+                assert project_a_settings.api_key_ciphertext != 'sk-project-a-1234'
+                assert project_a_settings.api_key_ciphertext != 'leaked-ciphertext-0000'
+
+                assert project_b_settings.provider == 'deepseek'
+                assert project_b_settings.api_key_last4 == '9876'
+                assert project_b_settings.api_key_ciphertext != 'deepseek-project-b-9876'
+                assert project_b_settings.api_key_ciphertext != project_a_settings.api_key_ciphertext
+
+        print('transport-ai-settings-isolation-and-rollback-ok')
         """
     ).strip()
 

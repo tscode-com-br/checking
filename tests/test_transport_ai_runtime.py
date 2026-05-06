@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from sistema.app.core.config import Settings, settings
 from sistema.app.database import Base
-from sistema.app.models import AdminUser, Project
+from sistema.app.models import AdminUser, Project, TransportAIProjectLlmSettings
 from sistema.app.schemas import (
     ProjectRow,
     TransportAgentPlanningInput,
@@ -547,5 +547,63 @@ def test_validate_transport_ai_runtime_configuration_reports_project_runtime_con
 
         assert result.ok is False
         assert [issue.code for issue in result.issues] == ["transport_ai_llm_runtime_conflict"]
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_conflict_serialization_excludes_api_keys_and_ciphertexts(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_project_key_conflict_redaction.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            settings_obj = _build_runtime_settings(
+                openai_api_key=None,
+                openai_model="legacy-openai-model-ignored",
+            )
+            admin_user = _create_admin_user(db)
+            project_a = _create_project(db, name="PRUNTIME-KEY-REDACT-A")
+            project_b = _create_project(db, name="PRUNTIME-KEY-REDACT-B")
+            upsert_transport_ai_llm_settings(
+                db,
+                project_id=project_a.id,
+                provider="openai",
+                api_key="runtime-redaction-openai-1111",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            upsert_transport_ai_llm_settings(
+                db,
+                project_id=project_b.id,
+                provider="openai",
+                api_key="runtime-redaction-openai-2222",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            db.commit()
+
+            persisted_rows = db.execute(
+                sa.select(TransportAIProjectLlmSettings)
+                .order_by(TransportAIProjectLlmSettings.project_id.asc())
+            ).scalars().all()
+            planning_input = _build_planning_input_for_projects(
+                projects=[project_a, project_b],
+                settings_obj=settings_obj,
+            )
+
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings_obj,
+                planning_input=planning_input,
+            )
+            serialized_result = result.model_dump_json()
+
+        assert result.ok is False
+        assert [issue.code for issue in result.issues] == ["transport_ai_llm_runtime_conflict"]
+        assert result.issues[0].message.endswith("Conflicting projects: PRUNTIME-KEY-REDACT-B.")
+        assert "runtime-redaction-openai-1111" not in serialized_result
+        assert "runtime-redaction-openai-2222" not in serialized_result
+        assert '"api_key":' not in serialized_result
+        assert '"api_key_ciphertext":' not in serialized_result
+        assert all(row.api_key_ciphertext not in serialized_result for row in persisted_rows)
     finally:
         engine.dispose()

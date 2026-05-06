@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Literal, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from .models import ManagedLocation
 from .services.admin_project_scope import normalize_admin_monitored_project_names
@@ -2753,6 +2754,25 @@ class TransportAISettingsUpdateRequest(BaseModel):
     project_id: int = Field(ge=1)
     provider: TransportAILlmProvider
     api_key: str | None = Field(default=None, max_length=4096)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_transport_ai_settings_project_id_present(cls, value: object):
+        if not isinstance(value, dict):
+            return value
+
+        project_id = value.get("project_id")
+        if (
+            "project_id" not in value
+            or project_id is None
+            or (isinstance(project_id, str) and not project_id.strip())
+        ):
+            raise PydanticCustomError(
+                "transport_ai_project_required",
+                "Transport AI project is required.",
+            )
+
+        return value
 
     @field_validator("api_key", mode="before")
     @classmethod

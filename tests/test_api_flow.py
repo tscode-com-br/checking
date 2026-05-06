@@ -9464,6 +9464,121 @@ def test_transport_assignment_rejects_vehicle_that_is_not_ready_for_allocation()
     assert assignment is None
 
 
+def test_transport_assignment_allows_vehicle_missing_plate_and_color_when_operational_fields_exist():
+    friday = date(2026, 4, 17)
+    timestamp = now_sgt()
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace="Partial Allocation Hub",
+            address="56 Pending Road",
+            zip="560056",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(
+            placa=None,
+            tipo="van",
+            color=None,
+            lugares=10,
+            tolerance=8,
+            service_scope="regular",
+        )
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome="Partial Allocation Rider",
+            chave="PA56",
+            projeto="P56",
+            workplace=workplace.workplace,
+            placa="PA5600",
+            end_rua="56 Pending Road",
+            zip="560056",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="08:10",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.commit()
+
+        request_id = request_row.id
+        vehicle_id = vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+        response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": request_id,
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": vehicle_id,
+            },
+        )
+
+    assert dashboard_response.status_code == 200
+    dashboard_payload = dashboard_response.json()
+    vehicle_row = next(row for row in dashboard_payload["regular_vehicles"] if row["id"] == vehicle_id)
+    registry_row = next(
+        row for row in dashboard_payload["regular_vehicle_registry"] if row["vehicle_id"] == vehicle_id
+    )
+
+    assert vehicle_row["placa"] is None
+    assert vehicle_row["color"] is None
+    assert vehicle_row["pending_fields"] == ["placa", "color"]
+    assert vehicle_row["is_ready_for_allocation"] is True
+    assert registry_row["pending_fields"] == ["placa", "color"]
+    assert registry_row["is_ready_for_allocation"] is True
+
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == request_id,
+                TransportAssignment.service_date == friday,
+                TransportAssignment.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+
+    assert assignment.status == "confirmed"
+    assert assignment.vehicle_id == vehicle_id
+
+
 def test_transport_vehicle_registration_without_plate_always_creates_new_vehicle():
     monday = date(2026, 4, 20)
     saturday = date(2026, 4, 25)

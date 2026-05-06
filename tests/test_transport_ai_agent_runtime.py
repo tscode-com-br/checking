@@ -375,6 +375,14 @@ def test_run_transport_ai_agent_returns_valid_plan_with_fake_model(tmp_path):
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
             project = _create_project(session, name="PRUNTIME1", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-1001",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
             user = _create_user(
                 session,
                 chave="RT01",
@@ -422,6 +430,20 @@ def test_run_transport_ai_agent_returns_valid_plan_with_fake_model(tmp_path):
             assert run.status == "proposed"
             assert run.completed_at is not None
             assert len(fake_model.invocations) == 1
+            planning_input_payload = json.loads(run.planning_input_json or "{}")
+            assert planning_input_payload["llm_runtime_projects"] == [
+                {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "partition_keys": [f"extra:{project.name}:{project.country_code}"],
+                    "provider": "openai",
+                    "model_name": "gpt-5.4-2026-03-05",
+                    "reasoning_effort": "high",
+                }
+            ]
+            assert run.llm_provider == "openai"
+            assert run.llm_model == "gpt-5.4-2026-03-05"
+            assert run.llm_reasoning_effort == "high"
     finally:
         engine.dispose()
 
@@ -592,6 +614,228 @@ def test_run_transport_ai_agent_persists_project_llm_runtime_snapshots_without_a
             assert run.llm_model == "deepseek-v4-pro"
             assert run.llm_reasoning_effort == "high"
             assert run.openai_model == "deepseek-v4-pro"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_persists_openai_project_snapshots_without_secret_fields(tmp_path, monkeypatch):
+    from sistema.app.services import transport_ai_agent as transport_ai_agent_module
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_openai_snapshot.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-OPENAI-SNAPSHOT", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="snapshot-openai-secret-7788",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RTSO",
+                nome="Runtime Snapshot Worker OpenAI",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7222A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model="",
+            )
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+            fake_model = _FakeChatModel([
+                {
+                    "raw": AIMessage(content="openai snapshot secret snapshot-openai-secret-7788"),
+                    "parsed": valid_plan,
+                    "parsing_error": None,
+                }
+            ])
+            monkeypatch.setattr(
+                transport_ai_agent_module,
+                "build_transport_ai_chat_model_for_provider",
+                lambda **kwargs: fake_model,
+            )
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            planning_input_payload = json.loads(run.planning_input_json or "{}")
+            runtime_projects = planning_input_payload.get("llm_runtime_projects")
+
+            assert result.plan is not None
+            assert runtime_projects == [
+                {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "partition_keys": [f"extra:{project.name}:{project.country_code}"],
+                    "provider": "openai",
+                    "model_name": "gpt-5.4-2026-03-05",
+                    "reasoning_effort": "high",
+                }
+            ]
+            assert "snapshot-openai-secret-7788" not in run.planning_input_json
+            assert '"api_key":' not in run.planning_input_json
+            assert '"api_key_ciphertext":' not in run.planning_input_json
+            assert '"api_key_last4":' not in run.planning_input_json
+            assert run.llm_provider == "openai"
+            assert run.llm_model == "gpt-5.4-2026-03-05"
+            assert run.llm_reasoning_effort == "high"
+            assert run.openai_model == "gpt-5.4-2026-03-05"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_fails_when_project_llm_snapshot_drifts_from_current_settings(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_snapshot_drift.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-SNAPSHOT-DRIFT", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="snapshot-openai-1234",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RTSD",
+                nome="Runtime Snapshot Drift Worker",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7998A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model="gpt-5.4-2026-03-05",
+                llm_provider="openai",
+                llm_model="gpt-5.4-2026-03-05",
+                llm_reasoning_effort="high",
+            )
+            run.planning_input_json = json.dumps(
+                {
+                    "planning_input_hash": run.planning_input_hash,
+                    "service_date": service_date.isoformat(),
+                    "route_kind": run.route_kind,
+                    "snapshot_key": "transport-ai-snapshot-drift",
+                    "captured_at": _fixture_timestamp().isoformat(),
+                    "limits": {
+                        "max_passengers_per_run": 80,
+                    },
+                    "settings": {
+                        "route_provider": "fake",
+                        "price_currency_code": "SGD",
+                        "price_rate_unit": "day",
+                        "matrix_profile": settings_obj.mapbox_matrix_profile,
+                        "directions_profile": settings_obj.mapbox_directions_profile,
+                    },
+                    "projects_by_name": {
+                        project.name: {
+                            "id": project.id,
+                            "name": project.name,
+                        }
+                    },
+                    "requests_by_scope": {},
+                    "vehicles_by_scope": {},
+                    "partitions": [
+                        {
+                            "partition_key": f"extra:{project.name}:{project.country_code}",
+                            "request_kind": "extra",
+                            "project_id": project.id,
+                            "project_name": project.name,
+                            "country_code": project.country_code,
+                            "country_name": project.country_name,
+                            "destination_project": {
+                                "id": project.id,
+                                "name": project.name,
+                            },
+                            "requests": [],
+                            "candidate_vehicles": [],
+                        }
+                    ],
+                    "llm_runtime_projects": [
+                        {
+                            "project_id": project.id,
+                            "project_name": project.name,
+                            "partition_keys": [f"extra:{project.name}:{project.country_code}"],
+                            "provider": "openai",
+                            "model_name": "gpt-5.4-2026-03-05",
+                            "reasoning_effort": "high",
+                        }
+                    ],
+                    "preflight_issues": [],
+                    "total_requests": 0,
+                    "total_candidate_vehicles": 0,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+            session.flush()
+
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="deepseek",
+                api_key="snapshot-deepseek-5678",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_execution_failed"
+            assert run.status == "failed"
+            assert "run LLM snapshot no longer matches the current project-specific AI settings" in (run.error_message or "")
     finally:
         engine.dispose()
 
@@ -965,6 +1209,14 @@ def test_run_transport_ai_agent_retries_invalid_response_until_plan_valid(tmp_pa
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
             project = _create_project(session, name="PRUNTIME2", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-2002",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
             user = _create_user(
                 session,
                 chave="RT02",
@@ -1031,6 +1283,14 @@ def test_run_transport_ai_agent_marks_run_failed_after_retry_exhaustion(tmp_path
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
             project = _create_project(session, name="PRUNTIME3", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-3003",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
             user = _create_user(
                 session,
                 chave="RT03",
@@ -1092,6 +1352,14 @@ def test_run_transport_ai_agent_sanitizes_raw_response(tmp_path):
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
             project = _create_project(session, name="PRUNTIME4", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-4004",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
             user = _create_user(
                 session,
                 chave="RT04",

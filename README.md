@@ -55,6 +55,25 @@ Sem essa variavel, o backend passa a bloquear `GET/PUT /api/transport/ai/setting
 
 Em homologacao e producao, manter `TRANSPORT_AI_ENABLED=false` por padrao. Se a feature for habilitada em uma janela controlada, preencher `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE` e `TRANSPORT_AI_MAX_CONCURRENT_RUNS` no mesmo deploy; sem esses gates, o backend passa a bloquear novas execucoes da IA e o readiness fica `unready` por desenho.
 
+### Contrato operacional do modal IA Settings
+- O catalogo de projetos do modal deve ser recarregado do endpoint autoritativo `GET /api/transport/projects`.
+- `state.dashboard.projects` continua servindo apenas como bootstrap visual local enquanto o catalogo autoritativo carrega.
+- `PUT /api/transport/ai/settings` exige `project_id`; a UI deve manter `Save` desabilitado sem projeto valido e sem catalogo `ready`.
+- Quando o contrato estatico do modal mudar de forma incompatível, atualize o versionamento de `styles.css`, `i18n.js` e `app.js` em `sistema/app/static/transport/index.html`. A versao coordenada atual do `transport` e `20260506b`.
+- O caminho legado global continua apenas para consulta e rollback controlado. Nao reintroduza fallback global implicito para gravacao ou runtime.
+
+### Smoke OpenAI opt-in
+- Chaves OpenAI reais so podem ser usadas fora do CI e apenas via `TRANSPORT_AI_TEST_OPENAI_API_KEY`.
+- O smoke opt-in fica em `tests/test_transport_ai_openai_smoke.py` e pula automaticamente quando a variavel nao estiver definida.
+- Execucao manual:
+
+```powershell
+c:/dev/projetos/checkcheck/.venv/Scripts/python.exe -m pytest tests/test_transport_ai_openai_smoke.py -q
+```
+
+- Depois do smoke, remova a variavel do ambiente atual e descarte qualquer preview temporario usado na validacao.
+- Runbook detalhado: `docs/context/transport_ai_project_rollout.md`.
+
 ### Preview local rapido do Transport fora do Compose
 Se o `.env` atual estiver apontando `DATABASE_URL` para `postgresql+psycopg://...@db:5432/...`, esse host `db` so existe dentro da rede Docker Compose e o boot local falhara com `getaddrinfo failed`.
 

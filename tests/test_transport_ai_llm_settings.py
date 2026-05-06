@@ -411,6 +411,101 @@ def test_transport_ai_project_llm_settings_stay_isolated_by_project_id_and_survi
         engine.dispose()
 
 
+def test_transport_ai_project_openai_settings_keep_ciphertext_hint_and_runtime_isolated_per_project(tmp_path):
+    engine, session_factory = _build_session_factory(
+        tmp_path / "transport_ai_project_llm_settings_openai_isolation.db"
+    )
+    configured_settings = _build_settings()
+    try:
+        with session_factory() as session:
+            admin_user = _create_admin_user(session)
+            project_a = _create_project(session, name="Projeto OpenAI A")
+            project_b = _create_project(session, name="Projeto OpenAI B")
+
+            persisted_a = upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_a.id,
+                provider="openai",
+                api_key="sk-openai-project-a-1234",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=configured_settings,
+            )
+            session.commit()
+
+            first_project_a_ciphertext = persisted_a.api_key_ciphertext
+
+            persisted_b = upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_b.id,
+                provider="openai",
+                api_key="sk-openai-project-b-9876",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=configured_settings,
+            )
+            session.commit()
+
+            project_a_settings = get_transport_ai_llm_settings(session, project_id=project_a.id)
+            project_b_settings = get_transport_ai_llm_settings(session, project_id=project_b.id)
+            payload_a = get_transport_ai_llm_settings_payload(
+                session,
+                project_id=project_a.id,
+                settings_obj=configured_settings,
+            )
+            payload_b = get_transport_ai_llm_settings_payload(
+                session,
+                project_id=project_b.id,
+                settings_obj=configured_settings,
+            )
+            runtime_a = resolve_transport_ai_llm_runtime_settings(
+                session,
+                project_id=project_a.id,
+                settings_obj=configured_settings,
+            )
+            runtime_b = resolve_transport_ai_llm_runtime_settings(
+                session,
+                project_id=project_b.id,
+                settings_obj=configured_settings,
+            )
+
+            serialized_payloads = payload_a.model_dump_json() + payload_b.model_dump_json()
+
+        assert project_a_settings is not None
+        assert project_b_settings is not None
+        assert project_a_settings.provider == "openai"
+        assert project_b_settings.provider == "openai"
+        assert project_a_settings.api_key_last4 == "1234"
+        assert project_b_settings.api_key_last4 == "9876"
+        assert project_a_settings.api_key_ciphertext
+        assert project_b_settings.api_key_ciphertext
+        assert project_a_settings.api_key_ciphertext == first_project_a_ciphertext
+        assert project_a_settings.api_key_ciphertext != "sk-openai-project-a-1234"
+        assert project_b_settings.api_key_ciphertext != "sk-openai-project-b-9876"
+        assert project_a_settings.api_key_ciphertext != project_b_settings.api_key_ciphertext
+
+        assert payload_a.project_id == project_a.id
+        assert payload_b.project_id == project_b.id
+        assert payload_a.provider == "openai"
+        assert payload_b.provider == "openai"
+        assert payload_a.has_api_key is True
+        assert payload_b.has_api_key is True
+        assert payload_a.api_key_hint == "***1234"
+        assert payload_b.api_key_hint == "***9876"
+
+        assert runtime_a.provider == "openai"
+        assert runtime_b.provider == "openai"
+        assert runtime_a.model_name == "gpt-5.4-2026-03-05"
+        assert runtime_b.model_name == "gpt-5.4-2026-03-05"
+        assert runtime_a.api_key == "sk-openai-project-a-1234"
+        assert runtime_b.api_key == "sk-openai-project-b-9876"
+
+        assert "sk-openai-project-a-1234" not in serialized_payloads
+        assert "sk-openai-project-b-9876" not in serialized_payloads
+        assert project_a_settings.api_key_ciphertext not in serialized_payloads
+        assert project_b_settings.api_key_ciphertext not in serialized_payloads
+    finally:
+        engine.dispose()
+
+
 def test_transport_ai_project_llm_settings_are_removed_when_project_is_deleted(tmp_path):
     engine, session_factory = _build_session_factory(
         tmp_path / "transport_ai_project_llm_settings_project_delete.db"

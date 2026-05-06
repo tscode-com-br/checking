@@ -42,6 +42,13 @@
     arrivalAtWorkTime: "07:45",
   };
   const DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER = "openai";
+  const AI_SETTINGS_PROJECT_CATALOG_STATUS = Object.freeze({
+    idle: "idle",
+    loading: "loading",
+    ready: "ready",
+    empty: "empty",
+    error: "error",
+  });
   const TRANSPORT_AI_SETTINGS_PROVIDER_DEFAULTS = Object.freeze({
     openai: Object.freeze({
       provider: "openai",
@@ -735,7 +742,6 @@
     }
 
     return !isPendingVehicleField(vehicle.tipo)
-      && !isPendingVehicleField(vehicle.placa)
       && !isPendingVehicleField(vehicle.lugares)
       && !isPendingVehicleField(vehicle.tolerance);
   }
@@ -818,7 +824,27 @@
     return "";
   }
 
+  function isTransportAiProjectRequiredErrorPayload(payload) {
+    if (!payload || !Array.isArray(payload.detail)) {
+      return false;
+    }
+
+    return payload.detail.some(function (item) {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+
+      const location = Array.isArray(item.loc) ? item.loc : [];
+      const message = String(item.msg || "").trim();
+      return location.includes("project_id") && /^field required$/i.test(message);
+    });
+  }
+
   function formatApiErrorMessage(payload, statusCode) {
+    if (isTransportAiProjectRequiredErrorPayload(payload)) {
+      return "Transport AI project is required.";
+    }
+
     const message = extractApiMessage(payload && (payload.detail !== undefined ? payload.detail : payload && payload.message));
     return message || `HTTP ${statusCode}`;
   }
@@ -854,6 +880,7 @@
       "The transport AI suggestion cannot be applied because its payload is invalid.": "ai.changesApplyFailed",
       "The transport AI suggestion could not be materialized for apply.": "ai.changesApplyFailed",
       "Transport AI settings encryption is unavailable.": "ai.settingsEncryptionUnavailable",
+      "Transport AI project is required.": "ai.settingsProjectRequired",
       "Transport AI API key is required.": "ai.settingsKeyRequired",
       "Transport AI API key is required when creating LLM settings.": "ai.settingsKeyRequired",
       "Transport AI API key is required when changing the LLM provider.": "ai.settingsProviderKeyRequired",
@@ -3108,6 +3135,7 @@
       aiSettingsLoading: false,
       aiSettingsSaving: false,
       aiSettingsProjects: [],
+      aiSettingsProjectCatalogStatus: AI_SETTINGS_PROJECT_CATALOG_STATUS.idle,
       aiSettingsSelectedProjectId: null,
       aiSettingsLoadedProvider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
       aiSettingsHasApiKey: false,
@@ -4205,11 +4233,81 @@
       aiAgentFeedback.dataset.tone = state.aiAgentFeedbackTone || "info";
     }
 
+    function getTransportAiSettingsProjectCatalogStatus() {
+      const normalizedStatus = String(state.aiSettingsProjectCatalogStatus || "").trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(AI_SETTINGS_PROJECT_CATALOG_STATUS, normalizedStatus)
+        ? AI_SETTINGS_PROJECT_CATALOG_STATUS[normalizedStatus]
+        : AI_SETTINGS_PROJECT_CATALOG_STATUS.idle;
+    }
+
+    function setTransportAiSettingsProjectCatalogStatus(status) {
+      state.aiSettingsProjectCatalogStatus = Object.prototype.hasOwnProperty.call(AI_SETTINGS_PROJECT_CATALOG_STATUS, status)
+        ? AI_SETTINGS_PROJECT_CATALOG_STATUS[status]
+        : AI_SETTINGS_PROJECT_CATALOG_STATUS.idle;
+    }
+
+    function clearTransportAiSettingsProjectSelection() {
+      state.aiSettingsSelectedProjectId = null;
+      state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+      state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
+      state.aiSettingsHasApiKey = false;
+      state.aiSettingsApiKeyHint = "";
+    }
+
     function getTransportAiSettingsProjectRows() {
-      if (Array.isArray(state.aiSettingsProjects) && state.aiSettingsProjects.length) {
-        return state.aiSettingsProjects.slice();
+      const normalizedCatalogProjects = normalizeTransportAiSettingsProjectRows(state.aiSettingsProjects);
+      if (normalizedCatalogProjects.length) {
+        return normalizedCatalogProjects;
       }
       return normalizeTransportAiSettingsProjectRows(getProjectRows());
+    }
+
+    function hasValidTransportAiSettingsProjectSelection(projectId, projectRows) {
+      const normalizedProjectId = normalizeTransportAiSettingsProjectId(projectId, null);
+      if (!normalizedProjectId) {
+        return false;
+      }
+
+      return normalizeTransportAiSettingsProjectRows(projectRows).some(function (projectRow) {
+        return projectRow.id === normalizedProjectId;
+      });
+    }
+
+    function resolveTransportAiSettingsApiErrorState(error, options) {
+      const resolvedOptions = options || {};
+      const normalizedMessage = String(error && error.message || "").trim();
+      const projectId = normalizeTransportAiSettingsProjectId(
+        resolvedOptions.projectId,
+        state.aiSettingsSelectedProjectId
+      );
+      const projectRows = normalizeTransportAiSettingsProjectRows(
+        resolvedOptions.projectRows !== undefined
+          ? resolvedOptions.projectRows
+          : state.aiSettingsProjects
+      );
+      const hasProjectInCatalog = hasValidTransportAiSettingsProjectSelection(projectId, projectRows);
+
+      if (isTransportAiProjectRequiredErrorPayload(error && error.payload) || normalizedMessage === "Transport AI project is required.") {
+        return {
+          message: t("ai.settingsProjectRequired"),
+          clearProjectSelection: false,
+          markCatalogAsError: false,
+        };
+      }
+
+      if (normalizedMessage === "Transport AI project does not exist.") {
+        return {
+          message: t(hasProjectInCatalog ? "ai.settingsProjectRemoved" : "ai.settingsProjectMissing"),
+          clearProjectSelection: true,
+          markCatalogAsError: true,
+        };
+      }
+
+      return {
+        message: localizeTransportApiMessage(normalizedMessage),
+        clearProjectSelection: false,
+        markCatalogAsError: false,
+      };
     }
 
     function getSelectedTransportAiSettingsProject() {
@@ -4224,18 +4322,35 @@
 
     function applyTransportAiSettingsProjects(projectRows, preferredProjectId) {
       const normalizedProjects = normalizeTransportAiSettingsProjectRows(projectRows);
+      const activeDraft = readTransportAiSettingsDraft(undefined, state.aiSettingsDraft || getDefaultTransportAiSettingsDraft());
+      const previousSelectedProjectId = normalizeTransportAiSettingsProjectId(
+        state.aiSettingsSelectedProjectId,
+        null
+      );
       state.aiSettingsProjects = normalizedProjects;
       const selectedProjectId = normalizeTransportAiSettingsProjectId(
         preferredProjectId,
-        state.aiSettingsSelectedProjectId
+        previousSelectedProjectId
       );
       const matchedProject = normalizedProjects.find(function (projectRow) {
         return projectRow.id === selectedProjectId;
       }) || normalizedProjects[0] || null;
       state.aiSettingsSelectedProjectId = matchedProject ? matchedProject.id : null;
+
+      if (!matchedProject) {
+        clearTransportAiSettingsProjectSelection();
+        return null;
+      }
+
+      const activeDraftProjectId = normalizeTransportAiSettingsProjectId(activeDraft.projectId, null);
+      if (previousSelectedProjectId === matchedProject.id && activeDraftProjectId === matchedProject.id) {
+        state.aiSettingsDraft = activeDraft;
+        return matchedProject;
+      }
+
       state.aiSettingsDraft = readTransportAiSettingsDraft(
         {
-          projectId: matchedProject ? matchedProject.id : null,
+          projectId: matchedProject.id,
           provider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
           apiKey: "",
         },
@@ -4248,18 +4363,21 @@
       const syncOptions = options || {};
       const activeDraft = readTransportAiSettingsDraft(undefined, state.aiSettingsDraft || getDefaultTransportAiSettingsDraft());
       const availableProjects = Array.isArray(state.aiSettingsProjects) ? state.aiSettingsProjects : [];
+      const projectCatalogStatus = getTransportAiSettingsProjectCatalogStatus();
+      const projectCatalogReady = projectCatalogStatus === AI_SETTINGS_PROJECT_CATALOG_STATUS.ready;
+      const projectCatalogLoading = projectCatalogStatus === AI_SETTINGS_PROJECT_CATALOG_STATUS.loading;
       const selectedProjectId = normalizeTransportAiSettingsProjectId(
         state.aiSettingsSelectedProjectId,
         activeDraft.projectId
       );
-      const hasSelectedProject = Boolean(selectedProjectId);
+      const hasSelectedProject = hasValidTransportAiSettingsProjectSelection(selectedProjectId, availableProjects);
       const selectedProvider = normalizeTransportAiSettingsProvider(
         activeDraft.provider,
         state.aiSettingsLoadedProvider || DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER
       );
       const controlsDisabled = !state.isAuthenticated || state.aiSettingsLoading || state.aiSettingsSaving;
-      const projectControlsDisabled = controlsDisabled || !availableProjects.length;
-      const fieldControlsDisabled = controlsDisabled || !hasSelectedProject;
+      const projectControlsDisabled = controlsDisabled || projectCatalogLoading || !availableProjects.length;
+      const fieldControlsDisabled = controlsDisabled || !hasSelectedProject || !projectCatalogReady;
       const apiKeyValue = String(activeDraft.apiKey || "").trim();
 
       if (aiSettingsProjectInput) {
@@ -4267,7 +4385,9 @@
         if (!availableProjects.length) {
           const emptyOption = document.createElement("option");
           emptyOption.value = "";
-          emptyOption.textContent = t("ai.settingsNoProjectsAvailable");
+          emptyOption.textContent = projectCatalogLoading
+            ? t("ai.settingsLoading")
+            : t("ai.settingsNoProjectsAvailable");
           aiSettingsProjectInput.appendChild(emptyOption);
         } else {
           const placeholderOption = document.createElement("option");
@@ -4302,16 +4422,27 @@
         aiSettingsApiKeyInput.disabled = fieldControlsDisabled;
       }
       if (aiSettingsProviderNote) {
-        aiSettingsProviderNote.textContent = hasSelectedProject
-          ? buildTransportAiSettingsProviderNote(selectedProvider)
-          : availableProjects.length
-            ? t("ai.settingsSelectProject")
-            : t("ai.settingsNoProjectsAvailable");
+        if (projectCatalogLoading) {
+          aiSettingsProviderNote.textContent = t("ai.settingsLoading");
+        } else if (!availableProjects.length) {
+          aiSettingsProviderNote.textContent = t("ai.settingsNoProjectsAvailable");
+        } else if (!hasSelectedProject) {
+          aiSettingsProviderNote.textContent = t("ai.settingsSelectProject");
+        } else if (!projectCatalogReady) {
+          aiSettingsProviderNote.textContent = t("ai.settingsProjectLoadFailed");
+        } else {
+          aiSettingsProviderNote.textContent = buildTransportAiSettingsProviderNote(selectedProvider);
+        }
       }
       if (aiSettingsApiKeyHint) {
         let hintMessage = "";
         let hintTone = "info";
-        if (!hasSelectedProject && availableProjects.length) {
+        if (projectCatalogLoading) {
+          hintMessage = "";
+        } else if (!projectCatalogReady && hasSelectedProject) {
+          hintMessage = t("ai.settingsProjectLoadFailed");
+          hintTone = "warning";
+        } else if (!hasSelectedProject && availableProjects.length) {
           hintMessage = t("ai.settingsSelectProject");
         } else if (!apiKeyValue) {
           if (state.aiSettingsHasApiKey && selectedProvider === state.aiSettingsLoadedProvider && state.aiSettingsApiKeyHint) {
@@ -5751,7 +5882,9 @@
         clearAiSettingsFeedback();
         syncAiSettingsControls();
         if (nextProjectId) {
-          void loadTransportAiSettings();
+          void loadTransportAiSettings({
+            forceProjectCatalogRefresh: getTransportAiSettingsProjectCatalogStatus() !== AI_SETTINGS_PROJECT_CATALOG_STATUS.ready,
+          });
         }
       });
     }
@@ -6109,43 +6242,57 @@
     function loadTransportAiSettingsProjectCatalog(options) {
       const loadOptions = options || {};
       const preferredProjectId = normalizeTransportAiSettingsProjectId(loadOptions.preferredProjectId, null);
-      const dashboardProjects = normalizeTransportAiSettingsProjectRows(getProjectRows());
-      if (dashboardProjects.length && !loadOptions.forceRefresh) {
-        applyTransportAiSettingsProjects(dashboardProjects, preferredProjectId);
-        return Promise.resolve(dashboardProjects);
-      }
-
       const cachedProjects = normalizeTransportAiSettingsProjectRows(state.aiSettingsProjects);
-      if (cachedProjects.length && !loadOptions.forceRefresh) {
+      if (
+        !loadOptions.forceRefresh
+        && getTransportAiSettingsProjectCatalogStatus() === AI_SETTINGS_PROJECT_CATALOG_STATUS.ready
+        && cachedProjects.length
+      ) {
         applyTransportAiSettingsProjects(cachedProjects, preferredProjectId);
         return Promise.resolve(cachedProjects);
       }
+
+      const bootstrapProjects = normalizeTransportAiSettingsProjectRows(getTransportAiSettingsProjectRows());
+      if (bootstrapProjects.length) {
+        applyTransportAiSettingsProjects(bootstrapProjects, preferredProjectId);
+      } else {
+        clearTransportAiSettingsProjectSelection();
+      }
+      setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.loading);
 
       return requestJson(`${TRANSPORT_API_PREFIX}/projects`)
         .then(function (projectRows) {
           const normalizedProjects = normalizeTransportAiSettingsProjectRows(projectRows);
           applyTransportAiSettingsProjects(normalizedProjects, preferredProjectId);
+          setTransportAiSettingsProjectCatalogStatus(
+            normalizedProjects.length
+              ? AI_SETTINGS_PROJECT_CATALOG_STATUS.ready
+              : AI_SETTINGS_PROJECT_CATALOG_STATUS.empty
+          );
           return normalizedProjects;
         })
         .catch(function (error) {
           const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsProjectLoadFailed"));
           const resolvedMessage = localizeTransportApiMessage(error && error.message)
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsProjectLoadFailed"));
+          const fallbackProjects = normalizeTransportAiSettingsProjectRows(state.aiSettingsProjects);
           setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
-          state.aiSettingsProjects = [];
-          state.aiSettingsSelectedProjectId = null;
-          state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
+          if (fallbackProjects.length) {
+            applyTransportAiSettingsProjects(fallbackProjects, preferredProjectId);
+          } else {
+            clearTransportAiSettingsProjectSelection();
+            state.aiSettingsProjects = [];
+          }
+          setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.error);
           return null;
         });
     }
 
-    function loadTransportAiSettings() {
+    function loadTransportAiSettings(options) {
+      const loadOptions = options || {};
       if (!state.isAuthenticated) {
-        state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
-        state.aiSettingsSelectedProjectId = null;
-        state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
-        state.aiSettingsHasApiKey = false;
-        state.aiSettingsApiKeyHint = "";
+        clearTransportAiSettingsProjectSelection();
+        setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.idle);
         setAiSettingsFeedback("", "warning", { key: "status.locked" });
         syncAiSettingsControls();
         return Promise.resolve(null);
@@ -6157,19 +6304,26 @@
       syncAiSettingsControls({ preserveInputs: true });
       return loadTransportAiSettingsProjectCatalog({
         preferredProjectId: state.aiSettingsSelectedProjectId,
+        forceRefresh: loadOptions.forceProjectCatalogRefresh === true,
       })
         .then(function (projectRows) {
           if (loadRequestSequence !== aiSettingsLoadRequestSequence || projectRows === null) {
             return null;
           }
 
+          if (getTransportAiSettingsProjectCatalogStatus() === AI_SETTINGS_PROJECT_CATALOG_STATUS.error) {
+            return null;
+          }
+
           const selectedProject = getSelectedTransportAiSettingsProject();
           if (!selectedProject) {
-            state.aiSettingsDraft = getDefaultTransportAiSettingsDraft();
-            state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
-            state.aiSettingsHasApiKey = false;
-            state.aiSettingsApiKeyHint = "";
-            setAiSettingsFeedback("", "warning", { key: "ai.settingsNoProjectsAvailable" });
+            const requestedProjectId = normalizeTransportAiSettingsProjectId(state.aiSettingsSelectedProjectId, null);
+            clearTransportAiSettingsProjectSelection();
+            if (getTransportAiSettingsProjectCatalogStatus() === AI_SETTINGS_PROJECT_CATALOG_STATUS.empty) {
+              setAiSettingsFeedback("", "warning", { key: "ai.settingsNoProjectsAvailable" });
+            } else if (requestedProjectId) {
+              setAiSettingsFeedback("", "warning", { key: "ai.settingsProjectMissing" });
+            }
             return null;
           }
 
@@ -6220,7 +6374,17 @@
             return null;
           }
           const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsLoadFailed"));
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+          const errorState = resolveTransportAiSettingsApiErrorState(error, {
+            projectId: state.aiSettingsSelectedProjectId,
+            projectRows: state.aiSettingsProjects,
+          });
+          if (errorState.markCatalogAsError) {
+            setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.error);
+          }
+          if (errorState.clearProjectSelection) {
+            clearTransportAiSettingsProjectSelection();
+          }
+          const resolvedMessage = errorState.message
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsLoadFailed"));
           setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
           return null;
@@ -6242,6 +6406,12 @@
         return Promise.resolve(null);
       }
 
+      if (getTransportAiSettingsProjectCatalogStatus() !== AI_SETTINGS_PROJECT_CATALOG_STATUS.ready) {
+        setAiSettingsFeedback("", "warning", { key: "ai.settingsProjectLoadFailed" });
+        syncAiSettingsControls({ preserveInputs: true });
+        return Promise.resolve(null);
+      }
+
       const draft = readTransportAiSettingsDraft(
         {
           projectInput: aiSettingsProjectInput,
@@ -6250,8 +6420,26 @@
         },
         state.aiSettingsDraft || getDefaultTransportAiSettingsDraft()
       );
+      const hasValidProjectSelection = hasValidTransportAiSettingsProjectSelection(
+        draft.projectId,
+        state.aiSettingsProjects
+      );
       if (!draft.projectId) {
-        setAiSettingsFeedback("", "warning", { key: "ai.settingsSelectProject" });
+        setAiSettingsFeedback("", "warning", { key: "ai.settingsProjectRequired" });
+        syncAiSettingsControls({ preserveInputs: true });
+        return Promise.resolve(null);
+      }
+      if (!hasValidProjectSelection) {
+        state.aiSettingsSelectedProjectId = null;
+        state.aiSettingsDraft = readTransportAiSettingsDraft(
+          {
+            projectId: null,
+            provider: draft.provider,
+            apiKey: draft.apiKey,
+          },
+          getDefaultTransportAiSettingsDraft()
+        );
+        setAiSettingsFeedback("", "warning", { key: "ai.settingsProjectMissing" });
         syncAiSettingsControls({ preserveInputs: true });
         return Promise.resolve(null);
       }
@@ -6284,7 +6472,17 @@
         })
         .catch(function (error) {
           const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsSaveFailed"));
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+          const errorState = resolveTransportAiSettingsApiErrorState(error, {
+            projectId: draft.projectId,
+            projectRows: state.aiSettingsProjects,
+          });
+          if (errorState.markCatalogAsError) {
+            setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.error);
+          }
+          if (errorState.clearProjectSelection) {
+            clearTransportAiSettingsProjectSelection();
+          }
+          const resolvedMessage = errorState.message
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsSaveFailed"));
           setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
           return null;
@@ -6307,6 +6505,7 @@
         getTransportAiSettingsProjectRows(),
         state.aiSettingsSelectedProjectId
       );
+      setTransportAiSettingsProjectCatalogStatus(AI_SETTINGS_PROJECT_CATALOG_STATUS.loading);
       state.aiSettingsDraft = readTransportAiSettingsDraft(
         {
           projectId: selectedProject ? selectedProject.id : null,
@@ -6327,7 +6526,7 @@
       } else if (aiSettingsProviderInput && typeof aiSettingsProviderInput.focus === "function") {
         aiSettingsProviderInput.focus();
       }
-      void loadTransportAiSettings();
+      void loadTransportAiSettings({ forceProjectCatalogRefresh: true });
     }
 
     function closeAiSettingsModal(options) {
