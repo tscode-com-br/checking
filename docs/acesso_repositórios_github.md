@@ -1,6 +1,6 @@
 # Acesso aos repositorios GitHub do projeto
 
-Status deste documento: reconciliado com a conta GitHub e com os remotes locais em 2026-05-05.
+Status deste documento: reconciliado com a conta GitHub, com os remotes locais e com o fluxo operacional de commit/push em 2026-05-06.
 
 Este arquivo substitui o antigo guia `instrucoes_commit_push.md` e consolida tres coisas diferentes que nao devem mais ser misturadas:
 
@@ -204,7 +204,141 @@ Regra adicional importante:
 - se o `gh repo view` do remote falhar, nao tente `git push` antes de criar um novo repositorio ou apontar o remote para um destino valido;
 - se existir apenas `archived-origin`, trate o repositorio como local-only ate a criacao de um novo `origin`.
 
-## 7. O que nao deve entrar em commit
+## 7. Como fazer commit e push em cada repositorio
+
+As sequencias abaixo assumem PowerShell no Windows e stage explicito por arquivo ou pasta.
+
+Regra importante:
+
+- no root, prefira `git add <arquivos>` em vez de `git add .` quando houver outras mudancas locais nao relacionadas;
+- nos repositorios Kotlin, o commit local funciona hoje, mas o push depende primeiro de recriar um `origin` valido.
+
+### 7.1 Sistema principal `checkcheck`
+
+Quando usar:
+
+- API
+- websites do sistema
+- deploy
+- documentacao do repo principal
+
+Fluxo recomendado:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck
+git status --short
+git branch --show-current
+git remote -v
+gh repo view tscode-com-br/checking
+
+git add <arquivo-ou-pasta>
+git commit -m "<mensagem>"
+git push origin main
+```
+
+Observacoes:
+
+- `git push origin main` neste repo aciona o deploy de producao;
+- se houver outros arquivos modificados no root e eles nao fizerem parte da entrega, nao use `git add .`.
+
+### 7.2 App Flutter `checking_android_new`
+
+Quando usar:
+
+- app Flutter
+- testes Flutter
+- assets e configuracoes do projeto Flutter
+
+Fluxo recomendado:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\checking_android_new
+git status --short
+git branch --show-current
+git remote -v
+gh repo view tscode-com-br/checking_app_flutter
+
+git add <arquivo-ou-pasta>
+git commit -m "<mensagem>"
+git push origin main
+```
+
+Observacoes:
+
+- este push publica apenas o repositorio Flutter;
+- ele nao aciona o deploy da API nem do website principal.
+
+### 7.3 App Kotlin legado `checking_kotlin`
+
+Estado atual:
+
+- branch local confirmada: `main`
+- remote ativo de publicacao: inexistente
+- remote historico preservado: `archived-origin`
+
+Commit local hoje:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\checking_kotlin
+git status --short
+git branch -vv
+git remote -v
+
+git add <arquivo-ou-pasta>
+git commit -m "<mensagem>"
+```
+
+Push so depois de recriar `origin`:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\checking_kotlin
+git remote remove archived-origin
+git remote add origin <novo-url-github>
+gh repo view <owner>/<repo>
+git push -u origin main
+```
+
+Observacoes:
+
+- nao tente `git push origin main` antes de recriar `origin`;
+- se quiser manter o remote historico apenas como referencia, renomeie em vez de apagar e adapte o comando acima.
+
+### 7.4 App Kotlin novo `checking_kotlin_new`
+
+Estado atual:
+
+- branch local confirmada: `web-parity-spa-baseline`
+- remote ativo de publicacao: inexistente
+- remote historico preservado: `archived-origin`
+
+Commit local hoje:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
+git status --short
+git branch -vv
+git remote -v
+
+git add <arquivo-ou-pasta>
+git commit -m "<mensagem>"
+```
+
+Push so depois de recriar `origin`:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
+git remote remove archived-origin
+git remote add origin <novo-url-github>
+gh repo view <owner>/<repo>
+git push -u origin web-parity-spa-baseline
+```
+
+Observacoes:
+
+- nao trocar a branch por `main` sem confirmar antes o fluxo desejado;
+- hoje o caminho seguro e tratar esse repo como local-only ate existir um novo repositorio GitHub.
+
+## 8. O que nao deve entrar em commit
 
 Itens normalmente excluidos:
 
@@ -216,7 +350,7 @@ Itens normalmente excluidos:
 - caches locais
 - qualquer arquivo de repositorio aninhado quando voce estiver no root
 
-## 8. Dono de GitHub Actions e Secrets
+## 9. Dono de GitHub Actions e Secrets
 
 O dono operacional de GitHub Actions e Secrets do deploy e o repo principal `checkcheck`.
 
