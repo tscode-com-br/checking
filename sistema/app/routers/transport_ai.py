@@ -210,6 +210,10 @@ def _transport_ai_router_json_loads(value: str | None) -> object | None:
     normalized = str(value or "").strip()
     if not normalized:
         return None
+    try:
+        return json.loads(normalized)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_transport_ai_settings_message_key(detail: str, default_key: str) -> str:
@@ -264,10 +268,6 @@ def _raise_transport_ai_router_structured_http_error(
             "technical_detail": normalized_technical_detail,
         },
     )
-    try:
-        return json.loads(normalized)
-    except (TypeError, ValueError):
-        return None
 
 
 def _measure_transport_ai_router_elapsed_ms(started_at: float) -> int:

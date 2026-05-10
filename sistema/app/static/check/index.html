@@ -139,26 +139,24 @@
               />
             </label>
 
-            <div class="check-field auth-field auth-field-button">
-              <span class="auth-field-spacer" aria-hidden="true">Ajustes</span>
+            <div class="auth-settings-slot">
               <button
                 id="settingsButton"
                 type="button"
-                class="secondary-button settings-trigger-button"
+                class="settings-trigger-button"
                 aria-label="Abrir ajustes"
                 aria-controls="settingsDialog"
                 aria-expanded="false"
                 title="Abrir ajustes"
               >
-                <img
+                <svg
                   class="settings-trigger-icon"
-                  src="/assets/icons/config.webp"
-                  alt=""
-                  width="24"
-                  height="24"
                   aria-hidden="true"
-                  decoding="async"
-                />
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="12" cy="12" r="3.2"></circle>
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.35a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9A1.7 1.7 0 0 0 10.04 3V2.91a2 2 0 0 1 4 0V3a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9c0 .68.4 1.29 1.04 1.56H21a2 2 0 0 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15z"></path>
+                </svg>
                 <span class="visually-hidden">Abrir ajustes</span>
               </button>
             </div>
@@ -411,7 +409,7 @@
             </div>
 
             <form id="settingsDialogForm" class="password-dialog-form settings-dialog-form" novalidate>
-              <label class="check-field settings-option-row settings-option-row-inline" for="settingsLanguageSelect">
+              <label class="check-field settings-option-row settings-option-row-language" for="settingsLanguageSelect">
                 <span>Idioma</span>
                 <select id="settingsLanguageSelect" class="settings-option-select" name="idioma">
                   <option value="zh">Chinese</option>
@@ -423,28 +421,24 @@
                 </select>
               </label>
 
-              <div class="settings-option-row settings-option-row-inline">
-                <span class="settings-option-label">Resetar Senha</span>
+              <div class="settings-option-row settings-option-row-action">
                 <button id="settingsResetPasswordButton" type="button" class="secondary-button settings-option-action">Resetar Senha</button>
               </div>
 
-              <div class="settings-option-row settings-option-row-inline">
-                <span class="settings-option-label">Permitir localização</span>
+              <div class="settings-option-row settings-option-row-action">
                 <button id="settingsLocationPermissionButton" type="button" class="secondary-button settings-option-action">Permitir localização</button>
               </div>
 
-              <div class="settings-option-row settings-option-row-inline">
-                <span class="settings-option-label">Suporte</span>
+              <div class="settings-option-row settings-option-row-action">
                 <button id="settingsSupportButton" type="button" class="secondary-button settings-option-action">Suporte</button>
               </div>
 
-              <div class="settings-option-row settings-option-row-inline">
-                <span class="settings-option-label">Sobre</span>
+              <div class="settings-option-row settings-option-row-action">
                 <button id="settingsAboutButton" type="button" class="secondary-button settings-option-action">Sobre</button>
               </div>
 
               <div class="password-dialog-actions settings-dialog-actions">
-                <button id="settingsDialogBackButton" type="button" class="secondary-button">Voltar</button>
+                <button id="settingsDialogBackButton" type="button" class="secondary-button settings-option-action settings-option-back-action">Voltar</button>
               </div>
             </form>
           </div>

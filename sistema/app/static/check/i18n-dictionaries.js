@@ -86,8 +86,8 @@
         changingStatus: 'Alterando senha...',
         savingStatus: 'Salvando senha...',
         validatingStatus: 'Senha sendo verificada.',
-        oldPasswordInvalid: 'A senha antiga deve ter entre 3 e 10 caracteres.',
-        newPasswordInvalid: 'A nova senha deve ter entre 3 e 10 caracteres.',
+        oldPasswordInvalid: 'A senha antiga deve ter entre 3 e 10 caractéres.',
+        newPasswordInvalid: 'A nova senha deve ter entre 3 e 10 caractéres.',
         confirmMismatch: 'A confirmação da nova senha não confere.',
         changeFailed: 'Não foi possível alterar a senha.',
         validationFailed: 'Não foi possível validar a senha.',
@@ -464,7 +464,7 @@
       },
       support: {
         phoneNumber: '5521992174446',
-        messageTemplate: 'Preciso de ajuda com a aplicacao Web. Minha chave e {chave}.',
+        messageTemplate: 'Preciso de ajuda com a aplicação Checking Web. Minha chave é {chave}.',
       },
     },
     en: {

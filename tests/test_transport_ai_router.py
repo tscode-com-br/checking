@@ -2101,6 +2101,36 @@ def test_transport_ai_run_status_humanizes_mapbox_timeout_and_keeps_runtime_issu
     _run_transport_ai_router_script(tmp_path, script=script)
 
 
+def test_transport_ai_run_status_humanizes_passenger_geocode_low_confidence_issue(tmp_path):
+    assertions = textwrap.dedent(
+        """
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["status"] == "failed"
+        assert payload["error_code"] == "passenger_origin_geocode_low_confidence"
+        assert payload["failure_category"] == "geocoding"
+        assert payload["review_state"] == "fatal_error"
+        assert payload["message_key"] == "transport_ai.error.passenger_origin_geocode_low_confidence"
+        assert payload["message"] == "Transport AI could not calculate routes because one or more passenger addresses returned low geocoding confidence."
+        assert payload["issues"][0]["code"] == "passenger_origin_geocode_low_confidence"
+        assert payload["issues"][0]["source"] == "run_error"
+        assert "returned low geocode confidence" in payload["issues"][0]["message"]
+        """
+    ).strip()
+    script = _build_transport_ai_run_status_script(
+        run_status="failed",
+        include_suggestion=False,
+        run_key="transport-ai-run:polling-geocode-confidence-001",
+        error_code="passenger_origin_geocode_low_confidence",
+        error_message="Passenger 'Worker 42' (W042) returned low geocode confidence (0.64).",
+        preflight_issues_json='[{"code":"passenger_origin_geocode_low_confidence","message":"Passenger \'Worker 42\' (W042) returned low geocode confidence (0.64).","blocking":true,"setting_name":"transport_route_points","source":"run_error"}]',
+        route_provider="mapbox",
+        assertions=assertions,
+    )
+    _run_transport_ai_router_script(tmp_path, script=script)
+
+
 def test_transport_ai_run_status_humanizes_llm_invoke_failure_and_exposes_message_params(tmp_path):
     assertions = textwrap.dedent(
         """

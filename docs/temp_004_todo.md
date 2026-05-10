@@ -468,7 +468,7 @@ Make Settings capable of launching support and documentation from within the web
    - Build a WhatsApp link using:
      - `https://wa.me/5521992174446?text=...`
    - Prefill the text with:
-     - `Preciso de ajuda com a aplicacao Web. Minha chave e <USER_KEY>.`
+     - `Checking Webacao Web. Minha chave e <USER_KEY>.`
    - Use `encodeURIComponent(...)` for the message.
 
 2. Resolve the key used in the support message carefully.

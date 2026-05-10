@@ -54,7 +54,8 @@ test('check page keeps the request-registration trigger hidden and exposes the s
   assert.match(checkHtml, /id="requestRegistrationButton"[^>]*hidden[^>]*aria-hidden="true"/);
   assert.match(checkHtml, />Solicitar cadastro</);
   assert.match(checkHtml, /id="settingsButton"[\s\S]*aria-controls="settingsDialog"[\s\S]*aria-expanded="false"/);
-  assert.match(checkHtml, /class="settings-trigger-icon"[\s\S]*src="\/assets\/icons\/config\.webp"/);
+  assert.match(checkHtml, /class="auth-settings-slot"/);
+  assert.match(checkHtml, /class="settings-trigger-icon"[\s\S]*viewBox="0 0 24 24"/);
   assert.match(checkHtml, /id="settingsDialogTitle">Ajustes</);
   assert.match(checkHtml, /id="settingsLanguageSelect"/);
   assert.match(checkHtml, /id="settingsResetPasswordButton"[\s\S]*>Resetar Senha</);
@@ -147,8 +148,11 @@ test('check page loads the dedicated dictionary and i18n runtime before app.js',
 test('check page styles the settings trigger and settings modal shell for mobile-friendly layout', () => {
   assert.match(checkCss, /\.settings-trigger-button \{[\s\S]*min-height: var\(--control-height\)|[\s\S]*display: inline-flex;/);
   assert.match(checkCss, /\.settings-trigger-icon \{[\s\S]*object-fit:\s*contain;/);
+  assert.match(checkCss, /\.auth-settings-slot \{[\s\S]*justify-content:\s*center;/);
   assert.match(checkCss, /\.settings-dialog-card \{[\s\S]*width:\s*min\(100%, 460px\);/);
-  assert.match(checkCss, /\.settings-option-row-inline \{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(156px, 44%\);/);
+  assert.match(checkCss, /\.settings-option-row-language \{[\s\S]*max-width:\s*min\(100%, 280px\);/);
+  assert.match(checkCss, /\.settings-option-row-action \{[\s\S]*justify-items:\s*center;/);
+  assert.match(checkCss, /\.settings-option-action \{[\s\S]*white-space:\s*nowrap;/);
   assert.match(checkCss, /\.settings-dialog-actions \{[\s\S]*grid-template-columns:\s*1fr;/);
 });
 
@@ -279,7 +283,7 @@ test('check page exposes a dedicated i18n dictionary source with the required la
 
   assert.equal(
     checkI18nDictionaries.dictionaries.pt.support.messageTemplate,
-    'Preciso de ajuda com a aplicacao Web. Minha chave e {chave}.'
+    'Preciso de ajuda com a aplicação Checking Web. Minha chave é {chave}.'
   );
   assert.equal(
     checkI18nDictionaries.dictionaries.en.transport.kinds.regular,

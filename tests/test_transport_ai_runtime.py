@@ -227,6 +227,11 @@ def test_resolve_transport_ai_failure_category_prefers_concrete_issue_codes_over
         issue_codes=["transport_ai_partition_missing_route_points"],
     ) == "geocoding"
 
+    assert resolve_transport_ai_failure_category(
+        error_code="transport_ai_agent_execution_failed",
+        issue_codes=["passenger_origin_geocode_low_confidence"],
+    ) == "geocoding"
+
 
 def test_resolve_transport_ai_review_state_distinguishes_fatal_failures_from_renderable_reviews():
     assert resolve_transport_ai_review_state(

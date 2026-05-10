@@ -131,6 +131,8 @@ def _resolve_transport_ai_failure_category_from_code(
         return "geocoding"
     if normalized_code.startswith("mapbox_"):
         return "route_provider"
+    if "geocode" in normalized_code or normalized_code.endswith("country_mismatch"):
+        return "geocoding"
     if "route_matrix" in normalized_code or "pair_no_route" in normalized_code or "segment_missing" in normalized_code:
         return "route_provider"
     if normalized_code.startswith("transport_ai_partition_"):
@@ -326,6 +328,60 @@ def _build_transport_ai_mapbox_message_descriptor(error_code: str) -> TransportA
     return None
 
 
+def _build_transport_ai_geocode_message_descriptor(
+    *,
+    error_code: str,
+    route_provider: str | None,
+) -> TransportAIMessageDescriptor | None:
+    normalized_code = str(error_code or "").strip().lower()
+    provider_label = _format_transport_ai_provider_label(route_provider)
+    params = {"provider": provider_label}
+
+    if normalized_code == "project_destination_geocode_missing":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.project_destination_geocode_missing",
+            message_params=params,
+            message="Transport AI could not calculate routes because the selected project destination could not be geocoded.",
+        )
+    if normalized_code == "project_destination_geocode_low_confidence":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.project_destination_geocode_low_confidence",
+            message_params=params,
+            message="Transport AI could not calculate routes because the selected project destination returned low geocoding confidence.",
+        )
+    if normalized_code == "project_destination_country_mismatch":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.project_destination_country_mismatch",
+            message_params=params,
+            message="Transport AI could not calculate routes because the selected project destination was resolved to the wrong country.",
+        )
+    if normalized_code == "passenger_origin_geocode_missing":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.passenger_origin_geocode_missing",
+            message_params=params,
+            message="Transport AI could not calculate routes because one or more passenger addresses could not be geocoded.",
+        )
+    if normalized_code == "passenger_origin_geocode_low_confidence":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.passenger_origin_geocode_low_confidence",
+            message_params=params,
+            message="Transport AI could not calculate routes because one or more passenger addresses returned low geocoding confidence.",
+        )
+    if normalized_code == "passenger_origin_country_mismatch":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.passenger_origin_country_mismatch",
+            message_params=params,
+            message="Transport AI could not calculate routes because one or more passenger addresses were resolved to the wrong country.",
+        )
+    if normalized_code == "transport_ai_partition_missing_route_points":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.partition_missing_route_points",
+            message_params=params,
+            message="Transport AI could not calculate routes because one or more passengers are missing validated route points.",
+        )
+    return None
+
+
 def resolve_transport_ai_message_descriptor(
     *,
     error_code: str | None,
@@ -336,6 +392,13 @@ def resolve_transport_ai_message_descriptor(
     normalized_code = str(error_code or "").strip().lower()
     if not normalized_code:
         return None
+
+    geocode_descriptor = _build_transport_ai_geocode_message_descriptor(
+        error_code=normalized_code,
+        route_provider=route_provider,
+    )
+    if geocode_descriptor is not None:
+        return geocode_descriptor
 
     mapbox_descriptor = _build_transport_ai_mapbox_message_descriptor(normalized_code)
     if mapbox_descriptor is not None:

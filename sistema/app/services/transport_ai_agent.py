@@ -111,6 +111,36 @@ class TransportAILangChainToolIssue(BaseModel):
     setting_name: str | None = Field(default=None, max_length=80)
 
 
+class TransportAIToolExecutionError(Exception):
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        issues: list["TransportAILangChainToolIssue"],
+    ) -> None:
+        normalized_issues = list(issues)
+        if not normalized_issues:
+            normalized_issues = [
+                TransportAILangChainToolIssue(
+                    code="transport_ai_tool_execution_failed",
+                    message=f"Tool '{tool_name}' failed without a structured issue payload.",
+                    blocking=True,
+                )
+            ]
+
+        primary_issue = next(
+            (issue for issue in normalized_issues if issue.blocking and issue.code),
+            normalized_issues[0],
+        )
+        self.tool_name = tool_name
+        self.issues = normalized_issues
+        self.error_code = primary_issue.code
+        self.message_key = primary_issue.message_key
+        self.message_params = dict(primary_issue.message_params or {})
+        self.primary_issue_message = primary_issue.message
+        super().__init__(_format_transport_ai_tool_issues(tool_name, normalized_issues))
+
+
 class TransportAILoadPlanningInputToolArgs(BaseModel):
     refresh: bool = False
 
@@ -343,12 +373,67 @@ def _coerce_transport_ai_tool_issue(
     )
 
 
+def _coerce_transport_ai_tool_issue_like(issue: Any) -> TransportAILangChainToolIssue:
+    if isinstance(issue, TransportAILangChainToolIssue):
+        return issue
+    if isinstance(issue, (TransportAIPreflightIssue, TransportProposalValidationIssue)):
+        return _coerce_transport_ai_tool_issue(issue)
+    if isinstance(issue, dict):
+        raw_request_id = issue.get("request_id")
+        request_id = raw_request_id if isinstance(raw_request_id, int) and raw_request_id > 0 else None
+        raw_vehicle_id = issue.get("vehicle_id")
+        vehicle_id = raw_vehicle_id if isinstance(raw_vehicle_id, int) and raw_vehicle_id > 0 else None
+        raw_message_params = issue.get("message_params")
+        message_params = raw_message_params if isinstance(raw_message_params, dict) else {}
+        return _build_transport_ai_tool_issue(
+            code=str(issue.get("code") or "").strip() or "transport_ai_tool_execution_failed",
+            message=str(issue.get("message") or "").strip() or "Transport AI tool execution failed.",
+            message_key=str(issue.get("message_key") or "").strip() or None,
+            message_params=message_params,
+            blocking=bool(issue.get("blocking", True)),
+            request_id=request_id,
+            vehicle_id=vehicle_id,
+            setting_name=str(issue.get("setting_name") or "").strip() or None,
+        )
+    return _build_transport_ai_tool_issue(
+        code="transport_ai_tool_execution_failed",
+        message=str(issue).strip() or "Transport AI tool execution failed.",
+        blocking=True,
+    )
+
+
 def _build_transport_ai_tool_issue_from_exception(
     exc: Exception,
     *,
     code: str = "transport_ai_tool_execution_failed",
 ) -> TransportAILangChainToolIssue:
-    return _build_transport_ai_tool_issue(code=code, message=str(exc), blocking=True)
+    normalized_message = _truncate_transport_ai_error_message(str(exc)) or "Transport AI tool execution failed."
+    if isinstance(exc, TransportRouteProviderError):
+        error_code = _resolve_transport_ai_route_provider_failure_code(exc)
+        _friendly_message, message_key, message_params = _resolve_transport_ai_failure_contract(
+            error_code=error_code,
+            fallback_message=normalized_message,
+            route_provider=exc.provider,
+        )
+        return _build_transport_ai_tool_issue(
+            code=error_code,
+            message=normalized_message,
+            message_key=message_key,
+            message_params=message_params,
+            blocking=True,
+            setting_name=f"transport_ai_{exc.provider}_{exc.operation}",
+        )
+    return _build_transport_ai_tool_issue(code=code, message=normalized_message, blocking=True)
+
+
+def _raise_transport_ai_tool_execution_error(
+    tool_name: str,
+    issues: list[Any] | None,
+) -> None:
+    raise TransportAIToolExecutionError(
+        tool_name=tool_name,
+        issues=[_coerce_transport_ai_tool_issue_like(issue) for issue in issues or []],
+    )
 
 
 def _has_transport_ai_blocking_issue(issues: list[TransportAILangChainToolIssue]) -> bool:
@@ -1620,6 +1705,30 @@ def _build_transport_ai_runtime_issue(
     )
 
 
+def _build_transport_ai_runtime_issues_from_tool_issues(
+    issues: list[TransportAILangChainToolIssue],
+) -> list[TransportAIPreflightIssue]:
+    if not issues:
+        return [
+            _build_transport_ai_runtime_issue(
+                code="transport_ai_tool_execution_failed",
+                message="Transport AI tool execution failed.",
+                setting_name="transport_ai_runtime",
+            )
+        ]
+
+    return [
+        _build_transport_ai_runtime_issue(
+            code=issue.code,
+            message=issue.message,
+            message_key=issue.message_key,
+            message_params=issue.message_params,
+            setting_name=issue.setting_name,
+        )
+        for issue in issues
+    ]
+
+
 def _resolve_transport_ai_route_provider_failure_code(exc: TransportRouteProviderError) -> str:
     provider = str(exc.provider or "").strip().lower()
     operation = str(exc.operation or "").strip().lower()
@@ -1805,7 +1914,7 @@ def _execute_transport_ai_tool_sequence(
     load_result = tools_by_name["load_planning_input"].invoke({})
     planning_input_hash = load_result.get("planning_input_hash")
     if not planning_input_hash:
-        raise ValueError(_format_transport_ai_tool_issues("load_planning_input", load_result.get("issues", [])))
+        _raise_transport_ai_tool_execution_error("load_planning_input", load_result.get("issues", []))
     summary = _ensure_transport_ai_observability_summary(context, run=run)
 
     geocode_started_at = perf_counter()
@@ -1826,7 +1935,7 @@ def _execute_transport_ai_tool_sequence(
             failure_layer="route_provider",
             failed_phase="geocode",
         )
-        raise ValueError(_format_transport_ai_tool_issues("geocode_route_points", geocode_result.get("issues", [])))
+        _raise_transport_ai_tool_execution_error("geocode_route_points", geocode_result.get("issues", []))
 
     matrix_started_at = perf_counter()
     route_matrix_result = tools_by_name["build_route_matrices"].invoke({"planning_input_hash": planning_input_hash})
@@ -1846,7 +1955,7 @@ def _execute_transport_ai_tool_sequence(
             failure_layer="route_provider",
             failed_phase="matrix",
         )
-        raise ValueError(_format_transport_ai_tool_issues("build_route_matrices", route_matrix_result.get("issues", [])))
+        _raise_transport_ai_tool_execution_error("build_route_matrices", route_matrix_result.get("issues", []))
 
     solve_started_at = perf_counter()
     solve_result = tools_by_name["solve_transport_plan"].invoke({"planning_input_hash": planning_input_hash})
@@ -1867,7 +1976,7 @@ def _execute_transport_ai_tool_sequence(
             failure_layer="local",
             failed_phase="solve",
         )
-        raise ValueError(_format_transport_ai_tool_issues("solve_transport_plan", solve_result.get("issues", [])))
+        _raise_transport_ai_tool_execution_error("solve_transport_plan", solve_result.get("issues", []))
 
     validate_started_at = perf_counter()
     validate_result = tools_by_name["validate_transport_plan"].invoke({"plan_key": plan_key})
@@ -1896,7 +2005,7 @@ def _execute_transport_ai_deterministic_plan(
     load_result = _run_load_planning_input_tool(context, refresh=False)
     planning_input_hash = load_result.planning_input_hash
     if not planning_input_hash:
-        raise ValueError(_format_transport_ai_tool_issues("load_planning_input", load_result.issues))
+        _raise_transport_ai_tool_execution_error("load_planning_input", load_result.issues)
     summary = _ensure_transport_ai_observability_summary(context, run=run)
 
     geocode_started_at = perf_counter()
@@ -1921,7 +2030,7 @@ def _execute_transport_ai_deterministic_plan(
             failure_layer="route_provider",
             failed_phase="geocode",
         )
-        raise ValueError(_format_transport_ai_tool_issues("geocode_route_points", geocode_result.issues))
+        _raise_transport_ai_tool_execution_error("geocode_route_points", geocode_result.issues)
 
     matrix_started_at = perf_counter()
     route_matrices_result = _run_build_route_matrices_tool(
@@ -1945,7 +2054,7 @@ def _execute_transport_ai_deterministic_plan(
             failure_layer="route_provider",
             failed_phase="matrix",
         )
-        raise ValueError(_format_transport_ai_tool_issues("build_route_matrices", route_matrices_result.issues))
+        _raise_transport_ai_tool_execution_error("build_route_matrices", route_matrices_result.issues)
 
     solve_started_at = perf_counter()
     solve_result = _run_solve_transport_plan_tool(
@@ -1969,7 +2078,7 @@ def _execute_transport_ai_deterministic_plan(
             failure_layer="local",
             failed_phase="solve",
         )
-        raise ValueError(_format_transport_ai_tool_issues("solve_transport_plan", solve_result.issues))
+        _raise_transport_ai_tool_execution_error("solve_transport_plan", solve_result.issues)
 
     validate_started_at = perf_counter()
     validation_result = _run_validate_transport_plan_tool(
@@ -2750,8 +2859,13 @@ def run_transport_ai_agent(
                     failure_layer="local",
                     failed_phase=current_phase or "planning",
                 )
+        raw_failure_message = (
+            exc.primary_issue_message
+            if isinstance(exc, TransportAIToolExecutionError)
+            else str(exc)
+        )
         technical_failure_message = _sanitize_transport_ai_string_with_runtime_secrets(
-            str(exc),
+            raw_failure_message,
             settings_obj=settings_obj,
             runtime_secret_literals=runtime_secret_literals,
         )
@@ -2764,6 +2878,33 @@ def run_transport_ai_agent(
                 exc,
                 settings_obj=settings_obj,
                 runtime_secret_literals=runtime_secret_literals,
+            )
+        elif isinstance(exc, TransportAIToolExecutionError):
+            failure_code = str(exc.error_code or "").strip() or failure_code
+            failure_message, failure_message_key, failure_message_params = _resolve_transport_ai_failure_contract(
+                error_code=failure_code,
+                fallback_message=technical_failure_message,
+                llm_provider=run.llm_provider,
+                llm_model=effective_model_name,
+                route_provider=run.route_provider,
+            )
+            if failure_message_key is None and exc.message_key:
+                failure_message_key = exc.message_key
+            if not failure_message_params and exc.message_params:
+                failure_message_params = dict(exc.message_params)
+            failure_issues = _build_transport_ai_runtime_issues_from_tool_issues(
+                [
+                    issue.model_copy(
+                        update={
+                            "message": _sanitize_transport_ai_string_with_runtime_secrets(
+                                issue.message,
+                                settings_obj=settings_obj,
+                                runtime_secret_literals=runtime_secret_literals,
+                            )
+                        }
+                    )
+                    for issue in exc.issues
+                ]
             )
         else:
             failure_message, failure_message_key, failure_message_params = _resolve_transport_ai_failure_contract(

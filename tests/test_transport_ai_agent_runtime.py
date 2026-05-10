@@ -1281,16 +1281,73 @@ def test_run_transport_ai_agent_marks_route_provider_failure_in_observability(tm
             )
 
             assert result.plan is None
-            assert result.error_code == "transport_ai_agent_execution_failed"
+            assert result.error_code == "passenger_origin_geocode_missing"
             assert result.observability is not None
             assert result.observability.failure_layer == "route_provider"
             assert result.observability.failed_phase == "geocode"
             assert result.observability.geocode_provider_call_count >= 1
             assert run.status == "failed"
+            assert result.message_key == "transport_ai.error.passenger_origin_geocode_missing"
+            assert "could not be geocoded" in result.error_message
 
             planning_payload = json.loads(run.planning_input_json)
             assert planning_payload["observability"]["failure_layer"] == "route_provider"
             assert planning_payload["observability"]["failed_phase"] == "geocode"
+            assert json.loads(run.preflight_issues_json)[0]["code"] == "passenger_origin_geocode_missing"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_preserves_low_confidence_geocode_issue_from_tools(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_geocode_low_confidence.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="deterministic",
+            openai_api_key=None,
+            transport_ai_route_provider="fake",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=True)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME1LC", address="1 Marina Boulevard", zip_code="018989")
+            user = _create_user(
+                session,
+                chave="R1L1",
+                nome="Runtime Worker Low Confidence",
+                projeto=project.name,
+                address="42 Custom Test Road",
+                zip_code="543210",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7103A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "passenger_origin_geocode_low_confidence"
+            assert result.message_key == "transport_ai.error.passenger_origin_geocode_low_confidence"
+            assert "low geocoding confidence" in result.error_message
+            assert result.observability is not None
+            assert result.observability.failure_layer == "route_provider"
+            assert result.observability.failed_phase == "geocode"
+            persisted_issues = json.loads(run.preflight_issues_json)
+            assert persisted_issues[0]["code"] == "passenger_origin_geocode_low_confidence"
+            assert "Runtime Worker Low Confidence" in persisted_issues[0]["message"]
     finally:
         engine.dispose()
 
