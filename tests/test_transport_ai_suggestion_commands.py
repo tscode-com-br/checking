@@ -627,7 +627,7 @@ def _build_transport_ai_suggestion_script(
         settings.transport_ai_route_provider = "fake"
         settings.transport_ai_operational_approval_evidence = "phase8-loadtest-2026-05-05"
         settings.transport_ai_max_concurrent_runs = 1
-        settings.mapbox_access_token = "test-mapbox-token"
+        settings.here_api_key = "test-here-api-key"
         clear_transport_reevaluation_events()
         seeded = _seed_transport_ai_suggestion_scenario(
             service_date=date.fromisoformat({service_date!r}),
@@ -690,7 +690,7 @@ def test_transport_ai_latest_suggestion_returns_not_found_when_none_exists(tmp_p
                 params={"service_date": "2026-06-10", "route_kind": "home_to_work"},
             )
             assert latest.status_code == 404, latest.text
-            assert latest.json()["detail"] == "Transport AI suggestion not found."
+            assert latest.json()["detail"]["message"] == "Transport AI suggestion not found."
 
         print("transport-ai-suggestion-commands-ok")
         """

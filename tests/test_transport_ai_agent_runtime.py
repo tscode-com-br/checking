@@ -40,7 +40,7 @@ from tests.test_transport_ai_planning import _build_dense_solver_matrix, _build_
 def _build_settings(**overrides) -> Settings:
     values = {
         "openai_api_key": "sk-test-openai-secret",
-        "mapbox_access_token": "pk.test-mapbox-secret",
+        "here_api_key": "test-here-api-key",
         "openai_model": "gpt-5-2025-08-07",
         "openai_max_retries": 2,
         "transport_ai_settings_encryption_key": Fernet.generate_key().decode("utf-8"),
@@ -331,7 +331,7 @@ def test_load_transport_ai_route_planner_prompt_uses_v4_failure_contract():
 
     assert "retry_feedback" in prompt_text
     assert "Never invent a parallel failure taxonomy" in prompt_text
-    assert "Do not speculate about Mapbox, OpenAI, DeepSeek" in prompt_text
+    assert "Do not speculate about HERE, OpenAI, DeepSeek" in prompt_text
     assert "leave those fields empty rather than inventing new values" in prompt_text
 
 
@@ -802,8 +802,8 @@ def test_run_transport_ai_agent_fails_when_project_llm_snapshot_drifts_from_curr
                         "route_provider": "fake",
                         "price_currency_code": "SGD",
                         "price_rate_unit": "day",
-                        "matrix_profile": settings_obj.mapbox_matrix_profile,
-                        "directions_profile": settings_obj.mapbox_directions_profile,
+                        "matrix_profile": settings_obj.here_matrix_profile,
+                        "directions_profile": settings_obj.here_directions_profile,
                     },
                     "projects_by_name": {
                         project.name: {
@@ -1362,7 +1362,7 @@ def test_run_transport_ai_agent_deterministic_mode_respects_extra_tolerance_clus
         )
         provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
 
-        def _fake_execute_transport_ai_deterministic_plan(*, context: TransportAILangChainToolContext):
+        def _fake_execute_transport_ai_deterministic_plan(*, context: TransportAILangChainToolContext, run=None):
             planning_input = build_transport_agent_planning_input(
                 context.db,
                 service_date=context.service_date,
@@ -1404,7 +1404,7 @@ def test_run_transport_ai_agent_deterministic_mode_respects_extra_tolerance_clus
             route_matrices_result = TransportAgentRouteMatricesResult(
                 planning_input_hash=planning_input.planning_input_hash,
                 provider="fake",
-                profile=context.settings_obj.mapbox_matrix_profile,
+                profile=context.settings_obj.here_matrix_profile,
                 partitions=route_matrix_partitions,
                 issues=[],
                 total_matrices=len(route_matrix_partitions),
@@ -2047,11 +2047,11 @@ def test_run_transport_ai_agent_sanitizes_raw_response(tmp_path):
                 {
                     "raw": AIMessage(
                         content=(
-                            "OpenAI key sk-test-openai-secret and mapbox pk.test-mapbox-secret and Bearer top-secret"
+                            "OpenAI key sk-test-openai-secret and HERE key test-here-api-key and Bearer top-secret"
                         ),
                         additional_kwargs={
                             "api_key": "sk-test-openai-secret",
-                            "access_token": "pk.test-mapbox-secret",
+                            "here_api_key": "test-here-api-key",
                         },
                     ),
                     "parsed": valid_plan,
@@ -2069,7 +2069,7 @@ def test_run_transport_ai_agent_sanitizes_raw_response(tmp_path):
 
             assert result.raw_model_response_json is not None
             assert "sk-test-openai-secret" not in result.raw_model_response_json
-            assert "pk.test-mapbox-secret" not in result.raw_model_response_json
+            assert "test-here-api-key" not in result.raw_model_response_json
             assert "Bearer top-secret" not in result.raw_model_response_json
             assert "[REDACTED]" in result.raw_model_response_json
     finally:

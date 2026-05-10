@@ -36,7 +36,7 @@ def _build_runtime_settings(**overrides) -> Settings:
         "transport_ai_agent_mode": "agent",
         "openai_model": "gpt-5-2025-08-07",
         "openai_api_key": "test-openai-key",
-        "mapbox_access_token": "test-mapbox-token",
+        "here_api_key": "test-here-api-key",
         "transport_ai_settings_encryption_key": Fernet.generate_key().decode("utf-8"),
         "transport_ai_operational_approval_evidence": "phase8-loadtest-2026-05-05",
         "transport_ai_max_passengers_per_run": 80,
@@ -206,7 +206,7 @@ def test_validate_transport_ai_runtime_configuration_returns_disabled_issue(tmp_
                 settings_obj=_build_runtime_settings(
                     transport_ai_enabled=False,
                     openai_api_key=None,
-                    mapbox_access_token=None,
+                    here_api_key=None,
                 ),
             )
 
@@ -329,14 +329,14 @@ def test_validate_transport_ai_runtime_configuration_reports_missing_mapbox_toke
     try:
         with session_factory() as db:
             _configure_transport_pricing(db)
-            settings_obj = _build_runtime_settings(mapbox_access_token=None)
+            settings_obj = _build_runtime_settings(here_api_key=None)
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
             )
 
         assert result.ok is False
-        assert [issue.code for issue in result.issues] == ["mapbox_access_token_missing"]
+        assert [issue.code for issue in result.issues] == ["here_api_key_missing"]
     finally:
         engine.dispose()
 

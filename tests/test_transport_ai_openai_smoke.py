@@ -268,7 +268,7 @@ def _build_transport_ai_openai_smoke_script() -> str:
         settings.transport_ai_route_provider = "fake"
         settings.transport_ai_operational_approval_evidence = "transport-ai-openai-opt-in-smoke"
         settings.transport_ai_max_concurrent_runs = 1
-        settings.mapbox_access_token = "test-mapbox-token"
+        settings.here_api_key = "test-here-api-key"
         settings.openai_api_key = None
         settings.openai_model = "legacy-openai-model-ignored"
 

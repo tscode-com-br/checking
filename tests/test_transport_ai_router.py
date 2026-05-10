@@ -101,6 +101,7 @@ def _build_transport_ai_router_env(tmp_path: Path) -> dict[str, str]:
     )
     env.pop("OPENAI_API_KEY", None)
     env.pop("MAPBOX_ACCESS_TOKEN", None)
+    env.pop("HERE_API_KEY", None)
     return env
 
 
@@ -1039,7 +1040,7 @@ def test_transport_ai_route_calculations_persist_scope_project_names_and_scope_a
         env_updates={
             'TRANSPORT_AI_ENABLED': 'true',
             'TRANSPORT_AI_AGENT_MODE': 'deterministic',
-            'MAPBOX_ACCESS_TOKEN': 'test-mapbox-token',
+            'HERE_API_KEY': 'test-here-api-key',
             'TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE': 'phase8-loadtest-2026-05-05',
             'TRANSPORT_AI_MAX_CONCURRENT_RUNS': '2',
             'TRANSPORT_AI_MAX_RUNTIME_SECONDS': '180',

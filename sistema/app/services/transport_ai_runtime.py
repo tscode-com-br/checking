@@ -49,6 +49,8 @@ _TRANSPORT_AI_FAILURE_CATEGORY_BY_CODE: dict[str, TransportAIFailureCategory] = 
     "transport_ai_max_passengers_per_run_invalid": "configuration",
     "transport_ai_max_runtime_seconds_invalid": "configuration",
     "transport_ai_max_concurrent_runs_invalid": "configuration",
+    "here_api_key_missing": "configuration",
+    "here_geocode_no_result": "geocoding",
     "mapbox_access_token_missing": "configuration",
     "mapbox_geocode_no_result": "geocoding",
     "transport_ai_deterministic_plan_invalid": "deterministic_validation",
@@ -254,6 +256,80 @@ def _build_transport_ai_llm_message_descriptor(
     return None
 
 
+def _build_transport_ai_here_message_descriptor(error_code: str) -> TransportAIMessageDescriptor | None:
+    normalized_code = str(error_code or "").strip().lower()
+    if normalized_code == "here_api_key_missing":
+        return TransportAIMessageDescriptor(
+            message_key="transport_ai.error.here_api_key_missing",
+            message_params={"provider": "HERE"},
+            message="Transport AI cannot calculate routes because the HERE API key is not configured.",
+        )
+
+    prefix = "here_"
+    if not normalized_code.startswith(prefix):
+        return None
+
+    remainder = normalized_code[len(prefix):]
+    operation, separator, suffix = remainder.partition("_")
+    operation_label = _TRANSPORT_AI_ROUTE_OPERATION_LABELS.get(operation)
+    if not separator or operation_label is None:
+        return None
+
+    params = {
+        "provider": "HERE",
+        "operation": operation,
+        "operation_label": operation_label,
+    }
+
+    if suffix == "auth_failed":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_auth_failed",
+            message_params=params,
+            message=f"Transport AI could not use HERE for {operation_label} because the configured API key was rejected.",
+        )
+    if suffix == "timeout":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_timeout",
+            message_params=params,
+            message=f"Transport AI timed out while waiting for HERE {operation_label}.",
+        )
+    if suffix == "request_4xx":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_request_4xx",
+            message_params=params,
+            message=f"Transport AI could not finish HERE {operation_label} because HERE rejected the request.",
+        )
+    if suffix == "request_5xx":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_request_5xx",
+            message_params=params,
+            message=f"Transport AI could not finish HERE {operation_label} because HERE returned a server error.",
+        )
+    if suffix == "invalid_response":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_invalid_response",
+            message_params=params,
+            message=f"Transport AI received an invalid HERE response during {operation_label}.",
+        )
+    if suffix == "no_result":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_no_result",
+            message_params=params,
+            message="Transport AI could not geocode at least one required address with HERE.",
+        )
+    if suffix == "no_route":
+        return TransportAIMessageDescriptor(
+            message_key=f"transport_ai.error.here_{operation}_no_route",
+            message_params=params,
+            message=(
+                "Transport AI could not calculate routes because HERE reported at least one unreachable route matrix cell."
+                if operation == "matrix"
+                else f"Transport AI could not calculate routes because HERE did not return a valid result for {operation_label}."
+            ),
+        )
+    return None
+
+
 def _build_transport_ai_mapbox_message_descriptor(error_code: str) -> TransportAIMessageDescriptor | None:
     normalized_code = str(error_code or "").strip().lower()
     if normalized_code == "mapbox_access_token_missing":
@@ -399,6 +475,10 @@ def resolve_transport_ai_message_descriptor(
     )
     if geocode_descriptor is not None:
         return geocode_descriptor
+
+    here_descriptor = _build_transport_ai_here_message_descriptor(normalized_code)
+    if here_descriptor is not None:
+        return here_descriptor
 
     mapbox_descriptor = _build_transport_ai_mapbox_message_descriptor(normalized_code)
     if mapbox_descriptor is not None:
@@ -835,7 +915,16 @@ def validate_transport_ai_runtime_configuration(
                 )
             )
 
-    if not str(settings_obj.mapbox_access_token or "").strip():
+    configured_provider = str(settings_obj.transport_ai_route_provider or "").strip().lower()
+    if configured_provider == "here" and not str(settings_obj.here_api_key or "").strip():
+        issues.append(
+            _build_transport_ai_preflight_issue(
+                code="here_api_key_missing",
+                message="The HERE API key is not configured.",
+                setting_name="here_api_key",
+            )
+        )
+    elif configured_provider == "mapbox" and not str(settings_obj.mapbox_access_token or "").strip():
         issues.append(
             _build_transport_ai_preflight_issue(
                 code="mapbox_access_token_missing",

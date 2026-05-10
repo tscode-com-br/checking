@@ -746,7 +746,7 @@ def test_solve_transport_ai_partition_with_ortools_respects_runtime_above_three_
 def _build_matrix_lookup_key(
     *,
     points: list[TransportAgentResolvedRoutePoint],
-    profile: str = "mapbox/driving-traffic",
+    profile: str = "here/car-fast",
 ) -> tuple[str, tuple[tuple[float, float], ...], tuple[tuple[float, float], ...]]:
     coordinate_pairs = tuple((point.longitude, point.latitude) for point in points)
     return (profile, coordinate_pairs, coordinate_pairs)
@@ -2243,7 +2243,7 @@ def test_build_transport_ai_route_matrices_returns_small_square_matrix_with_norm
                 matrix_results={
                     _build_matrix_lookup_key(points=points): _build_matrix_result(
                         provider="counting",
-                        profile="mapbox/driving-traffic",
+                        profile="here/car-fast",
                         points=points,
                         durations_seconds=[[0.0, 120.6], [125.2, 0.0]],
                         distances_meters=[[0.0, 1500.6], [1499.6, 0.0]],
@@ -2399,7 +2399,7 @@ def test_build_transport_ai_route_matrices_returns_issue_for_unroutable_pair(tmp
                 matrix_results={
                     _build_matrix_lookup_key(points=points): _build_matrix_result(
                         provider="counting",
-                        profile="mapbox/driving-traffic",
+                        profile="here/car-fast",
                         points=points,
                         durations_seconds=[[0.0, None], [125.0, 0.0]],
                         distances_meters=[[0.0, None], [1500.0, 0.0]],
@@ -2452,7 +2452,7 @@ def test_build_transport_ai_route_matrices_reuses_cache_without_second_provider_
                 matrix_results={
                     _build_matrix_lookup_key(points=points): _build_matrix_result(
                         provider="counting",
-                        profile="mapbox/driving-traffic",
+                        profile="here/car-fast",
                         points=points,
                         durations_seconds=[[0.0, 121.0], [125.0, 0.0]],
                         distances_meters=[[0.0, 1500.0], [1495.0, 0.0]],
@@ -2518,7 +2518,7 @@ def test_build_transport_ai_route_matrices_includes_project_destination_as_last_
                 matrix_results={
                     _build_matrix_lookup_key(points=points): _build_matrix_result(
                         provider="counting",
-                        profile="mapbox/driving-traffic",
+                        profile="here/car-fast",
                         points=points,
                         durations_seconds=[
                             [0.0, 60.0, 180.0],

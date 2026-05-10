@@ -24,7 +24,12 @@ def test_transport_ai_settings_default_to_safe_server_side_values():
     assert settings.mapbox_timeout_seconds == 20
     assert settings.mapbox_max_retries == 2
     assert settings.mapbox_geocoding_permanent is False
-    assert settings.transport_ai_route_provider == "mapbox"
+    assert settings.here_api_key is None
+    assert settings.here_matrix_profile == "here/car-fast"
+    assert settings.here_directions_profile == "here/car-fast"
+    assert settings.here_timeout_seconds == 20
+    assert settings.here_max_retries == 2
+    assert settings.transport_ai_route_provider == "here"
     assert settings.transport_ai_fake_matrix_asymmetric is False
     assert settings.transport_ai_max_passengers_per_run == 80
     assert settings.transport_ai_max_concurrent_runs == 1

@@ -148,11 +148,7 @@ def upsert_transport_ai_route_point(
     )
     ttl_days = max(int(settings_obj.transport_ai_geocode_cache_ttl_days), 0)
     expires_at = timestamp + timedelta(days=ttl_days)
-    persisted_raw_response_json = (
-        _serialize_optional_json_text(raw_response_json)
-        if settings_obj.mapbox_geocoding_permanent
-        else None
-    )
+    persisted_raw_response_json: str | None = None
 
     route_point = db.execute(
         select(TransportAIRoutePoint)

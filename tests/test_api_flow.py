@@ -20087,7 +20087,7 @@ def _configure_transport_ai_api_regression_runtime(monkeypatch) -> None:
     monkeypatch.setattr(settings, "transport_ai_route_provider", "fake")
     monkeypatch.setattr(settings, "transport_ai_operational_approval_evidence", "phase8-loadtest-2026-05-05")
     monkeypatch.setattr(settings, "transport_ai_max_concurrent_runs", 1)
-    monkeypatch.setattr(settings, "mapbox_access_token", "test-mapbox-token")
+    monkeypatch.setattr(settings, "here_api_key", "test-here-api-key")
 
 
 def _create_transport_ai_api_regression_vehicle_candidate(

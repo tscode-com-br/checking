@@ -397,7 +397,7 @@ def _build_route_calculation_script(
         settings.transport_ai_route_provider = "fake"
         settings.transport_ai_operational_approval_evidence = {operational_approval_evidence!r}
         settings.transport_ai_max_concurrent_runs = {max_concurrent_runs}
-        settings.mapbox_access_token = "test-mapbox-token"
+        settings.here_api_key = "test-here-api-key"
         clear_transport_reevaluation_events()
         seeded = _seed_route_calculation_scenario(
             service_date=date.fromisoformat({service_date!r}),

@@ -60,7 +60,12 @@ class Settings(BaseSettings):
     mapbox_timeout_seconds: int = 20
     mapbox_max_retries: int = 2
     mapbox_geocoding_permanent: bool = False
-    transport_ai_route_provider: str = "mapbox"
+    here_api_key: str | None = None
+    here_matrix_profile: str = "here/car-fast"
+    here_directions_profile: str = "here/car-fast"
+    here_timeout_seconds: int = 20
+    here_max_retries: int = 2
+    transport_ai_route_provider: str = "here"
     transport_ai_fake_matrix_asymmetric: bool = False
     transport_ai_enabled: bool = False
     transport_ai_agent_mode: str = "agent"

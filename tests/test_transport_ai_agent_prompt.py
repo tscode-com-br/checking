@@ -27,7 +27,7 @@ def test_transport_ai_route_planner_prompt_mentions_critical_constraints() -> No
     assert "Run route kind context: {route_kind}" in prompt_text
     assert "{earliest_boarding_time}" in prompt_text
     assert "{arrival_at_work_time}" in prompt_text
-    assert "Mapbox-backed" in prompt_text
+    assert "HERE-backed" in prompt_text
     assert "home_to_work" in prompt_text
     assert "work_to_home" in prompt_text
     assert "REGULAR and WEEKEND must always optimize the canonical home_to_work leg" in prompt_text

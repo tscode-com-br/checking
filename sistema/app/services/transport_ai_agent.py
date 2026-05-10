@@ -886,7 +886,10 @@ def _validate_transport_ai_plan_deterministically(
         for partition in planning_input.partitions
         for request in partition.requests
     }
-    allocation_counter = Counter(allocation.request_id for allocation in plan.passenger_allocations)
+    allocation_leg_counter = Counter(
+        (allocation.request_id, allocation.route_kind) for allocation in plan.passenger_allocations
+    )
+    allocated_request_ids = {allocation.request_id for allocation in plan.passenger_allocations}
     request_ids_with_plan_issues = {
         issue.request_id
         for issue in plan.validation_issues
@@ -894,9 +897,11 @@ def _validate_transport_ai_plan_deterministically(
     }
 
     duplicate_allocation_request_ids = sorted(
-        request_id
-        for request_id, allocation_count in allocation_counter.items()
-        if allocation_count > 1
+        {
+            request_id
+            for (request_id, route_kind), allocation_count in allocation_leg_counter.items()
+            if allocation_count > 1
+        }
     )
     for request_id in duplicate_allocation_request_ids:
         issues.append(
@@ -908,7 +913,7 @@ def _validate_transport_ai_plan_deterministically(
         )
 
     unexpected_allocation_request_ids = sorted(
-        request_id for request_id in allocation_counter if request_id not in expected_request_ids
+        request_id for request_id in allocated_request_ids if request_id not in expected_request_ids
     )
     for request_id in unexpected_allocation_request_ids:
         issues.append(
@@ -922,7 +927,7 @@ def _validate_transport_ai_plan_deterministically(
     unaccounted_request_ids = sorted(
         request_id
         for request_id in expected_request_ids
-        if request_id not in allocation_counter and request_id not in request_ids_with_plan_issues
+        if request_id not in allocated_request_ids and request_id not in request_ids_with_plan_issues
     )
     for request_id in unaccounted_request_ids:
         issues.append(
@@ -986,7 +991,7 @@ def _validate_transport_ai_plan_deterministically(
         planning_input_hash=planning_input.planning_input_hash,
         plan_key=plan.plan_key,
         total_requests=len(expected_request_ids),
-        allocated_request_count=len(allocation_counter),
+        allocated_request_count=len(allocated_request_ids),
         request_issue_count=len(request_ids_with_plan_issues),
         blocking_issue_count=blocking_issue_count,
         warning_issue_count=warning_issue_count,
@@ -1132,7 +1137,7 @@ def _run_build_route_matrices_tool(
                     resolved_route_points=route_points,
                     settings_obj=context.settings_obj,
                     provider=context.provider,
-                    profile=context.settings_obj.mapbox_matrix_profile,
+                    profile=context.settings_obj.here_matrix_profile,
                     reference_time=context.reference_time,
                 )
             _clear_transport_ai_state_after_route_matrices(context)
@@ -1732,6 +1737,30 @@ def _build_transport_ai_runtime_issues_from_tool_issues(
 def _resolve_transport_ai_route_provider_failure_code(exc: TransportRouteProviderError) -> str:
     provider = str(exc.provider or "").strip().lower()
     operation = str(exc.operation or "").strip().lower()
+
+    if provider == "here":
+        if isinstance(exc, TransportRouteProviderAuthError):
+            if exc.status_code in {401, 403}:
+                return f"here_{operation}_auth_failed"
+            return "here_api_key_missing"
+        if isinstance(exc, TransportRouteProviderTimeoutError):
+            return f"here_{operation}_timeout"
+        if isinstance(exc, TransportRouteProviderNoResultError):
+            if operation == "geocode":
+                return "here_geocode_no_result"
+            return f"here_{operation}_invalid_response"
+        if isinstance(exc, TransportRouteProviderNoRouteError):
+            return f"here_{operation}_no_route"
+        if isinstance(exc, TransportRouteProviderInvalidResponseError):
+            if exc.status_code is not None:
+                return (
+                    f"here_{operation}_request_5xx"
+                    if int(exc.status_code) >= 500
+                    else f"here_{operation}_request_4xx"
+                )
+            return f"here_{operation}_invalid_response"
+        return "transport_ai_agent_execution_failed"
+
     if provider != "mapbox":
         return "transport_ai_agent_execution_failed"
 
@@ -2180,8 +2209,8 @@ def _build_transport_ai_runtime_messages(
             earliest_boarding_time=context.earliest_boarding_time,
             arrival_at_work_time=context.arrival_at_work_time,
             route_provider=route_provider,
-            matrix_profile=context.settings_obj.mapbox_matrix_profile,
-            directions_profile=context.settings_obj.mapbox_directions_profile,
+            matrix_profile=context.settings_obj.here_matrix_profile,
+            directions_profile=context.settings_obj.here_directions_profile,
             planning_input_hash=planning_input.planning_input_hash,
         )
     )
@@ -2879,6 +2908,17 @@ def run_transport_ai_agent(
                 settings_obj=settings_obj,
                 runtime_secret_literals=runtime_secret_literals,
             )
+        elif isinstance(exc, TransportAILlmSettingsValidationError):
+            failure_message = technical_failure_message
+            failure_issues = [
+                _build_transport_ai_runtime_issue(
+                    code=failure_code,
+                    message=technical_failure_message,
+                    message_key=None,
+                    message_params={},
+                    setting_name="transport_ai_llm_runtime",
+                )
+            ]
         elif isinstance(exc, TransportAIToolExecutionError):
             failure_code = str(exc.error_code or "").strip() or failure_code
             failure_message, failure_message_key, failure_message_params = _resolve_transport_ai_failure_contract(

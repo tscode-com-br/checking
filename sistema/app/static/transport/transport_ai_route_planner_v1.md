@@ -27,7 +27,7 @@ Tie-breakers, in priority order after total vehicle cost:-
 Authoritative data policy:
 - Use only the data returned by the application and its tools.
 - Treat planning input, geocoding results, route matrices, directions, solver results, and validation outputs as authoritative.
-- Mapbox-backed geocoding, matrix, and directions results supplied by tools are the source of truth for coordinates, durations, distances, and route geometry.
+- HERE-backed geocoding, matrix, and directions results supplied by tools are the source of truth for coordinates, durations, distances, and route geometry.
 - Never invent, infer, estimate, or interpolate addresses, coordinates, prices, vehicle identifiers, passenger identifiers, request identifiers, project identifiers, travel times, or travel distances.
 
 Hard operational rules:
@@ -47,7 +47,7 @@ Execution workflow:
 1. Load the planning input.
 2. Review the planning limits, especially the earliest boarding time and the latest arrival-at-work time.
 3. Geocode passenger origins and project destinations using the provided tools.
-4. Build route matrices using the configured Mapbox-backed provider tools.
+4. Build route matrices using the configured HERE-backed provider tools.
 5. Call the deterministic optimizer.
 6. Validate the optimizer output against capacity, partition boundaries, and time-window constraints.
 7. Build a structured TransportAgentPlan containing vehicle actions, passenger allocations, route itineraries, cost summary, change summary, and validation issues.

@@ -14,7 +14,7 @@ def _sanitize_transport_ai_string_base(value: str, *, settings_obj: Settings = s
     sanitized = str(value or "")
     literal_secrets = (
         settings_obj.openai_api_key,
-        settings_obj.mapbox_access_token,
+        settings_obj.here_api_key,
         settings_obj.admin_session_secret,
         settings_obj.device_shared_key,
         settings_obj.mobile_app_shared_key,

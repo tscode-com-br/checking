@@ -2056,7 +2056,7 @@ def build_transport_ai_route_matrices(
 ) -> TransportAgentRouteMatricesResult:
     effective_provider = provider or build_transport_route_provider(settings_obj=settings_obj)
     owns_provider = provider is None
-    effective_profile = str(profile or settings_obj.mapbox_matrix_profile)
+    effective_profile = str(profile or settings_obj.here_matrix_profile)
     resolved_partitions: list[TransportAgentRouteMatrixPartition] = []
     issues: list[TransportAIPreflightIssue] = []
     total_matrix_provider_calls = 0
@@ -4012,6 +4012,8 @@ def build_transport_proposal_from_agent_plan(
         plan.passenger_allocations,
         key=lambda item: (item.request_id, item.pickup_order, item.vehicle_ref),
     ):
+        if allocation.route_kind != plan.route_kind:
+            continue
         if allocation.request_id in seen_request_ids:
             issues.append(
                 _build_transport_ai_plan_issue(

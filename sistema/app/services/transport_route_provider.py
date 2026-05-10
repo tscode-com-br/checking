@@ -370,6 +370,30 @@ DEFAULT_FAKE_TRANSPORT_ROUTE_CATALOG: dict[str, FakeTransportRouteCatalogEntry] 
         country_code="SG",
         country_name="Singapore",
     ),
+    "2 marina boulevard, 018990, singapore": FakeTransportRouteCatalogEntry(
+        formatted_address="2 Marina Boulevard, Singapore 018990",
+        coordinate=TransportRouteCoordinate(
+            longitude=103.8548,
+            latitude=1.2822,
+            label="2 Marina Boulevard",
+        ),
+        confidence=1.0,
+        provider_place_id="fake-place-2-marina-boulevard",
+        country_code="SG",
+        country_name="Singapore",
+    ),
+    "20 bayfront avenue, 018957, singapore": FakeTransportRouteCatalogEntry(
+        formatted_address="20 Bayfront Avenue, Singapore 018957",
+        coordinate=TransportRouteCoordinate(
+            longitude=103.8612,
+            latitude=1.2838,
+            label="20 Bayfront Avenue",
+        ),
+        confidence=1.0,
+        provider_place_id="fake-place-20-bayfront-avenue",
+        country_code="SG",
+        country_name="Singapore",
+    ),
 }
 
 _FAKE_COUNTRY_NAME_TO_CODE = {
@@ -563,8 +587,7 @@ class FakeTransportRouteProvider(TransportRouteProvider):
             elif end.latitude < start.latitude:
                 distance_meters += 40.0
 
-        normalized_profile = _normalize_required_text(profile, field_name="profile").lower()
-        speed_meters_per_second = 7.2 if normalized_profile.endswith("driving-traffic") else 9.8
+        speed_meters_per_second = 7.2
         duration_seconds = round((distance_meters / speed_meters_per_second) + 45.0, 3)
         return round(distance_meters, 3), duration_seconds
 
@@ -588,9 +611,36 @@ class FakeTransportRouteProvider(TransportRouteProvider):
 
 def _normalize_transport_route_provider_name(value: str) -> str:
     normalized = _normalize_required_text(value, field_name="transport_ai_route_provider").lower()
-    if normalized not in {"fake", "mapbox"}:
+    if normalized not in {"fake", "mapbox", "here"}:
         raise ValueError(f"Unsupported transport route provider: {normalized}")
     return normalized
+
+
+_HERE_MATRIX_MAX_ORIGINS = 15
+_HERE_MATRIX_MAX_DESTINATIONS = 100
+
+_ALPHA2_TO_ALPHA3: dict[str, str] = {
+    "AE": "ARE", "AR": "ARG", "AU": "AUS", "BR": "BRA", "CA": "CAN",
+    "CL": "CHL", "CN": "CHN", "CO": "COL", "DE": "DEU", "ES": "ESP",
+    "FR": "FRA", "GB": "GBR", "HK": "HKG", "ID": "IDN", "IN": "IND",
+    "IT": "ITA", "JP": "JPN", "KR": "KOR", "MX": "MEX", "MY": "MYS",
+    "NL": "NLD", "PH": "PHL", "SA": "SAU", "SG": "SGP", "TH": "THA",
+    "TW": "TWN", "US": "USA", "VN": "VNM",
+}
+
+
+def _alpha2_to_alpha3(country_code: str) -> str | None:
+    return _ALPHA2_TO_ALPHA3.get(str(country_code or "").strip().upper())
+
+
+def _parse_here_profile(profile: str) -> tuple[str, str]:
+    normalized = _normalize_required_text(profile, field_name="profile").lower()
+    if normalized.startswith("here/"):
+        normalized = normalized[5:]
+    parts = normalized.split("-", 1)
+    transport_mode = parts[0] if parts else "car"
+    routing_mode = parts[1] if len(parts) > 1 else "fast"
+    return transport_mode, routing_mode
 
 
 def _normalize_mapbox_profile(value: str) -> str:
@@ -686,6 +736,17 @@ def describe_transport_route_matrix_request_plan(
             "matrix_chunk_count": 0,
             "source_chunk_size": None,
             "destination_chunk_size": None,
+        }
+
+    if normalized_provider_name == "here":
+        source_chunk_size = min(source_count, _HERE_MATRIX_MAX_ORIGINS)
+        destination_chunk_size = min(destination_count, _HERE_MATRIX_MAX_DESTINATIONS)
+        matrix_request_count = ceil(source_count / source_chunk_size) * ceil(destination_count / destination_chunk_size)
+        return {
+            "matrix_request_count": matrix_request_count,
+            "matrix_chunk_count": matrix_request_count,
+            "source_chunk_size": source_chunk_size,
+            "destination_chunk_size": destination_chunk_size,
         }
 
     if normalized_provider_name != "mapbox":
@@ -1204,6 +1265,458 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
         return float(value)
 
 
+class HereTransportRouteProvider(TransportRouteProvider):
+    provider_name = "here"
+
+    def __init__(
+        self,
+        *,
+        settings_obj: Settings = settings,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._settings = settings_obj
+        self._client = client or httpx.Client(
+            timeout=float(settings_obj.here_timeout_seconds),
+        )
+        self._owns_client = client is None
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def geocode(self, request: GeocodeRequest) -> GeocodeResult:
+        query = ", ".join(part for part in [request.address, request.zip_code, request.country_name] if part)
+        params: dict[str, Any] = {
+            "q": query,
+            "limit": str(request.limit),
+            "apiKey": self._get_api_key("geocode"),
+        }
+        if request.language:
+            params["lang"] = request.language.lower()
+        if request.country_code:
+            alpha3 = _alpha2_to_alpha3(request.country_code)
+            if alpha3:
+                params["in"] = f"countryCode:{alpha3}"
+
+        payload = self._execute_request(
+            operation="geocode",
+            method="GET",
+            url="https://geocode.search.hereapi.com/v1/geocode",
+            params=params,
+        )
+
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            raise TransportRouteProviderNoResultError(
+                f"No geocode result for {request.normalized_query}",
+                provider=self.provider,
+                operation="geocode",
+            )
+
+        item = items[0]
+        if not isinstance(item, dict):
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE geocode response returned an invalid item payload.",
+                provider=self.provider,
+                operation="geocode",
+            )
+
+        position = item.get("position") or {}
+        lat = position.get("lat")
+        lng = position.get("lng")
+        if not isinstance(lat, int | float) or not isinstance(lng, int | float):
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE geocode response did not include valid coordinates.",
+                provider=self.provider,
+                operation="geocode",
+            )
+
+        address = item.get("address") or {}
+        scoring = item.get("scoring") or {}
+        query_score = scoring.get("queryScore")
+        confidence = float(query_score) if isinstance(query_score, int | float) else None
+        formatted_address = str(address.get("label") or item.get("title") or query)
+        place_id = str(item.get("id") or "") or None
+
+        return GeocodeResult(
+            provider=self.provider,
+            query=request.normalized_query,
+            formatted_address=formatted_address,
+            coordinate=TransportRouteCoordinate(
+                longitude=float(lng),
+                latitude=float(lat),
+                label=_normalize_optional_text(item.get("title")),
+            ),
+            confidence=confidence,
+            provider_place_id=place_id,
+            country_code=request.country_code,
+            country_name=request.country_name,
+            raw_response_json=payload,
+        )
+
+    def get_matrix(self, request: MatrixRequest) -> MatrixResult:
+        row_count = len(request.sources)
+        column_count = len(request.destinations)
+        durations_matrix: list[list[float | None]] = [
+            [None for _ in range(column_count)] for _ in range(row_count)
+        ]
+        distances_matrix: list[list[float | None]] | None = None
+        if "distance" in request.annotations:
+            distances_matrix = [[None for _ in range(column_count)] for _ in range(row_count)]
+
+        request_plan = describe_transport_route_matrix_request_plan(
+            provider_name=self.provider,
+            profile=request.profile,
+            source_count=row_count,
+            destination_count=column_count,
+        )
+        source_chunk_size = int(request_plan["source_chunk_size"] or row_count)
+        destination_chunk_size = int(request_plan["destination_chunk_size"] or column_count)
+        transport_mode, routing_mode = _parse_here_profile(request.profile)
+
+        for source_indexes in _iter_index_chunks(row_count, source_chunk_size):
+            for destination_indexes in _iter_index_chunks(column_count, destination_chunk_size):
+                sources_chunk = [request.sources[i] for i in source_indexes]
+                destinations_chunk = [request.destinations[i] for i in destination_indexes]
+                chunk_durations, chunk_distances = self._request_matrix_chunk(
+                    sources=sources_chunk,
+                    destinations=destinations_chunk,
+                    transport_mode=transport_mode,
+                    routing_mode=routing_mode,
+                    depart_at=request.depart_at,
+                    request_distances="distance" in request.annotations,
+                )
+                for local_row, global_row in enumerate(source_indexes):
+                    for local_col, global_col in enumerate(destination_indexes):
+                        durations_matrix[global_row][global_col] = chunk_durations[local_row][local_col]
+                        if distances_matrix is not None and chunk_distances is not None:
+                            distances_matrix[global_row][global_col] = chunk_distances[local_row][local_col]
+
+        if any(v is None for row in durations_matrix for v in row):
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE matrix response left gaps in the duration matrix.",
+                provider=self.provider,
+                operation="matrix",
+            )
+        if distances_matrix is not None and any(v is None for row in distances_matrix for v in row):
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE matrix response left gaps in the distance matrix.",
+                provider=self.provider,
+                operation="matrix",
+            )
+
+        return MatrixResult(
+            provider=self.provider,
+            profile=_normalize_required_text(request.profile, field_name="profile"),
+            sources=request.sources,
+            destinations=request.destinations,
+            durations_seconds=durations_matrix,
+            distances_meters=distances_matrix,
+            depart_at=request.depart_at,
+            matrix_request_count=int(request_plan["matrix_request_count"] or 0),
+            matrix_chunk_count=int(request_plan["matrix_chunk_count"] or 0),
+            source_chunk_size=source_chunk_size,
+            destination_chunk_size=destination_chunk_size,
+        )
+
+    def get_directions(self, request: DirectionsRequest) -> DirectionsResult:
+        transport_mode, routing_mode = _parse_here_profile(request.profile)
+        params: dict[str, Any] = {
+            "origin": f"{request.coordinates[0].latitude},{request.coordinates[0].longitude}",
+            "destination": f"{request.coordinates[-1].latitude},{request.coordinates[-1].longitude}",
+            "transportMode": transport_mode,
+            "routingMode": routing_mode,
+            "return": "summary",
+            "apiKey": self._get_api_key("directions"),
+        }
+        if request.depart_at is not None:
+            params["departureTime"] = request.depart_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        via_params = [
+            f"{coord.latitude},{coord.longitude}"
+            for coord in request.coordinates[1:-1]
+        ]
+        if via_params:
+            params["via"] = via_params
+
+        payload = self._execute_request(
+            operation="directions",
+            method="GET",
+            url="https://router.hereapi.com/v8/routes",
+            params=params,
+        )
+
+        routes = payload.get("routes")
+        if not isinstance(routes, list) or not routes:
+            raise TransportRouteProviderNoRouteError(
+                "HERE did not return a route for the requested directions.",
+                provider=self.provider,
+                operation="directions",
+            )
+
+        route = routes[0]
+        if not isinstance(route, dict):
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE directions response returned an invalid route payload.",
+                provider=self.provider,
+                operation="directions",
+            )
+
+        sections = route.get("sections")
+        expected_section_count = len(request.coordinates) - 1
+        if not isinstance(sections, list) or len(sections) != expected_section_count:
+            raise TransportRouteProviderInvalidResponseError(
+                "HERE directions response returned an unexpected sections count.",
+                provider=self.provider,
+                operation="directions",
+            )
+
+        legs: list[DirectionsLeg] = []
+        total_distance = 0.0
+        total_duration = 0.0
+
+        for i, section in enumerate(sections):
+            if not isinstance(section, dict):
+                raise TransportRouteProviderInvalidResponseError(
+                    "HERE directions response returned an invalid section payload.",
+                    provider=self.provider,
+                    operation="directions",
+                )
+            summary = section.get("summary") or {}
+            duration = summary.get("duration")
+            length = summary.get("length")
+            if not isinstance(duration, int | float) or float(duration) < 0:
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE directions section {i} has an invalid duration value.",
+                    provider=self.provider,
+                    operation="directions",
+                )
+            if not isinstance(length, int | float) or float(length) < 0:
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE directions section {i} has an invalid length value.",
+                    provider=self.provider,
+                    operation="directions",
+                )
+            legs.append(
+                DirectionsLeg(
+                    start=request.coordinates[i],
+                    end=request.coordinates[i + 1],
+                    distance_meters=float(length),
+                    duration_seconds=float(duration),
+                )
+            )
+            total_distance += float(length)
+            total_duration += float(duration)
+
+        geometry: dict[str, Any] | str | None = None
+        if request.geometry_format == "geojson":
+            geometry = {
+                "type": "LineString",
+                "coordinates": [[c.longitude, c.latitude] for c in request.coordinates],
+            }
+
+        return DirectionsResult(
+            provider=self.provider,
+            profile=_normalize_required_text(request.profile, field_name="profile"),
+            coordinates=request.coordinates,
+            distance_meters=round(total_distance, 3),
+            duration_seconds=round(total_duration, 3),
+            geometry=geometry,
+            legs=legs,
+            depart_at=request.depart_at,
+        )
+
+    def _request_matrix_chunk(
+        self,
+        *,
+        sources: list[TransportRouteCoordinate],
+        destinations: list[TransportRouteCoordinate],
+        transport_mode: str,
+        routing_mode: str,
+        depart_at: datetime | None,
+        request_distances: bool,
+    ) -> tuple[list[list[float]], list[list[float]] | None]:
+        body: dict[str, Any] = {
+            "origins": [{"lat": s.latitude, "lng": s.longitude} for s in sources],
+            "destinations": [{"lat": d.latitude, "lng": d.longitude} for d in destinations],
+            "regionDefinition": {"type": "world"},
+            "matrixAttributes": ["travelTimes"] + (["distances"] if request_distances else []),
+            "transportMode": transport_mode,
+            "routingMode": routing_mode,
+        }
+        if depart_at is not None:
+            body["departureTime"] = depart_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        payload = self._execute_request(
+            operation="matrix",
+            method="POST",
+            url="https://matrix.router.hereapi.com/v8/matrix",
+            params={"apiKey": self._get_api_key("matrix"), "async": "false"},
+            json_body=body,
+        )
+
+        matrix = payload.get("matrix") or {}
+        num_origins = len(sources)
+        num_destinations = len(destinations)
+
+        status_codes = matrix.get("statusCodes") or []
+        for idx, status_code in enumerate(status_codes):
+            if status_code != 0:
+                row = idx // num_destinations
+                col = idx % num_destinations
+                raise TransportRouteProviderNoRouteError(
+                    f"HERE matrix returned an unroutable cell at source {row} and destination {col} (status {status_code}).",
+                    provider=self.provider,
+                    operation="matrix",
+                )
+
+        durations = self._reshape_here_matrix(
+            matrix.get("travelTimes"),
+            num_origins=num_origins,
+            num_destinations=num_destinations,
+            field_name="travelTimes",
+        )
+        distances: list[list[float]] | None = None
+        if request_distances:
+            distances = self._reshape_here_matrix(
+                matrix.get("distances"),
+                num_origins=num_origins,
+                num_destinations=num_destinations,
+                field_name="distances",
+            )
+        return durations, distances
+
+    def _reshape_here_matrix(
+        self,
+        flat: Any,
+        *,
+        num_origins: int,
+        num_destinations: int,
+        field_name: str,
+    ) -> list[list[float]]:
+        expected = num_origins * num_destinations
+        if not isinstance(flat, list) or len(flat) != expected:
+            raise TransportRouteProviderInvalidResponseError(
+                f"HERE matrix response has unexpected {field_name} count (expected {expected}, got {len(flat) if isinstance(flat, list) else type(flat).__name__}).",
+                provider=self.provider,
+                operation="matrix",
+            )
+        result: list[list[float]] = []
+        for row_idx in range(num_origins):
+            row: list[float] = []
+            for col_idx in range(num_destinations):
+                val = flat[row_idx * num_destinations + col_idx]
+                if not isinstance(val, int | float):
+                    raise TransportRouteProviderInvalidResponseError(
+                        f"HERE matrix response has non-numeric {field_name} value.",
+                        provider=self.provider,
+                        operation="matrix",
+                    )
+                row.append(float(val))
+            result.append(row)
+        return result
+
+    def _execute_request(
+        self,
+        *,
+        operation: Literal["geocode", "matrix", "directions"],
+        method: Literal["GET", "POST"],
+        url: str,
+        params: dict[str, Any],
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        attempt_count = max(1, int(self._settings.here_max_retries) + 1)
+        last_retryable_status_code: int | None = None
+        for attempt in range(1, attempt_count + 1):
+            try:
+                if method == "POST":
+                    response = self._client.post(
+                        url,
+                        params=params,
+                        json=json_body,
+                        headers={"Accept": "application/json"},
+                    )
+                else:
+                    response = self._client.get(
+                        url,
+                        params=params,
+                        headers={"Accept": "application/json"},
+                    )
+            except httpx.TimeoutException as exc:
+                if attempt < attempt_count:
+                    continue
+                raise TransportRouteProviderTimeoutError(
+                    f"HERE {operation} request timed out after {self._settings.here_timeout_seconds} seconds.",
+                    provider=self.provider,
+                    operation=operation,
+                ) from exc
+            except httpx.TransportError as exc:
+                if attempt < attempt_count:
+                    continue
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE {operation} request failed before a response was received.",
+                    provider=self.provider,
+                    operation=operation,
+                ) from exc
+
+            if response.status_code in {401, 403}:
+                raise TransportRouteProviderAuthError(
+                    "HERE rejected the configured API key.",
+                    provider=self.provider,
+                    operation=operation,
+                    status_code=response.status_code,
+                )
+            if response.status_code == 429 or response.status_code >= 500:
+                last_retryable_status_code = response.status_code
+                if attempt < attempt_count:
+                    continue
+            if response.status_code >= 400:
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE {operation} request failed with status {response.status_code}.",
+                    provider=self.provider,
+                    operation=operation,
+                    status_code=response.status_code,
+                )
+
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE {operation} response was not valid JSON.",
+                    provider=self.provider,
+                    operation=operation,
+                    status_code=response.status_code,
+                ) from exc
+            if not isinstance(payload, dict):
+                raise TransportRouteProviderInvalidResponseError(
+                    f"HERE {operation} response must be a JSON object.",
+                    provider=self.provider,
+                    operation=operation,
+                    status_code=response.status_code,
+                )
+            return payload
+
+        raise TransportRouteProviderInvalidResponseError(
+            f"HERE {operation} request failed after retry exhaustion.",
+            provider=self.provider,
+            operation=operation,
+            status_code=last_retryable_status_code,
+        )
+
+    def _get_api_key(
+        self,
+        operation: Literal["geocode", "matrix", "directions"],
+    ) -> str:
+        key = str(self._settings.here_api_key or "").strip()
+        if not key:
+            raise TransportRouteProviderAuthError(
+                "The HERE API key is not configured.",
+                provider=self.provider,
+                operation=operation,
+            )
+        return key
+
+
 def build_transport_route_provider(
     *,
     settings_obj: Settings = settings,
@@ -1218,4 +1731,6 @@ def build_transport_route_provider(
             catalog=fake_catalog,
             allow_synthetic_geocode=allow_synthetic_geocode,
         )
+    if provider_name == "here":
+        return HereTransportRouteProvider(settings_obj=settings_obj, client=client)
     return MapboxTransportRouteProvider(settings_obj=settings_obj, client=client)
