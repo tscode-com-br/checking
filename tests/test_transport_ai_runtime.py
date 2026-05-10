@@ -12,6 +12,7 @@ from sistema.app.database import Base
 from sistema.app.models import AdminUser, Project, TransportAIProjectLlmSettings
 from sistema.app.schemas import (
     ProjectRow,
+    TransportAgentDashboardScope,
     TransportAgentPlanningInput,
     TransportAgentPlanningLimits,
     TransportAgentPlanningPartition,
@@ -22,7 +23,11 @@ from sistema.app.services import transport_ai_llm_settings as transport_ai_llm_s
 from sistema.app.services.transport_ai_llm_settings import (
     upsert_transport_ai_llm_settings,
 )
-from sistema.app.services.transport_ai_runtime import validate_transport_ai_runtime_configuration
+from sistema.app.services.transport_ai_runtime import (
+    resolve_transport_ai_failure_category,
+    resolve_transport_ai_review_state,
+    validate_transport_ai_runtime_configuration,
+)
 
 
 def _build_runtime_settings(**overrides) -> Settings:
@@ -211,6 +216,39 @@ def test_validate_transport_ai_runtime_configuration_returns_disabled_issue(tmp_
         engine.dispose()
 
 
+def test_resolve_transport_ai_failure_category_prefers_concrete_issue_codes_over_generic_envelopes():
+    assert resolve_transport_ai_failure_category(
+        error_code="transport_ai_planning_input_invalid",
+        issue_codes=["max_passengers_per_run_exceeded", "transport_ai_baseline_restore_failed"],
+    ) == "capacity"
+
+    assert resolve_transport_ai_failure_category(
+        error_code="transport_ai_route_calculation_unhandled_error",
+        issue_codes=["transport_ai_partition_missing_route_points"],
+    ) == "geocoding"
+
+
+def test_resolve_transport_ai_review_state_distinguishes_fatal_failures_from_renderable_reviews():
+    assert resolve_transport_ai_review_state(
+        run_status="failed",
+        has_suggestion=False,
+    ) == "fatal_error"
+    assert resolve_transport_ai_review_state(
+        run_status="proposed",
+        has_suggestion=True,
+        suggestion_issue_codes=["transport_ai_request_unallocated"],
+    ) == "review_with_exceptions"
+    assert resolve_transport_ai_review_state(
+        run_status="proposed",
+        has_suggestion=True,
+        suggestion_issue_codes=[],
+    ) == "review_ready"
+    assert resolve_transport_ai_review_state(
+        run_status="running",
+        has_suggestion=False,
+    ) == "unavailable"
+
+
 def test_transport_ai_runtime_migration_adds_llm_snapshot_columns(tmp_path):
     database_url = _build_database_url(tmp_path / "transport_ai_runtime_head.db")
 
@@ -377,6 +415,45 @@ def test_validate_transport_ai_runtime_configuration_accepts_complete_configurat
                 projects=[project],
                 settings_obj=settings_obj,
             )
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings_obj,
+                planning_input=planning_input,
+            )
+
+        assert result.ok is True
+        assert result.issues == []
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_only_checks_projects_present_in_filtered_partitions(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_filtered_scope.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            settings_obj = _build_runtime_settings(
+                openai_api_key=None,
+                openai_model="legacy-openai-model-ignored",
+            )
+            project_visible = _create_project(db, name="PRUNTIME-VISIBLE")
+            _create_project(db, name="PRUNTIME-HIDDEN")
+            _configure_transport_ai_llm_settings(
+                db,
+                settings_obj=settings_obj,
+                project_id=project_visible.id,
+                provider="openai",
+            )
+            planning_input = _build_planning_input_for_projects(
+                projects=[project_visible],
+                settings_obj=settings_obj,
+            ).model_copy(
+                update={
+                    "dashboard_scope": TransportAgentDashboardScope(project_ids=[project_visible.id]),
+                    "dashboard_scope_project_names": [project_visible.name],
+                }
+            )
+
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,

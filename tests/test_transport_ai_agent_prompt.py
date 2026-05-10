@@ -24,10 +24,23 @@ def test_transport_ai_route_planner_prompt_mentions_critical_constraints() -> No
     prompt_text = load_transport_ai_route_planner_prompt()
 
     assert "Ignore vehicle tolerance minutes completely." in prompt_text
+    assert "Run route kind context: {route_kind}" in prompt_text
     assert "{earliest_boarding_time}" in prompt_text
     assert "{arrival_at_work_time}" in prompt_text
     assert "Mapbox-backed" in prompt_text
     assert "home_to_work" in prompt_text
+    assert "work_to_home" in prompt_text
+    assert "REGULAR and WEEKEND must always optimize the canonical home_to_work leg" in prompt_text
+    assert "Never reoptimize it, never regroup passengers, and never switch vehicles while deriving that return leg." in prompt_text
+    assert "EXTRA requests must be planned according to their real request-level route kind and operational direction from the planning input." in prompt_text
+    assert "REGULAR and WEEKEND requested_time values remain audit-only." in prompt_text
+    assert "EXTRA requested_time values are operational inputs." in prompt_text
+    assert "planning_input.settings.extra_car_tolerance_minutes" in prompt_text
+    assert 'Work to Home - Desembarque' in prompt_text
+    assert "scheduled_dropoff_time" in prompt_text
+    assert "only for home_to_work" not in prompt_text
+    assert "Respect the provided route kind exactly and never rewrite one route kind into the other." not in prompt_text
+    assert "requested_time is available for audit only in this first delivery" not in prompt_text
 
 
 def test_transport_ai_route_planner_prompt_avoids_secrets_and_builds_langchain_template() -> None:

@@ -207,6 +207,7 @@ main {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  width: 100%;
 }
 
 .presence-controls {
@@ -551,13 +552,18 @@ th, td {
 
 th { background: #f3f4f6; }
 .presence-users-table {
-  min-width: 1040px;
+  width: 100%;
+  min-width: 0;
   table-layout: fixed;
 }
 
 .presence-users-table th,
 .presence-users-table td {
   vertical-align: middle;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .presence-users-table th:nth-child(1),
@@ -567,32 +573,58 @@ th { background: #f3f4f6; }
 
 .presence-users-table th:nth-child(2),
 .presence-users-table td:nth-child(2) {
-  width: 24%;
+  width: 20%;
 }
 
 .presence-users-table th:nth-child(3),
 .presence-users-table td:nth-child(3) {
-  width: 10%;
+  width: 9%;
 }
 
 .presence-users-table th:nth-child(4),
 .presence-users-table td:nth-child(4) {
-  width: 10%;
+  width: 12%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .presence-users-table th:nth-child(5),
 .presence-users-table td:nth-child(5) {
-  width: 17%;
+  width: 16%;
 }
 
 .presence-users-table th:nth-child(6),
 .presence-users-table td:nth-child(6) {
-  width: 10%;
+  width: 12%;
 }
 
 .presence-users-table th:nth-child(7),
 .presence-users-table td:nth-child(7) {
-  width: 14%;
+  width: 16%;
+}
+
+.presence-users-table thead th {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.presence-users-table tbody td {
+  font-weight: 400;
+}
+
+.presence-users-table .sortable-header {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.presence-users-table .event-cell,
+.presence-users-table .event-datetime-cell,
+.presence-users-table .event-datetime-line {
+  font-size: inherit;
+  font-weight: 400;
+  line-height: 1.15;
 }
 
 .events-table {
@@ -850,20 +882,22 @@ th { background: #f3f4f6; }
 
 .presence-mobile-card {
   display: grid;
-  gap: 6px;
-  padding: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  gap: 4px;
+  padding: 8px 10px;
   border: 1px solid #dbe5ef;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: none;
 }
 
 .presence-mobile-card--compact {
-  gap: 6px;
+  gap: 4px;
 }
 
 .presence-mobile-card--limited {
-  gap: 6px;
+  gap: 4px;
 }
 
 .presence-mobile-card-primary .event-cell,
@@ -874,15 +908,16 @@ th { background: #f3f4f6; }
 }
 
 .presence-mobile-card-primary .event-datetime-line {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 500;
   color: #334155;
 }
 
 .presence-mobile-card-main {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.2;
   color: #0f172a;
   overflow-wrap: anywhere;
 }
@@ -891,17 +926,18 @@ th { background: #f3f4f6; }
   display: inline;
   font-size: inherit;
   line-height: inherit;
+  font-weight: 400;
   color: inherit;
 }
 
 .presence-mobile-card-context {
   color: #334155;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .presence-mobile-card-local {
   font-size: inherit;
-  font-weight: 600;
+  font-weight: 400;
   color: #334155;
 }
 
@@ -1245,8 +1281,8 @@ input.inline, select.inline, textarea.inline {
   min-width: 76px;
 }
 
-.cadastro-pending-table td:nth-child(4) .inline {
-  min-width: 82px;
+.cadastro-pending-table td:nth-child(4) .membership-projects-cell {
+  min-width: 220px;
 }
 
 .cadastro-users-table .user-rfid.inline,
@@ -1257,7 +1293,7 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-users-table {
   width: 100%;
-  min-width: 1560px;
+  min-width: 1640px;
   table-layout: fixed;
 }
 
@@ -1283,7 +1319,7 @@ input.inline, select.inline, textarea.inline {
 
 .cadastro-users-table th:nth-child(5),
 .cadastro-users-table td:nth-child(5) {
-  width: 146px;
+  width: 224px;
 }
 
 .cadastro-users-table th:nth-child(6),
@@ -1325,6 +1361,10 @@ input.inline, select.inline, textarea.inline {
   font-size: 12px;
   vertical-align: middle;
   overflow: hidden;
+}
+
+.cadastro-users-table td:nth-child(5) {
+  overflow: visible;
 }
 
 .cadastro-users-table input.inline,
@@ -1549,7 +1589,41 @@ input.inline, select.inline, textarea.inline {
 }
 
 .admin-projects-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
+}
+
+.admin-projects-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-projects-summary-label {
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.admin-projects-summary-value {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-projects-help-copy {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .admin-projects-panel {
@@ -1596,6 +1670,98 @@ input.inline, select.inline, textarea.inline {
   display: flex;
   align-items: center;
   min-height: 100%;
+}
+
+.membership-projects-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.membership-projects-button {
+  align-self: flex-start;
+  min-width: 92px;
+}
+
+.membership-projects-button[aria-expanded="true"] {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.membership-projects-summary {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.membership-projects-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.membership-projects-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.membership-project-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.membership-project-option.is-locked {
+  border-style: dashed;
+}
+
+.membership-project-option input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.membership-project-option span {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.membership-project-option small {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.membership-projects-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .admin-projects-readonly-copy {
@@ -2181,11 +2347,14 @@ input.inline, select.inline, textarea.inline {
   .presence-users-table[data-presence-render-variant="mobile-limited"] tr.presence-mobile-row {
     border: 0;
     background: transparent;
-    margin-top: 12px;
+    margin-top: 8px;
     overflow: visible;
   }
   .presence-users-table[data-presence-render-variant="mobile"] td.presence-mobile-card-cell,
   .presence-users-table[data-presence-render-variant="mobile-limited"] td.presence-mobile-card-cell {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
     padding: 0;
     min-height: 0;
     border: 0;
@@ -2344,6 +2513,20 @@ input.inline, select.inline, textarea.inline {
   }
   .cadastro-users-table .user-actions {
     grid-template-columns: 1fr;
+  }
+  .membership-projects-button {
+    width: 100%;
+  }
+  .membership-projects-panel {
+    max-height: none;
+  }
+  .membership-projects-panel-footer {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .membership-projects-panel-footer button {
+    width: 100%;
+    min-height: 44px;
   }
   .admin-projects-panel {
     grid-template-columns: 1fr;

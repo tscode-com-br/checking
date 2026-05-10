@@ -158,16 +158,13 @@
 
   function resolveAutomaticCheckInLocation(locationPayload) {
     const resolvedLocal = String(locationPayload && locationPayload.resolved_local || '').trim();
-    if (resolvedLocal) {
-      return resolvedLocal;
-    }
+    return resolvedLocal || null;
+  }
 
-    const fallbackLabel = String(locationPayload && locationPayload.label || '').trim();
-    if (fallbackLabel) {
-      return fallbackLabel;
-    }
-
-    return AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION;
+  function isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal) {
+    const resolvedLocal = String(locationPayload && locationPayload.resolved_local || '').trim();
+    const candidateLocal = String(automaticLocal || '').trim();
+    return Boolean(resolvedLocal) && candidateLocal === resolvedLocal;
   }
 
   function shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings) {
@@ -244,12 +241,9 @@
       return false;
     }
 
-    if (resolveLastRecordedAction(remoteState) !== 'checkout') {
-      return false;
-    }
-
-    return normalizeLocationName(resolveAutomaticCheckInLocation(locationPayload))
-      !== normalizeLocationName(resolveCurrentRecordedLocation(remoteState));
+    // `not_in_known_location` can still inform the UI, but it is never a valid
+    // automatic check-in target.
+    return false;
   }
 
   return {
@@ -267,6 +261,7 @@
     isLastRelevantActivityInMixedZone,
     isMixedZoneCooldownActive,
     resolveAutomaticCheckInLocation,
+    isOperationalAutomaticCheckInLocation,
     resolveMixedZoneDecisionSettings,
     shouldAttemptAutomaticMixedZoneLocationEvent,
     shouldAttemptAutomaticLocationEvent,

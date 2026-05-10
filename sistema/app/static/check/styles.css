@@ -441,6 +441,35 @@ header {
   visibility: hidden;
 }
 
+.settings-trigger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border-color: rgba(15, 118, 110, 0.24);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.settings-trigger-button:hover,
+.settings-trigger-button:focus-visible {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14), 0 12px 28px rgba(15, 23, 42, 0.14);
+  outline: none;
+}
+
+.settings-trigger-button:disabled {
+  box-shadow: none;
+}
+
+.settings-trigger-icon {
+  display: block;
+  width: clamp(20px, 2.6vh, 24px);
+  height: clamp(20px, 2.6vh, 24px);
+  object-fit: contain;
+}
+
 .form-row {
   display: flex;
   align-items: flex-end;
@@ -451,6 +480,13 @@ header {
   flex: 0 0 clamp(86px, 18vw, 98px);
   width: clamp(86px, 18vw, 98px);
   min-width: clamp(86px, 18vw, 98px);
+}
+
+.check-field-projects {
+  position: relative;
+  flex: 0 0 clamp(180px, 34vw, 264px);
+  width: clamp(180px, 34vw, 264px);
+  min-width: clamp(180px, 34vw, 264px);
 }
 
 .check-field-grow {
@@ -495,6 +531,107 @@ header {
   text-align-last: left;
   color: #0f172a;
   transition: border-color 160ms ease, box-shadow 160ms ease, outline-color 160ms ease;
+}
+
+.project-membership-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: var(--control-radius);
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: var(--body-size);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, outline-color 160ms ease;
+}
+
+.project-membership-button:hover,
+.project-membership-button:focus-visible {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+  outline: none;
+}
+
+.project-membership-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+  box-shadow: none;
+}
+
+.project-membership-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-membership-link {
+  flex: 0 0 auto;
+  color: #0f766e;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.project-membership-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 4;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+}
+
+.project-membership-status {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.project-membership-options {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.project-membership-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #0f172a;
+  font-size: var(--body-size);
+}
+
+.project-membership-option input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.project-membership-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-membership-empty {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.82rem;
 }
 
 .auth-field.auth-field-pending input {
@@ -748,6 +885,26 @@ header {
   line-height: 1.45;
 }
 
+.registration-project-field {
+  gap: 8px;
+}
+
+.registration-project-hint {
+  margin: 0;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.registration-project-options {
+  max-height: 172px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: var(--control-radius);
+  background: #ffffff;
+}
+
 .password-dialog-card {
   display: grid;
   gap: 12px;
@@ -767,6 +924,11 @@ header {
   width: min(100%, 460px);
 }
 
+.settings-dialog-card {
+  width: min(100%, 460px);
+  gap: 14px;
+}
+
 .password-dialog-header h2 {
   margin: 0;
   font-size: clamp(1rem, 1.4vw, 1.14rem);
@@ -778,10 +940,43 @@ header {
   gap: 12px;
 }
 
+.settings-dialog-form {
+  gap: 14px;
+}
+
+.settings-option-row {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-option-row-inline {
+  grid-template-columns: minmax(0, 1fr) minmax(156px, 44%);
+  align-items: end;
+}
+
+.settings-option-label {
+  font-size: var(--label-size);
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.settings-option-select,
+.settings-option-action {
+  width: 100%;
+}
+
+.settings-option-action {
+  justify-self: stretch;
+}
+
 .password-dialog-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.settings-dialog-actions {
+  grid-template-columns: 1fr;
 }
 
 .password-dialog .check-field input,
@@ -1695,6 +1890,17 @@ header {
     min-width: 0;
   }
 
+  .check-field-projects {
+    flex-basis: auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .project-membership-panel {
+    position: static;
+    box-shadow: none;
+  }
+
   .legend-toggle {
     width: 100%;
     justify-content: flex-start;
@@ -2027,6 +2233,10 @@ header {
     width: min(100%, 480px);
   }
 
+  .settings-option-row-inline {
+    grid-template-columns: 1fr;
+  }
+
   .transport-screen {
     --transport-screen-card-height: calc(var(--app-viewport-height) - max(20px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
   }
@@ -2073,6 +2283,10 @@ header {
 
   .registration-dialog-card {
     width: min(100%, 560px);
+  }
+
+  .settings-dialog-card {
+    width: min(100%, 520px);
   }
 
   .transport-screen-card {

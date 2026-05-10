@@ -28,6 +28,9 @@ test('automatic refresh excludes the heavy tables and manual buttons reload them
   assert.match(adminJs, /startAutoRefresh\(\) \{[\s\S]*refreshAutomaticTables\(\)\.catch/);
   assert.match(adminJs, /requestRefreshAllTables\(\) \{[\s\S]*refreshAutomaticTables\(\)\.catch/);
   assert.doesNotMatch(adminJs, /fetchJson\("\/api\/admin\/missing-checkout"\)/);
+  assert.match(adminJs, /function capturePresencePageScroll\(\) \{[\s\S]*\["checkin", "checkout"\]\.includes\(activeTab\)[\s\S]*x:\s*window\.scrollX,[\s\S]*y:\s*window\.scrollY,[\s\S]*\}/);
+  assert.match(adminJs, /function restorePresencePageScroll\(snapshot\) \{[\s\S]*const applySnapshot = \(\) => \{[\s\S]*window\.scrollTo\(snapshot\.x, snapshot\.y\);[\s\S]*\};[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*applySnapshot\(\);[\s\S]*window\.requestAnimationFrame\(applySnapshot\);[\s\S]*\}\);[\s\S]*\}/);
+  assert.match(adminJs, /async function refreshAutomaticTables\(\) \{[\s\S]*const scrollSnapshot = capturePresencePageScroll\(\);[\s\S]*jobs\.push\(loadCheckin\(\)\);[\s\S]*jobs\.push\(loadCheckout\(\)\);[\s\S]*await Promise\.all\(jobs\);[\s\S]*restorePresencePageScroll\(scrollSnapshot\);[\s\S]*markDashboardRefreshed\(\);[\s\S]*\}/);
   assert.match(adminJs, /async function refreshAutomaticTables\(\) \{[\s\S]*Background refresh keeps the administrator grid stable\.[\s\S]*await loadProjects\(\);[\s\S]*jobs\.push\(loadPending\(\)\);[\s\S]*jobs\.push\(loadLocations\(\)\);[\s\S]*\}/);
   assert.doesNotMatch(adminJs, /async function refreshAutomaticTables\(\) \{[\s\S]*jobs\.push\(loadAdministrators\(\)\);[\s\S]*\}/);
   assert.match(adminJs, /async function loadAdministratorsWithProjectCatalog\(\) \{[\s\S]*await loadProjects\(\);[\s\S]*await loadAdministrators\(\);[\s\S]*\}/);

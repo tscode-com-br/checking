@@ -15,6 +15,7 @@ from ..models import Project, TransportRequest, User, Vehicle, Workplace
 from ..schemas import (
     AdminActionResponse,
     ProjectRow,
+    TransportAssignmentBoardingTimeUpdate,
     TransportAssignmentUpsert,
     TransportAuthVerifyRequest,
     TransportCurrencyCreateRequest,
@@ -52,13 +53,18 @@ from ..services.admin_auth import (
     verify_password,
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_transport_data_changed
+from ..services.transport_assignment_operations import update_transport_assignment_boarding_time
 from ..services.location_settings import (
     create_transport_currency_option,
+    get_transport_arrive_at_work_time,
+    get_transport_extra_car_tolerance_minutes,
     get_transport_last_update_time,
     get_transport_settings_payload,
     get_transport_vehicle_default_seat_counts,
     get_transport_work_to_home_time,
     resolve_transport_work_to_home_time_policy,
+    upsert_transport_arrive_at_work_time,
+    upsert_transport_extra_car_tolerance_minutes,
     upsert_transport_pricing_settings,
     upsert_transport_last_update_time,
     upsert_transport_vehicle_default_seat_counts,
@@ -99,6 +105,40 @@ from ..services.user_sync import find_user_by_chave
 
 
 router = APIRouter(prefix="/api/transport", tags=["transport"])
+
+TRANSPORT_DETAIL_MESSAGE_KEY_MAP: dict[str, str] = {
+    "Currency code already exists.": "warnings.currencyAlreadyExists",
+    "The selected currency is not available.": "warnings.currencyNotAvailable",
+    "departure_time is required for extra vehicles": "warnings.extraDepartureRequired",
+    "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": (
+        "warnings.weekendPersistence"
+    ),
+    "Regular vehicles must be persistent. Select at least one weekday": "warnings.regularPersistence",
+    "Regular vehicles can only be created from Monday to Friday.": "warnings.regularWeekdayOnly",
+    "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
+    "This vehicle cannot be removed from the selected route.": "warnings.vehicleCannotBeRemoved",
+    "The selected vehicle is not ready for allocation.": "warnings.vehiclePendingAllocation",
+    "A confirmed transport assignment is required to update boarding_time.": "warnings.boardingTimeRequiresConfirmedAssignment",
+    "Manual boarding_time is only available for confirmed home_to_work assignments.": "warnings.boardingTimeEtaOnly",
+}
+
+TRANSPORT_DETAIL_ERROR_CODE_MAP: dict[str, str] = {
+    "Currency code already exists.": "transport_currency_code_duplicate",
+    "The selected currency is not available.": "transport_currency_not_available",
+    "departure_time is required for extra vehicles": "transport_vehicle_extra_departure_required",
+    "Weekend vehicles must be persistent. Select Every Saturday and/or Every Sunday, or create the vehicle in Extra Transport List.": (
+        "transport_vehicle_weekend_persistence_required"
+    ),
+    "Regular vehicles must be persistent. Select at least one weekday": "transport_vehicle_regular_persistence_required",
+    "Regular vehicles can only be created from Monday to Friday.": "transport_vehicle_regular_weekday_required",
+    "Weekend vehicles can only be created on Saturdays or Sundays.": "transport_vehicle_weekend_day_required",
+    "This vehicle cannot be removed from the selected route.": "transport_vehicle_remove_forbidden",
+    "The selected vehicle is not ready for allocation.": "transport_vehicle_not_ready_for_allocation",
+    "A confirmed transport assignment is required to update boarding_time.": "transport_boarding_time_confirmed_required",
+    "Manual boarding_time is only available for confirmed home_to_work assignments.": "transport_boarding_time_eta_only",
+    "Vehicle not found.": "transport_vehicle_not_found",
+    "Vehicle schedule not found.": "transport_vehicle_schedule_not_found",
+}
 
 
 def build_transport_identity(user: User) -> TransportIdentity:
@@ -141,6 +181,103 @@ def encode_sse(payload: dict[str, str]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def _build_transport_message_contract(
+    *,
+    message: str,
+    message_key: str | None = None,
+    message_params: dict[str, object] | None = None,
+    error_code: str | None = None,
+    issues: list[dict[str, object]] | None = None,
+    technical_detail: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "message": message,
+        "message_key": message_key,
+        "message_params": dict(message_params or {}),
+    }
+    if error_code:
+        payload["error_code"] = error_code
+    if technical_detail:
+        payload["technical_detail"] = technical_detail
+    if issues:
+        payload["issues"] = [dict(issue) for issue in issues if isinstance(issue, dict)]
+    return payload
+
+
+def _build_transport_issue(
+    *,
+    code: str,
+    technical_detail: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    issue: dict[str, object] = {"code": code}
+    if technical_detail:
+        issue["message"] = technical_detail
+    if extra:
+        issue.update(extra)
+    return issue
+
+
+def _resolve_transport_message_key_from_detail(detail: str | None, default_key: str) -> str:
+    normalized_detail = str(detail or "").strip()
+    if not normalized_detail:
+        return default_key
+    return TRANSPORT_DETAIL_MESSAGE_KEY_MAP.get(normalized_detail, default_key)
+
+
+def _resolve_transport_error_code_from_detail(detail: str | None, default_code: str) -> str:
+    normalized_detail = str(detail or "").strip()
+    if not normalized_detail:
+        return default_code
+    return TRANSPORT_DETAIL_ERROR_CODE_MAP.get(normalized_detail, default_code)
+
+
+def _build_transport_admin_action_response(
+    *,
+    message: str,
+    message_key: str,
+    message_params: dict[str, object] | None = None,
+) -> AdminActionResponse:
+    return AdminActionResponse(
+        ok=True,
+        message=message,
+        message_key=message_key,
+        message_params=dict(message_params or {}),
+    )
+
+
+def _raise_transport_structured_http_error(
+    *,
+    status_code: int,
+    message: str,
+    message_key: str,
+    error_code: str,
+    message_params: dict[str, object] | None = None,
+    technical_detail: str | None = None,
+    issues: list[dict[str, object]] | None = None,
+) -> None:
+    effective_technical_detail = str(technical_detail or "").strip() or None
+    normalized_issues = list(issues or [])
+    if not normalized_issues:
+        normalized_issues = [
+            _build_transport_issue(
+                code=error_code,
+                technical_detail=effective_technical_detail,
+            )
+        ]
+    raise HTTPException(
+        status_code=status_code,
+        detail=_build_transport_message_contract(
+            message=message,
+            message_key=message_key,
+            message_params=message_params,
+            error_code=error_code,
+            issues=normalized_issues,
+            technical_detail=effective_technical_detail,
+        ),
+    )
+
+
 @router.get("/auth/session", response_model=TransportSessionResponse)
 def transport_session(request: Request, db: Session = Depends(get_db)) -> TransportSessionResponse:
     transport_user = get_authenticated_transport_user_from_session(request, db)
@@ -160,26 +297,48 @@ def verify_transport_access(
 
     if transport_user is None or transport_user.senha is None:
         clear_transport_session(request)
-        return TransportSessionResponse(authenticated=False, message="Invalid key or password.")
+        return TransportSessionResponse(
+            authenticated=False,
+            message="Invalid key or password.",
+            message_key="auth.invalidCredentials",
+            error_code="transport_auth_invalid_credentials",
+            issues=[_build_transport_issue(code="transport_auth_invalid_credentials")],
+        )
     if not user_has_transport_access(transport_user):
         clear_transport_session(request)
-        return TransportSessionResponse(authenticated=False, message="This user does not have transport access.")
+        return TransportSessionResponse(
+            authenticated=False,
+            message="This user does not have transport access.",
+            message_key="auth.noAccess",
+            error_code="transport_auth_access_denied",
+            issues=[_build_transport_issue(code="transport_auth_access_denied")],
+        )
     if not verify_password(payload.senha, transport_user.senha):
         clear_transport_session(request)
-        return TransportSessionResponse(authenticated=False, message="Invalid key or password.")
+        return TransportSessionResponse(
+            authenticated=False,
+            message="Invalid key or password.",
+            message_key="auth.invalidCredentials",
+            error_code="transport_auth_invalid_credentials",
+            issues=[_build_transport_issue(code="transport_auth_invalid_credentials")],
+        )
 
     request.session["transport_user_id"] = transport_user.id
     return TransportSessionResponse(
         authenticated=True,
         user=build_transport_identity(transport_user),
         message="Transport access granted.",
+        message_key="status.accessGranted",
     )
 
 
 @router.post("/auth/logout", response_model=AdminActionResponse)
 def transport_logout(request: Request) -> AdminActionResponse:
     clear_transport_session(request)
-    return AdminActionResponse(ok=True, message="Transport session closed.")
+    return _build_transport_admin_action_response(
+        message="Transport session closed.",
+        message_key="status.accessReset",
+    )
 
 
 @router.get("/stream", dependencies=[Depends(require_transport_session)])
@@ -449,11 +608,18 @@ def update_transport_settings(
     payload: TransportSettingsUpdateRequest,
     db: Session = Depends(get_db),
 ) -> TransportSettingsResponse:
+    previous_arrive_at_work_time = get_transport_arrive_at_work_time(db)
     previous_work_to_home_time = get_transport_work_to_home_time(db)
     previous_last_update_time = get_transport_last_update_time(db)
+    previous_extra_car_tolerance_minutes = get_transport_extra_car_tolerance_minutes(db)
 
+    upsert_transport_arrive_at_work_time(db, arrive_at_work_time=payload.arrive_at_work_time)
     settings_row = upsert_transport_work_to_home_time(db, work_to_home_time=payload.work_to_home_time)
     upsert_transport_last_update_time(db, last_update_time=payload.last_update_time)
+    upsert_transport_extra_car_tolerance_minutes(
+        db,
+        extra_car_tolerance_minutes=payload.extra_car_tolerance_minutes,
+    )
     upsert_transport_vehicle_default_seat_counts(
         db,
         default_car_seats=payload.default_car_seats,
@@ -473,11 +639,26 @@ def update_transport_settings(
             default_bus_price=payload.default_bus_price,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=409,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotSaveSettings",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_settings_update_failed",
+            ),
+            technical_detail=technical_detail,
+        )
     db.commit()
     if (
-        previous_work_to_home_time != payload.work_to_home_time
+        previous_arrive_at_work_time != payload.arrive_at_work_time
+        or previous_work_to_home_time != payload.work_to_home_time
         or previous_last_update_time != payload.last_update_time
+        or previous_extra_car_tolerance_minutes != payload.extra_car_tolerance_minutes
     ):
         emit_transport_reevaluation_event(
             event_type="transport_timing_policy_changed",
@@ -505,7 +686,20 @@ def create_transport_settings_currency(
             display_label=payload.display_label,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=409,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotAddCurrency",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_currency_create_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
     return TransportCurrencyOptionRow(code=currency_row.code, display_label=currency_row.display_label)
@@ -659,7 +853,20 @@ def create_transport_vehicle(
     try:
         vehicle, created_schedules = create_transport_vehicle_registration(db, payload=payload)
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=409,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotSaveVehicle",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_vehicle_create_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
     notify_admin_data_changed("register")
@@ -673,7 +880,10 @@ def create_transport_vehicle(
         vehicle_id=vehicle.id,
         schedule_id=created_schedules[0].id if len(created_schedules) == 1 else None,
     )
-    return AdminActionResponse(ok=True, message="Vehicle saved successfully.")
+    return _build_transport_admin_action_response(
+        message="Vehicle saved successfully.",
+        message_key="status.vehicleSaved",
+    )
 
 
 @router.delete("/vehicles/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
@@ -685,7 +895,20 @@ def delete_transport_vehicle_for_route(
     try:
         vehicle = delete_transport_vehicle_registration(db, schedule_id=schedule_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=400,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotDeleteVehicle",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_vehicle_delete_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
     notify_admin_data_changed("event")
@@ -698,7 +921,10 @@ def delete_transport_vehicle_for_route(
         vehicle_id=vehicle.id,
         schedule_id=schedule_id,
     )
-    return AdminActionResponse(ok=True, message="Vehicle deleted from the database.")
+    return _build_transport_admin_action_response(
+        message="Vehicle deleted from the database.",
+        message_key="status.vehicleDeleted",
+    )
 
 
 @router.put("/vehicles/{vehicle_id}", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
@@ -714,10 +940,21 @@ def update_transport_vehicle(
             payload=payload,
         )
     except ValueError as exc:
-        detail = str(exc)
-        if detail == "Vehicle not found.":
-            raise HTTPException(status_code=404, detail=detail) from exc
-        raise HTTPException(status_code=409, detail=detail) from exc
+        technical_detail = str(exc)
+        status_code = 404 if technical_detail == "Vehicle not found." else 409
+        _raise_transport_structured_http_error(
+            status_code=status_code,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotUpdateVehicle",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_vehicle_update_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
     notify_admin_data_changed("register")
@@ -728,7 +965,10 @@ def update_transport_vehicle(
         message="A vehicle configuration changed the transport supply context.",
         vehicle_id=vehicle.id,
     )
-    return AdminActionResponse(ok=True, message="Vehicle updated successfully.")
+    return _build_transport_admin_action_response(
+        message="Vehicle updated successfully.",
+        message_key="status.vehicleUpdated",
+    )
 
 
 @router.put("/vehicle-schedules/{schedule_id}", response_model=AdminActionResponse, dependencies=[Depends(require_transport_session)])
@@ -744,10 +984,21 @@ def update_transport_vehicle_schedule_route(
             payload=payload,
         )
     except ValueError as exc:
-        detail = str(exc)
-        if detail == "Vehicle schedule not found." or detail == "Vehicle not found.":
-            raise HTTPException(status_code=404, detail=detail) from exc
-        raise HTTPException(status_code=409, detail=detail) from exc
+        technical_detail = str(exc)
+        status_code = 404 if technical_detail in {"Vehicle schedule not found.", "Vehicle not found."} else 409
+        _raise_transport_structured_http_error(
+            status_code=status_code,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotUpdateVehicle",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_vehicle_schedule_update_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
     notify_admin_data_changed("event")
@@ -761,7 +1012,10 @@ def update_transport_vehicle_schedule_route(
         vehicle_id=schedule.vehicle_id,
         schedule_id=schedule.id,
     )
-    return AdminActionResponse(ok=True, message="Vehicle schedule updated successfully.")
+    return _build_transport_admin_action_response(
+        message="Vehicle schedule updated successfully.",
+        message_key="status.vehicleUpdated",
+    )
 
 
 @router.post("/assignments", response_model=AdminActionResponse)
@@ -772,15 +1026,54 @@ def save_transport_assignment(
 ) -> AdminActionResponse:
     transport_request = db.get(TransportRequest, payload.request_id)
     if transport_request is None:
-        raise HTTPException(status_code=404, detail="Transport request not found.")
+        _raise_transport_structured_http_error(
+            status_code=404,
+            message="Transport request not found.",
+            message_key="status.couldNotUpdateAllocation",
+            error_code="transport_request_not_found",
+            technical_detail="Transport request not found.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_not_found",
+                    technical_detail="Transport request not found.",
+                    extra={"request_id": payload.request_id},
+                )
+            ],
+        )
     if not request_applies_to_date(transport_request, payload.service_date):
-        raise HTTPException(status_code=400, detail="The transport request does not apply to the selected date.")
+        _raise_transport_structured_http_error(
+            status_code=400,
+            message="The transport request does not apply to the selected date.",
+            message_key="status.couldNotUpdateAllocation",
+            error_code="transport_request_date_mismatch",
+            technical_detail="The transport request does not apply to the selected date.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_date_mismatch",
+                    technical_detail="The transport request does not apply to the selected date.",
+                    extra={"request_id": payload.request_id, "service_date": payload.service_date.isoformat()},
+                )
+            ],
+        )
 
     vehicle = None
     if payload.vehicle_id is not None:
         vehicle = db.get(Vehicle, payload.vehicle_id)
         if vehicle is None:
-            raise HTTPException(status_code=404, detail="Vehicle not found.")
+            _raise_transport_structured_http_error(
+                status_code=404,
+                message="Vehicle not found.",
+                message_key="status.couldNotUpdateAllocation",
+                error_code="transport_vehicle_not_found",
+                technical_detail="Vehicle not found.",
+                issues=[
+                    _build_transport_issue(
+                        code="transport_vehicle_not_found",
+                        technical_detail="Vehicle not found.",
+                        extra={"vehicle_id": payload.vehicle_id},
+                    )
+                ],
+            )
         scoped_schedule = find_transport_vehicle_schedule(
             db,
             vehicle=vehicle,
@@ -795,8 +1088,34 @@ def save_transport_assignment(
                 service_date=payload.service_date,
                 route_kind=payload.route_kind,
             ) is not None:
-                raise HTTPException(status_code=409, detail="The selected vehicle belongs to a different list.")
-            raise HTTPException(status_code=409, detail="The selected vehicle is not available for this date and route.")
+                _raise_transport_structured_http_error(
+                    status_code=409,
+                    message="The selected vehicle belongs to a different list.",
+                    message_key="status.couldNotUpdateAllocation",
+                    error_code="transport_vehicle_scope_conflict",
+                    technical_detail="The selected vehicle belongs to a different list.",
+                    issues=[
+                        _build_transport_issue(
+                            code="transport_vehicle_scope_conflict",
+                            technical_detail="The selected vehicle belongs to a different list.",
+                            extra={"vehicle_id": payload.vehicle_id},
+                        )
+                    ],
+                )
+            _raise_transport_structured_http_error(
+                status_code=409,
+                message="The selected vehicle is not available for this date and route.",
+                message_key="status.couldNotUpdateAllocation",
+                error_code="transport_vehicle_schedule_unavailable",
+                technical_detail="The selected vehicle is not available for this date and route.",
+                issues=[
+                    _build_transport_issue(
+                        code="transport_vehicle_schedule_unavailable",
+                        technical_detail="The selected vehicle is not available for this date and route.",
+                        extra={"vehicle_id": payload.vehicle_id},
+                    )
+                ],
+            )
 
     try:
         assignment, is_update = upsert_transport_assignment_with_persistence(
@@ -810,7 +1129,20 @@ def save_transport_assignment(
             admin_user_id=None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=409,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotUpdateAllocation",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_assignment_save_failed",
+            ),
+            technical_detail=technical_detail,
+        )
 
     db.commit()
 
@@ -825,7 +1157,92 @@ def save_transport_assignment(
         request_id=transport_request.id,
         vehicle_id=vehicle.id if vehicle is not None else None,
     )
-    return AdminActionResponse(ok=True, message="Transport assignment saved successfully.")
+    return _build_transport_admin_action_response(
+        message="Transport assignment saved successfully.",
+        message_key="status.allocationUpdated",
+    )
+
+
+@router.put("/assignments/boarding-time", response_model=AdminActionResponse)
+def save_transport_assignment_boarding_time(
+    payload: TransportAssignmentBoardingTimeUpdate,
+    db: Session = Depends(get_db),
+    current_transport_user: User = Depends(require_transport_session),
+) -> AdminActionResponse:
+    transport_request = db.get(TransportRequest, payload.request_id)
+    if transport_request is None:
+        _raise_transport_structured_http_error(
+            status_code=404,
+            message="Transport request not found.",
+            message_key="status.couldNotSaveBoardingTime",
+            error_code="transport_request_not_found",
+            technical_detail="Transport request not found.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_not_found",
+                    technical_detail="Transport request not found.",
+                    extra={"request_id": payload.request_id},
+                )
+            ],
+        )
+    if not request_applies_to_date(transport_request, payload.service_date):
+        _raise_transport_structured_http_error(
+            status_code=400,
+            message="The transport request does not apply to the selected date.",
+            message_key="status.couldNotSaveBoardingTime",
+            error_code="transport_request_date_mismatch",
+            technical_detail="The transport request does not apply to the selected date.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_date_mismatch",
+                    technical_detail="The transport request does not apply to the selected date.",
+                    extra={"request_id": payload.request_id, "service_date": payload.service_date.isoformat()},
+                )
+            ],
+        )
+
+    try:
+        assignment = update_transport_assignment_boarding_time(
+            db,
+            transport_request=transport_request,
+            service_date=payload.service_date,
+            route_kind=payload.route_kind,
+            boarding_time=payload.boarding_time,
+            admin_user_id=current_transport_user.id,
+        )
+    except ValueError as exc:
+        technical_detail = str(exc)
+        _raise_transport_structured_http_error(
+            status_code=409,
+            message=technical_detail,
+            message_key=_resolve_transport_message_key_from_detail(
+                technical_detail,
+                "status.couldNotSaveBoardingTime",
+            ),
+            error_code=_resolve_transport_error_code_from_detail(
+                technical_detail,
+                "transport_assignment_boarding_time_save_failed",
+            ),
+            technical_detail=technical_detail,
+        )
+
+    db.commit()
+
+    notify_admin_data_changed("event")
+    emit_transport_reevaluation_event(
+        event_type="transport_assignment_changed",
+        reason="event",
+        source="transport_admin",
+        message="A manual boarding time update changed the transport assignment state.",
+        service_date=payload.service_date,
+        route_kind=payload.route_kind,
+        request_id=transport_request.id,
+        vehicle_id=assignment.vehicle_id,
+    )
+    return _build_transport_admin_action_response(
+        message="Transport boarding time saved successfully.",
+        message_key="status.boardingTimeSaved",
+    )
 
 
 @router.post("/requests/reject", response_model=AdminActionResponse)
@@ -836,9 +1253,35 @@ def reject_transport_request(
 ) -> AdminActionResponse:
     transport_request = db.get(TransportRequest, payload.request_id)
     if transport_request is None or transport_request.status != "active":
-        raise HTTPException(status_code=404, detail="Transport request not found.")
+        _raise_transport_structured_http_error(
+            status_code=404,
+            message="Transport request not found.",
+            message_key="status.couldNotRejectSelectedRequest",
+            error_code="transport_request_not_found",
+            technical_detail="Transport request not found.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_not_found",
+                    technical_detail="Transport request not found.",
+                    extra={"request_id": payload.request_id},
+                )
+            ],
+        )
     if not request_applies_to_date(transport_request, payload.service_date):
-        raise HTTPException(status_code=400, detail="The transport request does not apply to the selected date.")
+        _raise_transport_structured_http_error(
+            status_code=400,
+            message="The transport request does not apply to the selected date.",
+            message_key="status.couldNotRejectSelectedRequest",
+            error_code="transport_request_date_mismatch",
+            technical_detail="The transport request does not apply to the selected date.",
+            issues=[
+                _build_transport_issue(
+                    code="transport_request_date_mismatch",
+                    technical_detail="The transport request does not apply to the selected date.",
+                    extra={"request_id": payload.request_id, "service_date": payload.service_date.isoformat()},
+                )
+            ],
+        )
 
     assignment, is_update = reject_transport_request_and_assignments(
         db,
@@ -861,7 +1304,7 @@ def reject_transport_request(
         route_kind=payload.route_kind,
         request_id=transport_request.id,
     )
-    return AdminActionResponse(
-        ok=True,
+    return _build_transport_admin_action_response(
         message="Transport request rejected successfully.",
+        message_key="status.requestRejected",
     )

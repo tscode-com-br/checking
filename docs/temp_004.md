@@ -1,323 +1,848 @@
-# Plano detalhado para corrigir o check-in no refresh manual apos sair da Zona de CheckOut
+# Plano da Modificacao 4 - Widget Ajustes, cadastro automatico e manual completo do Checking Web
 
-## 1. Objetivo deste plano
+## Objetivo
 
-Este plano existe para corrigir, com o menor risco possivel, a falha descrita na Situacao 7 da Checking Web.
+Reorganizar o fluxo de autenticacao e configuracoes do `Checking Web` para que:
 
-Regra alvo:
+1. o botao ao lado do campo `Senha` deixe de existir na tela principal;
+2. no lugar dele apareca um icone de engrenagem baseado em `assets/icons/config.webp`;
+3. esse icone abra um novo widget `Ajustes`;
+4. o widget `Ajustes` concentre:
+   - troca de idioma;
+   - acao de resetar/alterar senha;
+   - reacesso a permissao de localizacao;
+   - suporte via WhatsApp;
+   - abertura do manual completo da aplicacao;
+5. quando a chave nao existir no banco, o cadastro de usuario abra automaticamente;
+6. quando a chave existir mas ainda nao tiver senha, o cadastro de senha abra automaticamente;
+7. o comportamento atual de alteracao de senha seja preservado, mudando apenas o ponto de entrada;
+8. seja criado um manual completo, com snapshots reais da aplicacao, acessivel a partir da propria interface web.
 
-1. a ultima atividade do usuario foi um check-out;
-2. a aplicacao web esta em primeiro plano;
-3. o usuario pressiona apenas o botao `Atualizar` para renovar a coordenada GPS;
-4. a localizacao anterior relevante era `Zona de CheckOut`;
-5. a nova localizacao nao e `Zona de CheckOut`;
-6. a nova localizacao pode ser uma localizacao cadastrada na API ou uma localizacao nao cadastrada, desde que o usuario nao esteja a mais de 2000 metros de uma localizacao cadastrada, desconsiderando `Zona de CheckOut` nessa verificacao;
-7. a aplicacao deve fazer check-in imediatamente apos a atualizacao da localizacao.
 
-Este plano foi desenhado para preservar o comportamento que ja esta correto nas Situacoes 1 a 6 e para evitar refatoracoes amplas em uma superficie que hoje ja funciona bem.
+## Confirmacoes tecnicas ja validadas
 
-## 2. Estado confirmado no repositorio antes da correcao
+1. O arquivo `assets/icons/config.webp` existe no repositorio.
+2. O backend monta `/assets` a partir da pasta raiz `assets`, portanto o icone pode ser servido no navegador por ` /assets/icons/config.webp `.
+3. O `Checking Web` atual ja usa o shell estatico em `sistema/app/static/check` e ja possui estrutura de dialogs reaproveitavel.
+4. O modulo `transport` ja possui uma base de i18n e um modal de settings que podem servir como referencia de arquitetura para o `Checking Web`.
 
-Leitura objetiva do codigo atual:
 
-1. `docs/regras_checkin_checkout_webapp.txt` documenta hoje apenas as Situacoes 1 a 6.
-2. `sistema/app/static/check/app.js` possui a funcao `runManualLocationRefreshSequence()`.
-3. Nessa funcao, o botao `Atualizar` chama `resolveCurrentLocation()` com `measurementTrigger: 'manual_refresh'`.
-4. Depois de obter `locationPayload`, o fluxo atual do repositorio chama `runAutomaticActivitiesIfNeeded(locationPayload)`.
-5. `sistema/app/static/check/app.js` tambem usa a mesma rotina automatica no fluxo de ciclo de vida da pagina, por meio de `runLifecycleUpdateSequence()`.
-6. `sistema/app/static/check/automatic-activities.js` concentra a decisao de check-in e check-out automaticos.
-7. Nesse arquivo ja existem duas decisoes importantes:
-8. `shouldAttemptAutomaticLocationEvent()` cobre localizacao cadastrada, inclusive check-out na `Zona de CheckOut` e check-in quando a ultima acao foi check-out.
-9. `shouldAttemptAutomaticNearbyWorkplaceCheckIn()` cobre o caso em que a localizacao nao bate exatamente com um local cadastrado, mas o backend devolve `status = not_in_known_location`, indicando que o usuario ainda esta proximo do local de trabalho.
-10. O repositorio ja possui um teste de controller para o refresh manual em `tests/check_user_location_ui.test.js`, mas esse teste cobre explicitamente a Situacao 6, nao a Situacao 7.
-11. O repositorio ja possui testes de decisao em `tests/web_automatic_activities.test.js` para check-in apos check-out em local conhecido e para check-in apos check-out em localizacao nao cadastrada proxima do trabalho.
+## Estado atual confirmado
 
-Conclusao pratica:
+1. Tela principal:
+   - a linha de autenticacao fica em `sistema/app/static/check/index.html`;
+   - o botao principal da area de senha e `#passwordActionButton`;
+   - sua label muda dinamicamente entre `Senha`, `Senha?`, `Chave?`, `Verificando...` e `Aguarde`.
 
-1. o caminho de orquestracao necessario para a Situacao 7 aparentemente ja existe no codigo fonte local;
-2. a lacuna mais provavel esta em um destes pontos:
-3. o artefato publicado em producao nao corresponde ao codigo atual do repositorio;
-4. existe um edge case real no estado remoto retornado pela API durante o refresh manual;
-5. existe um gap de cobertura entre a regra desejada e os testes do botao `Atualizar`.
+2. Fluxo de chave nao encontrada:
+   - o frontend consulta `GET /api/web/auth/status`;
+   - quando `found = false`, o botao vira `Chave?`;
+   - ao clicar, abre o dialogo de cadastro de usuario.
 
-## 3. Hipotese local e checagem discriminante
+3. Fluxo de usuario sem senha:
+   - quando `found = true` e `has_password = false`, o botao vira `Senha?`;
+   - ao clicar, abre o dialogo de senha em modo de cadastro.
 
-Hipotese local de trabalho:
+4. Fluxo de alteracao de senha:
+   - usa o mesmo dialogo visual de senha;
+   - em modo `change`, envia `chave`, `senha_antiga` e `nova_senha` para `/api/web/auth/change-password`.
 
-1. o comportamento quebrado esta concentrado no caminho do refresh manual quando o usuario sai da `Zona de CheckOut` apos um ultimo evento de check-out;
-2. a forma mais segura de confirmar isso e testar o botao `Atualizar` com o estado remoto `checkout` e com dois tipos de payload de localizacao:
-3. um payload de localizacao cadastrada fora da `Zona de CheckOut`;
-4. um payload de localizacao nao cadastrada, mas ainda dentro do raio permitido pelo backend.
+5. Localizacao:
+   - o frontend ja consulta o estado da permissao com `navigator.permissions.query({ name: 'geolocation' })` quando disponivel;
+   - existe estado local `gpsLocationPermissionGranted`;
+   - existem flags em `localStorage` para lembrar tentativa e concessao de permissao.
 
-Checagem discriminante mais barata:
+6. Idioma:
+   - o `Checking Web` ainda nao possui camada propria de i18n;
+   - o dashboard `transport` ja possui lista de idiomas e dicionarios reutilizaveis como referencia.
 
-1. adicionar e executar dois testes focados no caminho `runManualLocationRefreshSequence()`;
-2. se esses testes falharem localmente, a falha esta no codigo do frontend e a correcao deve ser minima e local;
-3. se esses testes passarem localmente, a primeira suspeita deve passar a ser deploy, cache ou divergencia entre bundle publicado e fonte atual.
+7. Manual:
+   - ainda nao existe manual dedicado do `Checking Web` acessivel pela propria UI;
+   - tambem nao existe pacote de snapshots curados para o usuario final.
 
-## 4. Principios obrigatorios da correcao
 
-1. nao criar um segundo caminho de submit automatico paralelo ao atual;
-2. reutilizar ao maximo a rotina ja existente `runAutomaticActivitiesIfNeeded()`;
-3. manter `automatic-activities.js` como fonte de verdade da decisao de check-in e check-out automaticos;
-4. nao recalcular distancia no frontend quando o backend ja devolve `status`, `matched`, `resolved_local` e os demais sinais necessarios;
-5. nao mexer na logica de permissao de geolocalizacao, fallback manual por baixa precisao ou bloqueio por app travada, a menos que a investigacao prove que o problema esta ali;
-6. nao alterar os fluxos de `startup`, `visibility`, `focus` e `pageshow` sem necessidade;
-7. nao alterar a semantica das Situacoes 1 a 6;
-8. nao introduzir regressao em check-out automatico na `Zona de CheckOut`;
-9. tratar a Situação 7 como extensao do comportamento ja esperado e nao como um fluxo novo de produto.
+## Resultado funcional desejado
 
-## 5. Plano detalhado por fases
+### 1. Shell principal
 
-## Fase 0 - Congelar o comportamento esperado
+1. Remover a funcao de CTA do antigo botao ao lado de `Senha`.
+2. Inserir um botao visual de configuracao com icone de engrenagem.
+3. O novo botao deve manter a mesma altura visual que o botao antigo, preservando o alinhamento da linha de autenticacao.
+4. O novo botao nao deve mais exibir `Senha?` nem `Chave?`.
 
-Objetivo:
+### 2. Widget Ajustes
 
-1. transformar a Situacao 7 em criterio executavel de aceite antes de tocar no comportamento.
+O widget deve abrir a partir do icone de engrenagem e conter:
 
-Acoes:
+1. `Idioma`
+   - dropdown de selecao;
+   - persistencia local do idioma escolhido;
+   - aplicacao imediata dos textos sem recarregar a pagina, se possivel.
 
-1. registrar formalmente a Situacao 7 no documento de regras da web app;
-2. quebrar a Situacao 7 em duas variantes obrigatorias:
-3. variante 7A: o refresh manual sai da `Zona de CheckOut` e passa para um local cadastrado na API;
-4. variante 7B: o refresh manual sai da `Zona de CheckOut`, nao casa com nenhum local exato, mas continua dentro do raio permitido pelo backend e deve gerar check-in com `Localizacao nao Cadastrada`;
-5. registrar tambem dois controles negativos para a mesma superficie:
-6. controle negativo 1: refresh manual permanece na `Zona de CheckOut` apos ultimo check-out e nao deve gerar nova atividade;
-7. controle negativo 2: refresh manual sai da `Zona de CheckOut`, mas o backend devolve `outside_workplace`, e portanto nao deve gerar check-in.
+2. `Resetar Senha`
+   - acao que abre o fluxo existente de alteracao de senha;
+   - manter o mesmo formulario de 3 campos:
+     - senha antiga;
+     - nova senha;
+     - confirma senha.
 
-Saida esperada:
+3. `Permitir localizacao`
+   - acao que tenta disparar novamente a solicitacao de permissao de geolocalizacao precisa;
+   - se a permissao ja estiver concedida e a localizacao estiver compartilhada, o botao fica desabilitado.
 
-1. o time passa a ter um contrato textual claro para o bug report e para a regressao.
+4. `Suporte`
+   - abre conversa no WhatsApp para `+5521992174446`;
+   - mensagem pre-preenchida:
+     - `Preciso de ajuda com a aplicacao Web. Minha chave e <chave do usuario>.`
 
-## Fase 1 - Reproducao minima e isolamento do problema
+5. `Sobre`
+   - abre o manual completo da aplicacao web;
+   - esse manual deve ser novo e conter snapshots reais.
 
-Objetivo:
+### 3. Autoabertura dos fluxos de cadastro
 
-1. descobrir se a falha esta no codigo atual ou no ambiente publicado.
+1. Chave inexistente:
+   - ao resolver o status da chave, o frontend deve abrir automaticamente o cadastro de usuario;
+   - nao deve mais depender da label `Chave?`.
 
-Acoes:
+2. Usuario sem senha:
+   - ao resolver o status da chave, o frontend deve abrir automaticamente o cadastro de senha;
+   - nao deve mais depender da label `Senha?`.
 
-1. montar uma harness focada no botao `Atualizar` em `tests/check_user_location_ui.test.js`;
-2. simular `runManualLocationRefreshSequence()` com a aplicacao destravada, atividades automaticas habilitadas e permissao de GPS valida;
-3. fixar o estado remoto retornado por `fetchWebState(chave)` com ultima acao `checkout` e `current_local = 'Zona de CheckOut'`;
-4. executar a variante 7A com `locationPayload = { matched: true, resolved_local: 'Escritorio Principal', status: 'matched' }`;
-5. executar a variante 7B com `locationPayload = { matched: false, status: 'not_in_known_location', label: 'Localizacao nao Cadastrada', nearest_workplace_distance_meters: 180 }`;
-6. verificar se o controller sempre chama `runAutomaticActivitiesIfNeeded(locationPayload)` depois do refresh manual;
-7. verificar se o helper de decisao retorna `true` para ambos os casos quando a ultima atividade e `checkout`;
-8. verificar se o helper continua retornando `false` quando a nova localizacao ainda e `Zona de CheckOut`.
 
-Saida esperada:
+## Decisoes de implementacao recomendadas
 
-1. um resultado binario claro:
-2. falha local reprodutivel, que aponta para correcao de codigo;
-3. ou comportamento local correto, que desloca a investigacao para deploy e bundle publicado.
+### 1. Reutilizar a infraestrutura de dialog existente
 
-## Fase 2 - Diagnostico do slice exato que decide a regra
+Recomendacao:
 
-Objetivo:
+1. Manter o dialog de senha atual como container unico para:
+   - cadastrar senha;
+   - alterar senha.
+2. Manter o dialog de cadastro de usuario atual.
+3. Criar um novo dialog `Ajustes` seguindo o mesmo padrao visual de backdrop + card + formulario/acoes.
 
-1. identificar o menor ponto de alteracao, caso os testes da Fase 1 falhem.
+Motivo:
 
-Roteiro de diagnostico:
+1. minimiza regressao visual;
+2. aproveita a logica de foco, `Escape`, backdrop e `syncFormControlStates`;
+3. reduz custo de manutencao.
 
-1. se o controller do refresh manual nao chamar `runAutomaticActivitiesIfNeeded(locationPayload)` em todos os casos de payload valido, corrigir somente `runManualLocationRefreshSequence()` em `sistema/app/static/check/app.js`;
-2. se o controller chamar corretamente, mas a acao automatica nao ocorrer para local conhecido, revisar apenas `shouldAttemptAutomaticLocationEvent()` em `sistema/app/static/check/automatic-activities.js`;
-3. se o controller chamar corretamente, mas a acao automatica nao ocorrer para localizacao nao cadastrada proxima do trabalho, revisar apenas `shouldAttemptAutomaticNearbyWorkplaceCheckIn()`;
-4. se ambos os helpers funcionarem isoladamente, revisar a ordem entre `fetchWebState()`, `applyHistoryState()` e a leitura de `current_local`, para confirmar se o estado remoto esta chegando coerente durante o refresh manual;
-5. confirmar se o frontend continua confiando no `status` devolvido por `/api/web/check/location` e nao esta inferindo distancia por conta propria;
-6. confirmar se a logica nao esta sendo interrompida por algum guard de desbloqueio, permissao, `chave` invalida ou desabilitacao de atividades automaticas.
+### 2. Tratar o icone de engrenagem como substituto visual do antigo botao
 
-Saida esperada:
+Recomendacao:
 
-1. um unico ponto de decisao identificado para correcao;
-2. ou evidencias suficientes de que o codigo local ja esta correto e o problema e de deploy/publicacao.
+1. manter o container `auth-field-button`;
+2. trocar o `#passwordActionButton` por um `#settingsButton` com imagem `config.webp`;
+3. preservar `min-height: var(--control-height)`.
 
-## Fase 3 - Correcao minima e reversivel
+Motivo:
 
-Objetivo:
+1. evita quebrar o grid da linha de autenticacao;
+2. facilita responsividade;
+3. atende o requisito de mesma altura do botao anterior.
 
-1. aplicar a menor mudanca possivel para fechar a Situação 7 sem tocar em fluxos estaveis.
+### 3. Separar nitidamente tres responsabilidades que hoje estao misturadas
 
-Diretrizes de implementacao:
+Hoje o botao principal cumpre tres papeis:
 
-1. preferir reaproveitar a orquestracao atual do refresh manual;
-2. evitar criar novas funcoes de submit automatico;
-3. evitar duplicar regras entre `app.js` e `automatic-activities.js`;
-4. se a correcao estiver no controller, limitar a mudanca a `runManualLocationRefreshSequence()`;
-5. se a correcao estiver na decisao, limitar a mudanca a um helper de `automatic-activities.js`;
-6. nao alterar contratos do backend nem payloads de `/api/web/check/location` se o bug puder ser resolvido apenas no frontend;
-7. se a investigacao provar que o backend esta devolvendo um `status` errado para o caso de usuario proximo do trabalho, abrir uma segunda trilha separada de correcao e nao misturar isso com a primeira entrega do bug.
+1. abrir cadastro de usuario;
+2. abrir cadastro de senha;
+3. abrir alteracao de senha.
 
-Resultado esperado:
+Depois da mudanca, a responsabilidade deve ficar assim:
 
-1. o refresh manual passa a gerar check-in quando o usuario deixa a `Zona de CheckOut` apos ultimo check-out e cai em local conhecido ou proximo do trabalho;
-2. as demais regras continuam identicas.
+1. `status da chave` decide autoabrir cadastro de usuario;
+2. `status da chave` decide autoabrir cadastro de senha;
+3. `Ajustes > Resetar Senha` abre apenas alteracao de senha.
 
-## Fase 4 - Regressao automatizada da matriz completa
+Motivo:
 
-Objetivo:
+1. reduz ambiguidade;
+2. melhora previsibilidade da UX;
+3. simplifica o estado do botao principal.
 
-1. provar que a Situacao 7 foi corrigida sem quebrar as Situacoes 1 a 6.
+### 4. Reutilizar a base de i18n do modulo transport como padrao, nao como copia cega
 
-Cobertura automatizada minima recomendada:
+Recomendacao:
 
-1. `tests/web_automatic_activities.test.js` deve cobrir a camada de decisao pura;
-2. `tests/check_user_location_ui.test.js` deve cobrir a camada de orquestracao do botao `Atualizar`.
+1. criar um `i18n.js` proprio do `Checking Web`;
+2. usar a mesma lista inicial de idiomas ja disponivel no `transport`:
+   - `pt`;
+   - `en`;
+   - `zh`;
+   - `ms`;
+   - `tl`.
+3. adaptar o modelo de dicionario, `resolveLanguageCode`, persistencia local e `switchLanguage`.
 
-Casos obrigatorios da matriz:
+Motivo:
 
-1. Situacao 1: ultima atividade `checkin` + localizacao `Zona de CheckOut` ou `outside_workplace` -> check-out automatico;
-2. Situacao 2: ultima atividade `checkout` + localizacao `Zona de CheckOut` ou `outside_workplace` -> nenhuma acao;
-3. Situacao 3: ultima atividade `checkout` + local conhecido fora da `Zona de CheckOut` ou local nao cadastrado proximo do trabalho -> check-in automatico;
-4. Situacao 4: ultima atividade `checkin` + mudanca de local conhecido -> novo check-in para atualizar localizacao;
-5. Situacao 5: ultima atividade `checkin` + local nao cadastrado, mas ainda proximo do trabalho -> nenhuma acao, apenas exibicao de `Localizacao nao Cadastrada`;
-6. Situacao 6: app em primeiro plano + ultimo evento `checkin` + botao `Atualizar` + mudanca de localizacao -> novo check-in de atualizacao;
-7. Situacao 7A: app em primeiro plano + ultimo evento `checkout` + local anterior relevante `Zona de CheckOut` + botao `Atualizar` + novo local cadastrado fora da `Zona de CheckOut` -> check-in imediato;
-8. Situacao 7B: app em primeiro plano + ultimo evento `checkout` + local anterior relevante `Zona de CheckOut` + botao `Atualizar` + novo local nao cadastrado, mas proximo do trabalho -> check-in imediato com `Localizacao nao Cadastrada`.
+1. unifica experiencia entre superficies web do sistema;
+2. reduz invencao paralela;
+3. evita acoplamento desnecessario entre `check` e `transport`.
 
-Controles negativos adicionais:
+### 5. Manual completo deve ser pagina dedicada, nao um bloco gigante dentro do app principal
 
-1. refresh manual com app travada nao deve acionar atividade automatica;
-2. refresh manual com atividades automaticas desabilitadas nao deve acionar atividade automatica;
-3. refresh manual com `chave` invalida nao deve acionar atividade automatica;
-4. refresh manual que continua em `Zona de CheckOut` apos ultimo `checkout` nao deve acionar atividade automatica;
-5. refresh manual que sai da `Zona de CheckOut`, mas cai em `outside_workplace`, nao deve acionar check-in.
+Recomendacao:
 
-Saida esperada:
+1. criar uma pagina estatica dedicada do manual em `sistema/app/static/check`;
+2. abrir essa pagina a partir do item `Sobre`;
+3. usar snapshots reais armazenados junto dos assets do manual.
 
-1. um recorte de testes pequeno, rapido e diretamente ligado a regra quebrada.
+Motivo:
 
-## Fase 5 - Validacao de deploy e producao
+1. manual com snapshots tende a ficar extenso;
+2. uma pagina dedicada e melhor para leitura, manutencao e compartilhamento;
+3. evita sobrecarregar o bundle principal do app.
 
-Objetivo:
 
-1. garantir que a correcao realmente chega a `https://www.tscode.com.br/checking/user`.
+## Escopo por arquivo e por camada
 
-Checklist de deploy:
+## 1. Frontend - estrutura HTML
 
-1. confirmar qual processo gera e publica os arquivos servidos em `checking/user`;
-2. confirmar se o servidor serve diretamente `sistema/app/static/check` ou se existe etapa intermediaria de build/copia;
-3. confirmar se o arquivo servido em producao corresponde ao `app.js` atualizado do repositorio;
-4. invalidar cache de navegador, proxy reverso e qualquer CDN usada na frente do site;
-5. confirmar se o deploy substitui de fato os assets antigos e nao preserva um bundle obsoleto;
-6. repetir manualmente a Situacao 7 logo apos o deploy e comparar com o comportamento local esperado;
-7. se o codigo local passar e producao continuar falhando, inspecionar especificamente divergencia entre artefato publicado e fonte versionada.
+### Arquivo principal
 
-Saida esperada:
+`sistema/app/static/check/index.html`
 
-1. evidencia de que o comportamento corrigido esta em producao, e nao apenas no repositorio.
+### Mudancas planejadas
 
-## 6. Arquivos provaveis de alteracao
+1. Substituir o botao visual de autenticacao por um botao de ajustes com icone.
+2. Criar a estrutura HTML do novo widget `Ajustes`.
+3. Incluir:
+   - label e `select` de idioma;
+   - botao `Resetar Senha`;
+   - botao `Permitir localizacao`;
+   - botao `Suporte`;
+   - botao `Sobre`;
+   - botao de fechar/voltar.
+4. Garantir atributos de acessibilidade:
+   - `role="dialog"`;
+   - `aria-modal="true"`;
+   - `aria-labelledby`;
+   - `aria-controls` no botao de abertura;
+   - `aria-expanded` no botao de abertura.
+5. Decidir se o botao `Resetar Senha` ficara:
+   - sempre visivel, mas desabilitado quando nao houver sessao liberada;
+   - ou visivel apenas quando `authState.hasPassword = true`.
 
-Arquivos com maior probabilidade de toque, em ordem de prioridade:
+### Recomendacao de UX
 
-1. `sistema/app/static/check/app.js`;
-2. `sistema/app/static/check/automatic-activities.js`;
-3. `tests/check_user_location_ui.test.js`;
-4. `tests/web_automatic_activities.test.js`;
-5. `docs/regras_checkin_checkout_webapp.txt`.
+Adotar a primeira opcao:
 
-Arquivos que nao devem ser tocados sem evidencia concreta:
+1. item sempre visivel no `Ajustes`;
+2. desabilitado quando nao houver sessao apta;
+3. texto explicativo curto no widget quando a acao nao estiver disponivel.
 
-1. `sistema/app/static/check/web-client-state.js`;
-2. endpoints de autenticacao web;
-3. logica de formulario manual;
-4. CSS e HTML da Checking Web;
-5. calculo administrativo da distancia maxima, a menos que a investigacao mostre `status` incorreto vindo da API.
 
-## 7. Riscos que o plano precisa evitar
+## 2. Frontend - estilos
 
-1. quebrar o refresh manual da Situacao 6, que hoje ja tem comportamento esperado;
-2. repetir check-out desnecessariamente quando o usuario continua na `Zona de CheckOut` apos ultimo `checkout`;
-3. gerar check-in quando o backend devolve `outside_workplace`;
-4. alterar a regra de `Localizacao nao Cadastrada` para casos da Situacao 5, que devem continuar sem check-out e sem check-in adicional;
-5. introduzir caminhos diferentes para refresh manual e ciclo de vida da pagina, o que aumentaria a manutencao e o risco de divergencia futura;
-6. mascarar um problema real de deploy com uma mudanca desnecessaria de codigo.
+### Arquivo principal
 
-## 8. Criterios de aceite da correcao
+`sistema/app/static/check/styles.css`
 
-A tarefa so deve ser considerada concluida quando todos os itens abaixo forem verdadeiros:
+### Mudancas planejadas
 
-1. a Situacao 7 esta documentada no arquivo de regras;
-2. existe cobertura automatizada para a variante 7A;
-3. existe cobertura automatizada para a variante 7B;
-4. as Situacoes 1 a 6 continuam cobertas e verdes;
-5. o refresh manual continua usando a mesma orquestracao automatica ja existente;
-6. a aplicacao faz check-in imediatamente quando o usuario deixa a `Zona de CheckOut` apos um ultimo `checkout`, tanto para local conhecido quanto para localizacao nao cadastrada proxima do trabalho;
-7. a aplicacao continua sem agir quando o usuario permanece em `Zona de CheckOut` apos um ultimo `checkout`;
-8. a aplicacao continua sem agir quando o backend diz que o usuario esta fora do ambiente de trabalho;
-9. o comportamento validado localmente tambem e confirmado no ambiente publicado.
+1. Criar estilo do novo `settingsButton`:
+   - mesma altura do antigo botao;
+   - largura apropriada para um botao quadrado ou quase quadrado;
+   - foco visivel;
+   - estados `hover`, `active`, `disabled`.
+2. Criar estilo do icone `config.webp`:
+   - controlar altura interna com `object-fit: contain`;
+   - evitar distorcao;
+   - garantir contraste do botao.
+3. Criar os estilos do dialog `Ajustes`:
+   - card;
+   - grid/lista de opcoes;
+   - linha com label + controle;
+   - botoes de acao.
+4. Prever responsividade em viewport baixa:
+   - scroll interno;
+   - espacos reduzidos;
+   - controles clicaveis.
+5. Estilizar estados desabilitados:
+   - `Permitir localizacao` quando a permissao ja estiver concedida;
+   - `Resetar Senha` quando a sessao nao permitir alteracao.
 
-## 9. To-do list detalhada para implementar o plano
 
-## Fase 1 - Diagnostico controlado
+## 3. Frontend - logica de UI e estado
 
-Resumo detalhado do que foi alterado nesta etapa: a regra textual da Situação 7 em `docs/regras_checkin_checkout_webapp.txt` foi refinada para separar explicitamente os dois ramos que a correção precisa preservar e testar. A descrição agora distingue a Variante 7A, em que o refresh manual sai da `Zona de CheckOut` para um local cadastrado diferente, e a Variante 7B, em que o refresh manual sai da `Zona de CheckOut`, não encontra um local exato, mas permanece dentro da faixa de proximidade do local de trabalho, o que deve resultar em check-in com `Localização não Cadastrada`. Essa alteração fecha a ambiguidade original da regra e transforma a Situação 7 em um contrato textual mais preciso para testes e deploy.
+### Arquivo principal
 
-Também foi feito o diagnóstico direto do fluxo real em `sistema/app/static/check/app.js`. A revisão confirmou que `runManualLocationRefreshSequence()` continua resolvendo a posição atual com `measurementTrigger: 'manual_refresh'` e, quando recebe um `locationPayload` válido, chama `runAutomaticActivitiesIfNeeded(locationPayload)` imediatamente no mesmo caminho do botão `Atualizar`. Isso é importante porque elimina, nesta fase, a hipótese de que o refresh manual esteja completamente desconectado da rotina automática no código-fonte atual do repositório. O diagnóstico reforça que a investigação futura deve se concentrar em um edge case da decisão automática, no estado remoto retornado pela API ou em divergência entre o artefato publicado e a fonte atual.
+`sistema/app/static/check/app.js`
 
-Na camada de decisão, foi revisado `sistema/app/static/check/automatic-activities.js`. O comportamento confirmado foi o seguinte: `shouldAttemptAutomaticLocationEvent()` retorna `true` para local conhecido fora da `Zona de CheckOut` quando a última atividade registrada não é `checkin`, desde que a nova localização não seja igual à `current_local` remota; e `shouldAttemptAutomaticNearbyWorkplaceCheckIn()` retorna `true` quando `matched = false`, `status = 'not_in_known_location'`, a última atividade registrada é `checkout` e a localização automática derivada difere da `current_local` remota. Em outras palavras, a lógica local já contempla, em tese, tanto a saída da `Zona de CheckOut` para local conhecido quanto a saída para uma localização não cadastrada, mas ainda próxima do trabalho.
+### Frentes de alteracao
 
-Para apoiar a próxima fase, foi consolidado o mapeamento mínimo dos sinais de `locationPayload` que controlam a Situação 7:
+#### 3.1. Substituicao do antigo botao principal
 
-| Sinal | Papel no diagnóstico da Situação 7 |
-| --- | --- |
-| `matched` | Distingue o ramo de local conhecido (`true`) do ramo sem correspondência exata (`false`). |
-| `status` | Diferencia `matched`, `not_in_known_location` e `outside_workplace`, que levam a decisões automáticas diferentes. |
-| `resolved_local` | Identifica o local conhecido resolvido e permite detectar saída da `Zona de CheckOut`. |
-| `label` | Fornece o rótulo usado no check-in automático quando não há correspondência exata, normalmente `Localização não Cadastrada`. |
-| `nearest_workplace_distance_meters` | Funciona como evidência complementar do ramo “próximo do trabalho”, ainda que a decisão do frontend dependa principalmente de `status`. |
+1. Remover o papel de `passwordActionButton` da tela principal.
+2. Introduzir referencias DOM novas:
+   - `settingsButton`;
+   - `settingsDialog`;
+   - `settingsDialogBackdrop`;
+   - `settingsLanguageSelect`;
+   - `settingsResetPasswordButton`;
+   - `settingsLocationPermissionButton`;
+   - `settingsSupportButton`;
+   - `settingsAboutButton`;
+   - `settingsBackButton`;
+   - opcionalmente um elemento de status interno do widget.
+3. Atualizar arrays de controle:
+   - `authControls`;
+   - `processControls`;
+   - colecoes de controles por dialog.
+4. Atualizar `syncFormControlStates()` para controlar:
+   - habilitacao do botao de ajustes;
+   - habilitacao individual dos itens do widget;
+   - fechamento seguro de painel quando estado global travar.
+
+#### 3.2. Novo fluxo de abertura do widget Ajustes
+
+1. Criar helpers:
+   - `isSettingsDialogOpen`;
+   - `openSettingsDialog`;
+   - `closeSettingsDialog`;
+   - `syncSettingsDialogState`.
+2. Integrar com:
+   - `isAnyDialogOpen`;
+   - tecla `Escape`;
+   - clique no backdrop;
+   - restauracao de foco para o botao de engrenagem ao fechar.
+
+#### 3.3. Remocao do comportamento `Chave?` e `Senha?`
 
-Também foi verificada a topologia de publicação da URL `https://www.tscode.com.br/checking/user`. Dentro da aplicação Python, `sistema/app/main.py` ainda consegue servir a Checking Web diretamente em `/user` a partir de `sistema/app/static/check` via `StaticFiles` quando a flag `serve_user_site_in_api` está habilitada. Porém, a rota pública de produção passa pelo reverse proxy definido em `deploy/nginx/checking-edge-routes.conf`, que publica `/checking/user` e encaminha o tráfego para o serviço `user-web` na porta `18082`. Esse serviço está definido em `docker-compose.websites.yml` e usa `deploy/docker/Dockerfile.user-web`, que simplesmente copia `sistema/app/static/check/` para `/usr/share/nginx/html/`. Portanto, existe uma etapa intermediária de empacotamento por imagem Docker e publicação via Nginx, mas não existe um build de frontend com transpile ou bundle separado: o conteúdo servido em produção é uma cópia estática direta do diretório `sistema/app/static/check` incluída na imagem do `user-web`.
+1. Remover a troca de label do botao principal para `Chave?` e `Senha?`.
+2. Simplificar a logica de `resolvePasswordActionButtonLabel`, ou remover essa funcao se ela deixar de fazer sentido.
+3. Revisar todos os pontos que hoje fazem:
+   - `isMissingUserRegistrationState()`;
+   - `isMissingPasswordRegistrationState()`;
+   - `isPasswordActionAssistanceModeActive()`.
+4. O comportamento novo deve ser:
+   - ao concluir `refreshAuthenticationStatus`, se `found = false`, abrir automaticamente `openRegistrationDialog()`;
+   - se `found = true` e `has_password = false`, abrir automaticamente `openPasswordDialog()` em modo `register`.
+
+#### 3.4. Protecao contra autoabertura repetitiva
+
+Esse ponto e critico.
+
+Sem cuidado, o app pode reabrir o modal em loop sempre que:
+
+1. o usuario fechar manualmente;
+2. o status for reconsultado;
+3. a chave continuar inexistente;
+4. ou a senha continuar ausente.
+
+Recomendacao:
 
-Por fim, a revisão da cobertura atual confirmou que já existe um teste de controller em `tests/check_user_location_ui.test.js` garantindo que o refresh manual chama `runAutomaticActivitiesIfNeeded(locationPayload)` para o cenário equivalente à Situação 6, mas ainda não há cobertura específica para a Situação 7. Isso fecha a implementação desta fase com três conclusões objetivas: a regra textual foi esclarecida, o caminho de orquestração do botão `Atualizar` permanece ligado à rotina automática no código local e a topologia de deploy mostra que uma divergência entre repositório e site publicado continua sendo uma hipótese real para a falha observada em produção.
+1. criar flags por chave para a sessao corrente, por exemplo:
+   - `lastAutoOpenedRegistrationChave`;
+   - `lastAutoOpenedPasswordRegistrationChave`;
+   - ou um mapa mais generico de `autoPromptState`.
+2. abrir automaticamente apenas quando:
+   - a chave acabou de ser resolvida;
+   - e ainda nao houve autoabertura para aquele estado/chave desde a ultima mudanca relevante.
+3. resetar essas flags quando:
+   - a chave mudar;
+   - o cadastro for concluido;
+   - a senha for criada com sucesso;
+   - o status passar para outro estado.
 
-## Fase 2 - Testes focados da Situacao 7
+#### 3.5. Acao "Resetar Senha" dentro de Ajustes
 
-Resumo detalhado do que foi alterado nesta etapa: a cobertura da Situação 7 foi transformada em testes executáveis nos dois níveis do slice que realmente controlam esse comportamento. Em `tests/check_user_location_ui.test.js`, foi adicionado um harness mais forte para o caminho do botão `Atualizar`, extraindo do `app.js` não apenas `runManualLocationRefreshSequence()`, mas também a rotina real `runAutomaticActivitiesIfNeeded()`. Esse harness fixa um estado remoto de referência com última ação `checkout` e `current_local = 'Zona de CheckOut'`, reaproveita a lógica real de `automatic-activities.js` para decidir quando agir e intercepta `submitAutomaticActivity()` para permitir afirmar, no teste, se houve check-in automático ou nenhuma ação.
+1. O item deve chamar o mesmo dialog de senha ja existente.
+2. Quando o usuario clicar em `Resetar Senha`:
+   - fechar `Ajustes`;
+   - abrir `openPasswordDialog()` em modo `change`.
+3. Manter a validacao atual de:
+   - tamanho da senha antiga;
+   - tamanho da nova senha;
+   - confirmacao igual;
+   - envio para `/api/web/auth/change-password`.
+4. Remover quaisquer dependencias antigas do clique no botao principal.
 
-Com esse harness, foram adicionados quatro cenários focados na orquestração do refresh manual. O primeiro cobre a Variante 7A, em que o refresh sai da `Zona de CheckOut` para um local conhecido e confirma um `checkin` automático imediato para o local resolvido. O segundo cobre a Variante 7B, em que o refresh sai da `Zona de CheckOut`, recebe `status = 'not_in_known_location'` e confirma um `checkin` automático com `Localização não Cadastrada`. Os dois controles negativos também foram adicionados no mesmo arquivo: permanência em `Zona de CheckOut` após último `checkout`, que deve resultar em nenhuma submissão automática, e transição para `outside_workplace`, que também deve manter o refresh sem nova atividade.
+#### 3.6. Acao "Permitir localizacao"
 
-Na camada de decisão pura, `tests/web_automatic_activities.test.js` passou a explicitar o caso de saída da `Zona de CheckOut` para local conhecido após último `checkout`, verificando que `shouldAttemptAutomaticLocationEvent()` retorna `true` quando `current_local` remoto ainda é `Zona de CheckOut` e a nova localização conhecida é diferente. O caso de localização não cadastrada próxima do trabalho já existia em essência, mas foi mantido e renomeado para deixar explícito que ele representa precisamente a saída da `Zona de CheckOut` para o ramo `not_in_known_location`, com `current_local = 'Zona de CheckOut'`, o que fecha a leitura da Variante 7B também na camada de decisão.
+1. Reaproveitar a infraestrutura existente de permissao e captura.
+2. Criar uma funcao especifica, por exemplo:
+   - `requestPreciseLocationPermissionFromSettings()`.
+3. O fluxo recomendado:
+   - se o navegador nao suportar `geolocation`, mostrar mensagem clara;
+   - se o contexto nao for seguro (`https`), mostrar mensagem clara;
+   - se a permissao ja estiver concedida, manter o botao desabilitado;
+   - se a permissao ainda nao estiver concedida, disparar `resolveCurrentLocation({ interactive: true, forceRefresh: true, showDetectingState: true })`;
+   - se o browser permitir, reconsultar `queryLocationPermissionState()` ao fim;
+   - sincronizar `gpsLocationPermissionGranted`, `locationPermissionGrantedKey` e a UI.
+4. Atualizar o texto do widget para indicar:
+   - `Localizacao ja permitida`;
+   - ou `Solicitar permissao`.
 
-Depois da implementação, foi executada a validação focada com `node --test tests/check_user_location_ui.test.js tests/web_automatic_activities.test.js`, e os 32 testes ficaram verdes. O resultado prático desta fase é importante: a base local agora tem cobertura explícita para a Situação 7A, para a Situação 7B e para os dois controles negativos do refresh manual, e essa cobertura confirma que o comportamento esperado já está representado corretamente no código atual do repositório. Com isso, a próxima fase deixa de ser uma correção presumida no escuro e passa a depender de eventual falha reproduzida por instrumentação adicional, divergência de estado remoto em produção ou diferença entre o artefato publicado e a fonte versionada.
+#### 3.7. Acao "Suporte" via WhatsApp
 
-## Fase 3 - Correcao minima de codigo, se os testes falharem
+1. Montar o link com `https://wa.me/5521992174446?text=...`.
+2. Encodar a mensagem com `encodeURIComponent`.
+3. A mensagem base recomendada:
+   - `Preciso de ajuda com a aplicacao Web. Minha chave e <CHAVE>.`
+4. Obter a chave do contexto por prioridade:
+   - chave autenticada atual;
+   - senao chave digitada no campo principal, se tiver 4 caracteres;
+   - senao string vazia ou placeholder neutro.
+5. Recomendacao de UX:
+   - manter o botao habilitado apenas se houver chave com 4 caracteres;
+   - ou, se preferir nao desabilitar, usar fallback:
+     - `Preciso de ajuda com a aplicacao Web. Minha chave ainda nao foi informada.`
 
-Resumo detalhado do que foi alterado nesta etapa: a premissa condicional desta fase foi reavaliada diretamente contra o estado atual do repositório depois da Fase 2. Como os testes focados da Situação 7 já haviam passado e o reread do slice confirmou que `runManualLocationRefreshSequence()` continua chamando `runAutomaticActivitiesIfNeeded(locationPayload)` no caminho do botão `Atualizar`, não houve evidência local que justificasse uma correção mínima em `sistema/app/static/check/app.js`. A implementação desta fase, portanto, consistiu em confirmar explicitamente que o controller já está alinhado com a regra esperada e que alterar esse ponto sem uma falha reproduzível introduziria risco desnecessário sobre um fluxo que hoje está correto no código-fonte local.
+Recomendacao principal:
 
-Na camada de decisão, a mesma revisão foi repetida sobre `sistema/app/static/check/automatic-activities.js`. O comportamento atual continua coerente com os cenários exercitados na Fase 2: `shouldAttemptAutomaticLocationEvent()` mantém o check-in para saída da `Zona de CheckOut` quando a última ação relevante foi `checkout` e a nova localização conhecida difere de `current_local`; `shouldAttemptAutomaticNearbyWorkplaceCheckIn()` continua cobrindo o ramo `matched = false` com `status = 'not_in_known_location'`; e o caminho negativo de permanência na `Zona de CheckOut` ou transição para `outside_workplace` segue bloqueando nova atividade. Com isso, esta fase foi concluída sem alterações em `automatic-activities.js`, porque a menor mudança correta, neste momento, é justamente não alterar a regra local enquanto não houver um teste vermelho ou uma reprodução concreta apontando defeito nesse helper.
+1. habilitar o botao somente quando houver chave valida;
+2. assim o requisito da mensagem com chave fica consistente.
 
-Essa decisão também preserva os princípios de mínimo risco definidos no plano. Nenhum novo caminho de submit automático foi criado, nenhuma regra foi duplicada entre controller e helper, e nenhum fluxo adjacente de `startup`, `visibility`, `focus`, `pageshow`, fallback manual ou permissões de GPS foi tocado. Em vez de introduzir uma correção especulativa, a implementação desta etapa consolidou que o estado atual do repositório já representa a correção pretendida para a Situação 7 no frontend local, e que a próxima investigação útil deve migrar do código para instrumentação adicional, conferência do estado remoto retornado pela API ou divergência entre artefato publicado e fonte versionada.
+#### 3.8. Acao "Sobre" e abertura do manual
 
-Como validação final desta fase, a cobertura focada foi executada novamente com `node --test tests/check_user_location_ui.test.js tests/web_automatic_activities.test.js`, mantendo verdes os cenários adicionados para a Variante 7A, Variante 7B e os controles negativos. O resultado objetivo desta etapa é que nenhuma mudança de código foi necessária em `app.js` ou `automatic-activities.js`, e essa ausência de alteração passou a ser uma conclusão documentada e verificada, não uma suposição. Assim, a Fase 3 fecha o diagnóstico local afirmando que a correção mínima de código não se aplica ao estado atual do repositório e que qualquer próxima ação corretiva deverá partir de evidência nova fora desse slice já validado.
+1. Criar helper:
+   - `openCheckingWebManual()`.
+2. Abrir a pagina dedicada do manual:
+   - na mesma aba;
+   - ou em nova aba.
 
-## Fase 4 - Regressao completa das Situacoes 1 a 7
+Recomendacao:
 
-Resumo detalhado do que foi alterado nesta etapa: a implementação da Fase 4 fechou as lacunas restantes da matriz regressiva das Situações 1 a 7 usando exatamente os dois níveis de teste definidos no plano: decisão pura em `tests/web_automatic_activities.test.js` e orquestração do botão `Atualizar` em `tests/check_user_location_ui.test.js`. Como as fases anteriores já haviam comprovado a Situação 7 no refresh manual e já existia cobertura parcial para checkout automático, check-in após checkout e não repetição de localização, esta etapa se concentrou em tornar a matriz explícita e completa, sem introduzir mudanças especulativas no código de produção.
+1. abrir em nova aba com `noopener`;
+2. manter o app principal intacto;
+3. permitir ao usuario consultar o manual sem perder o estado do formulario.
 
-Na suíte de decisão pura, foram adicionados os cenários que ainda faltavam para completar a leitura formal das Situações 4 e 5. O primeiro novo teste passou a afirmar que `shouldAttemptAutomaticLocationEvent()` retorna `true` quando o usuário já está em `checkin` e muda para outro local conhecido, cobrindo de forma explícita a Situação 4 como atualização legítima de localização. O segundo novo teste passou a afirmar que `shouldAttemptAutomaticNearbyWorkplaceCheckIn()` retorna `false` quando o usuário continua em estado de `checkin` e o backend devolve `not_in_known_location`, fechando o controle negativo da Situação 5, em que a aplicação deve apenas manter a exibição de proximidade ao trabalho sem disparar nova atividade. Com os testes que já existiam antes desta fase, a camada pura fica agora com cobertura explícita para: checkout automático em `Zona de CheckOut` e `outside_workplace` após `checkin` (Situação 1), ausência de ação quando o último estado já é `checkout` (Situação 2), check-in após `checkout` em local conhecido ou em localização próxima não cadastrada (Situação 3), atualização de local conhecido após `checkin` (Situação 4), ausência de nova ação em proximidade sem local exato durante `checkin` (Situação 5) e os ramos decisórios centrais da Situação 7.
+#### 3.9. Idioma e i18n
+
+1. Criar suporte de idioma proprio do `Checking Web`.
+2. Extrair textos fixos do app para dicionarios.
+3. Garantir traducao de:
+   - labels da tela principal;
+   - mensagens de status;
+   - dialogs de cadastro/senha;
+   - widget `Ajustes`;
+   - pagina do manual.
+4. Persistir idioma em `localStorage`.
+5. Aplicar idioma inicial por ordem:
+   - idioma salvo;
+   - idioma do navegador;
+   - fallback `pt`.
+
+
+## 4. Frontend - estado reutilizavel
+
+### Arquivo principal
+
+`sistema/app/static/check/web-client-state.js`
+
+### Mudancas planejadas
+
+1. Adicionar helpers de idioma, se a estrategia escolhida for concentrar parte da logica nesse modulo.
+2. Opcionalmente incluir helpers para:
+   - normalizar codigo de idioma;
+   - resolver idioma padrao pelo navegador;
+   - decidir se o botao de localizacao deve ser considerado concluido/desabilitado.
+3. Nao mover para esse arquivo regras muito acopladas ao DOM; manter nele apenas regras puras.
+
 
-Na suíte de controller/UI, a regressão foi fortalecida para o caminho completo do refresh manual. Foi adicionado um teste com o harness forte de `runManualLocationRefreshSequence()` mais `runAutomaticActivitiesIfNeeded()` que verifica a Situação 6 com submissão real: usuário já em `checkin`, mudança para outro local conhecido e confirmação de `submitAutomaticActivity({ action: 'checkin', local: ... })` no mesmo fluxo do botão `Atualizar`. Além disso, foram acrescentados os três controles negativos adicionais previstos no plano para a superfície do refresh manual: aplicação travada, em que o refresh sequer inicia a sequência; atividades automáticas desabilitadas, em que a medição pode ocorrer mas nenhuma atividade é enviada; e chave inválida, em que o fluxo não consulta o estado remoto nem tenta submeter nova atividade. Esses novos cenários se somam aos testes já existentes para a Variante 7A, Variante 7B, permanência em `Zona de CheckOut` e transição para `outside_workplace`, formando uma cobertura de orquestração mais completa e diretamente aderente à matriz das Situações 6 e 7.
+## 5. Frontend - novo modulo de i18n
 
-Depois de completar essa matriz, a validação executável da fase foi rodada novamente com `node --test tests/check_user_location_ui.test.js tests/web_automatic_activities.test.js`. O resultado final ficou em 38 testes verdes, sem falhas, o que confirma que o slice atualmente coberto mantém compatibilidade com as Situações 1 a 7 dentro da superfície prevista para o frontend local. Também é relevante registrar que esta fase não exigiu alterações em `sistema/app/static/check/app.js` nem em `sistema/app/static/check/automatic-activities.js`: o trabalho foi inteiramente de regressão e explicitação da cobertura, o que reduz risco e torna mais claro que qualquer divergência residual passa a estar mais provavelmente em estado remoto, publicação ou artefato servido em produção, e não em ausência de testes para a regra local.
+### Arquivos recomendados
 
-## Fase 5 - Validacao operacional e deploy
+1. `sistema/app/static/check/i18n.js`
+2. opcionalmente `sistema/app/static/check/manual-i18n.js` se o manual ficar grande o bastante para justificar separacao.
 
-Resumo detalhado do que foi alterado nesta etapa: a Fase 5 foi usada para transformar a validação de deploy em evidência objetiva sobre o artefato realmente servido em `https://www.tscode.com.br/checking/user`, sem introduzir publicação desnecessária nem mutar estado real de produção sem credenciais operacionais apropriadas para esse fluxo. O primeiro passo executado foi rerodar a suíte focada do slice com `node --test tests/check_user_location_ui.test.js tests/web_automatic_activities.test.js`, mantendo 38 testes verdes. Isso preserva a base local validada antes de qualquer checagem operacional externa e confirma que o comportamento esperado das Situações 6 e 7 continua verde no repositório.
+### Conteudo esperado
+
+1. lista de idiomas;
+2. dicionarios;
+3. helpers:
+   - `getDictionary`;
+   - `resolveLanguageCode`;
+   - `getStoredLanguageCode`;
+   - `setStoredLanguageCode`;
+   - `t`.
 
-Em seguida, a implementação desta fase verificou diretamente o artefato público. A página `https://www.tscode.com.br/checking/user` foi consultada e respondeu com a superfície esperada da Checking Web, incluindo o formulário `id="checkForm"`, o que é coerente com o smoke público previsto em `deploy/nginx/verify_checking_edge_cutover.sh`. Depois disso, o arquivo `https://www.tscode.com.br/checking/user/app.js` foi baixado e comparado com `sistema/app/static/check/app.js`, e o mesmo foi feito com `https://www.tscode.com.br/checking/user/automatic-activities.js` versus `sistema/app/static/check/automatic-activities.js`. A comparação literal inicial acusou diferença de tamanho, mas a discrepância foi isolada como diferença de quebra de linha entre LF e CRLF. Após normalização de newline, os dois pares de arquivos bateram exatamente. Isso muda materialmente o diagnóstico operacional: a publicação atual do site público contém o mesmo conteúdo-fonte relevante do repositório para o slice do refresh manual e das decisões automáticas, o que enfraquece a hipótese de bundle antigo ou asset divergente em produção para este caso específico.
+### Estrategia recomendada
 
-Também foi relido o caminho formal de deploy do site de check para registrar o estado operacional desta etapa. Em `scripts/deploy_launcher.py`, a ação `CHECK` continua definindo o redeploy do `user-web` via `docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate user-web`, com smoke local em `http://127.0.0.1:18082/` procurando `id="checkForm"`. Em paralelo, `deploy/nginx/verify_checking_edge_cutover.sh` continua validando a presença pública da página em `/checking/user`. Como os assets públicos já coincidem com o conteúdo atual do repositório após normalização de newline, não houve necessidade técnica de disparar um novo deploy apenas para esta fase, e nenhuma invalidação de cache foi executada porque não apareceu evidência de cache servindo um asset antigo.
+1. reaproveitar o desenho tecnico do `transport`;
+2. evitar importar diretamente o JS do transporte;
+3. manter independencia entre bundles.
 
-O ponto que permaneceu bloqueado nesta fase foi a validação manual ao vivo das Situações 6 e 7 em ambiente autenticado de produção. A partir deste workspace foi possível confirmar a disponibilidade da rota pública e a equivalência do asset publicado com o código local, mas não houve execução segura de um fluxo real com usuário autenticado, senha válida, permissão de geolocalização e deslocamento físico ou coordenadas homologadas em produção. Uma tentativa de smoke interativo controlado no browser integrado não se mostrou confiável o suficiente para substituir essa validação manual real, especialmente por limitações do ambiente quanto à simulação robusta de geolocalização e autenticação na própria superfície publicada. Por isso, esta fase registra um resultado operacional parcial e útil: o deploy público já está alinhado ao código local do slice investigado, porém a confirmação manual final em produção das Situações 6 e 7 continua pendente de execução em ambiente autorizado, com credenciais e contexto de localização apropriados.
 
-## Fase 6 - Fechamento tecnico
+## 6. Manual completo do Checking Web
 
-Resumo detalhado do que foi alterado nesta etapa: a Fase 6 consolidou o fechamento tecnico do slice da Situacao 7 com uma reconciliacao final entre a documentacao de regras, a cobertura automatizada adicionada e o estado real dos arquivos tocados no repositorio. O primeiro passo foi conferir novamente `docs/regras_checkin_checkout_webapp.txt` contra o comportamento hoje exercitado pelos testes e pelo helper de decisao. Essa revisao confirmou que a regra textual permanece alinhada ao comportamento entregue: a Situacao 7 continua separada em Variante 7A, para saida da `Zona de CheckOut` rumo a um local cadastrado, e Variante 7B, para saida da `Zona de CheckOut` rumo ao ramo `not_in_known_location`, com check-in em `Localizacao nao Cadastrada`; os dois controles negativos do refresh manual tambem continuam documentados, cobrindo permanencia em `Zona de CheckOut` e transicao para `outside_workplace`. Em outras palavras, o contrato textual agora corresponde exatamente ao que a cobertura executavel protege no frontend local.
+### Estrutura recomendada
 
-Na validacao executavel desta fase, a suite focada do slice foi rerodada com `node --test tests/check_user_location_ui.test.js tests/web_automatic_activities.test.js` e permaneceu verde com 38 testes aprovados. Para responder explicitamente ao item de fechamento sobre a qualidade da cobertura nova, esta etapa nao ficou apenas na passagem da suite com o codigo atual: foram executados dois ensaios de mutacao em copias temporarias dos arquivos relevantes, fora da worktree do repositorio. No primeiro probe, o ramo de `shouldAttemptAutomaticLocationEvent()` que hoje permite check-in automatico apos `checkout` em local conhecido foi forçado artificialmente a retornar `false`; com isso, falharam imediatamente tanto o teste puro `automatic check-in runs for a known location after checkout when leaving checkout zone` quanto o teste de orquestracao `manual refresh should submit automatic check-in after checkout when leaving checkout zone for a known location`. No segundo probe, o ramo de `shouldAttemptAutomaticNearbyWorkplaceCheckIn()` foi neutralizado para o caso `status = 'not_in_known_location'`; com isso, falharam o teste puro da Variante 7B e o teste de refresh manual para localizacao proxima nao cadastrada. Esses dois probes confirmam de forma objetiva que a cobertura adicionada nao esta apenas refletindo o estado atual do codigo: ela realmente detecta regressao quando os dois ramos centrais da Situacao 7 sao removidos e volta a passar com o codigo real do repositorio.
+Criar uma pequena superficie estatica propria do manual, por exemplo:
 
-Tambem foi feita a conferencia final do escopo por meio de `git status` restrito aos caminhos do slice. Nessa superficie, os arquivos diretamente ligados ao trabalho permaneceram limitados a `docs/regras_checkin_checkout_webapp.txt`, `tests/check_user_location_ui.test.js`, `tests/web_automatic_activities.test.js` e este proprio `docs/temp_004.md`. `sistema/app/static/check/app.js` nao entrou no slice nesta fase de fechamento. `sistema/app/static/check/automatic-activities.js` apareceu marcado na worktree local, mas `git diff -- sistema/app/static/check/automatic-activities.js` nao retornou diff textual neste ambiente, de modo que esta etapa nao confirmou nenhuma nova alteracao produtiva adicional alem da superficie ja estabelecida nas fases anteriores. Assim, o fechamento tecnico registra que a correcao local permaneceu concentrada em documentacao e cobertura regressiva, sem expansao para mudancas secundarias fora do recorte necessario.
+1. `sistema/app/static/check/manual.html`
+2. `sistema/app/static/check/manual.css`
+3. `sistema/app/static/check/manual.js`
+4. `sistema/app/static/check/manual-assets/`
 
-Por fim, o pequeno gotcha operacional registrado no fechamento e que a comparacao bruta entre asset publico e arquivo local pode gerar falso positivo de divergencia por causa de newline LF versus CRLF. Nesta investigacao, `app.js` e `automatic-activities.js` pareceram diferentes em uma checagem literal inicial por tamanho e comparacao direta, mas bateram exatamente depois da normalizacao de quebra de linha. Portanto, antes de concluir que producao esta servindo um bundle antigo, a verificacao correta precisa normalizar newline e so depois comparar o conteudo. Com isso, a Fase 6 fecha o slice com tres conclusoes tecnicas: a regra textual esta alinhada ao comportamento coberto, a cobertura adicionada realmente derruba quando as variantes 7A e 7B sao regressadas artificialmente, e a hipotese remanescente fora do codigo local continua sendo a validacao operacional autenticada em producao, nao ausencia de protecao automatizada ou falta de aderencia entre documentacao e comportamento local.
+### Conteudo minimo do manual
+
+1. Visao geral da aplicacao.
+2. Como informar a chave.
+3. Como funciona o cadastro automatico de usuario.
+4. Como funciona o cadastro automatico de senha.
+5. Como fazer login.
+6. Como registrar `Check-In` e `Check-Out`.
+7. Como selecionar projetos.
+8. Como funciona localizacao:
+   - permissao;
+   - localizacao indisponivel;
+   - precisao baixa;
+   - atividades automaticas.
+9. Como usar o modulo de transporte.
+10. Como alterar senha.
+11. Como usar `Ajustes`.
+12. Como acionar `Suporte`.
+13. Perguntas frequentes e mensagens comuns de erro.
+
+### Snapshots necessarios
+
+Recomendacao de lista minima:
+
+1. tela inicial com chave e senha;
+2. cadastro automatico de usuario;
+3. cadastro automatico de senha;
+4. widget `Ajustes`;
+5. dialog de alteracao de senha;
+6. estado de localizacao concedida;
+7. estado de localizacao negada;
+8. tela com projetos selecionados;
+9. fluxo de transporte;
+10. exemplo de status de sucesso apos `Check-In` ou `Check-Out`.
+
+### Estrategia de captura dos snapshots
+
+1. Implementar primeiro a UI final.
+2. Preparar dados previsiveis para captura:
+   - chave de exemplo;
+   - projetos de exemplo;
+   - estado autenticado;
+   - estado sem permissao de localizacao;
+   - estado com permissao;
+   - dialogos abertos.
+3. Capturar snapshots em viewport mobile realista e, se necessario, um conjunto adicional desktop.
+4. Curar as imagens:
+   - remover ruido desnecessario;
+   - garantir legibilidade;
+   - revisar se ha dados sensiveis.
+5. Exportar os assets finais para `manual-assets`.
+
+### Observacao importante
+
+O requisito fala em snapshots reais, entao o plano deve considerar:
+
+1. capturas de tela da interface implementada;
+2. nao apenas mockups estaticos;
+3. revisao final de consistencia entre texto do manual e app real.
+
+
+## 7. Backend
+
+### Mudancas obrigatorias
+
+Nenhuma mudanca de contrato de API e estritamente necessaria para cumprir o requisito principal, porque:
+
+1. `GET /api/web/auth/status` ja informa `found` e `has_password`;
+2. `POST /api/web/auth/register-user` ja cria usuario e autentica;
+3. `POST /api/web/auth/register-password` ja cria senha para usuario existente;
+4. `POST /api/web/auth/change-password` ja troca senha;
+5. a localizacao ja usa endpoints existentes.
+
+### Mudancas opcionais recomendadas
+
+1. Se o manual ganhar URL amigavel, considerar rota dedicada para `manual`:
+   - opcional apenas se a estrategia com `manual.html` nao for suficiente.
+2. Se o suporte por WhatsApp precisar ser auditado no futuro, considerar endpoint de telemetria, mas isso esta fora do requisito atual.
+
+
+## 8. Acessibilidade
+
+### Requisitos de implementacao
+
+1. O botao de engrenagem precisa de `aria-label` claro:
+   - `Abrir ajustes`.
+2. O dialog `Ajustes` deve:
+   - prender o foco enquanto aberto, se possivel;
+   - fechar com `Escape`;
+   - devolver foco ao disparador.
+3. O icone nao pode ser a unica forma de entendimento:
+   - usar `aria-label` e, se necessario, texto oculto.
+4. Os botoes desabilitados devem ter motivo perceptivel:
+   - por exemplo, descricao curta ou mensagem de status.
+5. O manual deve manter boa hierarquia semantica:
+   - `h1`, `h2`, listas e imagens com `alt`.
+
+
+## 9. Responsividade
+
+### Ponto de atencao
+
+O `Checking Web` ja e fortemente orientado a mobile. O widget `Ajustes` nao pode:
+
+1. quebrar a largura da linha de autenticacao;
+2. criar targets pequenos demais;
+3. ficar maior que a viewport sem scroll interno;
+4. competir visualmente com dialogs de senha/cadastro.
+
+### Recomendacao
+
+1. usar o mesmo padrao dos dialogs existentes;
+2. manter o card com largura proxima do dialog de senha;
+3. adotar lista vertical simples, sem layout sofisticado demais;
+4. no mobile, usar botoes em largura total para as acoes internas.
+
+
+## 10. Telemetria e comportamento de estado
+
+### Recomendacoes
+
+1. Registrar em medicao local ou eventos diagnosticos:
+   - troca de idioma;
+   - abertura automatica do cadastro de usuario;
+   - abertura automatica do cadastro de senha;
+   - tentativa de re-solicitar permissao de localizacao;
+   - clique em suporte;
+   - clique em sobre/manual.
+2. Isso ajuda a diferenciar:
+   - fluxo automatico disparado corretamente;
+   - fluxo fechado pelo usuario;
+   - falhas de permissao no navegador.
+
+Essa parte pode ser leve, mas deve ser considerada no desenho.
+
+
+## 11. Impacto esperado nos testes
+
+### Testes de frontend existentes que precisarao ser atualizados
+
+1. testes que hoje procuram labels `Chave?` e `Senha?` no botao principal;
+2. testes que ainda validam a existencia funcional do `passwordActionButton`;
+3. testes de HTML/CSS do widget de cadastro;
+4. testes de UX relacionados a dialogs.
+
+### Novos testes recomendados
+
+#### 11.1. Estrutura HTML
+
+1. existe `settingsButton`;
+2. `settingsButton` aponta para `/assets/icons/config.webp`;
+3. existe `settingsDialog`;
+4. existem os controles:
+   - idioma;
+   - resetar senha;
+   - permitir localizacao;
+   - suporte;
+   - sobre.
+
+#### 11.2. Comportamento da chave
+
+1. chave inexistente abre cadastro de usuario automaticamente;
+2. chave existente sem senha abre cadastro de senha automaticamente;
+3. o frontend nao fica reabrindo dialogo em loop apos fechamento manual;
+4. chave alterada reseta corretamente o estado de autoabertura.
+
+#### 11.3. Ajustes
+
+1. clique no icone abre `Ajustes`;
+2. `Escape` fecha `Ajustes`;
+3. item `Resetar Senha` abre o dialog de alteracao de senha;
+4. item `Permitir localizacao` fica desabilitado quando a permissao ja estiver concedida;
+5. item `Suporte` monta o link correto com a chave;
+6. item `Sobre` abre a URL correta do manual.
+
+#### 11.4. Idioma
+
+1. dropdown popula idiomas esperados;
+2. troca de idioma atualiza labels principais;
+3. idioma persiste em `localStorage`;
+4. recarregamento restaura idioma salvo.
+
+#### 11.5. Manual
+
+1. pagina do manual carrega;
+2. snapshots referenciados existem;
+3. manual possui secoes minimas obrigatorias.
+
+### Testes de API
+
+Provavelmente os contratos principais permanecem os mesmos, mas vale manter ou reforcar:
+
+1. `auth/status`;
+2. `register-user`;
+3. `register-password`;
+4. `change-password`.
+
+
+## 12. Riscos principais
+
+### 1. Autoabertura em loop
+
+Risco:
+
+1. o frontend ficar reabrindo cadastro de usuario/senha sempre que o usuario tentar fechar.
+
+Mitigacao:
+
+1. flags por chave e por estado de autoabertura;
+2. reset controlado apenas quando houver mudanca real do estado.
+
+### 2. Regressao na troca de senha
+
+Risco:
+
+1. mover a entrada da acao quebrar o fluxo de alteracao existente.
+
+Mitigacao:
+
+1. manter o dialog e o submit atuais;
+2. mudar apenas o ponto de disparo;
+3. criar testes de regressao especificos.
+
+### 3. Requisicao de permissao de localizacao nao disparar em todos os navegadores
+
+Risco:
+
+1. alguns browsers nao reabrem prompt se o usuario negou permanentemente.
+
+Mitigacao:
+
+1. tratar explicitamente estados:
+   - `granted`;
+   - `prompt`;
+   - `denied`;
+   - `unsupported`.
+2. quando nao for possivel reabrir o prompt, orientar o usuario a usar configuracoes do navegador.
+
+### 4. Crescimento grande do escopo por causa de i18n
+
+Risco:
+
+1. a mudanca de idioma puxar revisao de quase todo o texto da aplicacao.
+
+Mitigacao:
+
+1. separar em fase dedicada;
+2. comecar pelos textos do shell principal e dos novos widgets;
+3. expandir cobertura de mensagens progressivamente, com dicionarios centralizados.
+
+### 5. Manual desatualizar rapido
+
+Risco:
+
+1. o manual ficar desalinhado da interface apos pequenas mudancas futuras.
+
+Mitigacao:
+
+1. manual em arquivos dedicados;
+2. snapshots versionados;
+3. checklist final de consistencia antes da entrega;
+4. idealmente incluir o manual nos testes de existencia de assets.
+
+
+## 13. Sequencia recomendada de implementacao
+
+### Fase 1 - Preparacao e base
+
+1. Criar branch/escopo da modificacao.
+2. Mapear todos os seletores atuais ligados a `passwordActionButton`.
+3. Criar inventario dos textos que passarao por i18n.
+4. Definir estrutura final dos novos arquivos do manual.
+
+### Fase 2 - Estrutura HTML do novo Ajustes
+
+1. Inserir `settingsButton` no lugar visual do botao atual.
+2. Inserir o dialog `Ajustes` em `index.html`.
+3. Inserir `select` de idioma e botoes internos.
+
+### Fase 3 - CSS do botao de engrenagem e do dialog
+
+1. Estilizar o novo botao com o icone `config.webp`.
+2. Garantir mesma altura do botao anterior.
+3. Estilizar o dialog `Ajustes`.
+4. Validar responsividade mobile.
+
+### Fase 4 - Reorganizacao da logica de autenticacao
+
+1. Remover dependencia funcional de `Chave?` e `Senha?`.
+2. Implementar autoabertura do cadastro de usuario.
+3. Implementar autoabertura do cadastro de senha.
+4. Implementar protecao anti-loop.
+
+### Fase 5 - Mover alteracao de senha para Ajustes
+
+1. Fazer `Resetar Senha` abrir o dialog existente.
+2. Revisar habilitacao/desabilitacao pelo estado autenticado.
+3. Garantir que o submit atual continue igual.
+
+### Fase 6 - Permissao de localizacao
+
+1. Criar a acao de re-solicitar permissao.
+2. Desabilitar quando localizacao ja estiver compartilhada.
+3. Tratar navegadores sem suporte e contextos nao seguros.
+
+### Fase 7 - Suporte via WhatsApp
+
+1. Montar link com mensagem pre-preenchida.
+2. Validar comportamento com chave autenticada e digitada.
+3. Ajustar estado habilitado/desabilitado.
+
+### Fase 8 - i18n do Checking Web
+
+1. Criar `i18n.js`.
+2. Migrar textos principais.
+3. Integrar dropdown de idioma.
+4. Persistir idioma e aplicar em runtime.
+
+### Fase 9 - Manual e snapshots
+
+1. Criar pagina do manual.
+2. Escrever conteudo completo.
+3. Capturar snapshots reais.
+4. Referenciar snapshots finais.
+5. Ligar `Sobre` ao manual.
+
+### Fase 10 - Testes e consolidacao
+
+1. Atualizar testes existentes.
+2. Criar novos testes estruturais e comportamentais.
+3. Rodar validacao visual mobile/desktop.
+4. Revisar acessibilidade basica.
+5. Revisar textos em todos os idiomas suportados.
+
+
+## 14. Entregaveis finais esperados
+
+1. Tela principal do `Checking Web` com botao de engrenagem no lugar do antigo botao de senha.
+2. Widget `Ajustes` funcional com:
+   - idioma;
+   - resetar senha;
+   - permitir localizacao;
+   - suporte;
+   - sobre.
+3. Cadastro de usuario abrindo automaticamente quando a chave nao existir.
+4. Cadastro de senha abrindo automaticamente quando o usuario existir sem senha.
+5. Fluxo de alteracao de senha preservado dentro de `Ajustes`.
+6. Pagina de manual completa com snapshots.
+7. Suite de testes atualizada para o novo comportamento.
+
+
+## 15. Recomendacao final de abordagem
+
+Implementar esta modificacao em uma unica iniciativa funcional, mas com entrega interna em fases, nesta ordem:
+
+1. nova entrada visual (`Ajustes`);
+2. reorganizacao dos fluxos de autenticacao;
+3. localizacao e suporte;
+4. i18n;
+5. manual com snapshots;
+6. consolidacao de testes.
+
+Essa ordem reduz risco porque:
+
+1. primeiro estabiliza a navegacao e os gatilhos principais;
+2. depois preserva e reaproveita os fluxos existentes de senha/cadastro;
+3. por fim adiciona as camadas mais amplas e longas, como idioma e manual.

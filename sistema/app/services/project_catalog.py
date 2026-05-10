@@ -249,6 +249,33 @@ def ensure_known_project(db: Session, project_name: str, *, detail: str = "Proje
     return normalized_name
 
 
+def ensure_known_projects(
+    db: Session,
+    project_names: list[str],
+    *,
+    detail: str = "Projeto nao encontrado.",
+) -> list[str]:
+    normalized_names: list[str] = []
+    seen: set[str] = set()
+    for project_name in project_names:
+        normalized_name = normalize_project_name(project_name)
+        if normalized_name in seen:
+            continue
+        seen.add(normalized_name)
+        normalized_names.append(normalized_name)
+
+    if not normalized_names:
+        return []
+
+    existing_names = set(
+        db.execute(select(Project.name).where(Project.name.in_(normalized_names))).scalars().all()
+    )
+    missing_names = [project_name for project_name in normalized_names if project_name not in existing_names]
+    if missing_names:
+        raise HTTPException(status_code=422, detail=detail)
+    return sorted(normalized_names)
+
+
 def resolve_default_project_name(db: Session) -> str:
     project_names = list_project_names(db)
     if project_names:

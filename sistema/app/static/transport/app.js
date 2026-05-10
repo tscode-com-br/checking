@@ -1,5 +1,8 @@
 (function (globalScope) {
   const RESIZE_DEFAULT_MIN_SIZE = 96;
+  const VEHICLE_PANEL_RESIZE_DISABLE_MAX_WIDTH = 1180;
+  const VEHICLE_PANEL_KEYBOARD_RESIZE_STEP = 24;
+  const VEHICLE_PANEL_KEYBOARD_RESIZE_LARGE_STEP = 72;
   const REQUEST_SECTION_ORDER = ["extra", "weekend", "regular"];
   const VEHICLE_SCOPE_ORDER = ["extra", "weekend", "regular"];
   const REQUEST_TITLE_KEYS = {
@@ -20,6 +23,13 @@
     van: `${TRANSPORT_ASSETS_PREFIX}/icons/van.svg`,
     onibus: `${TRANSPORT_ASSETS_PREFIX}/icons/bus.svg`,
   };
+  const VEHICLE_TEMPORARY_ICON_PATHS = {
+    carro: `${TRANSPORT_ASSETS_PREFIX}/icons/car-orange.svg`,
+    minivan: `${TRANSPORT_ASSETS_PREFIX}/icons/minivan-orange.svg`,
+    van: `${TRANSPORT_ASSETS_PREFIX}/icons/van-orange.svg`,
+    onibus: `${TRANSPORT_ASSETS_PREFIX}/icons/bus-orange.svg`,
+  };
+  const VEHICLE_TEMPORARY_PLACEHOLDER_PATTERN = /^PLATE \d+$/;
   const ROUTE_KIND_KEYS = {
     home_to_work: "routes.home_to_work",
     work_to_home: "routes.work_to_home",
@@ -31,12 +41,17 @@
   };
   const TRANSPORT_LANGUAGE_STORAGE_KEY = "checking.transport.dashboard.language";
   const TRANSPORT_SELECTED_DATE_STORAGE_KEY = "checking.transport.dashboard.selectedDate";
+  const DEFAULT_STATUS_MESSAGE_KEY = "status.ready";
   const transportI18n = globalScope.CheckingTransportI18n || {};
   const TRANSPORT_DEFAULT_LANGUAGE = transportI18n.defaultLanguage || "en";
+  const DEFAULT_ARRIVE_AT_WORK_TIME = "07:45";
   const DEFAULT_WORK_TO_HOME_TIME = "16:45";
   const DEFAULT_LAST_UPDATE_TIME = "16:00";
+  const DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES = 30;
+  const MINUTES_PER_DAY = 24 * 60;
   const DEFAULT_VEHICLE_TOLERANCE_MINUTES = 5;
   const DEFAULT_TRANSPORT_PRICE_RATE_UNIT = "day";
+  const DEFAULT_AI_AGENT_REQUEST_KINDS = Object.freeze(["extra", "weekend", "regular"]);
   const DEFAULT_AI_AGENT_SETTINGS = {
     earliestBoardingTime: "06:50",
     arrivalAtWorkTime: "07:45",
@@ -64,6 +79,346 @@
     }),
   });
   const TRANSPORT_AI_SUMMARY_PLACEHOLDER = "--";
+  const TRANSPORT_AI_BIDIRECTIONAL_PLAN_CONTRACT = Object.freeze({
+    regularWeekend: Object.freeze({
+      outboundSourceOfTruth: "home_to_work",
+      returnLegMode: "derived_from_outbound",
+      sameVehicleRequired: true,
+      samePassengersRequired: true,
+      returnStopOrder: "reverse_outbound_stops",
+      returnDurationStrategy: "recalculate_work_to_home",
+    }),
+    extra: Object.freeze({
+      directionMode: "actual_request_direction",
+      forbidProjectDestinationOnWorkToHome: true,
+    }),
+    fields: Object.freeze({
+      canonicalReturnTime: "scheduled_dropoff_time",
+      outboundBoardingTime: "boarding_time",
+    }),
+    review: Object.freeze({
+      workToHomeSource: "backend_plan",
+      forbidLocalReturnReconstruction: true,
+    }),
+    vehicleRef: Object.freeze({
+      allowsMultipleRealLegs: true,
+      groupingKey: "vehicle_ref",
+    }),
+  });
+  const TRANSPORT_AI_REVIEW_TARGET_CONTRACT = Object.freeze({
+    primaryPanelKey: "review",
+    primarySurface: Object.freeze([
+      "vehicle_tables",
+      "management_table",
+      "exceptions",
+    ]),
+    canonicalRow: Object.freeze({
+      internalFields: Object.freeze(["request_id", "pickup_order"]),
+      visibleFields: Object.freeze([
+        "user_name",
+        "user_address",
+        "home_to_work_boarding",
+        "work_to_home_dropoff",
+      ]),
+    }),
+    ordering: Object.freeze({
+      primaryRouteKind: "home_to_work",
+      primaryField: "pickup_order",
+      fallbackField: "scheduled_pickup_time",
+    }),
+    addressSource: Object.freeze({
+      joinKey: "request_id",
+      sourceCollection: "route_itineraries.stops",
+      field: "address",
+      forbidFormattedUiText: true,
+    }),
+    deferredPopulation: Object.freeze({
+      work_to_home_dropoff: Object.freeze({
+        allowPlaceholder: true,
+        dependency: "modification_11",
+      }),
+    }),
+    bidirectionalPlanning: TRANSPORT_AI_BIDIRECTIONAL_PLAN_CONTRACT,
+    supportingPanels: Object.freeze(["vehicles", "passengers", "routes"]),
+    auditPanelKey: "audit",
+  });
+  const TRANSPORT_AI_DYNAMIC_LABELS = Object.freeze({
+    actions: Object.freeze({
+      keep: Object.freeze({ keyPath: "ai.review.actions.keep", fallbackText: "Keep" }),
+      create: Object.freeze({ keyPath: "ai.review.actions.create", fallbackText: "Add" }),
+      update: Object.freeze({ keyPath: "ai.review.actions.update", fallbackText: "Update" }),
+      remove_from_day: Object.freeze({
+        keyPath: "ai.review.actions.removeFromDay",
+        fallbackText: "Remove From Day",
+      }),
+    }),
+    lists: Object.freeze({
+      regular: Object.freeze({ keyPath: "ai.review.lists.regular", fallbackText: "Regular List" }),
+      weekend: Object.freeze({ keyPath: "ai.review.lists.weekend", fallbackText: "Weekend List" }),
+      extra: Object.freeze({ keyPath: "ai.review.lists.extra", fallbackText: "Extra List" }),
+    }),
+    stopTypes: Object.freeze({
+      pickup: Object.freeze({ keyPath: "ai.review.stopTypes.pickup", fallbackText: "Pickup" }),
+      destination: Object.freeze({ keyPath: "ai.review.stopTypes.destination", fallbackText: "Destination" }),
+    }),
+    topCards: Object.freeze({
+      suggestedCost: Object.freeze({ keyPath: "ai.review.topCards.suggestedCost", fallbackText: "Suggested Cost" }),
+      vehicles: Object.freeze({ keyPath: "ai.review.summary.vehicles", fallbackText: "Vehicles" }),
+      passengers: Object.freeze({ keyPath: "ai.review.summary.passengers", fallbackText: "Passengers" }),
+    }),
+    detailItems: Object.freeze({
+      currentCost: Object.freeze({ keyPath: "ai.review.detailItems.currentCost", fallbackText: "Current Cost" }),
+      suggestedCost: Object.freeze({ keyPath: "ai.review.detailItems.suggestedCost", fallbackText: "Suggested Cost" }),
+      costDelta: Object.freeze({ keyPath: "ai.review.detailItems.costDelta", fallbackText: "Cost Delta" }),
+      vehicles: Object.freeze({ keyPath: "ai.review.summary.vehicles", fallbackText: "Vehicles" }),
+      passengers: Object.freeze({ keyPath: "ai.review.summary.passengers", fallbackText: "Passengers" }),
+      window: Object.freeze({ keyPath: "ai.review.detailItems.window", fallbackText: "Window" }),
+      extraTolerance: Object.freeze({
+        keyPath: "ai.review.detailItems.extraTolerance",
+        fallbackText: "Extra Tolerance",
+      }),
+      planningInput: Object.freeze({ keyPath: "ai.review.detailItems.planningInput", fallbackText: "Planning Input" }),
+      routeProvider: Object.freeze({
+        keyPath: "ai.review.management.notes.routeProvider",
+        fallbackText: "Route Provider",
+      }),
+      model: Object.freeze({ keyPath: "ai.review.management.notes.model", fallbackText: "Model" }),
+    }),
+    vehicleFields: Object.freeze({
+      type: Object.freeze({ keyPath: "ai.review.meta.type", fallbackText: "Type" }),
+      seats: Object.freeze({ keyPath: "ai.review.meta.seats", fallbackText: "Seats" }),
+      identifier: Object.freeze({
+        keyPath: "ai.review.vehicleChanges.fields.identifier",
+        fallbackText: "Identifier",
+      }),
+      list: Object.freeze({ keyPath: "ai.review.meta.list", fallbackText: "List" }),
+      cost: Object.freeze({ keyPath: "ai.review.meta.cost", fallbackText: "Cost" }),
+      route: Object.freeze({ keyPath: "ai.review.meta.route", fallbackText: "Route" }),
+    }),
+    passengerFields: Object.freeze({
+      project: Object.freeze({ keyPath: "ai.review.passengers.fields.project", fallbackText: "Project" }),
+      requestKind: Object.freeze({
+        keyPath: "ai.review.passengers.fields.requestKind",
+        fallbackText: "Request Kind",
+      }),
+      vehicle: Object.freeze({ keyPath: "ai.review.passengers.fields.vehicle", fallbackText: "Vehicle" }),
+      pickupOrder: Object.freeze({
+        keyPath: "ai.review.passengers.fields.pickupOrder",
+        fallbackText: "Pickup Order",
+      }),
+      pickup: Object.freeze({ keyPath: "ai.review.passengers.fields.pickup", fallbackText: "Pickup" }),
+      arrival: Object.freeze({ keyPath: "ai.review.passengers.fields.arrival", fallbackText: "Arrival" }),
+    }),
+    routeFields: Object.freeze({
+      project: Object.freeze({ keyPath: "ai.review.routes.fields.project", fallbackText: "Project" }),
+      duration: Object.freeze({ keyPath: "ai.review.routes.fields.duration", fallbackText: "Duration" }),
+      cost: Object.freeze({ keyPath: "ai.review.routes.fields.cost", fallbackText: "Cost" }),
+      reference: Object.freeze({ keyPath: "ai.review.fields.reference", fallbackText: "Reference" }),
+      arrival: Object.freeze({ keyPath: "ai.review.fields.arrival", fallbackText: "Arrival" }),
+    }),
+    auditFields: Object.freeze({
+      promptVersion: Object.freeze({
+        keyPath: "ai.review.audit.summary.promptVersion",
+        fallbackText: "Prompt Version",
+      }),
+      routeProvider: Object.freeze({
+        keyPath: "ai.review.audit.summary.routeProvider",
+        fallbackText: "Route Provider",
+      }),
+      model: Object.freeze({ keyPath: "ai.review.audit.summary.model", fallbackText: "Model" }),
+      planningInput: Object.freeze({
+        keyPath: "ai.review.audit.summary.planningInput",
+        fallbackText: "Planning Input",
+      }),
+    }),
+  });
+  const TRANSPORT_AI_DYNAMIC_TEXT = Object.freeze({
+    noChange: Object.freeze({ keyPath: "ai.review.badges.noChange", fallbackText: "No Change" }),
+    ready: Object.freeze({ keyPath: "ai.review.badges.ready", fallbackText: "Ready" }),
+    pendingRequest: Object.freeze({
+      keyPath: "ai.review.passengers.pendingRequest",
+      fallbackText: "Pending Request",
+    }),
+    reviewTableAria: Object.freeze({
+      keyPath: "ai.review.notes.reviewTableAria",
+      fallbackText: "{vehicle} review table",
+    }),
+    vehicleId: Object.freeze({
+      keyPath: "ai.review.notes.vehicleId",
+      fallbackText: "Vehicle {id}",
+    }),
+    requestReference: Object.freeze({
+      keyPath: "ai.review.notes.requestReference",
+      fallbackText: "Request #{id}",
+    }),
+    runStatus: Object.freeze({
+      keyPath: "ai.review.notes.runStatus",
+      fallbackText: "Run {status}",
+    }),
+    suggestionStatus: Object.freeze({
+      keyPath: "ai.review.notes.suggestionStatus",
+      fallbackText: "Suggestion {status}",
+    }),
+    delta: Object.freeze({
+      keyPath: "ai.review.notes.delta",
+      fallbackText: "Delta {delta}",
+    }),
+    currentWithRate: Object.freeze({
+      keyPath: "ai.review.notes.currentWithRate",
+      fallbackText: "Current {current} | {rate}",
+    }),
+    routeCompletion: Object.freeze({
+      keyPath: "ai.review.notes.routeCompletion",
+      fallbackText: "{route} | Route completion {time}",
+    }),
+    fromPrevious: Object.freeze({
+      keyPath: "ai.review.notes.fromPrevious",
+      fallbackText: "From previous {segments}",
+    }),
+    noExtraTemporalClusters: Object.freeze({
+      keyPath: "ai.review.notes.noExtraTemporalClusters",
+      fallbackText: "No extra temporal clusters",
+    }),
+    extraClusters: Object.freeze({
+      keyPath: "ai.review.notes.extraClusters",
+      fallbackText: "Clusters {clusters}",
+    }),
+    routeCountInPlan: Object.freeze({
+      keyPath: "ai.review.notes.routeCountInPlan",
+      fallbackText: "{count} in plan",
+    }),
+    prompt: Object.freeze({
+      keyPath: "ai.review.notes.prompt",
+      fallbackText: "Prompt {prompt}",
+    }),
+    requestList: Object.freeze({
+      keyPath: "ai.review.audit.requestList",
+      fallbackText: "Requests {requests}",
+    }),
+    anchorBadge: Object.freeze({
+      keyPath: "ai.review.audit.anchorBadge",
+      fallbackText: "Anchor {time}",
+    }),
+    extraTolerance: Object.freeze({
+      keyPath: "ai.review.audit.extraToleranceNote",
+      fallbackText: "Extra tolerance {duration}",
+    }),
+    llm: Object.freeze({
+      keyPath: "ai.review.audit.llmNote",
+      fallbackText: "LLM {provider}",
+    }),
+    reasoning: Object.freeze({
+      keyPath: "ai.review.audit.reasoningNote",
+      fallbackText: "Reasoning {effort}",
+    }),
+    window: Object.freeze({
+      keyPath: "ai.review.audit.windowNote",
+      fallbackText: "Window {window}",
+    }),
+    vehicleChangesEmpty: Object.freeze({
+      keyPath: "ai.review.vehicleChanges.empty",
+      fallbackText: "Vehicle actions will appear in this panel once the review data is rendered.",
+    }),
+    passengerAllocationsEmpty: Object.freeze({
+      keyPath: "ai.review.passengers.empty",
+      fallbackText: "Passenger allocations will appear in this panel once the review data is rendered.",
+    }),
+    allocatedPassengersTitle: Object.freeze({
+      keyPath: "ai.review.passengers.allocatedTitle",
+      fallbackText: "Allocated Passengers",
+    }),
+    unallocatedPassengersTitle: Object.freeze({
+      keyPath: "ai.review.passengers.unallocatedTitle",
+      fallbackText: "Not Routed",
+    }),
+    routeItinerariesEmpty: Object.freeze({
+      keyPath: "ai.review.routes.empty",
+      fallbackText: "Route itineraries will appear in this panel once the review data is rendered.",
+    }),
+    routeStopsEmpty: Object.freeze({
+      keyPath: "ai.review.routes.emptyStops",
+      fallbackText: "No stops were generated for this route.",
+    }),
+    auditEmptyClusters: Object.freeze({
+      keyPath: "ai.review.audit.emptyClusters",
+      fallbackText: "No extra temporal clusters were captured for this suggestion.",
+    }),
+    removedFromDay: Object.freeze({
+      keyPath: "ai.review.vehicleChanges.removedFromDay",
+      fallbackText: "Removed from selected day",
+    }),
+  });
+  const TRANSPORT_AI_STATUS_FALLBACKS = Object.freeze({
+    proposed: "Proposed",
+    shown: "Shown",
+    saved: "Saved",
+    applied: "Applied",
+    requested: "Requested",
+    baseline_saved: "Baseline Saved",
+    passengers_reset: "Passengers Reset",
+    running: "Running",
+    cancelled: "Cancelled",
+    discarded: "Discarded",
+    expired: "Expired",
+    failed: "Failed",
+  });
+  const TRANSPORT_AI_COUNT_LABELS = Object.freeze({
+    action: Object.freeze({
+      keyPathPrefix: "ai.review.counts.action",
+      fallbackTextOne: "action",
+      fallbackTextOther: "actions",
+    }),
+    vehicle: Object.freeze({
+      keyPathPrefix: "ai.review.counts.vehicle",
+      fallbackTextOne: "vehicle",
+      fallbackTextOther: "vehicles",
+    }),
+    route: Object.freeze({
+      keyPathPrefix: "ai.review.counts.route",
+      fallbackTextOne: "route",
+      fallbackTextOther: "routes",
+    }),
+    request: Object.freeze({
+      keyPathPrefix: "ai.review.counts.request",
+      fallbackTextOne: "request",
+      fallbackTextOther: "requests",
+    }),
+    issue: Object.freeze({
+      keyPathPrefix: "ai.review.counts.issue",
+      fallbackTextOne: "issue",
+      fallbackTextOther: "issues",
+    }),
+    blockingIssue: Object.freeze({
+      keyPathPrefix: "ai.review.counts.blockingIssue",
+      fallbackTextOne: "blocking issue",
+      fallbackTextOther: "blocking issues",
+    }),
+    allocatedPassenger: Object.freeze({
+      keyPathPrefix: "ai.review.counts.allocatedPassenger",
+      fallbackTextOne: "allocated passenger",
+      fallbackTextOther: "allocated passengers",
+    }),
+    create: Object.freeze({
+      keyPathPrefix: "ai.review.counts.create",
+      fallbackTextOne: "create",
+      fallbackTextOther: "create",
+    }),
+    update: Object.freeze({
+      keyPathPrefix: "ai.review.counts.update",
+      fallbackTextOne: "update",
+      fallbackTextOther: "update",
+    }),
+    remove: Object.freeze({
+      keyPathPrefix: "ai.review.counts.remove",
+      fallbackTextOne: "remove",
+      fallbackTextOther: "remove",
+    }),
+    cluster: Object.freeze({
+      keyPathPrefix: "ai.review.counts.cluster",
+      fallbackTextOne: "cluster",
+      fallbackTextOther: "clusters",
+    }),
+  });
   const TRANSPORT_AI_ROUTE_POLL_INTERVAL_MS = 1200;
   const TRANSPORT_AI_ROUTE_POLL_MAX_MS = 10000;
   const MAX_TRANSPORT_PRICE_VALUE = 9999999999.99;
@@ -96,6 +451,12 @@
   const VEHICLE_GRID_FALLBACK_ITEM_HEIGHT = 96;
   const VEHICLE_DETAILS_VIEWPORT_MARGIN = 12;
   const VEHICLE_DETAILS_PANEL_OFFSET = 10;
+  const DEFAULT_VEHICLE_PANEL_HEIGHTS = Object.freeze({
+    extra: 288,
+    weekend: 272,
+    regular: 256,
+  });
+  const DEFAULT_VEHICLE_PANEL_HEIGHT_FALLBACK = 260;
 
   function getDictionaryForLanguage(languageCode) {
     if (transportI18n && typeof transportI18n.getDictionary === "function") {
@@ -195,6 +556,121 @@
     return interpolateTranslation(template !== undefined ? template : fallbackTemplate !== undefined ? fallbackTemplate : keyPath, values);
   }
 
+  function getResolvedTranslationOrNull(keyPath, values, languageCode) {
+    const normalizedKeyPath = String(keyPath || "").trim();
+    if (!normalizedKeyPath) {
+      return null;
+    }
+
+    const translatedValue = t(normalizedKeyPath, values, languageCode);
+    return translatedValue === normalizedKeyPath ? null : translatedValue;
+  }
+
+  function applyTranslatedAttribute(element, attributeName, keyPath, values, languageCode) {
+    if (!element || typeof element.setAttribute !== "function") {
+      return;
+    }
+
+    const translatedValue = getResolvedTranslationOrNull(keyPath, values, languageCode);
+    if (translatedValue === null) {
+      return;
+    }
+
+    element.setAttribute(attributeName, translatedValue);
+    if (attributeName in element) {
+      element[attributeName] = translatedValue;
+    }
+  }
+
+  function applyDeclarativeTranslations(rootElement, languageCode) {
+    const translationRoot = rootElement || (typeof document !== "undefined" ? document : null);
+    const resolvedLanguageCode = resolveLanguageCode(languageCode || getActiveLanguageCode());
+    if (!translationRoot || typeof translationRoot.querySelectorAll !== "function") {
+      return;
+    }
+
+    translationRoot.querySelectorAll("[data-i18n-text]").forEach(function (element) {
+      const translatedValue = getResolvedTranslationOrNull(element.dataset.i18nText, undefined, resolvedLanguageCode);
+      if (translatedValue === null) {
+        return;
+      }
+      element.textContent = translatedValue;
+    });
+
+    translationRoot.querySelectorAll("[data-i18n-aria-label]").forEach(function (element) {
+      applyTranslatedAttribute(
+        element,
+        "aria-label",
+        element.dataset.i18nAriaLabel,
+        undefined,
+        resolvedLanguageCode
+      );
+    });
+
+    translationRoot.querySelectorAll("[data-i18n-aria]").forEach(function (element) {
+      applyTranslatedAttribute(
+        element,
+        "aria-label",
+        element.dataset.i18nAria,
+        undefined,
+        resolvedLanguageCode
+      );
+    });
+
+    translationRoot.querySelectorAll("[data-i18n-placeholder]").forEach(function (element) {
+      applyTranslatedAttribute(
+        element,
+        "placeholder",
+        element.dataset.i18nPlaceholder,
+        undefined,
+        resolvedLanguageCode
+      );
+    });
+
+    translationRoot.querySelectorAll("[data-i18n-title]").forEach(function (element) {
+      applyTranslatedAttribute(
+        element,
+        "title",
+        element.dataset.i18nTitle,
+        undefined,
+        resolvedLanguageCode
+      );
+    });
+
+    translationRoot.querySelectorAll("[data-i18n-option]").forEach(function (element) {
+      const translatedValue = getResolvedTranslationOrNull(element.dataset.i18nOption, undefined, resolvedLanguageCode);
+      if (translatedValue === null) {
+        return;
+      }
+      element.textContent = translatedValue;
+    });
+  }
+
+  function applyDocumentLanguageMetadata(languageCode) {
+    if (typeof document === "undefined" || !document.documentElement) {
+      return;
+    }
+
+    const resolvedLanguageCode = resolveLanguageCode(languageCode || getActiveLanguageCode());
+    document.documentElement.lang = resolvedLanguageCode;
+    if (typeof document.documentElement.setAttribute === "function") {
+      document.documentElement.setAttribute("lang", resolvedLanguageCode);
+    }
+    const documentTitle = getResolvedTranslationOrNull("document.title", undefined, resolvedLanguageCode);
+    if (documentTitle !== null) {
+      document.title = documentTitle;
+    }
+  }
+
+  function applyInitialDeclarativeTranslations() {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    applyDocumentLanguageMetadata();
+    applyDeclarativeTranslations(document);
+  }
+
   function getTransportLockedMessage() {
     return t("status.locked");
   }
@@ -204,7 +680,7 @@
   }
 
   function getDefaultStatusMessage() {
-    return t("status.ready");
+    return t(DEFAULT_STATUS_MESSAGE_KEY);
   }
 
   function startOfLocalDay(value) {
@@ -414,6 +890,252 @@
           sizeProperty: "height",
           startProperty: "top",
         };
+  }
+
+  function getDefaultVehiclePanelHeight(scope) {
+    const normalizedScope = String(scope || "").trim().toLowerCase();
+    const defaultHeight = DEFAULT_VEHICLE_PANEL_HEIGHTS[normalizedScope];
+    return Math.max(
+      1,
+      Number.isFinite(defaultHeight) ? defaultHeight : DEFAULT_VEHICLE_PANEL_HEIGHT_FALLBACK
+    );
+  }
+
+  function resolveVehiclePanelExplicitHeight(options) {
+    const panelOptions = options || {};
+    const minHeight = Math.max(
+      1,
+      Math.round(Number(panelOptions.minHeight) || RESIZE_DEFAULT_MIN_SIZE)
+    );
+    const defaultHeight = Math.max(minHeight, getDefaultVehiclePanelHeight(panelOptions.scope));
+    const requestedHeight = Number(panelOptions.requestedHeight);
+
+    if (!Number.isFinite(requestedHeight) || requestedHeight <= 0) {
+      return defaultHeight;
+    }
+
+    return Math.max(minHeight, Math.round(requestedHeight));
+  }
+
+  function resolveVehiclePanelResizedHeight(options) {
+    const panelOptions = options || {};
+    const startHeight = Math.max(
+      1,
+      Number.isFinite(Number(panelOptions.startHeight))
+        ? Math.round(Number(panelOptions.startHeight))
+        : getDefaultVehiclePanelHeight(panelOptions.scope)
+    );
+    const pointerDelta = Number(panelOptions.pointerDelta) || 0;
+
+    return resolveVehiclePanelExplicitHeight({
+      scope: panelOptions.scope,
+      requestedHeight: startHeight + pointerDelta,
+      minHeight: panelOptions.minHeight,
+    });
+  }
+
+  function resolveVehiclePanelScope(panelElement) {
+    const vehicleGrid = panelElement && typeof panelElement.querySelector === "function"
+      ? panelElement.querySelector("[data-vehicle-scope]")
+      : null;
+    return vehicleGrid ? String(vehicleGrid.dataset.vehicleScope || "").trim().toLowerCase() : "";
+  }
+
+  function resolveVehiclePanelElementFromResizeHandle(handleElement) {
+    let candidateElement = handleElement || null;
+
+    while (candidateElement) {
+      if (
+        candidateElement.classList
+        && typeof candidateElement.classList.contains === "function"
+        && candidateElement.classList.contains("transport-pane")
+      ) {
+        return candidateElement;
+      }
+      candidateElement = candidateElement.parentElement || null;
+    }
+
+    return null;
+  }
+
+  function syncVehiclePanelExplicitHeights(rootElement) {
+    const scopeRoot = rootElement || (typeof document !== "undefined" ? document : null);
+    if (!scopeRoot || typeof scopeRoot.querySelectorAll !== "function") {
+      return;
+    }
+
+    const synchronizedPanels = new Set();
+    scopeRoot.querySelectorAll("[data-panel-resize-handle]").forEach(function (handleElement) {
+      const panelElement = resolveVehiclePanelElementFromResizeHandle(handleElement);
+      if (!panelElement || synchronizedPanels.has(panelElement)) {
+        return;
+      }
+
+      synchronizedPanels.add(panelElement);
+      const scope = resolveVehiclePanelScope(panelElement);
+      if (!scope) {
+        return;
+      }
+
+      const nextHeight = resolveVehiclePanelExplicitHeight({
+        scope,
+        requestedHeight: parsePixelValue(panelElement.style.height, 0),
+        minHeight: resolvePanelMinimumSize(panelElement, RESIZE_DEFAULT_MIN_SIZE),
+      });
+      panelElement.style.height = `${nextHeight}px`;
+    });
+  }
+
+  function isVehiclePanelResizeEnabledForViewport(viewportWidth) {
+    return Number(viewportWidth) > VEHICLE_PANEL_RESIZE_DISABLE_MAX_WIDTH;
+  }
+
+  function isVehiclePanelResizeEnabled() {
+    if (typeof globalScope.matchMedia === "function") {
+      return !globalScope.matchMedia(`(max-width: ${VEHICLE_PANEL_RESIZE_DISABLE_MAX_WIDTH}px)`).matches;
+    }
+
+    const fallbackViewportWidth = typeof document !== "undefined" && document.documentElement
+      ? document.documentElement.clientWidth
+      : 0;
+
+    return isVehiclePanelResizeEnabledForViewport(globalScope.innerWidth || fallbackViewportWidth);
+  }
+
+  function syncVehiclePanelResizeHandleState(rootElement) {
+    const scopeRoot = rootElement || (typeof document !== "undefined" ? document : null);
+    if (!scopeRoot || typeof scopeRoot.querySelectorAll !== "function") {
+      return;
+    }
+
+    const resizeEnabled = isVehiclePanelResizeEnabled();
+
+    scopeRoot.querySelectorAll("[data-panel-resize-handle]").forEach(function (handleElement) {
+      const panelElement = resolveVehiclePanelElementFromResizeHandle(handleElement);
+      const scope = resolveVehiclePanelScope(panelElement);
+      if (!scope) {
+        return;
+      }
+
+      const label = t("layout.resizeVehiclePanel", { scope: mapScopeTitle(scope) });
+      handleElement.setAttribute("aria-label", label);
+      handleElement.title = resizeEnabled ? label : "";
+
+      if (resizeEnabled) {
+        handleElement.disabled = false;
+        handleElement.removeAttribute("disabled");
+        handleElement.removeAttribute("aria-hidden");
+        return;
+      }
+
+      handleElement.disabled = true;
+      handleElement.setAttribute("disabled", "");
+      handleElement.setAttribute("aria-hidden", "true");
+    });
+  }
+
+  function enableVehiclePanelResizeHandle(handleElement) {
+    if (!handleElement || typeof handleElement.addEventListener !== "function") {
+      return;
+    }
+
+    handleElement.addEventListener("pointerdown", function (event) {
+      if (!isVehiclePanelResizeEnabled() || handleElement.disabled) {
+        return;
+      }
+
+      if (event.pointerType !== "touch" && event.button !== 0) {
+        return;
+      }
+
+      const panelElement = resolveVehiclePanelElementFromResizeHandle(handleElement);
+      const scope = resolveVehiclePanelScope(panelElement);
+      if (!panelElement || !scope) {
+        return;
+      }
+
+      const startHeight = Math.round(panelElement.getBoundingClientRect().height)
+        || getDefaultVehiclePanelHeight(scope);
+      const startPointerY = Number.isFinite(event.clientY) ? event.clientY : 0;
+      const minHeight = resolvePanelMinimumSize(panelElement, RESIZE_DEFAULT_MIN_SIZE);
+
+      function applyResize(moveEvent) {
+        const pointerY = Number.isFinite(moveEvent.clientY) ? moveEvent.clientY : startPointerY;
+        const nextHeight = resolveVehiclePanelResizedHeight({
+          scope,
+          startHeight,
+          pointerDelta: pointerY - startPointerY,
+          minHeight,
+        });
+
+        panelElement.style.height = `${nextHeight}px`;
+        updateVehicleGridLayouts(panelElement);
+      }
+
+      function stopResize() {
+        globalScope.removeEventListener("pointermove", applyResize);
+        globalScope.removeEventListener("pointerup", stopResize);
+        globalScope.removeEventListener("pointercancel", stopResize);
+        updateVehicleGridLayouts(panelElement);
+        if (typeof handleElement.releasePointerCapture === "function" && event.pointerId !== undefined) {
+          try {
+            handleElement.releasePointerCapture(event.pointerId);
+          } catch (error) {}
+        }
+        document.body.classList.remove("transport-is-resizing");
+      }
+
+      if (typeof handleElement.setPointerCapture === "function" && event.pointerId !== undefined) {
+        try {
+          handleElement.setPointerCapture(event.pointerId);
+        } catch (error) {}
+      }
+
+      document.body.classList.add("transport-is-resizing");
+      globalScope.addEventListener("pointermove", applyResize);
+      globalScope.addEventListener("pointerup", stopResize, { once: true });
+      globalScope.addEventListener("pointercancel", stopResize, { once: true });
+      applyResize(event);
+      event.preventDefault();
+    });
+
+    handleElement.addEventListener("keydown", function (event) {
+      if (!isVehiclePanelResizeEnabled() || handleElement.disabled) {
+        return;
+      }
+
+      const panelElement = resolveVehiclePanelElementFromResizeHandle(handleElement);
+      const scope = resolveVehiclePanelScope(panelElement);
+      if (!panelElement || !scope) {
+        return;
+      }
+
+      let pointerDelta = 0;
+      if (event.key === "ArrowUp") {
+        pointerDelta = -(event.shiftKey ? VEHICLE_PANEL_KEYBOARD_RESIZE_LARGE_STEP : VEHICLE_PANEL_KEYBOARD_RESIZE_STEP);
+      } else if (event.key === "ArrowDown") {
+        pointerDelta = event.shiftKey ? VEHICLE_PANEL_KEYBOARD_RESIZE_LARGE_STEP : VEHICLE_PANEL_KEYBOARD_RESIZE_STEP;
+      } else if (event.key === "PageUp") {
+        pointerDelta = -VEHICLE_PANEL_KEYBOARD_RESIZE_LARGE_STEP;
+      } else if (event.key === "PageDown") {
+        pointerDelta = VEHICLE_PANEL_KEYBOARD_RESIZE_LARGE_STEP;
+      } else {
+        return;
+      }
+
+      const currentHeight = Math.round(panelElement.getBoundingClientRect().height)
+        || parsePixelValue(panelElement.style.height, getDefaultVehiclePanelHeight(scope));
+      const nextHeight = resolveVehiclePanelResizedHeight({
+        scope,
+        startHeight: currentHeight,
+        pointerDelta,
+        minHeight: resolvePanelMinimumSize(panelElement, RESIZE_DEFAULT_MIN_SIZE),
+      });
+
+      panelElement.style.height = `${nextHeight}px`;
+      updateVehicleGridLayouts(panelElement);
+      event.preventDefault();
+    });
   }
 
   function resolveVehicleDetailsPosition(options) {
@@ -840,13 +1562,125 @@
     });
   }
 
+  function extractStructuredTransportApiPayload(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+
+    const directPayload = payload;
+    const detailPayload = payload.detail && typeof payload.detail === "object" && !Array.isArray(payload.detail)
+      ? payload.detail
+      : null;
+
+    function isStructuredContract(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+      }
+      return Boolean(
+        value.message_key
+        || value.error_code
+        || value.issues
+        || value.technical_detail
+        || value.message
+      );
+    }
+
+    if (isStructuredContract(detailPayload)) {
+      return detailPayload;
+    }
+    if (isStructuredContract(directPayload)) {
+      return directPayload;
+    }
+    return null;
+  }
+
+  function resolveTransportApiStructuredMessageOptions(payload) {
+    const structuredPayload = extractStructuredTransportApiPayload(payload);
+    if (!structuredPayload) {
+      return null;
+    }
+
+    const messageKey = String(structuredPayload.message_key || "").trim();
+    if (!messageKey) {
+      return null;
+    }
+
+    return {
+      key: messageKey,
+      values: structuredPayload.message_params && typeof structuredPayload.message_params === "object"
+        ? Object.assign({}, structuredPayload.message_params)
+        : null,
+    };
+  }
+
+  function resolveTransportApiStructuredMessage(payload) {
+    const structuredPayload = extractStructuredTransportApiPayload(payload);
+    if (!structuredPayload) {
+      return "";
+    }
+
+    const messageKey = String(structuredPayload.message_key || "").trim();
+    if (messageKey) {
+      const params = structuredPayload.message_params && typeof structuredPayload.message_params === "object"
+        ? structuredPayload.message_params
+        : {};
+      const translated = t(messageKey, params);
+      if (translated && translated !== messageKey) {
+        return translated;
+      }
+    }
+
+    const structuredMessage = localizeTransportApiMessage(structuredPayload.message);
+    if (structuredMessage) {
+      return structuredMessage;
+    }
+
+    return String(structuredPayload.message || "").trim();
+  }
+
   function formatApiErrorMessage(payload, statusCode) {
+    const structuredMessage = resolveTransportApiStructuredMessage(payload);
+    if (structuredMessage) {
+      return structuredMessage;
+    }
+
     if (isTransportAiProjectRequiredErrorPayload(payload)) {
       return "Transport AI project is required.";
     }
 
     const message = extractApiMessage(payload && (payload.detail !== undefined ? payload.detail : payload && payload.message));
     return message || `HTTP ${statusCode}`;
+  }
+
+  function localizeConfirmedExtraOverrideConflictMessage(message) {
+    const conflictMessagePrefix = "The user already has a confirmed extra transport override for this date and route";
+    const normalizedMessage = String(message || "").trim();
+    if (!normalizedMessage.startsWith(conflictMessagePrefix)) {
+      return "";
+    }
+
+    const suffix = normalizedMessage.slice(conflictMessagePrefix.length).trim();
+    if (!suffix || suffix === ".") {
+      return t("warnings.extraOverrideConflictGeneric");
+    }
+
+    const normalizedRouteList = suffix.replace(/^:\s*/, "").replace(/\.$/, "");
+    if (!normalizedRouteList) {
+      return t("warnings.extraOverrideConflictGeneric");
+    }
+
+    const routeLabels = normalizedRouteList
+      .split(",")
+      .map(function (routeKind) {
+        const normalizedRouteKind = String(routeKind || "").trim();
+        const routeKey = ROUTE_KIND_KEYS[normalizedRouteKind];
+        return routeKey ? t(routeKey) : normalizedRouteKind;
+      })
+      .filter(Boolean);
+
+    return routeLabels.length
+      ? t("warnings.extraOverrideConflict", { route: routeLabels.join(", ") })
+      : t("warnings.extraOverrideConflictGeneric");
   }
 
   function localizeTransportApiMessage(message) {
@@ -858,6 +1692,11 @@
       return "";
     }
 
+    const confirmedExtraOverrideMessage = localizeConfirmedExtraOverrideConflictMessage(normalizedMessage);
+    if (confirmedExtraOverrideMessage) {
+      return confirmedExtraOverrideMessage;
+    }
+
     const messageKey = {
       "Invalid key or password.": "auth.invalidCredentials",
       "This user does not have transport access.": "auth.noAccess",
@@ -867,6 +1706,7 @@
       "Vehicle updated successfully.": "status.vehicleUpdated",
       "Vehicle deleted from the database.": "status.vehicleDeleted",
       "Transport request rejected successfully.": "status.requestRejected",
+      "Transport boarding time saved successfully.": "status.boardingTimeSaved",
       "Transport AI suggestion is ready for review.": "ai.agentSettingsReadyForReview",
       "Transport AI suggestion was saved and is ready to be applied.": "ai.changesSaved",
       "Transport AI suggestion was cancelled and the baseline was restored.": "ai.changesCancelled",
@@ -896,6 +1736,8 @@
       "Weekend vehicles can only be created on Saturdays or Sundays.": "warnings.weekendWeekendOnly",
       "This vehicle cannot be removed from the selected route.": "warnings.vehicleCannotBeRemoved",
       "The selected vehicle is not ready for allocation.": "warnings.vehiclePendingAllocation",
+      "A confirmed transport assignment is required to update boarding_time.": "warnings.boardingTimeRequiresConfirmedAssignment",
+      "Manual boarding_time is only available for confirmed home_to_work assignments.": "warnings.boardingTimeEtaOnly",
     }[normalizedMessage];
 
     return messageKey ? t(messageKey) : normalizedMessage;
@@ -986,6 +1828,20 @@
       return fallbackValue;
     }
     return normalizedValue;
+  }
+
+  function getTransportPriceRateUnitLabel(value, fallbackValue) {
+    const normalizedUnit = normalizeTransportPriceRateUnit(value, "");
+    if (!normalizedUnit) {
+      return fallbackValue || "";
+    }
+
+    return {
+      hour: translateTransportAiReviewText("settings.perHour", "Per hour"),
+      day: translateTransportAiReviewText("settings.perDay", "Per day"),
+      week: translateTransportAiReviewText("settings.perWeek", "Per week"),
+      month: translateTransportAiReviewText("settings.perMonth", "Per month"),
+    }[normalizedUnit] || fallbackValue || normalizedUnit;
   }
 
   function normalizeTransportPriceSetting(value, fallbackValue) {
@@ -1309,8 +2165,39 @@
     return getRouteKindLabel(routeKind).toLowerCase();
   }
 
+  function isTemporaryVehiclePlaceholderPlate(value) {
+    const normalizedValue = String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
+    return VEHICLE_TEMPORARY_PLACEHOLDER_PATTERN.test(normalizedValue);
+  }
+
+  function hasVehicleAdministrativeIncompleteness(vehicle) {
+    if (!vehicle || typeof vehicle !== "object" || Array.isArray(vehicle)) {
+      return false;
+    }
+
+    const pendingFields = Array.isArray(vehicle.pending_fields) ? vehicle.pending_fields : [];
+    return pendingFields.includes("placa")
+      || pendingFields.includes("color")
+      || isPendingVehicleField(vehicle.placa)
+      || isPendingVehicleField(vehicle.color);
+  }
+
+  function shouldUseTemporaryVehicleIcon(vehicle) {
+    if (!vehicle || typeof vehicle !== "object" || Array.isArray(vehicle)) {
+      return false;
+    }
+
+    return isTemporaryVehiclePlaceholderPlate(vehicle.placa)
+      || hasVehicleAdministrativeIncompleteness(vehicle);
+  }
+
   function mapVehicleIconPath(value) {
-    return VEHICLE_ICON_PATHS[value] || VEHICLE_ICON_PATHS.carro;
+    const vehicle = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+    const vehicleType = vehicle ? vehicle.tipo : value;
+    const iconPaths = shouldUseTemporaryVehicleIcon(vehicle)
+      ? VEHICLE_TEMPORARY_ICON_PATHS
+      : VEHICLE_ICON_PATHS;
+    return iconPaths[vehicleType] || iconPaths.carro;
   }
 
   function formatVehicleOccupancyLabel(vehicle, assignedCount) {
@@ -1360,8 +2247,247 @@
     return isValidTransportTimeValue(value) ? String(value || "").trim() : fallbackValue;
   }
 
+  function getTransportCurrentTimestampMs(options) {
+    const explicitClientNowMs = Number(options && options.clientNowMs);
+    if (Number.isFinite(explicitClientNowMs)) {
+      return explicitClientNowMs;
+    }
+
+    if (globalScope.Date && typeof globalScope.Date.now === "function") {
+      return globalScope.Date.now();
+    }
+
+    return new Date().getTime();
+  }
+
+  function parseTransportTimezoneOffsetMinutes(value) {
+    const normalizedValue = String(value || "").trim();
+    if (!normalizedValue) {
+      return null;
+    }
+
+    if (/z$/i.test(normalizedValue)) {
+      return 0;
+    }
+
+    const match = normalizedValue.match(/([+-])(\d{2}):(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    const sign = match[1] === "-" ? -1 : 1;
+    const hours = Number(match[2]);
+    const minutes = Number(match[3]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+      return null;
+    }
+
+    return sign * ((hours * 60) + minutes);
+  }
+
+  function createTransportReferenceClock(serverTimestamp, options) {
+    const normalizedTimestamp = String(serverTimestamp || "").trim();
+    if (!normalizedTimestamp) {
+      return null;
+    }
+
+    const offsetMinutes = parseTransportTimezoneOffsetMinutes(normalizedTimestamp);
+    const parsedTimestamp = new Date(normalizedTimestamp);
+    if (offsetMinutes === null || Number.isNaN(parsedTimestamp.getTime())) {
+      return null;
+    }
+
+    return {
+      serverTimestamp: normalizedTimestamp,
+      serverNowMs: parsedTimestamp.getTime(),
+      clientNowMs: getTransportCurrentTimestampMs(options),
+      offsetMinutes,
+    };
+  }
+
+  function resolveTransportReferenceNow(clockState, options) {
+    if (!clockState || !Number.isFinite(Number(clockState.serverNowMs))) {
+      return null;
+    }
+
+    const clientNowMs = getTransportCurrentTimestampMs(options);
+    const elapsedMs = Math.max(0, clientNowMs - Number(clockState.clientNowMs || 0));
+    return Number(clockState.serverNowMs) + elapsedMs;
+  }
+
+  function resolveTransportReferenceNowContext(clockState, options) {
+    const absoluteNowMs = resolveTransportReferenceNow(clockState, options);
+    if (absoluteNowMs === null) {
+      return null;
+    }
+
+    const offsetMinutes = Number(clockState.offsetMinutes || 0);
+    const serverLocalDate = new Date(absoluteNowMs + (offsetMinutes * 60 * 1000));
+    if (Number.isNaN(serverLocalDate.getTime())) {
+      return null;
+    }
+
+    return {
+      absoluteNowMs,
+      offsetMinutes,
+      serverLocalDate,
+      currentMinutes: (serverLocalDate.getUTCHours() * 60) + serverLocalDate.getUTCMinutes(),
+    };
+  }
+
+  function normalizeTransportMinutesOfDay(value) {
+    const normalizedValue = Number(value);
+    if (!Number.isFinite(normalizedValue)) {
+      return null;
+    }
+
+    return ((normalizedValue % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  }
+
+  function resolveRoutineVehicleReferenceSwitchMinutes(arriveAtWorkTime, workToHomeTime) {
+    const arriveAtWorkMinutes = parseTransportTimeToMinutes(arriveAtWorkTime);
+    const workToHomeMinutes = parseTransportTimeToMinutes(workToHomeTime);
+    if (arriveAtWorkMinutes === null || workToHomeMinutes === null) {
+      return null;
+    }
+
+    return {
+      switchToEtdMinutes: normalizeTransportMinutesOfDay(arriveAtWorkMinutes + 30),
+      switchToEtaMinutes: normalizeTransportMinutesOfDay(workToHomeMinutes + 30),
+    };
+  }
+
+  function isTransportMinuteWithinCircularRange(currentMinutes, startMinutes, endMinutes) {
+    if (startMinutes === endMinutes) {
+      return false;
+    }
+
+    if (startMinutes < endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    }
+
+    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+  }
+
+  function resolveRoutineVehicleReferenceMode(currentMinutes, arriveAtWorkTime, workToHomeTime) {
+    const normalizedCurrentMinutes = normalizeTransportMinutesOfDay(currentMinutes);
+    const switchMinutes = resolveRoutineVehicleReferenceSwitchMinutes(arriveAtWorkTime, workToHomeTime);
+    if (normalizedCurrentMinutes === null || !switchMinutes) {
+      return null;
+    }
+
+    return isTransportMinuteWithinCircularRange(
+      normalizedCurrentMinutes,
+      switchMinutes.switchToEtdMinutes,
+      switchMinutes.switchToEtaMinutes
+    )
+      ? "etd"
+      : "eta";
+  }
+
+  function resolveNextRoutineVehicleReferenceDelayMs(clockState, arriveAtWorkTime, workToHomeTime, options) {
+    const nowContext = resolveTransportReferenceNowContext(clockState, options);
+    const switchMinutes = resolveRoutineVehicleReferenceSwitchMinutes(arriveAtWorkTime, workToHomeTime);
+    if (!nowContext || !switchMinutes) {
+      return null;
+    }
+
+    const year = nowContext.serverLocalDate.getUTCFullYear();
+    const month = nowContext.serverLocalDate.getUTCMonth();
+    const day = nowContext.serverLocalDate.getUTCDate();
+    const candidateMoments = [switchMinutes.switchToEtdMinutes, switchMinutes.switchToEtaMinutes].map(function (minutes) {
+      const hours = Math.floor(minutes / 60);
+      const minuteOfHour = minutes % 60;
+      let absoluteTargetMs = Date.UTC(year, month, day, hours, minuteOfHour, 0, 0)
+        - (nowContext.offsetMinutes * 60 * 1000);
+      if (absoluteTargetMs <= nowContext.absoluteNowMs) {
+        absoluteTargetMs += MINUTES_PER_DAY * 60 * 1000;
+      }
+      return absoluteTargetMs;
+    });
+    const nextSwitchAtMs = Math.min.apply(null, candidateMoments);
+    return Math.max(0, nextSwitchAtMs - nowContext.absoluteNowMs);
+  }
+
+  function isRoutineVehicleScope(scope) {
+    const normalizedScope = String(scope || "").trim();
+    return normalizedScope === "regular" || normalizedScope === "weekend";
+  }
+
+  function formatRoutineVehicleReferenceLabel(mode, arriveAtWorkTime, workToHomeTime) {
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+    if (normalizedMode === "eta") {
+      const etaTime = normalizeTransportTimeValue(arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME);
+      return isValidTransportTimeValue(etaTime)
+        ? translateTransportAiReviewText("ai.review.etaLabel", "ETA {time}h", { time: etaTime })
+        : "";
+    }
+    if (normalizedMode === "etd") {
+      const etdTime = normalizeTransportTimeValue(workToHomeTime, DEFAULT_WORK_TO_HOME_TIME);
+      return isValidTransportTimeValue(etdTime)
+        ? translateTransportAiReviewText("ai.review.etdLabel", "ETD {time}h", { time: etdTime })
+        : "";
+    }
+    return "";
+  }
+
+  function resolveRoutineVehicleReferenceCurrentMinutes(nowRef, options) {
+    const numericNow = Number(nowRef);
+    if (Number.isFinite(numericNow)) {
+      return normalizeTransportMinutesOfDay(numericNow);
+    }
+
+    const nowContext = resolveTransportReferenceNowContext(nowRef, options);
+    if (nowContext) {
+      return normalizeTransportMinutesOfDay(nowContext.currentMinutes);
+    }
+
+    const fallbackDate = new Date(getTransportCurrentTimestampMs(options));
+    if (Number.isNaN(fallbackDate.getTime())) {
+      return null;
+    }
+
+    return normalizeTransportMinutesOfDay((fallbackDate.getHours() * 60) + fallbackDate.getMinutes());
+  }
+
+  function getRoutineVehicleReferenceMode(dashboard, arriveAtWorkTime, nowRef, fallbackWorkToHomeTime, options) {
+    const normalizedArriveAtWorkTime = normalizeTransportTimeValue(arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME);
+    const effectiveWorkToHomeTime = getEffectiveWorkToHomeDepartureTime(dashboard, fallbackWorkToHomeTime);
+    const currentMinutes = resolveRoutineVehicleReferenceCurrentMinutes(nowRef, options);
+    if (currentMinutes === null) {
+      return null;
+    }
+
+    return resolveRoutineVehicleReferenceMode(
+      currentMinutes,
+      normalizedArriveAtWorkTime,
+      effectiveWorkToHomeTime
+    );
+  }
+
+  function getRoutineVehicleReferenceLabel(dashboard, arriveAtWorkTime, nowRef, fallbackWorkToHomeTime, options) {
+    const normalizedArriveAtWorkTime = normalizeTransportTimeValue(arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME);
+    const effectiveWorkToHomeTime = getEffectiveWorkToHomeDepartureTime(dashboard, fallbackWorkToHomeTime);
+    const referenceMode = getRoutineVehicleReferenceMode(
+      dashboard,
+      arriveAtWorkTime,
+      nowRef,
+      fallbackWorkToHomeTime,
+      options
+    );
+    if (referenceMode === null) {
+      return "";
+    }
+
+    return formatRoutineVehicleReferenceLabel(referenceMode, normalizedArriveAtWorkTime, effectiveWorkToHomeTime);
+  }
+
   function getDefaultAiAgentSettings() {
-    return Object.assign({}, DEFAULT_AI_AGENT_SETTINGS);
+    return {
+      earliestBoardingTime: DEFAULT_AI_AGENT_SETTINGS.earliestBoardingTime,
+      arrivalAtWorkTime: DEFAULT_AI_AGENT_SETTINGS.arrivalAtWorkTime,
+      requestKinds: Array.from(DEFAULT_AI_AGENT_REQUEST_KINDS),
+    };
   }
 
   function normalizeTransportAiSettingsProvider(value, fallbackValue) {
@@ -1454,6 +2580,81 @@
     return String(fallbackValue == null ? "" : fallbackValue).trim();
   }
 
+  function normalizeAiAgentRequestKind(value) {
+    const normalizedValue = String(value || "").trim().toLowerCase();
+    return DEFAULT_AI_AGENT_REQUEST_KINDS.includes(normalizedValue)
+      ? normalizedValue
+      : "";
+  }
+
+  function readAiAgentRequestKinds(source, fallbackValues) {
+    const defaultRequestKinds = Array.isArray(fallbackValues) && fallbackValues.length
+      ? fallbackValues
+      : getDefaultAiAgentSettings().requestKinds;
+    let rawRequestKinds = defaultRequestKinds;
+
+    if (source && typeof source === "object") {
+      if (Object.prototype.hasOwnProperty.call(source, "requestKinds")) {
+        rawRequestKinds = source.requestKinds;
+      } else if (Object.prototype.hasOwnProperty.call(source, "requestKindInputs")) {
+        rawRequestKinds = Array.isArray(source.requestKindInputs)
+          ? source.requestKindInputs
+            .filter(function (inputElement) {
+              return inputElement && inputElement.checked;
+            })
+            .map(function (inputElement) {
+              return String(
+                inputElement.getAttribute("data-ai-agent-request-kind")
+                || inputElement.value
+                || ""
+              ).trim().toLowerCase();
+            })
+          : [];
+      }
+    }
+
+    if (!Array.isArray(rawRequestKinds)) {
+      rawRequestKinds = defaultRequestKinds;
+    }
+
+    const selectedRequestKinds = new Set();
+    rawRequestKinds.forEach(function (requestKind) {
+      const normalizedRequestKind = normalizeAiAgentRequestKind(requestKind);
+      if (!normalizedRequestKind) {
+        return;
+      }
+      selectedRequestKinds.add(normalizedRequestKind);
+    });
+
+    return DEFAULT_AI_AGENT_REQUEST_KINDS.filter(function (requestKind) {
+      return selectedRequestKinds.has(requestKind);
+    });
+  }
+
+  function getAiAgentRequestKindLabel(requestKind) {
+    const normalizedRequestKind = normalizeAiAgentRequestKind(requestKind);
+    const labelKey = REQUEST_LABEL_KEYS[normalizedRequestKind];
+    return labelKey ? t(labelKey) : String(requestKind || "").trim();
+  }
+
+  function buildAiAgentSubmittingFeedbackOptions(requestKinds) {
+    const normalizedRequestKinds = readAiAgentRequestKinds(
+      { requestKinds },
+      DEFAULT_AI_AGENT_REQUEST_KINDS
+    );
+    if (normalizedRequestKinds.length === 1) {
+      return {
+        key: "ai.agentSettingsSubmittingSingleRequestKind",
+        values: {
+          requestKind: getAiAgentRequestKindLabel(normalizedRequestKinds[0]),
+        },
+      };
+    }
+    return {
+      key: "ai.agentSettingsSubmitting",
+    };
+  }
+
   function readAiAgentSettingsDraft(source, fallbackValues) {
     const defaults = Object.assign({}, getDefaultAiAgentSettings(), fallbackValues || {});
     return {
@@ -1469,6 +2670,7 @@
         "arrivalAtWorkInput",
         defaults.arrivalAtWorkTime
       ),
+      requestKinds: readAiAgentRequestKinds(source, defaults.requestKinds),
     };
   }
 
@@ -1490,6 +2692,15 @@
         ok: false,
         messageKey: "ai.agentSettingsInvalidTimes",
         field: "arrivalAtWorkTime",
+        draft: normalizedDraft,
+      };
+    }
+
+    if (!normalizedDraft.requestKinds.length) {
+      return {
+        ok: false,
+        messageKey: "ai.agentSettingsNoRequestKindsSelected",
+        field: "requestKinds",
         draft: normalizedDraft,
       };
     }
@@ -1541,14 +2752,83 @@
     return `${TRANSPORT_API_PREFIX}/ai/settings?project_id=${encodeURIComponent(normalizedProjectId || "")}`;
   }
 
-  function buildTransportAiRouteCalculationPayload(serviceDate, routeKind, draft) {
-    const normalizedDraft = readAiAgentSettingsDraft(draft, getDefaultAiAgentSettings());
+  function buildTransportAiDashboardScope(projectRows, projectVisibility, requestKinds) {
+    const normalizedRequestKinds = readAiAgentRequestKinds({ requestKinds }, DEFAULT_AI_AGENT_REQUEST_KINDS);
+    const normalizedProjectRows = Array.isArray(projectRows) ? projectRows : [];
+    if (!normalizedProjectRows.length) {
+      return {
+        request_kinds: normalizedRequestKinds,
+      };
+    }
+
+    const normalizedProjectVisibility = projectVisibility && typeof projectVisibility === "object"
+      ? projectVisibility
+      : {};
+    const visibleProjectIds = normalizedProjectRows
+      .filter(function (projectRow) {
+        return projectRow && projectRow.id !== undefined && projectRow.id !== null && projectRow.name;
+      })
+      .filter(function (projectRow) {
+        return normalizedProjectVisibility[String(projectRow.name).trim()] !== false;
+      })
+      .map(function (projectRow) {
+        return Number.parseInt(String(projectRow.id), 10);
+      })
+      .filter(function (projectId) {
+        return Number.isFinite(projectId) && projectId > 0;
+      });
+
     return {
+      project_ids: Array.from(new Set(visibleProjectIds)).sort(function (left, right) {
+        return left - right;
+      }),
+      request_kinds: normalizedRequestKinds,
+    };
+  }
+
+  function buildTransportAiRequestRouteKinds(routeKind, requestKinds) {
+    const normalizedRouteKind = String(routeKind || "home_to_work").trim() || "home_to_work";
+    const normalizedRequestKinds = readAiAgentRequestKinds({ requestKinds }, DEFAULT_AI_AGENT_REQUEST_KINDS);
+    const routeKinds = {};
+
+    normalizedRequestKinds.forEach(function (requestKind) {
+      routeKinds[requestKind] = requestKind === "extra" ? normalizedRouteKind : "home_to_work";
+    });
+
+    return routeKinds;
+  }
+
+  function buildTransportAiRouteCalculationPayload(serviceDate, routeKind, draft, dashboardScope) {
+    const normalizedDraft = readAiAgentSettingsDraft(draft, getDefaultAiAgentSettings());
+    const normalizedRouteKind = String(routeKind || "home_to_work").trim() || "home_to_work";
+    const resolvedRequestKinds = dashboardScope && typeof dashboardScope === "object" && !Array.isArray(dashboardScope)
+      ? readAiAgentRequestKinds(
+        { requestKinds: dashboardScope.request_kinds },
+        normalizedDraft.requestKinds
+      )
+      : readAiAgentRequestKinds(
+        { requestKinds: normalizedDraft.requestKinds },
+        DEFAULT_AI_AGENT_REQUEST_KINDS
+      );
+    const payload = {
       service_date: String(serviceDate || "").trim(),
-      route_kind: String(routeKind || "home_to_work").trim() || "home_to_work",
+      route_kind: normalizedRouteKind,
       earliest_boarding_time: normalizedDraft.earliestBoardingTime,
       arrival_at_work_time: normalizedDraft.arrivalAtWorkTime,
+      request_route_kinds: buildTransportAiRequestRouteKinds(normalizedRouteKind, resolvedRequestKinds),
     };
+
+    if (dashboardScope !== undefined) {
+      if (dashboardScope && typeof dashboardScope === "object" && !Array.isArray(dashboardScope)) {
+        payload.dashboard_scope = Object.assign({}, dashboardScope, {
+          request_kinds: resolvedRequestKinds,
+        });
+      } else {
+        payload.dashboard_scope = dashboardScope;
+      }
+    }
+
+    return payload;
   }
 
   function shouldContinuePollingAiRouteRun(runStatus) {
@@ -1560,6 +2840,75 @@
       && !runStatus.suggestion_ready
       && ["requested", "baseline_saved", "passengers_reset", "running"].includes(normalizedStatus)
     );
+  }
+
+  function hasRenderableTransportAiReview(runStatusResponse) {
+    const normalizedResponse = runStatusResponse && typeof runStatusResponse === "object"
+      ? runStatusResponse
+      : {};
+    const normalizedReviewState = String(normalizedResponse.review_state || "").trim().toLowerCase();
+    if (normalizedReviewState) {
+      return normalizedReviewState === "review_ready" || normalizedReviewState === "review_with_exceptions";
+    }
+    return Boolean(normalizedResponse.suggestion_ready && normalizedResponse.suggestion);
+  }
+
+  function resolveTransportAiStructuredMessage(response) {
+    const normalizedResponse = response && typeof response === "object" ? response : {};
+    const structuredPayload = extractStructuredTransportApiPayload(normalizedResponse) || normalizedResponse;
+    const messageKey = String(structuredPayload.message_key || "").trim();
+    if (messageKey) {
+      const params = structuredPayload.message_params && typeof structuredPayload.message_params === "object"
+        ? structuredPayload.message_params
+        : {};
+      const translated = t(messageKey, params);
+      if (translated && translated !== messageKey) {
+        return translated;
+      }
+    }
+
+    const failureCategory = String(normalizedResponse.failure_category || "").trim().toLowerCase();
+    const categoryKeyMap = {
+      configuration: "ai.errors.configurationError",
+      empty_scope: "ai.errors.emptyScopeError",
+      capacity: "ai.errors.capacityError",
+      solver: "ai.errors.solverError",
+      geocoding: "ai.errors.geocodingError",
+      route_provider: "ai.errors.routeProviderError",
+      llm_invoke: "ai.errors.llmInvokeError",
+      llm_response: "ai.errors.llmResponseError",
+      deterministic_validation: "ai.errors.deterministicValidationError",
+      unexpected: "ai.errors.unexpectedError",
+    };
+    const categoryKey = categoryKeyMap[failureCategory];
+    if (categoryKey) {
+      const categoryMessage = t(categoryKey);
+      if (categoryMessage && categoryMessage !== categoryKey) {
+        return categoryMessage;
+      }
+    }
+
+    const structuredMessage = resolveTransportApiStructuredMessage(normalizedResponse);
+    if (structuredMessage) {
+      return structuredMessage;
+    }
+
+    const rawMessage = String(normalizedResponse.message || "").trim();
+    return rawMessage || t("ai.routeCalculationFailed");
+  }
+
+  function resolveTransportAiBaselineComplement(response) {
+    const message = String(response && response.message || "").trim();
+    if (!message) {
+      return null;
+    }
+    if (/baseline\s+restored\b/i.test(message) && !/raised|requires/i.test(message)) {
+      return t("ai.errors.baselineRestored");
+    }
+    if (/baseline\s+restore\s+(raised|requires)/i.test(message)) {
+      return t("ai.errors.baselineRestoreError");
+    }
+    return null;
   }
 
   function getTransportAiSuggestionKey(runStatusResponse) {
@@ -1687,13 +3036,81 @@
     return normalizedValue || fallbackValue;
   }
 
-  function formatTransportAiCountText(value, singularLabel, pluralLabel, fallbackValue) {
+  function translateTransportAiReviewText(keyPath, fallbackText, values, languageCode) {
+    const translatedText = t(keyPath, values, languageCode);
+    if (translatedText === keyPath) {
+      return interpolateTranslation(fallbackText, values);
+    }
+    return translatedText;
+  }
+
+  function translateTransportAiDefinition(definition, values, languageCode) {
+    if (!definition || !definition.keyPath) {
+      return "";
+    }
+
+    return translateTransportAiReviewText(
+      definition.keyPath,
+      definition.fallbackText || definition.keyPath,
+      values,
+      languageCode
+    );
+  }
+
+  function getTransportAiDynamicLabel(groupName, labelName, values, languageCode) {
+    const group = TRANSPORT_AI_DYNAMIC_LABELS[groupName];
+    if (!group || !Object.prototype.hasOwnProperty.call(group, labelName)) {
+      return "";
+    }
+    return translateTransportAiDefinition(group[labelName], values, languageCode);
+  }
+
+  function getTransportAiCountLabel(unitKey, count, languageCode) {
+    const definition = TRANSPORT_AI_COUNT_LABELS[unitKey];
+    const normalizedCount = Number.isFinite(Number(count)) ? Math.max(0, Math.round(Number(count))) : 0;
+    if (!definition) {
+      return "";
+    }
+
+    const pluralCategory = normalizedCount === 1 ? "one" : "other";
+    return translateTransportAiReviewText(
+      `${definition.keyPathPrefix}.${pluralCategory}`,
+      pluralCategory === "one" ? definition.fallbackTextOne : definition.fallbackTextOther,
+      { count: normalizedCount },
+      languageCode
+    );
+  }
+
+  function formatTransportAiCountText(value, unitKey, fallbackValue) {
     if (!Number.isFinite(Number(value))) {
       return fallbackValue;
     }
 
     const normalizedCount = Math.max(0, Math.round(Number(value)));
-    return `${normalizedCount} ${normalizedCount === 1 ? singularLabel : pluralLabel}`;
+    const label = getTransportAiCountLabel(unitKey, normalizedCount);
+    return label ? `${normalizedCount} ${label}` : String(normalizedCount);
+  }
+
+  function formatTransportAiIntegerText(value, fallbackValue) {
+    if (!Number.isFinite(Number(value))) {
+      return fallbackValue;
+    }
+
+    return String(Math.max(0, Math.round(Number(value))));
+  }
+
+  function formatTransportAiSignedCountDeltaText(currentValue, nextValue, unitKey, fallbackValue) {
+    if (!Number.isFinite(Number(currentValue)) || !Number.isFinite(Number(nextValue))) {
+      return fallbackValue;
+    }
+
+    const normalizedCurrent = Math.max(0, Math.round(Number(currentValue)));
+    const normalizedNext = Math.max(0, Math.round(Number(nextValue)));
+    const delta = normalizedNext - normalizedCurrent;
+    const absoluteDelta = Math.abs(delta);
+    const label = getTransportAiCountLabel(unitKey, absoluteDelta);
+    const prefix = delta > 0 ? "+" : delta < 0 ? "-" : "";
+    return label ? `${prefix}${absoluteDelta} ${label}` : `${prefix}${absoluteDelta}`;
   }
 
   function formatTransportAiComparison(currentValue, nextValue, fallbackValue) {
@@ -1720,13 +3137,81 @@
       return fallbackValue || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
     }
 
-    return normalizedValue
+    const translatedStatus = translateTransportAiReviewText(
+      `ai.review.statuses.${normalizedValue}`,
+      TRANSPORT_AI_STATUS_FALLBACKS[normalizedValue]
+        || normalizedValue
+          .split(/[_\s-]+/)
+          .filter(Boolean)
+          .map(function (token) {
+            return token.charAt(0).toUpperCase() + token.slice(1);
+          })
+          .join(" ")
+    );
+    return translatedStatus
+      || normalizedValue
       .split(/[_\s-]+/)
       .filter(Boolean)
       .map(function (token) {
         return token.charAt(0).toUpperCase() + token.slice(1);
       })
       .join(" ");
+  }
+
+  function formatTransportAiLabelValue(labelKeyPath, fallbackLabel, valueText, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const normalizedValue = formatTransportAiCompactText(valueText, normalizedPlaceholder);
+    if (normalizedValue === normalizedPlaceholder) {
+      return "";
+    }
+
+    return `${translateTransportAiReviewText(labelKeyPath, fallbackLabel)} ${normalizedValue}`;
+  }
+
+  function joinTransportAiNoteParts(parts, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const noteParts = (Array.isArray(parts) ? parts : []).filter(function (part) {
+      const normalizedPart = String(part || "").trim();
+      return normalizedPart && normalizedPart !== normalizedPlaceholder;
+    });
+    return noteParts.length ? noteParts.join(" | ") : normalizedPlaceholder;
+  }
+
+  function formatTransportAiMinutesText(value, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    if (!Number.isFinite(Number(value))) {
+      return normalizedPlaceholder;
+    }
+
+    return `${Math.max(0, Math.round(Number(value)))} ${translateTransportAiReviewText("ai.review.units.minuteShort", "min")}`;
+  }
+
+  function formatTransportAiRequestReference(requestId, fallbackValue) {
+    if (!Number.isFinite(Number(requestId))) {
+      return fallbackValue || "";
+    }
+
+    return translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.requestReference, {
+      id: Math.max(0, Math.round(Number(requestId))),
+    });
+  }
+
+  function formatTransportAiVehicleIdentifierLabel(vehicleId, fallbackValue) {
+    if (!Number.isFinite(Number(vehicleId))) {
+      return fallbackValue || "";
+    }
+
+    return translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.vehicleId, {
+      id: Math.max(0, Math.round(Number(vehicleId))),
+    });
+  }
+
+  function getTransportAiReviewTargetContract() {
+    return TRANSPORT_AI_REVIEW_TARGET_CONTRACT;
+  }
+
+  function getTransportAiBidirectionalPlanContract() {
+    return TRANSPORT_AI_BIDIRECTIONAL_PLAN_CONTRACT;
   }
 
   function resolveTransportAiStatusTone(status) {
@@ -1761,9 +3246,9 @@
     if (!Number.isFinite(parsedDelta)) {
       return {
         valueText: placeholder,
-        label: "Pending",
+        label: translateTransportAiReviewText("ai.review.badges.costPending", "Cost Pending"),
         direction: "neutral",
-        badgeText: "Cost Pending",
+        badgeText: translateTransportAiReviewText("ai.review.badges.costPending", "Cost Pending"),
         tone: "neutral",
       };
     }
@@ -1772,9 +3257,11 @@
       const savingsText = formatTransportCurrencyAmount(Math.abs(parsedDelta), currencyCode, { placeholder });
       return {
         valueText: savingsText,
-        label: "Savings",
+        label: translateTransportAiReviewText("ai.review.badges.savings", "Savings"),
         direction: "savings",
-        badgeText: `Savings ${savingsText}`,
+        badgeText: translateTransportAiReviewText("ai.review.badges.savingsAmount", "Savings {amount}", {
+          amount: savingsText,
+        }),
         tone: "success",
       };
     }
@@ -1783,9 +3270,11 @@
       const increaseText = formatTransportCurrencyAmount(parsedDelta, currencyCode, { placeholder });
       return {
         valueText: increaseText,
-        label: "Increase",
+        label: translateTransportAiReviewText("ai.review.badges.increase", "Increase"),
         direction: "increase",
-        badgeText: `Increase ${increaseText}`,
+        badgeText: translateTransportAiReviewText("ai.review.badges.increaseAmount", "Increase {amount}", {
+          amount: increaseText,
+        }),
         tone: "warning",
       };
     }
@@ -1793,10 +3282,511 @@
     const unchangedText = formatTransportCurrencyAmount(0, currencyCode, { placeholder });
     return {
       valueText: unchangedText,
-      label: "No Change",
+      label: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.noChange),
       direction: "neutral",
-      badgeText: "No Cost Change",
+      badgeText: translateTransportAiReviewText("ai.review.badges.noCostChange", "No Cost Change"),
       tone: "neutral",
+    };
+  }
+
+  function resolveTransportAiReviewVehicleRef(action) {
+    const normalizedAction = action && typeof action === "object" ? action : {};
+    const afterState = readTransportAiVehicleActionState(normalizedAction.after);
+    const vehicleRefFromAfter = String(getTransportAiVehicleActionValue(afterState, "vehicle_ref") || "").trim();
+    if (vehicleRefFromAfter) {
+      return vehicleRefFromAfter;
+    }
+    if (Number.isFinite(Number(normalizedAction.vehicle_id))) {
+      return `existing:${Math.max(0, Math.round(Number(normalizedAction.vehicle_id)))}`;
+    }
+    const clientVehicleKey = String(normalizedAction.client_vehicle_key || getTransportAiVehicleActionValue(afterState, "client_vehicle_key") || "").trim();
+    if (!clientVehicleKey) {
+      return "";
+    }
+    if (clientVehicleKey.startsWith("existing:") || clientVehicleKey.startsWith("new:")) {
+      return clientVehicleKey;
+    }
+    return `new:${clientVehicleKey}`;
+  }
+
+  function buildTransportAiReviewActionLookup(vehicleActions) {
+    return (Array.isArray(vehicleActions) ? vehicleActions : []).reduce(function (lookup, action) {
+      const vehicleRef = resolveTransportAiReviewVehicleRef(action);
+      if (!vehicleRef || Object.prototype.hasOwnProperty.call(lookup, vehicleRef)) {
+        return lookup;
+      }
+      lookup[vehicleRef] = action;
+      return lookup;
+    }, {});
+  }
+
+  function resolveTransportAiReviewSensitivityBadge(action) {
+    const normalizedAction = action && typeof action === "object" ? action : null;
+    if (!normalizedAction) {
+      return null;
+    }
+
+    const actionType = String(normalizedAction.action_type || "").trim().toLowerCase();
+    const beforeState = readTransportAiVehicleActionState(normalizedAction.before);
+    const afterState = readTransportAiVehicleActionState(normalizedAction.after);
+    const sensitiveFieldNames = ["vehicle_type", "capacity", "plate", "service_scope"];
+    const hasSensitiveDiff = actionType === "remove_from_day" || sensitiveFieldNames.some(function (fieldName) {
+      const beforeValue = getTransportAiVehicleActionValue(beforeState, fieldName);
+      const afterValue = hasTransportAiVehicleActionField(afterState, fieldName)
+        ? getTransportAiVehicleActionValue(afterState, fieldName)
+        : getTransportAiVehicleActionValue(beforeState, fieldName);
+      return String(beforeValue == null ? "" : beforeValue).trim() !== String(afterValue == null ? "" : afterValue).trim();
+    });
+
+    if (!hasSensitiveDiff) {
+      return null;
+    }
+
+    return {
+      text: translateTransportAiReviewText("ai.review.badges.sensitive", "Sensitive Change"),
+      tone: actionType === "remove_from_day" ? "error" : "warning",
+    };
+  }
+
+  function dedupeTransportAiReviewBadges(badges) {
+    const seenTexts = new Set();
+    return (Array.isArray(badges) ? badges : []).filter(function (badge) {
+      const badgeText = formatTransportAiCompactText(badge && badge.text, "").trim().toLowerCase();
+      if (!badgeText || seenTexts.has(badgeText)) {
+        return false;
+      }
+      seenTexts.add(badgeText);
+      return true;
+    });
+  }
+
+  function buildAiChangesReviewViewModel(runStatusResponse, fallbackCurrencyCode) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const costSummary = plan.cost_summary && typeof plan.cost_summary === "object" ? plan.cost_summary : {};
+    const priceCurrencyCode = normalizeTransportCurrencyCode(costSummary.price_currency_code || fallbackCurrencyCode);
+    const vehicleActions = Array.isArray(plan.vehicle_actions) ? plan.vehicle_actions.filter(Boolean) : [];
+    const vehicleReviewTables = Array.isArray(plan.vehicle_review_tables) ? plan.vehicle_review_tables.filter(Boolean) : [];
+    const requestIdsWithValidationIssues = (Array.isArray(plan.validation_issues) ? plan.validation_issues : []).reduce(function (requestIds, issue) {
+      const requestId = Number(issue && issue.request_id);
+      if (Number.isFinite(requestId)) {
+        requestIds.add(Math.max(0, Math.round(requestId)));
+      }
+      return requestIds;
+    }, new Set());
+    const actionByVehicleRef = buildTransportAiReviewActionLookup(vehicleActions);
+    const columns = {
+      userName: translateTransportAiReviewText("ai.review.columns.userName", "User Name"),
+      userAddress: translateTransportAiReviewText("ai.review.columns.userAddress", "User Address"),
+      homeToWorkBoarding: translateTransportAiReviewText("ai.review.columns.homeToWorkBoarding", "Home to Work - Boarding"),
+      workToHomeDropoff: translateTransportAiReviewText("ai.review.columns.workToHomeDropoff", "Work to Home - Dropoff"),
+    };
+    const items = vehicleReviewTables.map(function (table, tableIndex) {
+      const normalizedTable = table && typeof table === "object" ? table : {};
+      const vehicleRef = formatTransportAiCompactText(normalizedTable.vehicle_ref, "").trim();
+      const matchingAction = vehicleRef ? actionByVehicleRef[vehicleRef] : null;
+      const afterState = matchingAction ? readTransportAiVehicleActionState(matchingAction.after) : {};
+      const capacityValue = parsePositiveNumber(
+        getTransportAiVehicleActionValue(afterState, "capacity"),
+        null
+      );
+      const subtitleParts = [];
+      if (Number.isFinite(Number(normalizedTable.vehicle_id))) {
+        subtitleParts.push(formatTransportAiVehicleIdentifierLabel(normalizedTable.vehicle_id));
+      }
+      if (vehicleRef) {
+        subtitleParts.push(vehicleRef);
+      }
+
+      const metaItems = [];
+      if (normalizedTable.action_type) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.action", "Action"),
+          value: getTransportAiVehicleActionLabel(normalizedTable.action_type),
+        });
+      }
+      if (normalizedTable.vehicle_type) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.type", "Type"),
+          value: getTransportAiVehicleTypeLabel(normalizedTable.vehicle_type),
+        });
+      }
+      if (capacityValue !== null) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.seats", "Seats"),
+          value: String(Math.max(0, Math.round(capacityValue))),
+        });
+      }
+      if (Number.isFinite(Number(normalizedTable.estimated_cost))) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.cost", "Cost"),
+          value: formatTransportCurrencyAmount(normalizedTable.estimated_cost, priceCurrencyCode, { placeholder }),
+        });
+      }
+      if (normalizedTable.service_scope) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.list", "List"),
+          value: getTransportAiVehicleScopeLabel(normalizedTable.service_scope),
+        });
+      }
+      if (normalizedTable.route_kind) {
+        metaItems.push({
+          label: translateTransportAiReviewText("ai.review.meta.route", "Route"),
+          value: getRouteKindLabel(normalizedTable.route_kind),
+        });
+      }
+
+      const badges = dedupeTransportAiReviewBadges(
+        (Array.isArray(normalizedTable.header_badges) ? normalizedTable.header_badges : [])
+          .concat(resolveTransportAiReviewSensitivityBadge(matchingAction) || [])
+      );
+
+      return {
+        vehicleRef: vehicleRef || `review-table-${tableIndex + 1}`,
+        titleText: formatTransportAiCompactText(normalizedTable.vehicle_label || normalizedTable.plate || vehicleRef, placeholder),
+        subtitleText: subtitleParts.join(" | "),
+        rationaleText: String(normalizedTable.action_rationale || "").trim(),
+        badges,
+        metaItems,
+        isSensitive: badges.some(function (badge) {
+          return normalizeAiChangesBadgeTone(badge && badge.tone) === "warning"
+            || normalizeAiChangesBadgeTone(badge && badge.tone) === "error";
+        }),
+        rows: (Array.isArray(normalizedTable.rows) ? normalizedTable.rows : []).map(function (row) {
+          const normalizedRow = row && typeof row === "object" ? row : {};
+          const requestId = Number.isFinite(Number(normalizedRow.request_id))
+            ? Math.max(0, Math.round(Number(normalizedRow.request_id)))
+            : null;
+          const hasHomeToWorkBoarding = String(normalizedRow.home_to_work_boarding || "").trim().length > 0;
+          const shouldUseHomeToWorkPlaceholder = !hasHomeToWorkBoarding
+            && normalizedRow.home_to_work_boarding_is_placeholder !== false;
+          const hasWorkToHomeDropoff = String(normalizedRow.work_to_home_dropoff || "").trim().length > 0;
+          const shouldUseWorkToHomePlaceholder = !hasWorkToHomeDropoff && normalizedRow.work_to_home_dropoff_is_placeholder !== false;
+          const routeSegmentUnavailableText = translateTransportAiReviewText(
+            "ai.review.placeholders.routeSegmentUnavailable",
+            "Not planned for this route"
+          );
+          const shouldUseRouteSegmentPlaceholderForWorkToHome = shouldUseWorkToHomePlaceholder
+            && normalizedTable.service_scope === "extra"
+            && String(normalizedTable.route_kind || "").trim() === "home_to_work";
+          const shouldUseExceptionsPlaceholderForWorkToHome = shouldUseWorkToHomePlaceholder
+            && requestId !== null
+            && requestIdsWithValidationIssues.has(requestId);
+          return {
+            requestId,
+            userNameText: formatTransportAiCompactText(normalizedRow.user_name, placeholder),
+            userAddressText: formatTransportAiCompactText(normalizedRow.user_address, placeholder),
+            homeToWorkBoardingText: hasHomeToWorkBoarding
+              ? formatTransportAiCompactText(normalizedRow.home_to_work_boarding, placeholder)
+              : shouldUseHomeToWorkPlaceholder
+                ? routeSegmentUnavailableText
+                : placeholder,
+            workToHomeDropoffText: hasWorkToHomeDropoff
+              ? formatTransportAiCompactText(normalizedRow.work_to_home_dropoff, placeholder)
+              : shouldUseWorkToHomePlaceholder
+                ? shouldUseRouteSegmentPlaceholderForWorkToHome
+                  ? routeSegmentUnavailableText
+                  : shouldUseExceptionsPlaceholderForWorkToHome
+                    ? translateTransportAiReviewText("ai.review.placeholders.reviewExceptions", "See exceptions")
+                    : translateTransportAiReviewText("ai.review.placeholders.workToHomeDropoff", "Unavailable in this plan")
+                : placeholder,
+            homeToWorkBoardingIsPlaceholder: shouldUseHomeToWorkPlaceholder,
+            workToHomeDropoffIsPlaceholder: shouldUseWorkToHomePlaceholder,
+          };
+        }),
+      };
+    });
+
+    return {
+      columns,
+      items,
+      emptyMessage: translateTransportAiReviewText(
+        "ai.review.empty",
+        "Per-vehicle review tables will appear here once the consolidated plan is available."
+      ),
+    };
+  }
+
+  function buildTransportAiAllocatedRequestIdSet(passengerAllocations) {
+    return (Array.isArray(passengerAllocations) ? passengerAllocations : []).reduce(function (requestIds, allocation) {
+      const requestId = Number(allocation && allocation.request_id);
+      if (Number.isFinite(requestId)) {
+        requestIds.add(Math.max(0, Math.round(requestId)));
+      }
+      return requestIds;
+    }, new Set());
+  }
+
+  function buildAiChangesReviewExceptionsViewModel(runStatusResponse) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const passengerAllocations = Array.isArray(plan.passenger_allocations)
+      ? plan.passenger_allocations.filter(Boolean)
+      : [];
+    const validationIssues = Array.isArray(plan.validation_issues)
+      ? plan.validation_issues.filter(Boolean)
+      : [];
+    const allocatedRequestIds = buildTransportAiAllocatedRequestIdSet(passengerAllocations);
+    const blockingTitleText = translateTransportAiReviewText(
+      "ai.review.exceptions.labels.blockingIssue",
+      "Blocking Issue"
+    );
+    const needsReviewTitleText = translateTransportAiReviewText(
+      "ai.review.exceptions.labels.needsReview",
+      "Needs Review"
+    );
+    const notRoutedBadgeText = translateTransportAiReviewText(
+      "ai.review.exceptions.badges.notRouted",
+      "Not Routed"
+    );
+    const blockingBadgeText = translateTransportAiReviewText(
+      "ai.review.exceptions.badges.blocking",
+      "Blocking Issue"
+    );
+    const needsReviewBadgeText = translateTransportAiReviewText(
+      "ai.review.exceptions.badges.needsReview",
+      "Needs Review"
+    );
+    const items = validationIssues.map(function (issue, issueIndex) {
+      const normalizedIssue = issue && typeof issue === "object" ? issue : {};
+      const requestId = Number.isFinite(Number(normalizedIssue.request_id))
+        ? Math.max(0, Math.round(Number(normalizedIssue.request_id)))
+        : null;
+      const isBlocking = normalizedIssue.blocking !== false;
+      const isNotRouted = requestId !== null && !allocatedRequestIds.has(requestId);
+      const issueKind = isNotRouted ? "not_routed" : isBlocking ? "blocking" : "review";
+      return {
+        key: requestId !== null ? `request-${requestId}` : `issue-${issueIndex + 1}`,
+        kind: issueKind,
+        requestId,
+        titleText: requestId !== null
+          ? formatTransportAiRequestReference(requestId, placeholder)
+          : (isBlocking ? blockingTitleText : needsReviewTitleText),
+        subtitleText: formatTransportAiCompactText(normalizedIssue.code, ""),
+        messageText: formatTransportAiCompactText(normalizedIssue.message, placeholder),
+        badges: [{
+          text: isNotRouted ? notRoutedBadgeText : (isBlocking ? blockingBadgeText : needsReviewBadgeText),
+          tone: isNotRouted || isBlocking ? "error" : "warning",
+        }],
+      };
+    }).sort(function (leftItem, rightItem) {
+      const priorityByKind = {
+        not_routed: 0,
+        blocking: 1,
+        review: 2,
+      };
+      const leftPriority = Object.prototype.hasOwnProperty.call(priorityByKind, leftItem.kind)
+        ? priorityByKind[leftItem.kind]
+        : 99;
+      const rightPriority = Object.prototype.hasOwnProperty.call(priorityByKind, rightItem.kind)
+        ? priorityByKind[rightItem.kind]
+        : 99;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      if (leftItem.requestId !== null && rightItem.requestId !== null && leftItem.requestId !== rightItem.requestId) {
+        return leftItem.requestId - rightItem.requestId;
+      }
+      return leftItem.key.localeCompare(rightItem.key);
+    });
+
+    return {
+      titleText: translateTransportAiReviewText("ai.review.exceptions.title", "Exceptions / Not Routed"),
+      summaryText: translateTransportAiReviewText(
+        "ai.review.exceptions.summary",
+        "Requests without a vehicle assignment and validation issues stay visible here without reopening a passenger-first layout."
+      ),
+      emptyMessage: translateTransportAiReviewText(
+        "ai.review.exceptions.empty",
+        "No review exceptions were raised for this plan."
+      ),
+      items,
+    };
+  }
+
+  function buildTransportAiManagementByVehicleTypeText(byVehicleType, placeholder) {
+    return (Array.isArray(byVehicleType) ? byVehicleType : []).reduce(function (parts, entry) {
+      const normalizedEntry = entry && typeof entry === "object" ? entry : {};
+      const vehicleTypeText = formatTransportAiCompactText(
+        getTransportAiVehicleTypeLabel(normalizedEntry.vehicle_type),
+        placeholder
+      );
+      const totalText = formatTransportAiIntegerText(normalizedEntry.total_count, placeholder);
+      if (vehicleTypeText === placeholder && totalText === placeholder) {
+        return parts;
+      }
+
+      parts.push(`${vehicleTypeText} ${totalText}`);
+      return parts;
+    }, []).join(" | ");
+  }
+
+  function buildAiChangesManagementViewModel(options) {
+    const viewOptions = options || {};
+    const placeholder = viewOptions.placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const changeSummary = viewOptions.changeSummary && typeof viewOptions.changeSummary === "object"
+      ? viewOptions.changeSummary
+      : {};
+    const byVehicleTypeText = buildTransportAiManagementByVehicleTypeText(changeSummary.by_vehicle_type, placeholder);
+    const byVehicleTypeLabel = translateTransportAiReviewText(
+      "ai.review.management.notes.byVehicleType",
+      "By Vehicle Type"
+    );
+    const createLabel = translateTransportAiReviewText("ai.review.management.notes.create", "Create");
+    const updateLabel = translateTransportAiReviewText("ai.review.management.notes.update", "Update");
+    const removeLabel = translateTransportAiReviewText("ai.review.management.notes.remove", "Remove");
+    const currencyLabel = translateTransportAiReviewText("ai.review.management.notes.currency", "Currency");
+    const rateLabel = translateTransportAiReviewText("ai.review.management.notes.rate", "Rate");
+    const routeProviderLabel = translateTransportAiReviewText(
+      "ai.review.management.notes.routeProvider",
+      "Route Provider"
+    );
+    const promptVersionLabel = translateTransportAiReviewText(
+      "ai.review.management.notes.promptVersion",
+      "Prompt Version"
+    );
+    const modelLabel = translateTransportAiReviewText("ai.review.management.notes.model", "Model");
+    const blockingLabel = translateTransportAiReviewText("ai.review.management.notes.blocking", "Blocking");
+    const noBlockingIssuesText = translateTransportAiReviewText(
+      "ai.review.management.notes.noBlockingIssues",
+      "No blocking issues"
+    );
+    const actionNoteParts = [];
+    if (Number.isFinite(Number(changeSummary.create_count)) && Number(changeSummary.create_count) > 0) {
+      actionNoteParts.push(`${createLabel} ${formatTransportAiIntegerText(changeSummary.create_count, placeholder)}`);
+    }
+    if (Number.isFinite(Number(changeSummary.update_count)) && Number(changeSummary.update_count) > 0) {
+      actionNoteParts.push(`${updateLabel} ${formatTransportAiIntegerText(changeSummary.update_count, placeholder)}`);
+    }
+    if (Number.isFinite(Number(changeSummary.remove_from_day_count)) && Number(changeSummary.remove_from_day_count) > 0) {
+      actionNoteParts.push(`${removeLabel} ${formatTransportAiIntegerText(changeSummary.remove_from_day_count, placeholder)}`);
+    }
+
+    const vehicleNotesText = formatTransportAiLabelValue(
+      "ai.review.management.notes.byVehicleType",
+      "By Vehicle Type",
+      byVehicleTypeText,
+      placeholder
+    ) || placeholder;
+    const actionNotesText = joinTransportAiNoteParts(actionNoteParts, placeholder);
+    const routeNotesText = joinTransportAiNoteParts([
+      viewOptions.routeKindText,
+      viewOptions.serviceDateText,
+      formatTransportAiLabelValue(
+        "ai.review.management.notes.routeProvider",
+        "Route Provider",
+        viewOptions.routeProviderText,
+        placeholder
+      ),
+      formatTransportAiLabelValue(
+        "ai.review.management.notes.promptVersion",
+        "Prompt Version",
+        viewOptions.promptVersionText,
+        placeholder
+      ),
+      formatTransportAiLabelValue(
+        "ai.review.management.notes.model",
+        "Model",
+        viewOptions.modelText,
+        placeholder
+      ),
+    ], placeholder);
+
+    return {
+      titleText: translateTransportAiReviewText("ai.review.managementTitle", "Management Table"),
+      columns: {
+        metric: translateTransportAiReviewText("ai.review.management.columns.metric", "Metric"),
+        current: translateTransportAiReviewText("ai.review.management.columns.current", "Current"),
+        suggested: translateTransportAiReviewText("ai.review.management.columns.suggested", "Suggested"),
+        delta: translateTransportAiReviewText("ai.review.management.columns.delta", "Delta"),
+        notes: translateTransportAiReviewText("ai.review.management.columns.notes", "Notes"),
+      },
+      rows: [
+        {
+          key: "total_cost",
+          metricText: translateTransportAiReviewText("ai.review.management.rows.totalCost", "Total Cost"),
+          currentText: viewOptions.currentCostText,
+          suggestedText: viewOptions.suggestedCostText,
+          deltaText: viewOptions.deltaDetails.valueText,
+          notesText: joinTransportAiNoteParts([
+            viewOptions.deltaDetails.badgeText,
+            formatTransportAiLabelValue(
+              "ai.review.management.notes.currency",
+              "Currency",
+              viewOptions.priceCurrencyCode,
+              placeholder
+            ),
+            formatTransportAiLabelValue(
+              "ai.review.management.notes.rate",
+              "Rate",
+              viewOptions.priceRateUnitText,
+              placeholder
+            ),
+          ], placeholder),
+        },
+        {
+          key: "vehicles",
+          metricText: translateTransportAiReviewText("ai.review.management.rows.vehicles", "Vehicles"),
+          currentText: formatTransportAiIntegerText(viewOptions.currentVehicleCount, placeholder),
+          suggestedText: formatTransportAiIntegerText(viewOptions.suggestedVehicleCount, placeholder),
+          deltaText: formatTransportAiSignedCountDeltaText(
+            viewOptions.currentVehicleCount,
+            viewOptions.suggestedVehicleCount,
+            "vehicle",
+            placeholder
+          ),
+          notesText: vehicleNotesText,
+        },
+        {
+          key: "actions",
+          metricText: translateTransportAiReviewText("ai.review.management.rows.actions", "Total Actions"),
+          currentText: placeholder,
+          suggestedText: formatTransportAiIntegerText(viewOptions.totalVehicleActions, placeholder),
+          deltaText: placeholder,
+          notesText: actionNotesText,
+        },
+        {
+          key: "passengers",
+          metricText: translateTransportAiReviewText(
+            "ai.review.management.rows.passengersAllocated",
+            "Passengers Allocated"
+          ),
+          currentText: placeholder,
+          suggestedText: formatTransportAiIntegerText(viewOptions.passengerAllocationCount, placeholder),
+          deltaText: placeholder,
+          notesText: viewOptions.timeWindowText,
+        },
+        {
+          key: "routes",
+          metricText: translateTransportAiReviewText("ai.review.management.rows.routes", "Total Routes"),
+          currentText: placeholder,
+          suggestedText: formatTransportAiIntegerText(viewOptions.routeCount, placeholder),
+          deltaText: placeholder,
+          notesText: routeNotesText,
+        },
+        {
+          key: "issues",
+          metricText: translateTransportAiReviewText(
+            "ai.review.management.rows.issuesAndBlocking",
+            "Issues / Blocking"
+          ),
+          currentText: placeholder,
+          suggestedText: formatTransportAiIntegerText(viewOptions.validationIssueCount, placeholder),
+          deltaText: formatTransportAiIntegerText(viewOptions.blockingIssueCount, placeholder),
+          notesText: Number(viewOptions.blockingIssueCount) > 0
+            ? formatTransportAiLabelValue(
+              "ai.review.management.notes.blocking",
+              "Blocking",
+              formatTransportAiIntegerText(viewOptions.blockingIssueCount, placeholder),
+              placeholder
+            )
+            : noBlockingIssuesText,
+        },
+      ],
     };
   }
 
@@ -1805,16 +3795,18 @@
     const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
     const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
     const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
+    const audit = suggestion.audit && typeof suggestion.audit === "object" ? suggestion.audit : {};
     const costSummary = plan.cost_summary && typeof plan.cost_summary === "object" ? plan.cost_summary : {};
     const changeSummary = plan.change_summary && typeof plan.change_summary === "object" ? plan.change_summary : {};
     const passengerAllocations = Array.isArray(plan.passenger_allocations) ? plan.passenger_allocations.filter(Boolean) : [];
     const routeItineraries = Array.isArray(plan.route_itineraries) ? plan.route_itineraries.filter(Boolean) : [];
+    const extraClusters = Array.isArray(audit.extra_clusters) ? audit.extra_clusters.filter(Boolean) : [];
     const validationIssues = Array.isArray(plan.validation_issues) ? plan.validation_issues.filter(Boolean) : [];
     const blockingIssueCount = validationIssues.reduce(function (count, issue) {
       return count + (issue && issue.blocking !== false ? 1 : 0);
     }, 0);
     const priceCurrencyCode = normalizeTransportCurrencyCode(costSummary.price_currency_code || fallbackCurrencyCode);
-    const priceRateUnitText = formatTransportAiCompactText(costSummary.price_rate_unit, placeholder);
+    const priceRateUnitText = getTransportPriceRateUnitLabel(costSummary.price_rate_unit, placeholder);
     const currentCostText = formatTransportCurrencyAmount(costSummary.current_total_estimated_cost, priceCurrencyCode, { placeholder });
     const suggestedCostText = formatTransportCurrencyAmount(costSummary.suggested_total_estimated_cost, priceCurrencyCode, { placeholder });
     const deltaDetails = resolveAiChangesCostDeltaDetails(costSummary.estimated_cost_delta, priceCurrencyCode, { placeholder });
@@ -1823,19 +3815,19 @@
       costSummary.suggested_vehicle_count,
       placeholder
     );
-    const allocatedPassengersText = formatTransportAiCountText(passengerAllocations.length, "allocated", "allocated", placeholder);
-    const issueCountText = formatTransportAiCountText(validationIssues.length, "issue", "issues", placeholder);
-    const blockingIssueText = formatTransportAiCountText(blockingIssueCount, "blocking", "blocking", placeholder);
-    const routeCountText = formatTransportAiCountText(routeItineraries.length, "route", "routes", placeholder);
-    const totalVehicleActionsText = formatTransportAiCountText(changeSummary.total_vehicle_actions, "action", "actions", placeholder);
+    const allocatedPassengersText = formatTransportAiCountText(passengerAllocations.length, "allocatedPassenger", placeholder);
+    const issueCountText = formatTransportAiCountText(validationIssues.length, "issue", placeholder);
+    const blockingIssueText = formatTransportAiCountText(blockingIssueCount, "blockingIssue", placeholder);
+    const routeCountText = formatTransportAiCountText(routeItineraries.length, "route", placeholder);
+    const totalVehicleActionsText = formatTransportAiCountText(changeSummary.total_vehicle_actions, "action", placeholder);
     const createCountText = Number.isFinite(Number(changeSummary.create_count)) && Number(changeSummary.create_count) > 0
-      ? formatTransportAiCountText(changeSummary.create_count, "create", "create", placeholder)
+      ? formatTransportAiCountText(changeSummary.create_count, "create", placeholder)
       : "";
     const updateCountText = Number.isFinite(Number(changeSummary.update_count)) && Number(changeSummary.update_count) > 0
-      ? formatTransportAiCountText(changeSummary.update_count, "update", "update", placeholder)
+      ? formatTransportAiCountText(changeSummary.update_count, "update", placeholder)
       : "";
     const removeCountText = Number.isFinite(Number(changeSummary.remove_from_day_count)) && Number(changeSummary.remove_from_day_count) > 0
-      ? formatTransportAiCountText(changeSummary.remove_from_day_count, "remove", "remove", placeholder)
+      ? formatTransportAiCountText(changeSummary.remove_from_day_count, "remove", placeholder)
       : "";
     const currentRouteKind = response.route_kind || plan.route_kind || "";
     const routeKindText = currentRouteKind ? getRouteKindLabel(currentRouteKind) : placeholder;
@@ -1844,22 +3836,36 @@
     const routeProviderText = formatTransportAiCompactText(response.route_provider || suggestion.route_provider, placeholder);
     const modelText = formatTransportAiCompactText(response.openai_model || suggestion.openai_model, placeholder);
     const promptVersionText = formatTransportAiCompactText(suggestion.prompt_version || plan.prompt_version, placeholder);
+    const planningInputHashText = formatTransportAiCompactText(audit.planning_input_hash, placeholder);
+    const extraToleranceNumber = Number(audit.extra_car_tolerance_minutes);
+    const extraToleranceText = formatTransportAiMinutesText(extraToleranceNumber, placeholder);
+    const extraClusterCountText = formatTransportAiCountText(extraClusters.length, "cluster", placeholder);
+    const extraClusterAnchorText = formatTransportAiClusterAnchorSummary(extraClusters, placeholder);
+    const extraClustersNote = extraClusters.length
+      ? translateTransportAiReviewText("ai.review.anchorsLabel", "Anchors {anchors}", {
+        anchors: extraClusterAnchorText,
+      })
+      : translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.noExtraTemporalClusters);
     const objectiveSummary = formatTransportAiCompactText(
       plan.objective_summary || localizeTransportApiMessage(response.message) || response.message,
       placeholder
     );
     const actionSummarySegments = [totalVehicleActionsText, createCountText, updateCountText, removeCountText].filter(Boolean);
-    const actionSummaryText = actionSummarySegments.length ? actionSummarySegments.join(" | ") : placeholder;
+    const actionSummaryText = joinTransportAiNoteParts(actionSummarySegments, placeholder);
     const statusBadges = [];
     if (response.status) {
       statusBadges.push({
-        text: `Run ${humanizeTransportAiStatus(response.status, placeholder)}`,
+        text: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.runStatus, {
+          status: humanizeTransportAiStatus(response.status, placeholder),
+        }),
         tone: resolveTransportAiStatusTone(response.status),
       });
     }
     if (suggestion.status) {
       statusBadges.push({
-        text: `Suggestion ${humanizeTransportAiStatus(suggestion.status, placeholder)}`,
+        text: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.suggestionStatus, {
+          status: humanizeTransportAiStatus(suggestion.status, placeholder),
+        }),
         tone: resolveTransportAiStatusTone(suggestion.status),
       });
     }
@@ -1875,6 +3881,8 @@
         tone: blockingIssueCount ? "warning" : "info",
       });
     }
+
+    const reviewViewModel = buildAiChangesReviewViewModel(runStatusResponse, fallbackCurrencyCode);
 
     return {
       placeholder,
@@ -1909,16 +3917,50 @@
         modelText,
         promptVersionText,
       },
+      audit: {
+        planningInputHashText,
+        extraToleranceText,
+        extraClusterCountText,
+        extraClusterAnchorText,
+      },
+      review: Object.assign({}, reviewViewModel, {
+        exceptions: buildAiChangesReviewExceptionsViewModel(runStatusResponse),
+        management: buildAiChangesManagementViewModel({
+          placeholder,
+          changeSummary,
+          currentCostText,
+          suggestedCostText,
+          deltaDetails,
+          priceCurrencyCode,
+          priceRateUnitText,
+          currentVehicleCount: costSummary.current_vehicle_count,
+          suggestedVehicleCount: costSummary.suggested_vehicle_count,
+          totalVehicleActions: changeSummary.total_vehicle_actions,
+          passengerAllocationCount: passengerAllocations.length,
+          routeCount: routeItineraries.length,
+          validationIssueCount: validationIssues.length,
+          blockingIssueCount,
+          timeWindowText,
+          routeKindText,
+          serviceDateText,
+          routeProviderText,
+          promptVersionText,
+          modelText,
+        }),
+      }),
       statusBadges,
       topCards: [
         {
-          label: "Suggested Cost",
+          label: getTransportAiDynamicLabel("topCards", "suggestedCost"),
           value: suggestedCostText,
-          note: `Current ${currentCostText} | ${priceRateUnitText}`,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.currentWithRate, {
+            current: currentCostText,
+            rate: priceRateUnitText,
+          }),
           badges: [{ text: deltaDetails.badgeText, tone: deltaDetails.tone }],
         },
         {
-          label: "Vehicles",
+          label: getTransportAiDynamicLabel("topCards", "vehicles"),
           value: vehicleComparisonText,
           note: actionSummaryText,
           badges: totalVehicleActionsText !== placeholder
@@ -1926,58 +3968,326 @@
             : [],
         },
         {
-          label: "Passengers",
+          label: getTransportAiDynamicLabel("topCards", "passengers"),
           value: allocatedPassengersText,
-          note: `${issueCountText} | ${routeCountText}`,
+          note: joinTransportAiNoteParts([issueCountText, routeCountText], placeholder),
           badges: validationIssues.length
-            ? [{ text: blockingIssueCount ? blockingIssueText : "Ready", tone: blockingIssueCount ? "warning" : "success" }]
-            : [{ text: "Ready", tone: "success" }],
+            ? [{
+              text: blockingIssueCount
+                ? blockingIssueText
+                : translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.ready),
+              tone: blockingIssueCount ? "warning" : "success",
+            }]
+            : [{ text: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.ready), tone: "success" }],
         },
       ],
       detailItems: [
         {
-          label: "Current Cost",
+          label: getTransportAiDynamicLabel("detailItems", "currentCost"),
           value: currentCostText,
-          note: `Currency ${priceCurrencyCode || placeholder} | Rate ${priceRateUnitText}`,
+          note: joinTransportAiNoteParts([
+            formatTransportAiLabelValue(
+              "ai.review.management.notes.currency",
+              "Currency",
+              priceCurrencyCode,
+              placeholder
+            ),
+            formatTransportAiLabelValue(
+              "ai.review.management.notes.rate",
+              "Rate",
+              priceRateUnitText,
+              placeholder
+            ),
+          ], placeholder),
         },
         {
-          label: "Suggested Cost",
+          label: getTransportAiDynamicLabel("detailItems", "suggestedCost"),
           value: suggestedCostText,
-          note: `${routeCountText} in plan`,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.routeCountInPlan, {
+            count: routeCountText,
+          }),
         },
         {
-          label: "Cost Delta",
+          label: getTransportAiDynamicLabel("detailItems", "costDelta"),
           value: deltaDetails.valueText,
           note: deltaDetails.badgeText,
           badge: { text: deltaDetails.label, tone: deltaDetails.tone },
         },
         {
-          label: "Vehicles",
+          label: getTransportAiDynamicLabel("detailItems", "vehicles"),
           value: vehicleComparisonText,
           note: actionSummaryText,
         },
         {
-          label: "Passengers",
+          label: getTransportAiDynamicLabel("detailItems", "passengers"),
           value: allocatedPassengersText,
-          note: `${issueCountText} | ${blockingIssueText}`,
+          note: joinTransportAiNoteParts([issueCountText, blockingIssueText], placeholder),
         },
         {
-          label: "Window",
+          label: getTransportAiDynamicLabel("detailItems", "window"),
           value: timeWindowText,
-          note: `${routeKindText} | ${serviceDateText}`,
+          note: joinTransportAiNoteParts([routeKindText, serviceDateText], placeholder),
         },
         {
-          label: "Route Provider",
+          label: getTransportAiDynamicLabel("detailItems", "extraTolerance"),
+          value: extraToleranceText,
+          note: joinTransportAiNoteParts([extraClusterCountText, extraClustersNote], placeholder),
+        },
+        {
+          label: getTransportAiDynamicLabel("detailItems", "planningInput"),
+          value: planningInputHashText,
+          note: extraClusters.length
+            ? translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.extraClusters, {
+              clusters: extraClusterCountText,
+            })
+            : translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.noExtraTemporalClusters),
+        },
+        {
+          label: getTransportAiDynamicLabel("detailItems", "routeProvider"),
           value: routeProviderText,
-          note: `Prompt ${promptVersionText}`,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.prompt, {
+            prompt: promptVersionText,
+          }),
         },
         {
-          label: "Model",
+          label: getTransportAiDynamicLabel("detailItems", "model"),
           value: modelText,
-          note: `Suggestion ${humanizeTransportAiStatus(suggestion.status, placeholder)}`,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.suggestionStatus, {
+            status: humanizeTransportAiStatus(suggestion.status, placeholder),
+          }),
         },
       ],
     };
+  }
+
+  function createTransportAiReviewTableElement(reviewItem, columnLabels) {
+    const reviewSectionElement = createNode(
+      "section",
+      `transport-ai-review-vehicle-panel${reviewItem.isSensitive ? " is-sensitive" : ""}`
+    );
+    reviewSectionElement.dataset.aiReviewVehicleTable = reviewItem.vehicleRef;
+
+    const headElement = createNode("div", "transport-ai-review-vehicle-head");
+    const titleRowElement = createNode("div", "transport-ai-review-vehicle-title-row");
+    const titleBlockElement = createNode("div", "transport-ai-review-vehicle-title-block");
+    titleBlockElement.appendChild(createNode("h4", "transport-ai-review-vehicle-title", reviewItem.titleText));
+    if (reviewItem.subtitleText) {
+      titleBlockElement.appendChild(createNode("p", "transport-ai-review-vehicle-subtitle", reviewItem.subtitleText));
+    }
+    titleRowElement.appendChild(titleBlockElement);
+    if (reviewItem.badges.length) {
+      const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+      reviewItem.badges.forEach(function (badge) {
+        badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+      });
+      titleRowElement.appendChild(badgeRowElement);
+    }
+    headElement.appendChild(titleRowElement);
+
+    if (reviewItem.metaItems.length) {
+      const metaGridElement = createNode("dl", "transport-ai-review-vehicle-meta-grid");
+      reviewItem.metaItems.forEach(function (metaItem) {
+        const metaItemElement = createNode("div", "transport-ai-review-vehicle-meta-item");
+        metaItemElement.appendChild(createNode("dt", "transport-ai-review-vehicle-meta-label", metaItem.label));
+        metaItemElement.appendChild(createNode("dd", "transport-ai-review-vehicle-meta-value", metaItem.value));
+        metaGridElement.appendChild(metaItemElement);
+      });
+      headElement.appendChild(metaGridElement);
+    }
+
+    if (reviewItem.rationaleText) {
+      headElement.appendChild(createNode("p", "transport-ai-review-vehicle-rationale", reviewItem.rationaleText));
+    }
+
+    reviewSectionElement.appendChild(headElement);
+
+    const tableShellElement = createNode("div", "transport-ai-review-table-shell");
+    const tableElement = createNode("table", "transport-ai-review-table");
+    tableElement.setAttribute("aria-label", translateTransportAiDefinition(
+      TRANSPORT_AI_DYNAMIC_TEXT.reviewTableAria,
+      { vehicle: reviewItem.titleText }
+    ));
+    const tableHeadElement = document.createElement("thead");
+    const headRowElement = document.createElement("tr");
+    [
+      columnLabels.userName,
+      columnLabels.userAddress,
+      columnLabels.homeToWorkBoarding,
+      columnLabels.workToHomeDropoff,
+    ].forEach(function (label) {
+      headRowElement.appendChild(createNode("th", "transport-ai-review-table-heading", label));
+    });
+    tableHeadElement.appendChild(headRowElement);
+
+    const tableBodyElement = document.createElement("tbody");
+    reviewItem.rows.forEach(function (row) {
+      const rowElement = document.createElement("tr");
+      rowElement.className = "transport-ai-review-table-row";
+      if (row.requestId !== null) {
+        rowElement.dataset.aiReviewRequestId = String(row.requestId);
+      }
+
+      rowElement.appendChild(createNode("td", "transport-ai-review-table-cell transport-ai-review-table-cell-user", row.userNameText));
+      rowElement.appendChild(createNode("td", "transport-ai-review-table-cell transport-ai-review-table-cell-address", row.userAddressText));
+      const homeToWorkCellElement = createNode(
+        "td",
+        `transport-ai-review-table-cell transport-ai-review-table-cell-time${row.homeToWorkBoardingIsPlaceholder ? " is-placeholder" : ""}`,
+        row.homeToWorkBoardingText
+      );
+      rowElement.appendChild(homeToWorkCellElement);
+      const workToHomeCellElement = createNode(
+        "td",
+        `transport-ai-review-table-cell transport-ai-review-table-cell-time${row.workToHomeDropoffIsPlaceholder ? " is-placeholder" : ""}`,
+        row.workToHomeDropoffText
+      );
+      rowElement.appendChild(workToHomeCellElement);
+      tableBodyElement.appendChild(rowElement);
+    });
+
+    tableElement.appendChild(tableHeadElement);
+    tableElement.appendChild(tableBodyElement);
+    tableShellElement.appendChild(tableElement);
+    reviewSectionElement.appendChild(tableShellElement);
+    return reviewSectionElement;
+  }
+
+  function createTransportAiManagementTableElement(managementViewModel) {
+    const managementSectionElement = createNode("section", "transport-ai-review-management-panel");
+    managementSectionElement.dataset.aiReviewManagementTable = "";
+    managementSectionElement.appendChild(
+      createNode("h4", "transport-ai-review-section-title", managementViewModel.titleText)
+    );
+
+    const tableShellElement = createNode(
+      "div",
+      "transport-ai-review-table-shell transport-ai-review-management-table-shell"
+    );
+    const tableElement = createNode("table", "transport-ai-review-table transport-ai-review-management-table");
+    tableElement.setAttribute("aria-label", managementViewModel.titleText);
+
+    const tableHeadElement = document.createElement("thead");
+    const headRowElement = document.createElement("tr");
+    [
+      managementViewModel.columns.metric,
+      managementViewModel.columns.current,
+      managementViewModel.columns.suggested,
+      managementViewModel.columns.delta,
+      managementViewModel.columns.notes,
+    ].forEach(function (label) {
+      headRowElement.appendChild(createNode("th", "transport-ai-review-table-heading", label));
+    });
+    tableHeadElement.appendChild(headRowElement);
+
+    const tableBodyElement = document.createElement("tbody");
+    managementViewModel.rows.forEach(function (row) {
+      const rowElement = document.createElement("tr");
+      rowElement.className = "transport-ai-review-table-row transport-ai-review-management-row";
+      rowElement.dataset.aiReviewManagementMetric = row.key;
+
+      rowElement.appendChild(
+        createNode(
+          "td",
+          "transport-ai-review-table-cell transport-ai-review-management-cell transport-ai-review-management-cell-metric",
+          row.metricText
+        )
+      );
+      rowElement.appendChild(
+        createNode(
+          "td",
+          "transport-ai-review-table-cell transport-ai-review-management-cell transport-ai-review-management-cell-value",
+          row.currentText
+        )
+      );
+      rowElement.appendChild(
+        createNode(
+          "td",
+          "transport-ai-review-table-cell transport-ai-review-management-cell transport-ai-review-management-cell-value",
+          row.suggestedText
+        )
+      );
+      rowElement.appendChild(
+        createNode(
+          "td",
+          "transport-ai-review-table-cell transport-ai-review-management-cell transport-ai-review-management-cell-value",
+          row.deltaText
+        )
+      );
+      rowElement.appendChild(
+        createNode(
+          "td",
+          "transport-ai-review-table-cell transport-ai-review-management-cell transport-ai-review-management-cell-note",
+          row.notesText
+        )
+      );
+      tableBodyElement.appendChild(rowElement);
+    });
+
+    tableElement.appendChild(tableHeadElement);
+    tableElement.appendChild(tableBodyElement);
+    tableShellElement.appendChild(tableElement);
+    managementSectionElement.appendChild(tableShellElement);
+    return managementSectionElement;
+  }
+
+  function createTransportAiReviewExceptionsElement(exceptionsViewModel) {
+    const exceptionsSectionElement = createNode("section", "transport-ai-review-exceptions-panel");
+    exceptionsSectionElement.dataset.aiReviewExceptionsSection = "";
+    exceptionsSectionElement.appendChild(
+      createNode("h4", "transport-ai-review-section-title", exceptionsViewModel.titleText)
+    );
+    exceptionsSectionElement.appendChild(
+      createNode("p", "transport-ai-review-exceptions-summary", exceptionsViewModel.summaryText)
+    );
+
+    if (!exceptionsViewModel.items.length) {
+      exceptionsSectionElement.appendChild(
+        createNode("p", "transport-ai-changes-empty-state", exceptionsViewModel.emptyMessage)
+      );
+      return exceptionsSectionElement;
+    }
+
+    const listElement = createNode("div", "transport-ai-review-exceptions-list");
+    listElement.dataset.aiReviewExceptionsList = "";
+    exceptionsViewModel.items.forEach(function (item) {
+      const itemElement = createNode(
+        "article",
+        `transport-ai-review-exception-item is-${item.kind.replace(/_/g, "-")}`
+      );
+      itemElement.dataset.aiReviewExceptionItem = item.key;
+      itemElement.dataset.aiReviewExceptionKind = item.kind;
+      if (item.requestId !== null) {
+        itemElement.dataset.aiReviewExceptionRequestId = String(item.requestId);
+      }
+
+      const headElement = createNode("div", "transport-ai-review-exception-head");
+      const titleBlockElement = createNode("div", "transport-ai-review-exception-title-block");
+      titleBlockElement.appendChild(
+        createNode("h5", "transport-ai-review-exception-title", item.titleText)
+      );
+      if (item.subtitleText) {
+        titleBlockElement.appendChild(
+          createNode("p", "transport-ai-review-exception-subtitle", item.subtitleText)
+        );
+      }
+      headElement.appendChild(titleBlockElement);
+
+      if (item.badges.length) {
+        const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+        item.badges.forEach(function (badge) {
+          badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+        });
+        headElement.appendChild(badgeRowElement);
+      }
+
+      itemElement.appendChild(headElement);
+      itemElement.appendChild(
+        createNode("p", "transport-ai-review-exception-message", item.messageText)
+      );
+      listElement.appendChild(itemElement);
+    });
+
+    exceptionsSectionElement.appendChild(listElement);
+    return exceptionsSectionElement;
   }
 
   function createAiChangesBadgeElement(badge) {
@@ -1992,12 +4302,10 @@
 
   function getTransportAiVehicleActionLabel(actionType) {
     const normalizedActionType = String(actionType || "").trim().toLowerCase();
-    return {
-      keep: "Keep",
-      create: "Add",
-      update: "Update",
-      remove_from_day: "Remove From Day",
-    }[normalizedActionType] || humanizeTransportAiStatus(normalizedActionType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+    if (Object.prototype.hasOwnProperty.call(TRANSPORT_AI_DYNAMIC_LABELS.actions, normalizedActionType)) {
+      return getTransportAiDynamicLabel("actions", normalizedActionType);
+    }
+    return humanizeTransportAiStatus(normalizedActionType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
   }
 
   function resolveTransportAiVehicleActionTone(actionType) {
@@ -2017,20 +4325,19 @@
   function getTransportAiVehicleTypeLabel(vehicleType) {
     const normalizedVehicleType = String(vehicleType || "").trim().toLowerCase();
     return {
-      carro: "Car",
-      minivan: "Minivan",
-      van: "Van",
-      onibus: "Bus",
+      carro: translateTransportAiReviewText("vehicleTypes.carro", "Car"),
+      minivan: translateTransportAiReviewText("vehicleTypes.minivan", "Minivan"),
+      van: translateTransportAiReviewText("vehicleTypes.van", "Van"),
+      onibus: translateTransportAiReviewText("vehicleTypes.onibus", "Bus"),
     }[normalizedVehicleType] || humanizeTransportAiStatus(normalizedVehicleType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
   }
 
   function getTransportAiVehicleScopeLabel(serviceScope) {
     const normalizedScope = String(serviceScope || "").trim().toLowerCase();
-    return {
-      regular: "Regular List",
-      weekend: "Weekend List",
-      extra: "Extra List",
-    }[normalizedScope] || humanizeTransportAiStatus(normalizedScope, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+    if (Object.prototype.hasOwnProperty.call(TRANSPORT_AI_DYNAMIC_LABELS.lists, normalizedScope)) {
+      return getTransportAiDynamicLabel("lists", normalizedScope);
+    }
+    return humanizeTransportAiStatus(normalizedScope, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
   }
 
   function readTransportAiVehicleActionState(actionState) {
@@ -2107,7 +4414,10 @@
     }
 
     if (actionType === "remove_from_day") {
-      const removedText = String(displayOptions.removedText || "Removed from selected day").trim() || "Removed from selected day";
+      const removedText = String(
+        displayOptions.removedText
+        || translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.removedFromDay)
+      ).trim() || translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.removedFromDay);
       return {
         valueText: `${normalizedBeforeText} -> ${removedText}`,
         changed: true,
@@ -2194,6 +4504,8 @@
     const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
     const plan = suggestion.plan && typeof suggestion.plan === "object" ? suggestion.plan : {};
     const vehicleActions = Array.isArray(plan.vehicle_actions) ? plan.vehicle_actions.filter(Boolean) : [];
+    const routeItineraries = Array.isArray(plan.route_itineraries) ? plan.route_itineraries.filter(Boolean) : [];
+    const fallbackRouteKind = String(response.route_kind || plan.route_kind || "").trim().toLowerCase();
     const priceCurrencyCode = normalizeTransportCurrencyCode(
       (plan.cost_summary && plan.cost_summary.price_currency_code)
       || fallbackCurrencyCode
@@ -2202,6 +4514,17 @@
       const beforeState = readTransportAiVehicleActionState(action.before);
       const afterState = readTransportAiVehicleActionState(action.after);
       const actionType = String(action.action_type || "").trim().toLowerCase();
+      const itinerary = findTransportAiItineraryForVehicleAction(action, routeItineraries);
+      const actionRouteKind = resolveTransportAiVehicleActionRouteKind(action, itinerary, fallbackRouteKind);
+      const beforeRouteKind = hasTransportAiVehicleActionField(beforeState, "route_kind")
+        ? String(getTransportAiVehicleActionValue(beforeState, "route_kind") || "").trim().toLowerCase()
+        : actionRouteKind;
+      const beforeReferenceTime = hasTransportAiVehicleActionField(beforeState, "departure_time")
+        ? getTransportAiVehicleActionValue(beforeState, "departure_time")
+        : undefined;
+      const afterReferenceTime = hasTransportAiVehicleActionField(afterState, "departure_time")
+        ? getTransportAiVehicleActionValue(afterState, "departure_time")
+        : resolveTransportAiItineraryReferenceTime(itinerary);
       const vehicleId = Number.isFinite(Number(action.vehicle_id)) ? Math.max(0, Math.round(Number(action.vehicle_id))) : null;
       const identifierBefore = formatTransportAiVehicleIdentifier(
         getTransportAiVehicleActionValue(beforeState, "plate")
@@ -2221,12 +4544,15 @@
         : identifierBefore !== placeholder
           ? identifierBefore
           : identifierAfter;
-      const titleSuffix = vehicleId ? `Vehicle ${vehicleId}` : action.client_vehicle_key;
+      const titleSuffix = vehicleId
+        ? formatTransportAiVehicleIdentifierLabel(vehicleId, action.client_vehicle_key)
+        : action.client_vehicle_key;
       const actionTone = resolveTransportAiVehicleActionTone(actionType);
       const costPair = resolveTransportAiVehicleCostPair(action, priceCurrencyCode, placeholder);
       const fieldRows = [
         {
-          label: "Type",
+          fieldKey: "type",
+          label: getTransportAiDynamicLabel("vehicleFields", "type"),
           ...buildTransportAiVehicleFieldDisplay(
             actionType,
             formatTransportAiVehicleFieldText("vehicle_type", getTransportAiVehicleActionValue(beforeState, "vehicle_type"), { placeholder }),
@@ -2241,7 +4567,8 @@
           ),
         },
         {
-          label: "Seats",
+          fieldKey: "seats",
+          label: getTransportAiDynamicLabel("vehicleFields", "seats"),
           ...buildTransportAiVehicleFieldDisplay(
             actionType,
             formatTransportAiVehicleFieldText("capacity", getTransportAiVehicleActionValue(beforeState, "capacity"), { placeholder }),
@@ -2256,11 +4583,13 @@
           ),
         },
         {
-          label: "Identifier",
+          fieldKey: "identifier",
+          label: getTransportAiDynamicLabel("vehicleFields", "identifier"),
           ...buildTransportAiVehicleFieldDisplay(actionType, identifierBefore, identifierAfter, { placeholder }),
         },
         {
-          label: "List",
+          fieldKey: "list",
+          label: getTransportAiDynamicLabel("vehicleFields", "list"),
           ...buildTransportAiVehicleFieldDisplay(
             actionType,
             formatTransportAiVehicleFieldText("service_scope", getTransportAiVehicleActionValue(beforeState, "service_scope") || action.service_scope, { placeholder }),
@@ -2275,24 +4604,64 @@
           ),
         },
         {
-          label: "Cost",
+          fieldKey: "cost",
+          label: getTransportAiDynamicLabel("vehicleFields", "cost"),
           ...buildTransportAiVehicleFieldDisplay(actionType, costPair.beforeText, costPair.afterText, {
             placeholder,
             preserveBeforeForCreate: true,
           }),
-          note: costPair.deltaText !== placeholder ? `Delta ${costPair.deltaText}` : placeholder,
+          note: costPair.deltaText !== placeholder
+            ? translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.delta, {
+              delta: costPair.deltaText,
+            })
+            : placeholder,
         },
       ];
+      if (String(action.service_scope || "").trim().toLowerCase() === "extra") {
+        fieldRows.splice(
+          4,
+          0,
+          {
+            fieldKey: "route",
+            label: getTransportAiDynamicLabel("vehicleFields", "route"),
+            ...buildTransportAiVehicleFieldDisplay(
+              actionType,
+              beforeRouteKind ? getTransportAiRouteKindLabel(beforeRouteKind) : placeholder,
+              actionRouteKind ? getTransportAiRouteKindLabel(actionRouteKind) : placeholder,
+              { placeholder }
+            ),
+          },
+          {
+            fieldKey: "reference",
+            label: getTransportAiReferenceFieldLabel("extra", actionRouteKind),
+            ...buildTransportAiVehicleFieldDisplay(
+              actionType,
+              formatTransportAiReferenceValue("extra", beforeRouteKind, beforeReferenceTime, placeholder),
+              formatTransportAiReferenceValue("extra", actionRouteKind, afterReferenceTime, placeholder),
+              { placeholder }
+            ),
+            note: buildTransportAiReferenceFieldNote(
+              "extra",
+              actionRouteKind,
+              itinerary && itinerary.projected_arrival_time,
+              placeholder
+            ),
+          }
+        );
+      }
       const sensitiveChange = actionType === "remove_from_day"
         || fieldRows.some(function (fieldRow) {
-          return fieldRow.changed && ["Type", "Seats", "Identifier", "List"].includes(fieldRow.label);
+          return fieldRow.changed && ["type", "seats", "identifier", "list"].includes(fieldRow.fieldKey);
         });
       const badges = [
         { text: getTransportAiVehicleActionLabel(actionType), tone: actionTone },
         { text: getTransportAiVehicleScopeLabel(action.service_scope), tone: "neutral" },
       ];
       if (sensitiveChange) {
-        badges.push({ text: "Sensitive Change", tone: actionType === "remove_from_day" ? "error" : "warning" });
+        badges.push({
+          text: translateTransportAiReviewText("ai.review.badges.sensitive", "Sensitive Change"),
+          tone: actionType === "remove_from_day" ? "error" : "warning",
+        });
       }
 
       return {
@@ -2311,7 +4680,7 @@
 
     return {
       placeholder,
-      emptyMessage: "Vehicle actions will appear in this panel once the review data is rendered.",
+      emptyMessage: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.vehicleChangesEmpty),
       items,
     };
   }
@@ -2381,26 +4750,154 @@
   function getTransportAiPassengerRequestKindLabel(requestKind) {
     const normalizedRequestKind = String(requestKind || "").trim().toLowerCase();
     return {
-      regular: "Regular",
-      weekend: "Weekend",
-      extra: "Extra",
+      regular: translateTransportAiReviewText("modal.scope.regular", "Regular"),
+      weekend: translateTransportAiReviewText("modal.scope.weekend", "Weekend"),
+      extra: translateTransportAiReviewText("modal.scope.extra", "Extra"),
     }[normalizedRequestKind] || humanizeTransportAiStatus(normalizedRequestKind, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
   }
 
   function getTransportAiRouteKindLabel(routeKind) {
     const normalizedRouteKind = String(routeKind || "").trim().toLowerCase();
     return {
-      home_to_work: "Home To Work",
-      work_to_home: "Work To Home",
+      home_to_work: translateTransportAiReviewText("routes.home_to_work", "Home To Work"),
+      work_to_home: translateTransportAiReviewText("routes.work_to_home", "Work To Home"),
     }[normalizedRouteKind] || humanizeTransportAiStatus(normalizedRouteKind, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
   }
 
   function getTransportAiStopTypeLabel(stopType) {
     const normalizedStopType = String(stopType || "").trim().toLowerCase();
-    return {
-      pickup: "Pickup",
-      destination: "Destination",
-    }[normalizedStopType] || humanizeTransportAiStatus(normalizedStopType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+    if (Object.prototype.hasOwnProperty.call(TRANSPORT_AI_DYNAMIC_LABELS.stopTypes, normalizedStopType)) {
+      return getTransportAiDynamicLabel("stopTypes", normalizedStopType);
+    }
+    return humanizeTransportAiStatus(normalizedStopType, TRANSPORT_AI_SUMMARY_PLACEHOLDER);
+  }
+
+  function resolveTransportAiReferenceTimeFromStops(stops) {
+    const stopList = Array.isArray(stops) ? stops : [];
+    const timedStop = stopList.find(function (stop) {
+      return Boolean(String(stop && stop.scheduled_time || "").trim());
+    });
+    return timedStop ? String(timedStop.scheduled_time || "").trim() : "";
+  }
+
+  function resolveTransportAiItineraryReferenceTime(itinerary) {
+    const normalizedItinerary = itinerary && typeof itinerary === "object" ? itinerary : {};
+    const serviceScope = String(normalizedItinerary.service_scope || "").trim().toLowerCase();
+    const routeKind = String(normalizedItinerary.route_kind || "").trim().toLowerCase();
+    if (serviceScope === "extra") {
+      if (routeKind === "home_to_work") {
+        return String(normalizedItinerary.projected_arrival_time || "").trim();
+      }
+      if (routeKind === "work_to_home") {
+        const firstTimedStop = resolveTransportAiReferenceTimeFromStops(normalizedItinerary.stops);
+        return firstTimedStop || String(normalizedItinerary.projected_arrival_time || "").trim();
+      }
+    }
+    return String(normalizedItinerary.projected_arrival_time || "").trim();
+  }
+
+  function getTransportAiReferenceFieldLabel(serviceScope, routeKind) {
+    const normalizedScope = String(serviceScope || "").trim().toLowerCase();
+    const normalizedRouteKind = String(routeKind || "").trim().toLowerCase();
+    if (normalizedScope === "extra") {
+      if (normalizedRouteKind === "home_to_work") {
+        return translateTransportAiReviewText("ai.review.columns.eta", "ETA");
+      }
+      if (normalizedRouteKind === "work_to_home") {
+        return translateTransportAiReviewText("ai.review.columns.etd", "ETD");
+      }
+      return getTransportAiDynamicLabel("routeFields", "reference");
+    }
+    return getTransportAiDynamicLabel("routeFields", "arrival");
+  }
+
+  function formatTransportAiReferenceValue(serviceScope, routeKind, referenceTime, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const normalizedReferenceTime = normalizeTransportTimeValue(referenceTime, "");
+    if (!isValidTransportTimeValue(normalizedReferenceTime)) {
+      return normalizedPlaceholder;
+    }
+    if (String(serviceScope || "").trim().toLowerCase() === "extra") {
+      return formatExtraVehicleReferenceLabel(routeKind, normalizedReferenceTime) || normalizedPlaceholder;
+    }
+    return normalizedReferenceTime;
+  }
+
+  function buildTransportAiReferenceFieldNote(serviceScope, routeKind, projectedArrivalTime, placeholder) {
+    const normalizedScope = String(serviceScope || "").trim().toLowerCase();
+    const normalizedRouteKind = String(routeKind || "").trim().toLowerCase();
+    const routeKindLabel = getTransportAiRouteKindLabel(normalizedRouteKind);
+    const completionText = formatTransportAiCompactText(projectedArrivalTime, placeholder);
+    if (normalizedScope === "extra" && normalizedRouteKind === "work_to_home" && completionText !== placeholder) {
+      return translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.routeCompletion, {
+        route: routeKindLabel,
+        time: completionText,
+      });
+    }
+    return routeKindLabel;
+  }
+
+  function findTransportAiItineraryForVehicleAction(action, routeItineraries) {
+    const normalizedAction = action && typeof action === "object" ? action : {};
+    const normalizedRouteItineraries = Array.isArray(routeItineraries) ? routeItineraries : [];
+    const clientVehicleKey = String(normalizedAction.client_vehicle_key || "").trim();
+    const vehicleId = Number(normalizedAction.vehicle_id);
+    return normalizedRouteItineraries.find(function (itinerary) {
+      const itineraryVehicleRef = String(itinerary && itinerary.vehicle_ref || "").trim();
+      const itineraryClientVehicleKey = String(itinerary && itinerary.client_vehicle_key || "").trim();
+      if (clientVehicleKey && (itineraryVehicleRef === clientVehicleKey || itineraryClientVehicleKey === clientVehicleKey)) {
+        return true;
+      }
+      return Number.isFinite(vehicleId) && Number(itinerary && itinerary.vehicle_id) === vehicleId;
+    }) || null;
+  }
+
+  function resolveTransportAiVehicleActionRouteKind(action, itinerary, fallbackRouteKind) {
+    const normalizedAction = action && typeof action === "object" ? action : {};
+    const beforeState = readTransportAiVehicleActionState(normalizedAction.before);
+    const afterState = readTransportAiVehicleActionState(normalizedAction.after);
+    const candidates = [
+      getTransportAiVehicleActionValue(afterState, "route_kind"),
+      getTransportAiVehicleActionValue(beforeState, "route_kind"),
+      itinerary && itinerary.route_kind,
+      fallbackRouteKind,
+    ];
+    for (const candidate of candidates) {
+      const normalizedCandidate = String(candidate || "").trim().toLowerCase();
+      if (normalizedCandidate === "home_to_work" || normalizedCandidate === "work_to_home") {
+        return normalizedCandidate;
+      }
+    }
+    return "";
+  }
+
+  function formatTransportAiClusterAnchorSummary(extraClusters, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const clusterList = Array.isArray(extraClusters) ? extraClusters : [];
+    const anchorTimes = clusterList.map(function (cluster) {
+      return formatTransportAiCompactText(cluster && cluster.anchor_requested_time, "");
+    }).filter(Boolean);
+    if (!anchorTimes.length) {
+      return normalizedPlaceholder;
+    }
+    return anchorTimes.join(", ");
+  }
+
+  function buildTransportAiAuditClusterRequestText(requestIds, placeholder) {
+    const normalizedPlaceholder = String(placeholder || TRANSPORT_AI_SUMMARY_PLACEHOLDER).trim() || TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const requestIdList = Array.isArray(requestIds)
+      ? requestIds.filter(function (requestId) {
+        return Number.isFinite(Number(requestId)) && Number(requestId) > 0;
+      }).map(function (requestId) {
+        return `#${Math.max(1, Math.round(Number(requestId)))}`;
+      })
+      : [];
+    if (!requestIdList.length) {
+      return normalizedPlaceholder;
+    }
+    return translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.requestList, {
+      requests: requestIdList.join(", "),
+    });
   }
 
   function formatTransportAiDuration(durationSeconds, placeholder) {
@@ -2413,13 +4910,15 @@
     const totalMinutes = Math.max(0, Math.round(totalSeconds / 60));
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
+    const hourLabel = translateTransportAiReviewText("ai.review.units.hourShort", "h");
+    const minuteLabel = translateTransportAiReviewText("ai.review.units.minuteShort", "min");
     if (hours && minutes) {
-      return `${hours}h ${minutes}m`;
+      return `${hours}${hourLabel} ${minutes}${minuteLabel === "min" ? "" : " "}${minuteLabel}`;
     }
     if (hours) {
-      return `${hours}h`;
+      return `${hours}${hourLabel}`;
     }
-    return `${totalMinutes} min`;
+    return `${totalMinutes} ${minuteLabel}`;
   }
 
   function formatTransportAiDistance(distanceMeters, placeholder) {
@@ -2429,11 +4928,13 @@
       return normalizedPlaceholder;
     }
 
+    const kilometerLabel = translateTransportAiReviewText("ai.review.units.kilometerShort", "km");
+    const meterLabel = translateTransportAiReviewText("ai.review.units.meterShort", "m");
     if (totalMeters >= 1000) {
       const kilometers = totalMeters / 1000;
-      return `${kilometers.toFixed(kilometers >= 10 ? 0 : 1)} km`;
+      return `${kilometers.toFixed(kilometers >= 10 ? 0 : 1)} ${kilometerLabel}`;
     }
-    return `${Math.round(totalMeters)} m`;
+    return `${Math.round(totalMeters)} ${meterLabel}`;
   }
 
   function buildTransportAiRouteStopTravelText(stop, placeholder) {
@@ -2453,7 +4954,11 @@
     if (distanceText !== placeholder) {
       travelParts.push(distanceText);
     }
-    return travelParts.length ? `From previous ${travelParts.join(" · ")}` : placeholder;
+    return travelParts.length
+      ? translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.fromPrevious, {
+        segments: travelParts.join(" · "),
+      })
+      : placeholder;
   }
 
   function buildAiPassengerAllocationsViewModel(runStatusResponse) {
@@ -2477,7 +4982,24 @@
       }
       return collection;
     }, {});
-    const allocatedRequestIds = new Set();
+    const allocatedRequestIds = buildTransportAiAllocatedRequestIdSet(passengerAllocations);
+    const passengerFieldLabels = {
+      project: getTransportAiDynamicLabel("passengerFields", "project"),
+      requestKind: getTransportAiDynamicLabel("passengerFields", "requestKind"),
+      vehicle: getTransportAiDynamicLabel("passengerFields", "vehicle"),
+      pickupOrder: getTransportAiDynamicLabel("passengerFields", "pickupOrder"),
+      pickup: getTransportAiDynamicLabel("passengerFields", "pickup"),
+      arrival: getTransportAiDynamicLabel("passengerFields", "arrival"),
+    };
+    const pendingRequestTitle = translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.pendingRequest);
+    const needsReviewBadgeText = translateTransportAiReviewText(
+      "ai.review.exceptions.badges.needsReview",
+      "Needs Review"
+    );
+    const notRoutedBadgeText = translateTransportAiReviewText(
+      "ai.review.exceptions.badges.notRouted",
+      "Not Routed"
+    );
     const items = passengerAllocations.slice().sort(function (leftItem, rightItem) {
       const leftPickupTime = String(leftItem && leftItem.scheduled_pickup_time || "").trim();
       const rightPickupTime = String(rightItem && rightItem.scheduled_pickup_time || "").trim();
@@ -2494,9 +5016,6 @@
       const requestId = Number.isFinite(Number(allocation.request_id))
         ? Math.max(0, Math.round(Number(allocation.request_id)))
         : null;
-      if (requestId) {
-        allocatedRequestIds.add(requestId);
-      }
       const itinerary = itineraryByVehicleRef[String(allocation.vehicle_ref || "").trim()] || null;
       const vehicleText = formatTransportAiVehicleIdentifier(
         itinerary && (itinerary.plate || itinerary.client_vehicle_key || itinerary.vehicle_ref)
@@ -2525,34 +5044,34 @@
         ],
         fieldRows: [
           {
-            label: "Project",
+            label: passengerFieldLabels.project,
             valueText: projectName,
-            note: requestId ? `Request #${requestId}` : placeholder,
+            note: formatTransportAiRequestReference(requestId, placeholder),
           },
           {
-            label: "Request Kind",
+            label: passengerFieldLabels.requestKind,
             valueText: requestKindLabel,
             note: routeKindLabel,
           },
           {
-            label: "Vehicle",
+            label: passengerFieldLabels.vehicle,
             valueText: vehicleText,
             note: formatTransportAiCompactText(allocation.vehicle_ref, placeholder),
           },
           {
-            label: "Pickup Order",
+            label: passengerFieldLabels.pickupOrder,
             valueText: pickupOrder === null ? placeholder : `#${pickupOrder}`,
             note: itinerary && itinerary.route_key
               ? formatTransportAiCompactText(itinerary.route_key, placeholder)
               : placeholder,
           },
           {
-            label: "Pickup",
+            label: passengerFieldLabels.pickup,
             valueText: formatTransportAiCompactText(allocation.scheduled_pickup_time, placeholder),
             note: formatTransportAiCompactText(allocation.service_date, placeholder),
           },
           {
-            label: "Arrival",
+            label: passengerFieldLabels.arrival,
             valueText: formatTransportAiCompactText(allocation.projected_arrival_time, placeholder),
             note: itinerary && itinerary.project_name
               ? formatTransportAiCompactText(itinerary.project_name, placeholder)
@@ -2571,20 +5090,23 @@
         : null;
       return {
         requestId,
-        titleText: requestId ? `Request #${requestId}` : "Pending Request",
+        titleText: formatTransportAiRequestReference(requestId, pendingRequestTitle),
         subtitleText: formatTransportAiCompactText(issue.code, placeholder),
         messageText: formatTransportAiCompactText(issue.message, placeholder),
         badges: [
-          { text: issue.blocking === false ? "Needs Review" : "Not Routed", tone: issue.blocking === false ? "warning" : "error" },
+          {
+            text: issue.blocking === false ? needsReviewBadgeText : notRoutedBadgeText,
+            tone: issue.blocking === false ? "warning" : "error",
+          },
         ],
       };
     });
 
     return {
       placeholder,
-      emptyMessage: "Passenger allocations will appear in this panel once the review data is rendered.",
-      allocatedTitle: "Allocated Passengers",
-      unallocatedTitle: "Not Routed",
+      emptyMessage: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.passengerAllocationsEmpty),
+      allocatedTitle: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.allocatedPassengersTitle),
+      unallocatedTitle: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.unallocatedPassengersTitle),
       items,
       unallocatedItems,
     };
@@ -2689,6 +5211,11 @@
       (plan.cost_summary && plan.cost_summary.price_currency_code)
       || fallbackCurrencyCode
     );
+    const routeFieldLabels = {
+      project: getTransportAiDynamicLabel("routeFields", "project"),
+      duration: getTransportAiDynamicLabel("routeFields", "duration"),
+      cost: getTransportAiDynamicLabel("routeFields", "cost"),
+    };
     const items = routeItineraries.slice().sort(function (leftItem, rightItem) {
       const leftArrival = String(leftItem && leftItem.projected_arrival_time || "").trim();
       const rightArrival = String(rightItem && rightItem.projected_arrival_time || "").trim();
@@ -2699,6 +5226,20 @@
     }).map(function (itinerary) {
       const vehicleTitle = formatTransportAiVehicleIdentifier(
         itinerary.plate || itinerary.client_vehicle_key || itinerary.vehicle_ref,
+        placeholder
+      );
+      const referenceTime = resolveTransportAiItineraryReferenceTime(itinerary);
+      const referenceLabel = getTransportAiReferenceFieldLabel(itinerary.service_scope, itinerary.route_kind);
+      const referenceValueText = formatTransportAiReferenceValue(
+        itinerary.service_scope,
+        itinerary.route_kind,
+        referenceTime,
+        placeholder
+      );
+      const referenceNoteText = buildTransportAiReferenceFieldNote(
+        itinerary.service_scope,
+        itinerary.route_kind,
+        itinerary.projected_arrival_time,
         placeholder
       );
       const stops = (Array.isArray(itinerary.stops) ? itinerary.stops : []).slice().sort(function (leftStop, rightStop) {
@@ -2738,22 +5279,22 @@
         ],
         fieldRows: [
           {
-            label: "Project",
+            label: routeFieldLabels.project,
             valueText: formatTransportAiCompactText(itinerary.project_name, placeholder),
             note: formatTransportAiCompactText(itinerary.partition_key, placeholder),
           },
           {
-            label: "Arrival",
-            valueText: formatTransportAiCompactText(itinerary.projected_arrival_time, placeholder),
-            note: getTransportAiRouteKindLabel(itinerary.route_kind),
+            label: referenceLabel,
+            valueText: referenceValueText,
+            note: referenceNoteText,
           },
           {
-            label: "Duration",
+            label: routeFieldLabels.duration,
             valueText: formatTransportAiDuration(itinerary.total_duration_seconds, placeholder),
             note: formatTransportAiDistance(itinerary.total_distance_meters, placeholder),
           },
           {
-            label: "Cost",
+            label: routeFieldLabels.cost,
             valueText: formatTransportCurrencyAmount(itinerary.estimated_cost, priceCurrencyCode, { placeholder }),
             note: formatTransportAiCompactText(itinerary.vehicle_ref, placeholder),
           },
@@ -2764,8 +5305,8 @@
 
     return {
       placeholder,
-      emptyMessage: "Route itineraries will appear in this panel once the review data is rendered.",
-      emptyStopsMessage: "No stops were generated for this route.",
+      emptyMessage: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.routeItinerariesEmpty),
+      emptyStopsMessage: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.routeStopsEmpty),
       items,
     };
   }
@@ -2856,6 +5397,154 @@
     return viewModel;
   }
 
+  function buildAiChangesAuditViewModel(runStatusResponse) {
+    const placeholder = TRANSPORT_AI_SUMMARY_PLACEHOLDER;
+    const response = runStatusResponse && typeof runStatusResponse === "object" ? runStatusResponse : {};
+    const suggestion = response.suggestion && typeof response.suggestion === "object" ? response.suggestion : {};
+    const audit = suggestion.audit && typeof suggestion.audit === "object" ? suggestion.audit : {};
+    const extraClusters = Array.isArray(audit.extra_clusters) ? audit.extra_clusters.filter(Boolean) : [];
+    const extraToleranceNumber = Number(audit.extra_car_tolerance_minutes);
+    const extraToleranceText = Number.isFinite(extraToleranceNumber) && extraToleranceNumber >= 0
+      ? `${Math.round(extraToleranceNumber)} min`
+      : placeholder;
+    const planningInputHashText = formatTransportAiCompactText(audit.planning_input_hash, placeholder);
+    const promptVersionText = formatTransportAiCompactText(suggestion.prompt_version, placeholder);
+    const routeProviderText = formatTransportAiCompactText(response.route_provider || suggestion.route_provider, placeholder);
+    const llmProviderText = formatTransportAiCompactText(response.llm_provider, placeholder);
+    const modelText = formatTransportAiCompactText(response.openai_model || response.llm_model, placeholder);
+    const reasoningText = formatTransportAiCompactText(response.llm_reasoning_effort, placeholder);
+    const routeKindText = response.route_kind ? getRouteKindLabel(response.route_kind) : placeholder;
+    const auditSummaryLabels = {
+      promptVersion: getTransportAiDynamicLabel("auditFields", "promptVersion"),
+      routeProvider: getTransportAiDynamicLabel("auditFields", "routeProvider"),
+      model: getTransportAiDynamicLabel("auditFields", "model"),
+      planningInput: getTransportAiDynamicLabel("auditFields", "planningInput"),
+    };
+    const clusterItems = extraClusters.map(function (cluster) {
+      const requestIds = Array.isArray(cluster.request_ids) ? cluster.request_ids : [];
+      const requestCount = Number.isFinite(Number(cluster.request_count)) && Number(cluster.request_count) > 0
+        ? Math.max(1, Math.round(Number(cluster.request_count)))
+        : requestIds.length;
+      const anchorText = formatTransportAiCompactText(cluster.anchor_requested_time, placeholder);
+      return {
+        titleText: formatTransportAiCompactText(cluster.cluster_key, placeholder),
+        subtitleText: formatTransportAiCompactText(cluster.partition_key, placeholder),
+        badges: [
+          {
+            text: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.anchorBadge, {
+              time: anchorText === placeholder ? placeholder : `${anchorText}h`,
+            }),
+            tone: "info",
+          },
+          {
+            text: formatTransportAiCountText(requestCount, "request", placeholder),
+            tone: "neutral",
+          },
+        ],
+        windowText: formatTransportAiTimeWindow(
+          cluster.earliest_requested_time,
+          cluster.latest_requested_time,
+          placeholder
+        ),
+        requestText: buildTransportAiAuditClusterRequestText(requestIds, placeholder),
+      };
+    });
+
+    return {
+      placeholder,
+      summaryItems: [
+        {
+          label: auditSummaryLabels.promptVersion,
+          valueText: promptVersionText,
+          note: routeKindText,
+        },
+        {
+          label: auditSummaryLabels.routeProvider,
+          valueText: routeProviderText,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.llm, { provider: llmProviderText }),
+        },
+        {
+          label: auditSummaryLabels.model,
+          valueText: modelText,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.reasoning, { effort: reasoningText }),
+        },
+        {
+          label: auditSummaryLabels.planningInput,
+          valueText: planningInputHashText,
+          note: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.extraTolerance, {
+            duration: extraToleranceText,
+          }),
+        },
+      ],
+      clusterItems,
+      emptyClusterMessage: translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.auditEmptyClusters),
+    };
+  }
+
+  function renderAiChangesAudit(options) {
+    const renderOptions = options || {};
+    const viewModel = buildAiChangesAuditViewModel(renderOptions.runStatusResponse);
+    if (typeof document === "undefined") {
+      return viewModel;
+    }
+
+    const auditPanelElement = renderOptions.auditPanelElement;
+    if (!auditPanelElement) {
+      return viewModel;
+    }
+
+    clearElement(auditPanelElement);
+
+    const sectionsElement = createNode("div", "transport-ai-changes-audit-sections");
+    const summaryGridElement = createNode("div", "transport-ai-changes-executive-grid");
+    viewModel.summaryItems.forEach(function (item) {
+      const itemElement = createNode("article", "transport-ai-changes-executive-item");
+      itemElement.appendChild(createNode("span", "transport-ai-changes-summary-label", item.label));
+      itemElement.appendChild(createNode("strong", "transport-ai-changes-executive-value", item.valueText));
+      itemElement.appendChild(createNode("p", "transport-ai-changes-executive-note", item.note));
+      summaryGridElement.appendChild(itemElement);
+    });
+    sectionsElement.appendChild(summaryGridElement);
+
+    const clusterSectionElement = createNode("section", "transport-ai-changes-audit-section");
+    clusterSectionElement.appendChild(createNode(
+      "h4",
+      "transport-ai-changes-panel-subtitle",
+      translateTransportAiReviewText("ai.review.extraTemporalClusters", "Extra Temporal Clusters")
+    ));
+    if (!viewModel.clusterItems.length) {
+      clusterSectionElement.appendChild(createNode("p", "transport-ai-changes-empty-state", viewModel.emptyClusterMessage));
+    } else {
+      const clusterListElement = createNode("div", "transport-ai-changes-audit-cluster-list");
+      viewModel.clusterItems.forEach(function (item) {
+        const itemElement = createNode("article", "transport-ai-changes-audit-cluster");
+        const headElement = createNode("div", "transport-ai-changes-audit-head");
+        const titleBlockElement = createNode("div", "transport-ai-changes-route-title-block");
+        titleBlockElement.appendChild(createNode("h5", "transport-ai-changes-route-title", item.titleText));
+        titleBlockElement.appendChild(createNode("p", "transport-ai-changes-route-ref", item.subtitleText));
+        headElement.appendChild(titleBlockElement);
+        const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
+        item.badges.forEach(function (badge) {
+          badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
+        });
+        headElement.appendChild(badgeRowElement);
+        itemElement.appendChild(headElement);
+        itemElement.appendChild(createNode(
+          "p",
+          "transport-ai-changes-audit-meta",
+          translateTransportAiDefinition(TRANSPORT_AI_DYNAMIC_TEXT.window, { window: item.windowText })
+        ));
+        itemElement.appendChild(createNode("p", "transport-ai-changes-audit-meta", item.requestText));
+        clusterListElement.appendChild(itemElement);
+      });
+      clusterSectionElement.appendChild(clusterListElement);
+    }
+    sectionsElement.appendChild(clusterSectionElement);
+
+    auditPanelElement.appendChild(sectionsElement);
+    return viewModel;
+  }
+
   function renderAiChangesSummary(options) {
     const renderOptions = options || {};
     const viewModel = buildAiChangesSummaryViewModel(
@@ -2871,20 +5560,7 @@
 
     if (summaryGridElement) {
       clearElement(summaryGridElement);
-      viewModel.topCards.forEach(function (card) {
-        const cardElement = createNode("article", "transport-ai-changes-summary-card");
-        cardElement.appendChild(createNode("span", "transport-ai-changes-summary-label", card.label));
-        cardElement.appendChild(createNode("strong", "transport-ai-changes-summary-value", card.value));
-        cardElement.appendChild(createNode("p", "transport-ai-changes-summary-note", card.note));
-        if (Array.isArray(card.badges) && card.badges.length) {
-          const badgeRowElement = createNode("div", "transport-ai-changes-badge-row");
-          card.badges.forEach(function (badge) {
-            badgeRowElement.appendChild(createAiChangesBadgeElement(badge));
-          });
-          cardElement.appendChild(badgeRowElement);
-        }
-        summaryGridElement.appendChild(cardElement);
-      });
+      summaryGridElement.hidden = true;
     }
 
     if (summaryPanelElement) {
@@ -2899,20 +5575,26 @@
         summaryPanelElement.appendChild(badgeRowElement);
       }
 
-      const detailsGridElement = createNode("div", "transport-ai-changes-executive-grid");
-      viewModel.detailItems.forEach(function (item) {
-        const itemElement = createNode("article", "transport-ai-changes-executive-item");
-        const headElement = createNode("div", "transport-ai-changes-executive-head");
-        headElement.appendChild(createNode("span", "transport-ai-changes-summary-label", item.label));
-        if (item.badge) {
-          headElement.appendChild(createAiChangesBadgeElement(item.badge));
-        }
-        itemElement.appendChild(headElement);
-        itemElement.appendChild(createNode("strong", "transport-ai-changes-executive-value", item.value));
-        itemElement.appendChild(createNode("p", "transport-ai-changes-executive-note", item.note));
-        detailsGridElement.appendChild(itemElement);
-      });
-      summaryPanelElement.appendChild(detailsGridElement);
+      const reviewWorkspaceElement = createNode("div", "transport-ai-review-workspace");
+      reviewWorkspaceElement.dataset.aiReviewWorkspace = "primary";
+
+      const vehicleTableListElement = createNode("div", "transport-ai-review-vehicle-table-list");
+      vehicleTableListElement.dataset.aiReviewVehicleTableList = "";
+      if (!viewModel.review.items.length) {
+        vehicleTableListElement.appendChild(createNode("p", "transport-ai-changes-empty-state", viewModel.review.emptyMessage));
+      } else {
+        viewModel.review.items.forEach(function (reviewItem) {
+          vehicleTableListElement.appendChild(createTransportAiReviewTableElement(reviewItem, viewModel.review.columns));
+        });
+      }
+      reviewWorkspaceElement.appendChild(vehicleTableListElement);
+
+      if (viewModel.review.exceptions && viewModel.review.exceptions.items.length) {
+        reviewWorkspaceElement.appendChild(createTransportAiReviewExceptionsElement(viewModel.review.exceptions));
+      }
+
+      reviewWorkspaceElement.appendChild(createTransportAiManagementTableElement(viewModel.review.management));
+      summaryPanelElement.appendChild(reviewWorkspaceElement);
     }
 
     return viewModel;
@@ -2939,6 +5621,144 @@
     }
 
     return isValidTransportTimeValue(fallbackTime) ? String(fallbackTime).trim() : "";
+  }
+
+  function formatExtraVehicleReferenceLabel(routeKind, referenceTime) {
+    const normalizedReferenceTime = normalizeTransportTimeValue(referenceTime, "");
+    if (!isValidTransportTimeValue(normalizedReferenceTime)) {
+      return "";
+    }
+
+    if (routeKind === "home_to_work") {
+      return translateTransportAiReviewText("ai.review.etaLabel", "ETA {time}h", {
+        time: normalizedReferenceTime,
+      });
+    }
+    if (routeKind === "work_to_home") {
+      return translateTransportAiReviewText("ai.review.etdLabel", "ETD {time}h", {
+        time: normalizedReferenceTime,
+      });
+    }
+
+    return normalizedReferenceTime;
+  }
+
+  function resolveVehicleReferenceMode(scope, dashboard, arriveAtWorkTime, nowRef, fallbackWorkToHomeTime, routeKind, options) {
+    const normalizedScope = String(scope || "").trim();
+    if (isRoutineVehicleScope(normalizedScope)) {
+      return getRoutineVehicleReferenceMode(
+        dashboard,
+        arriveAtWorkTime,
+        nowRef,
+        fallbackWorkToHomeTime,
+        options
+      );
+    }
+
+    if (normalizedScope === "extra") {
+      if (routeKind === "home_to_work") {
+        return "eta";
+      }
+      if (routeKind === "work_to_home") {
+        return "etd";
+      }
+    }
+
+    return null;
+  }
+
+  function getVehicleReferenceLabel(scope, vehicle, dashboard, arriveAtWorkTime, nowRef, fallbackWorkToHomeTime, routeKind, options) {
+    const normalizedScope = String(scope || "").trim();
+    const referenceMode = resolveVehicleReferenceMode(
+      normalizedScope,
+      dashboard,
+      arriveAtWorkTime,
+      nowRef,
+      fallbackWorkToHomeTime,
+      routeKind,
+      options
+    );
+    if (isRoutineVehicleScope(normalizedScope)) {
+      const normalizedArriveAtWorkTime = normalizeTransportTimeValue(arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME);
+      const effectiveWorkToHomeTime = getEffectiveWorkToHomeDepartureTime(dashboard, fallbackWorkToHomeTime);
+      return formatRoutineVehicleReferenceLabel(referenceMode, normalizedArriveAtWorkTime, effectiveWorkToHomeTime);
+    }
+
+    const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(dashboard, fallbackWorkToHomeTime);
+    const departureTime = getVehicleDepartureTime(vehicle, effectiveDepartureTime, normalizedScope);
+    if (normalizedScope === "extra" && (referenceMode === "eta" || referenceMode === "etd")) {
+      return formatExtraVehicleReferenceLabel(routeKind, departureTime);
+    }
+
+    return departureTime;
+  }
+
+  function resolveVehiclePassengerOperationalTime(
+    scope,
+    vehicle,
+    requestRow,
+    dashboard,
+    arriveAtWorkTime,
+    nowRef,
+    fallbackWorkToHomeTime,
+    routeKind,
+    options
+  ) {
+    const normalizedScope = String(scope || "").trim();
+    const referenceMode = resolveVehicleReferenceMode(
+      normalizedScope,
+      dashboard,
+      arriveAtWorkTime,
+      nowRef,
+      fallbackWorkToHomeTime,
+      routeKind,
+      options
+    );
+
+    if (referenceMode === "etd") {
+      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(dashboard, fallbackWorkToHomeTime);
+      return {
+        mode: "etd",
+        time: getVehicleDepartureTime(vehicle, effectiveDepartureTime, normalizedScope),
+        timeField: null,
+      };
+    }
+
+    if (referenceMode === "eta") {
+      // requested_time captures only the passenger's ask and can diverge from the operational pickup.
+      const boardingTime = normalizeTransportTimeValue(requestRow && requestRow.boarding_time, "");
+      return {
+        mode: "eta",
+        time: isValidTransportTimeValue(boardingTime) ? boardingTime : "",
+        timeField: "boarding_time",
+      };
+    }
+
+    return {
+      mode: null,
+      time: "",
+      timeField: null,
+    };
+  }
+
+  function getExtraVehicleDepartureFieldKey(routeKind) {
+    if (routeKind === "home_to_work") {
+      return "modal.fields.etaTime";
+    }
+    if (routeKind === "work_to_home") {
+      return "modal.fields.etdTime";
+    }
+    return "modal.fields.departureTime";
+  }
+
+  function getExtraVehicleScopeNoteKey(routeKind) {
+    if (routeKind === "home_to_work") {
+      return "modal.notes.extraHomeToWork";
+    }
+    if (routeKind === "work_to_home") {
+      return "modal.notes.extraWorkToHome";
+    }
+    return "modal.notes.extra";
   }
 
   function shouldHighlightRequestName(assignmentStatus) {
@@ -3047,7 +5867,10 @@
     return routeKey ? t(routeKey) : routeKind;
   }
 
-  function getModalScopeNote(scope) {
+  function getModalScopeNote(scope, routeKind) {
+    if (scope === "extra") {
+      return t(getExtraVehicleScopeNoteKey(routeKind));
+    }
     const noteKey = MODAL_SCOPE_NOTE_KEYS[scope] || MODAL_SCOPE_NOTE_KEYS.regular;
     return t(noteKey);
   }
@@ -3104,10 +5927,19 @@
       settingsLoading: false,
       settingsSaving: false,
       languageLoading: false,
+      statusMessageKey: DEFAULT_STATUS_MESSAGE_KEY,
+      statusMessageValues: null,
+      statusMessageText: "",
+      statusMessageTone: "info",
       vehicleModalMode: "create",
       vehicleModalVehicleId: null,
+      arriveAtWorkTime: DEFAULT_ARRIVE_AT_WORK_TIME,
       workToHomeTime: DEFAULT_WORK_TO_HOME_TIME,
+      dashboardGeneratedAt: "",
+      vehicleReferenceClock: null,
+      vehicleReferenceModeTimer: null,
       lastUpdateTime: DEFAULT_LAST_UPDATE_TIME,
+      extraCarToleranceMinutes: DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES,
       vehicleSeatDefaults: Object.assign({}, DEFAULT_VEHICLE_SEAT_COUNT),
       vehiclePriceDefaults: Object.assign({}, DEFAULT_VEHICLE_PRICE_DEFAULTS),
       vehicleToleranceDefaultMinutes: DEFAULT_VEHICLE_TOLERANCE_MINUTES,
@@ -3167,26 +5999,19 @@
     const settingsTrigger = document.querySelector("[data-open-settings-modal]");
     const settingsModal = document.querySelector("[data-settings-modal]");
     const aiSettingsModal = document.querySelector("[data-ai-settings-modal]");
-    const aiSettingsModalTitle = document.getElementById("transport-ai-settings-modal-title");
-    const aiSettingsProjectLabel = document.querySelector("[data-ai-settings-project-label]");
     const aiSettingsProjectInput = document.querySelector("[data-ai-settings-project]");
-    const aiSettingsProviderLabel = document.querySelector("[data-ai-settings-provider-label]");
     const aiSettingsProviderInput = document.querySelector("[data-ai-settings-provider]");
     const aiSettingsProviderNote = document.querySelector("[data-ai-settings-provider-note]");
-    const aiSettingsApiKeyLabel = document.querySelector("[data-ai-settings-api-key-label]");
     const aiSettingsApiKeyInput = document.querySelector("[data-ai-settings-api-key]");
     const aiSettingsApiKeyHint = document.querySelector("[data-ai-settings-api-key-hint]");
     const aiSettingsFeedback = document.querySelector("[data-ai-settings-feedback]");
     const aiAgentModal = document.querySelector("[data-ai-agent-modal]");
-    const aiAgentModalTitle = document.getElementById("transport-ai-agent-modal-title");
     const aiAgentModalNote = document.querySelector("[data-ai-agent-modal-note]");
-    const aiAgentEarliestBoardingLabel = document.querySelector("[data-ai-agent-early-boarding-label]");
-    const aiAgentArrivalLabel = document.querySelector("[data-ai-agent-arrival-label]");
+    const aiAgentRequestKindInputs = Array.from(document.querySelectorAll("[data-ai-agent-request-kind]"));
     const aiAgentEarliestBoardingInput = document.querySelector("[data-ai-agent-earliest-boarding]");
     const aiAgentArrivalAtWorkInput = document.querySelector("[data-ai-agent-arrival-at-work]");
     const aiAgentFeedback = document.querySelector("[data-ai-agent-feedback]");
     const aiChangesModal = document.querySelector("[data-ai-changes-modal]");
-    const aiChangesModalTitle = document.querySelector("[data-ai-changes-title]");
     const aiChangesSummary = document.querySelector("[data-ai-changes-status]")
       || document.querySelector("[data-ai-changes-summary]");
     const aiChangesSummaryGrid = document.querySelector("[data-ai-changes-summary-grid]");
@@ -3194,38 +6019,25 @@
     const aiChangesVehiclesPanel = document.querySelector("[data-ai-changes-vehicles]");
     const aiChangesPassengersPanel = document.querySelector("[data-ai-changes-passengers]");
     const aiChangesRoutesPanel = document.querySelector("[data-ai-changes-routes]");
+    const aiChangesAuditPanel = document.querySelector("[data-ai-changes-audit]");
     const aiChangesCancelButton = document.querySelector("[data-ai-changes-cancel]");
     const aiChangesSaveButton = document.querySelector("[data-ai-changes-save]");
     const aiChangesApplyButton = document.querySelector("[data-ai-changes-apply]");
-    const settingsPreferencesTitle = document.querySelector("[data-settings-preferences-title]");
-    const settingsVehicleDefaultsTitle = document.querySelector("[data-settings-vehicle-defaults-title]");
-    const settingsLanguageLabel = document.querySelector("[data-settings-language-label]");
     const settingsLanguageSelect = document.querySelector("[data-settings-language-select]");
-    const settingsTimeLabel = document.querySelector("[data-settings-time-label]");
+    const settingsArriveAtWorkInput = document.querySelector("[data-settings-arrive-at-work-time]");
     let aiSettingsLoadRequestSequence = 0;
     const settingsTimeInput = document.querySelector("[data-settings-work-to-home-time]");
-    const settingsLastUpdateLabel = document.querySelector("[data-settings-last-update-label]");
+    const settingsExtraCarToleranceInput = document.querySelector("[data-settings-extra-car-tolerance]");
     const settingsLastUpdateInput = document.querySelector("[data-settings-last-update-time]");
-    const settingsTimeNote = document.querySelector("[data-settings-time-note]");
-    const settingsVehicleDefaultsNote = document.querySelector("[data-settings-vehicle-defaults-note]");
-    const settingsPriceVariablesLabel = document.querySelector("[data-settings-price-variables-label]");
-    const settingsPriceVariablesNote = document.querySelector("[data-settings-price-variables-note]");
-    const settingsPriceCurrencyLabel = document.querySelector("[data-settings-price-currency-label]");
     const settingsPriceCurrencySelect = document.querySelector("[data-settings-price-currency]");
-    const settingsPriceRateUnitLabel = document.querySelector("[data-settings-price-rate-unit-label]");
     const settingsPriceRateUnitSelect = document.querySelector("[data-settings-price-rate-unit]");
-    const settingsPriceRateUnitOptions = settingsPriceRateUnitSelect ? Array.from(settingsPriceRateUnitSelect.options) : [];
     const settingsAddCurrencyButton = document.querySelector("[data-settings-add-currency-button]");
     const settingsAddCurrencyPanel = document.querySelector("[data-settings-add-currency-panel]");
-    const settingsNewCurrencyCodeLabel = document.querySelector("[data-settings-new-currency-code-label]");
     const settingsNewCurrencyCodeInput = document.querySelector("[data-settings-new-currency-code]");
-    const settingsNewCurrencyLabelLabel = document.querySelector("[data-settings-new-currency-label-label]");
     const settingsNewCurrencyLabelInput = document.querySelector("[data-settings-new-currency-label]");
     const settingsCancelCurrencyButton = document.querySelector("[data-settings-cancel-currency-button]");
     const settingsSaveCurrencyButton = document.querySelector("[data-settings-save-currency-button]");
-    const settingsDefaultToleranceLabel = document.querySelector("[data-settings-default-tolerance-label]");
     const settingsDefaultToleranceInput = document.querySelector("[data-settings-default-tolerance]");
-    const settingsCloseButton = document.querySelector("[data-settings-close-button]");
     const settingsDefaultSeatLabels = {
       carro: document.querySelector('[data-settings-default-seat-label="carro"]'),
       minivan: document.querySelector('[data-settings-default-seat-label="minivan"]'),
@@ -3262,11 +6074,11 @@
     const vehicleModalFeedback = document.querySelector("[data-vehicle-modal-feedback]");
     const extraServiceDateField = document.querySelector("[data-extra-service-date-field]");
     const extraDepartureField = document.querySelector("[data-extra-departure-field]");
+    const extraDepartureFieldLabel = document.querySelector("[data-extra-departure-label]");
     const extraRouteField = document.querySelector("[data-extra-route-field]");
     const weekendPersistenceFields = Array.from(document.querySelectorAll("[data-weekend-persistence-field]"));
     const regularPersistenceFields = Array.from(document.querySelectorAll("[data-regular-persistence-field]"));
     const routeTimePopover = document.querySelector("[data-route-time-popover]");
-    const routeTimeLabel = document.querySelector("[data-route-time-label]");
     const routeTimeInput = document.querySelector("[data-route-time-input]");
     const aiMenuShell = document.querySelector("[data-ai-menu-shell]");
     const aiMenuTrigger = document.querySelector("[data-ai-menu-trigger]");
@@ -3432,8 +6244,49 @@
       return nextScope;
     }
 
+    function getActiveVehicleModalRouteKind(scope) {
+      const normalizedScope = normalizeVehicleScope(scope || (vehicleModal && vehicleModal.dataset.scope));
+      if (normalizedScope !== "extra") {
+        return "";
+      }
+
+      if (vehicleForm && vehicleForm.elements.route_kind) {
+        const currentRouteKind = String(vehicleForm.elements.route_kind.value || "").trim();
+        if (Object.prototype.hasOwnProperty.call(ROUTE_KIND_KEYS, currentRouteKind)) {
+          return currentRouteKind;
+        }
+      }
+
+      const selectedRouteKind = getSelectedRouteKind();
+      return Object.prototype.hasOwnProperty.call(ROUTE_KIND_KEYS, selectedRouteKind)
+        ? selectedRouteKind
+        : "";
+    }
+
+    function syncExtraVehicleDepartureFieldCopy(scope) {
+      const normalizedScope = normalizeVehicleScope(scope || (vehicleModal && vehicleModal.dataset.scope));
+      const fieldKey = normalizedScope === "extra"
+        ? getExtraVehicleDepartureFieldKey(getActiveVehicleModalRouteKind(normalizedScope))
+        : "modal.fields.departureTime";
+      const labelText = t(fieldKey);
+
+      if (extraDepartureFieldLabel) {
+        extraDepartureFieldLabel.textContent = labelText;
+      }
+      if (
+        vehicleForm
+        && vehicleForm.elements.departure_time
+        && typeof vehicleForm.elements.departure_time.setAttribute === "function"
+      ) {
+        vehicleForm.elements.departure_time.setAttribute("aria-label", labelText);
+      }
+    }
+
     function syncVehicleModalCopy(scope) {
       const normalizedScope = normalizeVehicleScope(scope || (vehicleModal && vehicleModal.dataset.scope));
+      const currentRouteKind = normalizedScope === "extra"
+        ? getActiveVehicleModalRouteKind(normalizedScope)
+        : "";
 
       if (modalScopeLabel) {
         modalScopeLabel.textContent = mapScopeTitle(normalizedScope);
@@ -3441,7 +6294,7 @@
       if (modalScopeNote) {
         modalScopeNote.textContent = isVehicleModalEditMode()
           ? t("modal.notes.edit")
-          : getModalScopeNote(normalizedScope);
+          : getModalScopeNote(normalizedScope, currentRouteKind);
       }
       if (vehicleModalTitle) {
         vehicleModalTitle.textContent = isVehicleModalEditMode()
@@ -3488,132 +6341,10 @@
         return;
       }
 
-      document.documentElement.lang = getActiveLanguageCode();
-      document.title = t("document.title");
+      applyDocumentLanguageMetadata();
+      applyDeclarativeTranslations(document);
+      syncStatusMessageCopy();
 
-      const brandKicker = document.querySelector(".transport-topbar-brand .transport-topbar-kicker");
-      const brandTitle = document.querySelector(".transport-topbar-brand .transport-topbar-title");
-      const supportKicker = document.querySelector(".transport-topbar-support .transport-topbar-kicker");
-      const authLabels = document.querySelectorAll(".transport-auth-label");
-      const requestSectionTitles = document.querySelectorAll(".transport-request-section .transport-section-title-link");
-      const paneLinks = document.querySelectorAll(".transport-pane-title-link");
-      const addVehicleButtons = document.querySelectorAll("[data-open-vehicle-modal]");
-      const modalFieldLabels = vehicleForm ? vehicleForm.querySelectorAll(".transport-field > span") : [];
-      const weekendLabels = weekendPersistenceFields.map(function (fieldElement) {
-        return fieldElement.querySelector("span");
-      });
-      const regularLabels = regularPersistenceFields.map(function (fieldElement) {
-        return fieldElement.querySelector("span");
-      });
-      const modalActionButtons = vehicleForm ? vehicleForm.querySelectorAll(".transport-modal-actions button") : [];
-      const typeOptions = vehicleForm && vehicleForm.elements.tipo ? Array.from(vehicleForm.elements.tipo.options) : [];
-      const routeOptions = vehicleForm && vehicleForm.elements.route_kind ? Array.from(vehicleForm.elements.route_kind.options) : [];
-
-      if (brandKicker) {
-        brandKicker.textContent = t("topbar.brand");
-      }
-      if (brandTitle) {
-        brandTitle.textContent = t("topbar.allocationBoard");
-      }
-      if (supportKicker) {
-        supportKicker.textContent = t("topbar.systemSupport");
-      }
-      if (routeTimeLabel) {
-        routeTimeLabel.textContent = t("settings.workToHomeTime");
-      }
-      if (aiMenuTrigger) {
-        aiMenuTrigger.setAttribute("aria-label", t("ai.openMenuAria"));
-      }
-      if (aiMenu) {
-        aiMenu.setAttribute("aria-label", t("ai.menuAria"));
-      }
-      if (aiCalculateRoutesButton) {
-        aiCalculateRoutesButton.textContent = t("ai.calculateRoutes");
-      }
-      if (aiImplementModificationsButton) {
-        aiImplementModificationsButton.textContent = t("ai.implementModifications");
-      }
-      if (aiSettingsMenuButton) {
-        aiSettingsMenuButton.textContent = t("ai.settingsMenuLabel");
-      }
-      if (authLabels[0]) {
-        authLabels[0].textContent = t("auth.key");
-      }
-      if (authLabels[1]) {
-        authLabels[1].textContent = t("auth.pass");
-      }
-
-      const projectListTitle = document.querySelector("[data-project-list-toggle]");
-      const userListTitle = document.querySelector("[data-user-list-title]");
-      if (projectListTitle) {
-        projectListTitle.textContent = t("panes.projectList");
-      }
-      if (userListTitle) {
-        userListTitle.textContent = t("panes.userList");
-      }
-      if (requestSectionTitles[0]) {
-        requestSectionTitles[0].textContent = getRequestTitle("extra");
-      }
-      if (requestSectionTitles[1]) {
-        requestSectionTitles[1].textContent = getRequestTitle("weekend");
-      }
-      if (requestSectionTitles[2]) {
-        requestSectionTitles[2].textContent = getRequestTitle("regular");
-      }
-      if (paneLinks[0]) {
-        paneLinks[0].textContent = t("vehicles.lists.extra");
-      }
-      if (paneLinks[1]) {
-        paneLinks[1].textContent = t("vehicles.lists.weekend");
-      }
-      if (paneLinks[2]) {
-        paneLinks[2].textContent = t("vehicles.lists.regular");
-      }
-      addVehicleButtons.forEach(function (buttonElement) {
-        const scope = buttonElement.dataset.openVehicleModal;
-        if (!scope) {
-          return;
-        }
-        buttonElement.setAttribute("aria-label", t(`vehicles.addAria.${scope}`));
-      });
-      if (settingsTrigger) {
-        settingsTrigger.textContent = t("settings.dashboardLink");
-        settingsTrigger.setAttribute("aria-label", t("settings.openAria"));
-      }
-      if (aiSettingsModalTitle) {
-        aiSettingsModalTitle.textContent = t("ai.settingsTitle");
-      }
-      if (aiSettingsProjectLabel) {
-        aiSettingsProjectLabel.textContent = t("ai.settingsProject");
-      }
-      if (aiSettingsProviderLabel) {
-        aiSettingsProviderLabel.textContent = t("ai.settingsProvider");
-      }
-      if (aiSettingsApiKeyLabel) {
-        aiSettingsApiKeyLabel.textContent = t("ai.settingsApiKey");
-      }
-      if (aiSettingsApiKeyInput) {
-        aiSettingsApiKeyInput.placeholder = t("ai.settingsApiKeyPlaceholder");
-      }
-      document.querySelectorAll("[data-close-ai-settings-modal]").forEach(function (buttonElement) {
-        if (buttonElement.classList.contains("transport-modal-close")) {
-          buttonElement.setAttribute("aria-label", t("ai.settingsCloseAria"));
-          return;
-        }
-        buttonElement.textContent = t("ai.settingsCancel");
-      });
-      document.querySelectorAll("[data-ai-settings-save]").forEach(function (buttonElement) {
-        buttonElement.textContent = t("ai.settingsSave");
-      });
-      if (aiAgentModalTitle) {
-        aiAgentModalTitle.textContent = t("ai.agentSettingsTitle");
-      }
-      if (aiAgentEarliestBoardingLabel) {
-        aiAgentEarliestBoardingLabel.textContent = t("ai.agentSettingsEarliestBoarding");
-      }
-      if (aiAgentArrivalLabel) {
-        aiAgentArrivalLabel.textContent = t("ai.agentSettingsArrivalAtWork");
-      }
       if (aiAgentModalNote) {
         const projectCount = getProjectRows().filter(function (projectRow) {
           return projectRow && projectRow.name;
@@ -3622,204 +6353,22 @@
           ? t("ai.agentSettingsNoteReady", { count: projectCount })
           : t("ai.agentSettingsNotePending");
       }
-      document.querySelectorAll("[data-close-ai-agent-modal]").forEach(function (buttonElement) {
-        if (buttonElement.classList.contains("transport-modal-close")) {
-          buttonElement.setAttribute("aria-label", t("ai.agentSettingsCloseAria"));
-          return;
-        }
-        buttonElement.textContent = buttonElement.hasAttribute("data-ai-agent-cancel")
-          ? t("ai.agentSettingsCancel")
-          : t("ai.agentSettingsClose");
-      });
-      document.querySelectorAll("[data-ai-agent-submit]").forEach(function (buttonElement) {
-        buttonElement.textContent = t("ai.agentSettingsSubmit");
-      });
       syncAiSettingsControls({ preserveInputs: true });
-      if (aiChangesModalTitle) {
-        aiChangesModalTitle.textContent = t("ai.changesTitle");
-      }
-      document.querySelectorAll("[data-close-ai-changes-modal]").forEach(function (buttonElement) {
-        if (buttonElement.classList.contains("transport-modal-close")) {
-          buttonElement.setAttribute("aria-label", t("ai.changesCloseAria"));
-        }
-      });
       syncAiAgentSettingsControls({ preserveInputs: true });
       syncAiChangesSummaryCopy();
       syncAiChangesSummaryRender();
       syncAiVehicleChangesRender();
       syncAiPassengerAllocationsRender();
       syncAiRouteItinerariesRender();
+      syncAiChangesAuditRender();
       syncAiChangesControls();
 
       syncVehicleModalCopy(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
-      document.querySelectorAll("[data-close-vehicle-modal]").forEach(function (buttonElement) {
-        if (buttonElement.classList.contains("transport-modal-close")) {
-          buttonElement.setAttribute("aria-label", t("modal.closeVehicleAria"));
-          return;
-        }
-        buttonElement.textContent = t("modal.actions.cancel");
-      });
-      if (modalFieldLabels[0]) {
-        modalFieldLabels[0].textContent = t("modal.fields.type");
+      if (settingsArriveAtWorkInput) {
+        settingsArriveAtWorkInput.placeholder = DEFAULT_ARRIVE_AT_WORK_TIME;
       }
-      if (modalFieldLabels[1]) {
-        modalFieldLabels[1].textContent = t("modal.fields.plate");
-      }
-      if (modalFieldLabels[2]) {
-        modalFieldLabels[2].textContent = t("modal.fields.color");
-      }
-      if (modalFieldLabels[3]) {
-        modalFieldLabels[3].textContent = t("modal.fields.places");
-      }
-      if (modalFieldLabels[4]) {
-        modalFieldLabels[4].textContent = t("modal.fields.tolerance");
-      }
-      if (modalFieldLabels[5]) {
-        modalFieldLabels[5].textContent = t("modal.fields.departureDate");
-      }
-      if (modalFieldLabels[6]) {
-        modalFieldLabels[6].textContent = t("modal.fields.departureTime");
-      }
-      if (modalFieldLabels[7]) {
-        modalFieldLabels[7].textContent = t("modal.fields.route");
-      }
-      typeOptions.forEach(function (optionElement) {
-        if (!optionElement) {
-          return;
-        }
-
-        if (optionElement.value === "") {
-          optionElement.text = t("modal.options.blankType");
-          return;
-        }
-
-        if (optionElement.value === "carro") {
-          optionElement.text = t("modal.options.car");
-          return;
-        }
-
-        if (optionElement.value === "minivan") {
-          optionElement.text = t("modal.options.minivan");
-          return;
-        }
-
-        if (optionElement.value === "van") {
-          optionElement.text = t("modal.options.van");
-          return;
-        }
-
-        if (optionElement.value === "onibus") {
-          optionElement.text = t("modal.options.bus");
-        }
-      });
-      if (routeOptions[0]) {
-        routeOptions[0].text = getRouteKindLabel("home_to_work");
-      }
-      if (routeOptions[1]) {
-        routeOptions[1].text = getRouteKindLabel("work_to_home");
-      }
-      if (weekendLabels[0]) {
-        weekendLabels[0].textContent = t("modal.fields.everySaturday");
-      }
-      if (weekendLabels[1]) {
-        weekendLabels[1].textContent = t("modal.fields.everySunday");
-      }
-      if (regularLabels[0]) {
-        regularLabels[0].textContent = t("modal.fields.everyMonday");
-      }
-      if (regularLabels[1]) {
-        regularLabels[1].textContent = t("modal.fields.everyTuesday");
-      }
-      if (regularLabels[2]) {
-        regularLabels[2].textContent = t("modal.fields.everyWednesday");
-      }
-      if (regularLabels[3]) {
-        regularLabels[3].textContent = t("modal.fields.everyThursday");
-      }
-      if (regularLabels[4]) {
-        regularLabels[4].textContent = t("modal.fields.everyFriday");
-      }
-      const settingsTitle = document.getElementById("transport-settings-modal-title");
-      if (settingsTitle) {
-        settingsTitle.textContent = t("settings.title");
-      }
-      document.querySelectorAll("[data-close-settings-modal]").forEach(function (buttonElement) {
-        if (buttonElement.classList.contains("transport-modal-close")) {
-          buttonElement.setAttribute("aria-label", t("settings.closeAria"));
-          return;
-        }
-        buttonElement.textContent = t("settings.close");
-      });
-      if (settingsPreferencesTitle) {
-        settingsPreferencesTitle.textContent = t("settings.preferences");
-      }
-      if (settingsVehicleDefaultsTitle) {
-        settingsVehicleDefaultsTitle.textContent = t("settings.vehicleDefaults");
-      }
-      if (settingsPriceVariablesLabel) {
-        settingsPriceVariablesLabel.textContent = t("settings.priceVariables");
-      }
-      if (settingsLanguageLabel) {
-        settingsLanguageLabel.textContent = t("settings.languages");
-      }
-      if (settingsTimeLabel) {
-        settingsTimeLabel.textContent = t("settings.workToHomeTime");
-      }
-      if (settingsLastUpdateLabel) {
-        settingsLastUpdateLabel.textContent = t("settings.lastUpdateTime");
-      }
-      if (settingsTimeNote) {
-        settingsTimeNote.textContent = t("settings.workToHomeNote");
-      }
-      if (settingsVehicleDefaultsNote) {
-        settingsVehicleDefaultsNote.textContent = t("settings.vehicleDefaultsNote");
-      }
-      if (settingsPriceVariablesNote) {
-        settingsPriceVariablesNote.textContent = t("settings.priceVariablesNote");
-      }
-      if (settingsPriceCurrencyLabel) {
-        settingsPriceCurrencyLabel.textContent = t("settings.currency");
-      }
-      if (settingsPriceRateUnitLabel) {
-        settingsPriceRateUnitLabel.textContent = t("settings.billingUnit");
-      }
-      settingsPriceRateUnitOptions.forEach(function (optionElement) {
-        if (!optionElement) {
-          return;
-        }
-        if (optionElement.value === "hour") {
-          optionElement.text = t("settings.perHour");
-          return;
-        }
-        if (optionElement.value === "day") {
-          optionElement.text = t("settings.perDay");
-          return;
-        }
-        if (optionElement.value === "week") {
-          optionElement.text = t("settings.perWeek");
-          return;
-        }
-        if (optionElement.value === "month") {
-          optionElement.text = t("settings.perMonth");
-        }
-      });
-      if (settingsAddCurrencyButton) {
-        settingsAddCurrencyButton.textContent = t("settings.addCurrency");
-      }
-      if (settingsNewCurrencyCodeLabel) {
-        settingsNewCurrencyCodeLabel.textContent = t("settings.currencyCode");
-      }
-      if (settingsNewCurrencyLabelLabel) {
-        settingsNewCurrencyLabelLabel.textContent = t("settings.currencyLabel");
-      }
-      if (settingsCancelCurrencyButton) {
-        settingsCancelCurrencyButton.textContent = t("modal.actions.cancel");
-      }
-      if (settingsSaveCurrencyButton) {
-        settingsSaveCurrencyButton.textContent = t("settings.saveCurrency");
-      }
-      if (settingsDefaultToleranceLabel) {
-        settingsDefaultToleranceLabel.textContent = t("settings.standardTolerance");
+      if (settingsExtraCarToleranceInput) {
+        settingsExtraCarToleranceInput.placeholder = String(DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES);
       }
       if (settingsDefaultSeatLabels.carro) {
         settingsDefaultSeatLabels.carro.textContent = t("settings.defaultPlacesLabel", {
@@ -3862,75 +6411,9 @@
         });
       }
       populateTransportCurrencyOptions();
-      if (settingsCloseButton) {
-        settingsCloseButton.textContent = t("settings.close");
-      }
 
-      const transportLayout = document.getElementById("tela01");
-      if (transportLayout) {
-        transportLayout.setAttribute("aria-label", t("layout.transportLayout"));
-      }
-      if (transportTopbar) {
-        transportTopbar.setAttribute("aria-label", t("layout.quickActions"));
-      }
-      const datePanel = document.querySelector("[data-date-panel]");
-      if (datePanel) {
-        datePanel.setAttribute("aria-label", t("layout.selectedServiceDate"));
-      }
-      const previousDateButton = document.querySelector('[data-date-shift="-1"]');
-      if (previousDateButton) {
-        previousDateButton.setAttribute("aria-label", t("layout.previousServiceDate"));
-      }
-      const nextDateButton = document.querySelector('[data-date-shift="1"]');
-      if (nextDateButton) {
-        nextDateButton.setAttribute("aria-label", t("layout.nextServiceDate"));
-      }
-      const dateLink = document.querySelector("[data-date-link]");
-      if (dateLink) {
-        dateLink.setAttribute("aria-label", t("layout.returnServiceDateToToday"));
-      }
-      const authArea = document.querySelector(".transport-topbar-auth");
-      if (authArea) {
-        authArea.setAttribute("aria-label", t("layout.transportAccessFields"));
-      }
-      if (requestUserButton) {
-        requestUserButton.setAttribute("aria-label", t("layout.requestUserCreation"));
-      }
-      const layoutDividers = document.querySelectorAll("[data-resize]");
-      if (layoutDividers[0]) {
-        layoutDividers[0].setAttribute("aria-label", t("layout.resizeMenuMain"));
-      }
-      const mainPanels = document.getElementById("tela01principal");
-      if (mainPanels) {
-        mainPanels.setAttribute("aria-label", t("layout.transportMainPanels"));
-      }
-      const requestSections = document.querySelectorAll(".transport-request-section");
-      if (requestSections[0]) {
-        requestSections[0].setAttribute("aria-label", t("layout.extraCarRequests"));
-      }
-      if (requestSections[1]) {
-        requestSections[1].setAttribute("aria-label", t("layout.weekendCarRequests"));
-      }
-      if (requestSections[2]) {
-        requestSections[2].setAttribute("aria-label", t("layout.regularCarRequests"));
-      }
-      if (layoutDividers[1]) {
-        layoutDividers[1].setAttribute("aria-label", t("layout.resizeColumns"));
-      }
       const carPanels = document.getElementById("tela01main_dir");
-      if (carPanels) {
-        carPanels.setAttribute("aria-label", t("layout.transportCarPanels"));
-      }
-      if (layoutDividers[2]) {
-        layoutDividers[2].setAttribute("aria-label", t("layout.resizeExtraWeekend"));
-      }
-      if (layoutDividers[3]) {
-        layoutDividers[3].setAttribute("aria-label", t("layout.resizeWeekendRegular"));
-      }
-      const footer = document.querySelector(".transport-footer-status");
-      if (footer) {
-        footer.setAttribute("aria-label", t("layout.transportNotifications"));
-      }
+      syncVehiclePanelResizeHandleState(carPanels || document);
 
       refreshDatePanelLabels();
       syncVehicleModalFields(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "regular");
@@ -4109,9 +6592,27 @@
         settingsLanguageSelect.value = getActiveLanguageCode();
         settingsLanguageSelect.disabled = state.languageLoading;
       }
+      if (settingsArriveAtWorkInput) {
+        settingsArriveAtWorkInput.value = normalizeTransportTimeValue(
+          state.arriveAtWorkTime,
+          DEFAULT_ARRIVE_AT_WORK_TIME
+        );
+        settingsArriveAtWorkInput.title = settingsArriveAtWorkInput.value;
+        settingsArriveAtWorkInput.disabled = settingsControlsDisabled;
+      }
       if (settingsTimeInput) {
         settingsTimeInput.value = normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME);
         settingsTimeInput.disabled = settingsControlsDisabled;
+      }
+      if (settingsExtraCarToleranceInput) {
+        settingsExtraCarToleranceInput.value = String(
+          normalizeVehicleToleranceSetting(
+            state.extraCarToleranceMinutes,
+            DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES
+          )
+        );
+        settingsExtraCarToleranceInput.title = settingsExtraCarToleranceInput.value;
+        settingsExtraCarToleranceInput.disabled = settingsControlsDisabled;
       }
       if (settingsLastUpdateInput) {
         settingsLastUpdateInput.value = normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME);
@@ -4190,6 +6691,14 @@
         if (aiAgentArrivalAtWorkInput) {
           aiAgentArrivalAtWorkInput.value = activeDraft.arrivalAtWorkTime;
         }
+        aiAgentRequestKindInputs.forEach(function (inputElement) {
+          const requestKind = String(
+            inputElement.getAttribute("data-ai-agent-request-kind")
+            || inputElement.value
+            || ""
+          ).trim().toLowerCase();
+          inputElement.checked = activeDraft.requestKinds.includes(requestKind);
+        });
       }
 
       if (aiAgentEarliestBoardingInput) {
@@ -4198,6 +6707,9 @@
       if (aiAgentArrivalAtWorkInput) {
         aiAgentArrivalAtWorkInput.disabled = hasActiveRun;
       }
+      aiAgentRequestKindInputs.forEach(function (inputElement) {
+        inputElement.disabled = hasActiveRun;
+      });
 
       document.querySelectorAll("[data-ai-agent-cancel]").forEach(function (buttonElement) {
         buttonElement.disabled = hasActiveRun;
@@ -4218,9 +6730,15 @@
         return;
       }
 
-      const feedbackMessage = state.aiAgentFeedbackKey
-        ? t(state.aiAgentFeedbackKey, state.aiAgentFeedbackValues || undefined)
-        : String(state.aiAgentFeedbackMessage || "").trim();
+      let feedbackMessage = "";
+      if (state.aiAgentFeedbackKey) {
+        const translatedFeedback = t(state.aiAgentFeedbackKey, state.aiAgentFeedbackValues || undefined);
+        feedbackMessage = translatedFeedback && translatedFeedback !== state.aiAgentFeedbackKey
+          ? translatedFeedback
+          : String(state.aiAgentFeedbackMessage || "").trim() || translatedFeedback;
+      } else {
+        feedbackMessage = String(state.aiAgentFeedbackMessage || "").trim();
+      }
       if (!feedbackMessage) {
         aiAgentFeedback.hidden = true;
         aiAgentFeedback.textContent = "";
@@ -4273,9 +6791,16 @@
       });
     }
 
-    function resolveTransportAiSettingsApiErrorState(error, options) {
-      const resolvedOptions = options || {};
-      const normalizedMessage = String(error && error.message || "").trim();
+  function resolveTransportAiSettingsApiErrorState(error, options) {
+    const resolvedOptions = options || {};
+    const structuredPayload = extractStructuredTransportApiPayload(error && error.payload);
+    const normalizedMessageKey = String(structuredPayload && structuredPayload.message_key || "").trim();
+    const normalizedErrorCode = String(structuredPayload && structuredPayload.error_code || "").trim();
+    const normalizedMessage = String(
+      (structuredPayload && structuredPayload.message)
+      || (error && error.message)
+      || ""
+    ).trim();
       const projectId = normalizeTransportAiSettingsProjectId(
         resolvedOptions.projectId,
         state.aiSettingsSelectedProjectId
@@ -4287,28 +6812,38 @@
       );
       const hasProjectInCatalog = hasValidTransportAiSettingsProjectSelection(projectId, projectRows);
 
-      if (isTransportAiProjectRequiredErrorPayload(error && error.payload) || normalizedMessage === "Transport AI project is required.") {
-        return {
-          message: t("ai.settingsProjectRequired"),
-          clearProjectSelection: false,
-          markCatalogAsError: false,
-        };
-      }
-
-      if (normalizedMessage === "Transport AI project does not exist.") {
-        return {
-          message: t(hasProjectInCatalog ? "ai.settingsProjectRemoved" : "ai.settingsProjectMissing"),
-          clearProjectSelection: true,
-          markCatalogAsError: true,
-        };
-      }
-
+    if (
+      normalizedErrorCode === "transport_ai_settings_project_required"
+      || normalizedMessageKey === "ai.settingsProjectRequired"
+      || isTransportAiProjectRequiredErrorPayload(error && error.payload)
+      || normalizedMessage === "Transport AI project is required."
+    ) {
       return {
-        message: localizeTransportApiMessage(normalizedMessage),
+        message: t("ai.settingsProjectRequired"),
         clearProjectSelection: false,
         markCatalogAsError: false,
       };
     }
+
+    if (
+      normalizedErrorCode === "transport_ai_settings_project_not_found"
+      || normalizedMessageKey === "ai.settingsProjectMissing"
+      || normalizedMessage === "Transport AI project does not exist."
+    ) {
+      return {
+        message: t(hasProjectInCatalog ? "ai.settingsProjectRemoved" : "ai.settingsProjectMissing"),
+        clearProjectSelection: true,
+        markCatalogAsError: true,
+      };
+    }
+
+    return {
+      message: resolveTransportApiStructuredMessage(error && error.payload)
+        || localizeTransportApiMessage(normalizedMessage),
+      clearProjectSelection: false,
+      markCatalogAsError: false,
+    };
+  }
 
     function getSelectedTransportAiSettingsProject() {
       const selectedProjectId = normalizeTransportAiSettingsProjectId(state.aiSettingsSelectedProjectId, null);
@@ -4478,9 +7013,15 @@
         return;
       }
 
-      const feedbackMessage = state.aiSettingsFeedbackKey
-        ? t(state.aiSettingsFeedbackKey, state.aiSettingsFeedbackValues || undefined)
-        : String(state.aiSettingsFeedbackMessage || "").trim();
+      let feedbackMessage = "";
+      if (state.aiSettingsFeedbackKey) {
+        const translatedFeedback = t(state.aiSettingsFeedbackKey, state.aiSettingsFeedbackValues || undefined);
+        feedbackMessage = translatedFeedback && translatedFeedback !== state.aiSettingsFeedbackKey
+          ? translatedFeedback
+          : String(state.aiSettingsFeedbackMessage || "").trim() || translatedFeedback;
+      } else {
+        feedbackMessage = String(state.aiSettingsFeedbackMessage || "").trim();
+      }
       if (!feedbackMessage) {
         aiSettingsFeedback.hidden = true;
         aiSettingsFeedback.textContent = "";
@@ -4542,9 +7083,15 @@
         return;
       }
 
-      const summaryMessage = state.aiChangesSummaryKey
-        ? t(state.aiChangesSummaryKey, state.aiChangesSummaryValues || undefined)
-        : String(state.aiChangesSummaryMessage || "").trim();
+      let summaryMessage = "";
+      if (state.aiChangesSummaryKey) {
+        const translatedSummary = t(state.aiChangesSummaryKey, state.aiChangesSummaryValues || undefined);
+        summaryMessage = translatedSummary && translatedSummary !== state.aiChangesSummaryKey
+          ? translatedSummary
+          : String(state.aiChangesSummaryMessage || "").trim() || translatedSummary;
+      } else {
+        summaryMessage = String(state.aiChangesSummaryMessage || "").trim();
+      }
       if (!summaryMessage) {
         aiChangesSummary.hidden = true;
         aiChangesSummary.textContent = "";
@@ -4605,9 +7152,24 @@
       });
     }
 
+    function syncAiChangesAuditRender() {
+      if (!aiChangesAuditPanel || (!state.aiRouteRunStatus && !state.aiRouteSuggestion)) {
+        return;
+      }
+
+      renderAiChangesAudit({
+        runStatusResponse: state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion },
+        auditPanelElement: aiChangesAuditPanel,
+      });
+    }
+
     function readTransportSettingsDraft() {
       return {
+        arriveAtWorkTime: settingsArriveAtWorkInput ? settingsArriveAtWorkInput.value : state.arriveAtWorkTime,
         workToHomeTime: settingsTimeInput ? settingsTimeInput.value : state.workToHomeTime,
+        extraCarToleranceMinutes: settingsExtraCarToleranceInput
+          ? settingsExtraCarToleranceInput.value
+          : state.extraCarToleranceMinutes,
         lastUpdateTime: settingsLastUpdateInput ? settingsLastUpdateInput.value : state.lastUpdateTime,
         priceCurrencyCode: settingsPriceCurrencySelect ? settingsPriceCurrencySelect.value : state.priceCurrencyCode,
         priceRateUnit: settingsPriceRateUnitSelect ? settingsPriceRateUnitSelect.value : state.priceRateUnit,
@@ -4731,7 +7293,7 @@
         return Promise.resolve(null);
       }
       if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncRouteTimeControls();
         return Promise.resolve(null);
       }
@@ -4753,7 +7315,7 @@
             });
           }
           return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
-            setStatus(t("status.settingsSaved"), "success");
+            setStatus("", "success", { key: "status.settingsSaved" });
             return response;
           });
         })
@@ -4921,6 +7483,68 @@
       };
     }
 
+    function hasRoutineVehicleReferenceRows(dashboard) {
+      return Boolean(
+        dashboard
+        && (
+          (Array.isArray(dashboard.regular_vehicles) && dashboard.regular_vehicles.length)
+          || (Array.isArray(dashboard.weekend_vehicles) && dashboard.weekend_vehicles.length)
+          || (Array.isArray(dashboard.regular_vehicle_registry) && dashboard.regular_vehicle_registry.length)
+          || (Array.isArray(dashboard.weekend_vehicle_registry) && dashboard.weekend_vehicle_registry.length)
+        )
+      );
+    }
+
+    function clearVehicleReferenceModeTimer() {
+      if (state.vehicleReferenceModeTimer) {
+        globalScope.clearTimeout(state.vehicleReferenceModeTimer);
+        state.vehicleReferenceModeTimer = null;
+      }
+    }
+
+    function clearVehicleReferenceClock() {
+      clearVehicleReferenceModeTimer();
+      state.dashboardGeneratedAt = "";
+      state.vehicleReferenceClock = null;
+    }
+
+    function syncTransportReferenceClock(dashboard) {
+      state.arriveAtWorkTime = normalizeTransportTimeValue(
+        dashboard && dashboard.arrive_at_work_time,
+        normalizeTransportTimeValue(state.arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME)
+      );
+      state.dashboardGeneratedAt = dashboard && dashboard.dashboard_generated_at
+        ? String(dashboard.dashboard_generated_at)
+        : "";
+      state.vehicleReferenceClock = createTransportReferenceClock(state.dashboardGeneratedAt);
+    }
+
+    function scheduleVehicleReferenceModeTimer() {
+      clearVehicleReferenceModeTimer();
+      if (!state.dashboard || isTransportPageHidden() || !hasRoutineVehicleReferenceRows(state.dashboard)) {
+        return;
+      }
+
+      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
+      const delayMs = resolveNextRoutineVehicleReferenceDelayMs(
+        state.vehicleReferenceClock,
+        normalizeTransportTimeValue(state.arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME),
+        effectiveDepartureTime
+      );
+      if (delayMs === null) {
+        return;
+      }
+
+      state.vehicleReferenceModeTimer = globalScope.setTimeout(function () {
+        state.vehicleReferenceModeTimer = null;
+        if (isTransportPageHidden() || !state.dashboard) {
+          return;
+        }
+        renderVehiclePanels();
+        scheduleVehicleReferenceModeTimer();
+      }, delayMs);
+    }
+
     function closeRealtimeEventStream() {
       if (state.realtimeEventStream) {
         state.realtimeEventStream.close();
@@ -5047,6 +7671,7 @@
 
     function handlePageVisibilityChange() {
       if (isTransportPageHidden()) {
+        clearVehicleReferenceModeTimer();
         clearPendingRealtimeRefresh();
         clearPendingRealtimeReconnect();
         clearPendingAiRoutePolling();
@@ -5061,6 +7686,10 @@
 
       if (state.realtimeReconnectPending || !state.realtimeEventStream) {
         startRealtimeUpdates();
+      }
+      if (state.dashboard) {
+        renderVehiclePanels();
+        scheduleVehicleReferenceModeTimer();
       }
       void flushDeferredDashboardLoad();
       if (shouldContinuePollingAiRouteRun(state.aiRouteRunStatus)) {
@@ -5080,6 +7709,8 @@
           startRealtimeUpdates();
         }
       } else {
+        clearVehicleReferenceClock();
+        state.arriveAtWorkTime = DEFAULT_ARRIVE_AT_WORK_TIME;
         stopRealtimeUpdates();
         clearPendingAiRoutePolling();
         resetAiRoutePollingBackoff();
@@ -5123,33 +7754,48 @@
       state.sessionBootstrapPending = false;
       setAuthenticationState(false, null, { resetInputs: true, clearDashboard: true });
       requestJson(`${TRANSPORT_API_PREFIX}/auth/logout`, { method: "POST" }).catch(function () {});
-      setStatus(message || getTransportLockedMessage(), "warning");
+      const normalizedMessage = String(message || "").trim();
+      const sessionExpiredMessage = String(getTransportSessionExpiredMessage() || "").trim();
+      const statusKey = !normalizedMessage
+        ? "status.locked"
+        : normalizedMessage === sessionExpiredMessage
+          ? "status.sessionExpired"
+          : "";
+      setStatus(normalizedMessage || getTransportLockedMessage(), "warning", { key: statusKey });
     }
 
-    function handleProtectedRequestError(error, fallbackMessage) {
-      if (error && Number(error.status) === 401) {
-        clearTransportSession(getTransportSessionExpiredMessage());
-        return true;
-      }
-      setStatus(localizeTransportApiMessage(error && error.message) || fallbackMessage, "error");
-      if (error && (Number(error.status) === 404 || Number(error.status) === 409)) {
-        requestDashboardRefresh({ announce: false });
-      }
-      return false;
+  function handleProtectedRequestError(error, fallbackMessage) {
+    if (error && Number(error.status) === 401) {
+      clearTransportSession(getTransportSessionExpiredMessage());
+      return true;
     }
+    const resolvedErrorMessage = resolveTransportApiStructuredMessage(error && error.payload)
+      || localizeTransportApiMessage(error && error.message)
+      || fallbackMessage;
+    setStatus(resolvedErrorMessage, "error", resolveTransportApiStructuredMessageOptions(error && error.payload));
+    if (error && (Number(error.status) === 404 || Number(error.status) === 409)) {
+      requestDashboardRefresh({ announce: false });
+    }
+    return false;
+  }
 
     function openUserCreationRequest() {
       if (typeof globalScope.open === "function") {
         globalScope.open("../admin", "_blank", "noopener");
       }
-      setStatus(t("status.openAdminToRequestUser"), "info");
+      setStatus("", "info", { key: "status.openAdminToRequestUser" });
     }
 
     function loadTransportSettings(options) {
       const nextOptions = options || {};
       if (!state.isAuthenticated) {
+        state.arriveAtWorkTime = normalizeTransportTimeValue(state.arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME);
         state.workToHomeTime = state.workToHomeTime || DEFAULT_WORK_TO_HOME_TIME;
         state.lastUpdateTime = state.lastUpdateTime || DEFAULT_LAST_UPDATE_TIME;
+        state.extraCarToleranceMinutes = normalizeVehicleToleranceSetting(
+          state.extraCarToleranceMinutes,
+          DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES
+        );
         state.vehicleSeatDefaults = applyTransportVehicleSeatDefaults(state.vehicleSeatDefaults);
         state.vehiclePriceDefaults = resolveTransportVehiclePriceDefaults(
           state.vehiclePriceDefaults,
@@ -5168,11 +7814,22 @@
       return requestJson(`${TRANSPORT_API_PREFIX}/settings`)
         .then(function (response) {
           state.settingsLoaded = true;
+          state.arriveAtWorkTime = normalizeTransportTimeValue(
+            response && response.arrive_at_work_time,
+            normalizeTransportTimeValue(state.arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME)
+          );
           state.workToHomeTime = String(
             response && response.work_to_home_time ? response.work_to_home_time : DEFAULT_WORK_TO_HOME_TIME
           );
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : DEFAULT_LAST_UPDATE_TIME
+          );
+          state.extraCarToleranceMinutes = normalizeVehicleToleranceSetting(
+            response && response.extra_car_tolerance_minutes,
+            normalizeVehicleToleranceSetting(
+              state.extraCarToleranceMinutes,
+              DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES
+            )
           );
           state.priceCurrencyCode = normalizeTransportCurrencyCode(response && response.price_currency_code);
           state.priceRateUnit = normalizeTransportPriceRateUnit(
@@ -5207,14 +7864,20 @@
     }
 
     function saveTransportSettings(nextValues) {
+      const previousArriveAtWorkTime = state.arriveAtWorkTime;
       const previousWorkToHomeTime = state.workToHomeTime;
       const previousLastUpdateTime = state.lastUpdateTime;
+      const previousExtraCarToleranceMinutes = state.extraCarToleranceMinutes;
       const previousPriceCurrencyCode = state.priceCurrencyCode;
       const previousPriceRateUnit = state.priceRateUnit;
       const previousVehicleSeatDefaults = Object.assign({}, state.vehicleSeatDefaults);
       const previousVehiclePriceDefaults = Object.assign({}, state.vehiclePriceDefaults);
       const previousAvailableCurrencies = resolveTransportCurrencyOptions(state.availableCurrencies);
       const previousVehicleToleranceDefaultMinutes = state.vehicleToleranceDefaultMinutes;
+      const normalizedArriveAtWorkTime = normalizeTransportTimeValue(
+        nextValues && nextValues.arriveAtWorkTime,
+        normalizeTransportTimeValue(state.arriveAtWorkTime, DEFAULT_ARRIVE_AT_WORK_TIME)
+      );
       const normalizedTime = normalizeTransportTimeValue(
         nextValues && nextValues.workToHomeTime,
         normalizeTransportTimeValue(state.workToHomeTime, DEFAULT_WORK_TO_HOME_TIME)
@@ -5222,6 +7885,13 @@
       const normalizedLastUpdateTime = normalizeTransportTimeValue(
         nextValues && nextValues.lastUpdateTime,
         normalizeTransportTimeValue(state.lastUpdateTime, DEFAULT_LAST_UPDATE_TIME)
+      );
+      const normalizedExtraCarToleranceMinutes = normalizeVehicleToleranceSetting(
+        nextValues && nextValues.extraCarToleranceMinutes,
+        normalizeVehicleToleranceSetting(
+          state.extraCarToleranceMinutes,
+          DEFAULT_EXTRA_CAR_TOLERANCE_MINUTES
+        )
       );
       const normalizedSeatDefaults = resolveTransportVehicleSeatDefaults(
         {
@@ -5250,7 +7920,11 @@
         nextValues && nextValues.defaultToleranceMinutes,
         state.vehicleToleranceDefaultMinutes
       );
-      if (!isValidTransportTimeValue(normalizedTime) || !isValidTransportTimeValue(normalizedLastUpdateTime)) {
+      if (
+        !isValidTransportTimeValue(normalizedArriveAtWorkTime)
+        || !isValidTransportTimeValue(normalizedTime)
+        || !isValidTransportTimeValue(normalizedLastUpdateTime)
+      ) {
         syncSettingsControls();
         return Promise.resolve(null);
       }
@@ -5260,18 +7934,20 @@
           return currencyOption.code === normalizedPriceCurrencyCode;
         })
       ) {
-        setStatus(t("warnings.currencyNotAvailable"), "warning");
+        setStatus("", "warning", { key: "warnings.currencyNotAvailable" });
         syncSettingsControls();
         return Promise.resolve(null);
       }
       if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncSettingsControls();
         return Promise.resolve(null);
       }
 
+      state.arriveAtWorkTime = normalizedArriveAtWorkTime;
       state.workToHomeTime = normalizedTime;
       state.lastUpdateTime = normalizedLastUpdateTime;
+      state.extraCarToleranceMinutes = normalizedExtraCarToleranceMinutes;
       state.priceCurrencyCode = normalizedPriceCurrencyCode;
       state.priceRateUnit = normalizedPriceRateUnit;
       state.vehicleSeatDefaults = Object.assign({}, normalizedSeatDefaults);
@@ -5285,8 +7961,10 @@
       return requestJson(`${TRANSPORT_API_PREFIX}/settings`, {
         method: "PUT",
         body: JSON.stringify({
+          arrive_at_work_time: normalizedArriveAtWorkTime,
           work_to_home_time: normalizedTime,
           last_update_time: normalizedLastUpdateTime,
+          extra_car_tolerance_minutes: normalizedExtraCarToleranceMinutes,
           default_car_seats: normalizedSeatDefaults.carro,
           default_minivan_seats: normalizedSeatDefaults.minivan,
           default_van_seats: normalizedSeatDefaults.van,
@@ -5302,11 +7980,19 @@
       })
         .then(function (response) {
           state.settingsLoaded = true;
+          state.arriveAtWorkTime = normalizeTransportTimeValue(
+            response && response.arrive_at_work_time,
+            normalizedArriveAtWorkTime
+          );
           state.workToHomeTime = String(
             response && response.work_to_home_time ? response.work_to_home_time : normalizedTime
           );
           state.lastUpdateTime = String(
             response && response.last_update_time ? response.last_update_time : normalizedLastUpdateTime
+          );
+          state.extraCarToleranceMinutes = normalizeVehicleToleranceSetting(
+            response && response.extra_car_tolerance_minutes,
+            normalizedExtraCarToleranceMinutes
           );
           state.priceCurrencyCode = normalizeTransportCurrencyCode(response && response.price_currency_code);
           state.priceRateUnit = normalizeTransportPriceRateUnit(
@@ -5327,13 +8013,15 @@
               : normalizedToleranceDefault
           );
           return loadDashboard(dateStore.getValue(), { announce: false }).then(function () {
-            setStatus(t("status.settingsSaved"), "success");
+            setStatus("", "success", { key: "status.settingsSaved" });
             return response;
           });
         })
         .catch(function (error) {
+          state.arriveAtWorkTime = previousArriveAtWorkTime;
           state.workToHomeTime = previousWorkToHomeTime;
           state.lastUpdateTime = previousLastUpdateTime;
+          state.extraCarToleranceMinutes = previousExtraCarToleranceMinutes;
           state.priceCurrencyCode = previousPriceCurrencyCode;
           state.priceRateUnit = previousPriceRateUnit;
           state.vehicleSeatDefaults = previousVehicleSeatDefaults;
@@ -5360,12 +8048,12 @@
       );
 
       if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         return Promise.resolve(null);
       }
 
       if (!isValidTransportCurrencyCode(normalizedCurrencyCode)) {
-        setStatus(t("warnings.invalidCurrencyCode"), "warning");
+        setStatus("", "warning", { key: "warnings.invalidCurrencyCode" });
         if (settingsNewCurrencyCodeInput && typeof settingsNewCurrencyCodeInput.focus === "function") {
           settingsNewCurrencyCodeInput.focus();
         }
@@ -5405,9 +8093,17 @@
 
     function switchTransportLanguage(nextLanguageCode) {
       const resolvedCode = resolveLanguageCode(nextLanguageCode);
+      const previousStatusDescriptor = {
+        key: state.statusMessageKey,
+        values: state.statusMessageValues && typeof state.statusMessageValues === "object"
+          ? Object.assign({}, state.statusMessageValues)
+          : null,
+        message: state.statusMessageText,
+        tone: state.statusMessageTone,
+      };
       state.languageLoading = true;
       syncSettingsControls();
-      setStatus(t("status.switchingLanguage"), "info");
+      setStatus("", "info", { key: "status.switchingLanguage", preserveState: true });
 
       return new Promise(function (resolve) {
         const finishSwitch = function () {
@@ -5421,11 +8117,7 @@
           state.languageLoading = false;
           syncSettingsControls();
           syncRouteTimeControls();
-          if (state.isAuthenticated) {
-            setStatus(t("status.dashboardUpdated"), "info");
-          } else {
-            setStatus(getTransportLockedMessage(), "warning");
-          }
+          syncStatusMessageCopy(previousStatusDescriptor);
           resolve();
         };
 
@@ -5467,7 +8159,12 @@
           if (response && response.authenticated && response.user) {
             state.lastVerifiedAuthSignature = currentSignature;
             setAuthenticationState(true, response.user, {});
-            setStatus(localizeTransportApiMessage(response.message) || t("status.accessGranted"), "success");
+            const structuredAccessGrantedMessage = resolveTransportApiStructuredMessage(response)
+              || String(response && response.message || "").trim();
+            const accessGrantedMessage = structuredAccessGrantedMessage || t("status.accessGranted");
+            const accessGrantedOptions = resolveTransportApiStructuredMessageOptions(response)
+              || (structuredAccessGrantedMessage ? undefined : { key: "status.accessGranted" });
+            setStatus(accessGrantedMessage, "success", accessGrantedOptions);
             return Promise.all([
               loadDashboard(dateStore.getValue(), { announce: false }),
               loadTransportSettings({ silent: true }),
@@ -5476,7 +8173,12 @@
 
           state.lastVerifiedAuthSignature = "";
           setAuthenticationState(false, null, {});
-          setStatus(localizeTransportApiMessage(response && response.message) || getTransportLockedMessage(), "warning");
+          const structuredLockedMessage = resolveTransportApiStructuredMessage(response)
+            || String(response && response.message || "").trim();
+          const lockedMessage = structuredLockedMessage || getTransportLockedMessage();
+          const lockedOptions = resolveTransportApiStructuredMessageOptions(response)
+            || (structuredLockedMessage ? undefined : { key: "status.locked" });
+          setStatus(lockedMessage, "warning", lockedOptions);
           return null;
         })
         .catch(function (error) {
@@ -5486,7 +8188,12 @@
           if (error && error.name === "AbortError") {
             return null;
           }
-          setStatus(localizeTransportApiMessage(error && error.message) || t("status.couldNotVerify"), "error");
+          const structuredVerifyErrorMessage = resolveTransportApiStructuredMessage(error && error.payload)
+            || localizeTransportApiMessage(error && error.message);
+          const verifyErrorMessage = structuredVerifyErrorMessage || t("status.couldNotVerify");
+          const verifyErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload)
+            || (structuredVerifyErrorMessage ? undefined : { key: "status.couldNotVerify" });
+          setStatus(verifyErrorMessage, "error", verifyErrorOptions);
           return null;
         })
         .finally(function () {
@@ -5510,7 +8217,7 @@
         state.authVerifySignature = "";
         if (!state.isAuthenticated && !state.sessionBootstrapPending) {
           setAuthenticationState(false, null, {});
-          setStatus(getTransportLockedMessage(), "warning");
+          setStatus("", "warning", { key: "status.locked" });
         }
         return;
       }
@@ -5550,7 +8257,7 @@
           const authDraftChanged = getTransportAuthInputSnapshot() !== initialAuthInputSnapshot;
           if (response && response.authenticated && response.user) {
             setAuthenticationState(true, response.user, { fillKey: !authDraftChanged });
-            setStatus(getDefaultStatusMessage(), "info");
+            setStatus("", "info", { key: DEFAULT_STATUS_MESSAGE_KEY });
             return Promise.all([
               loadDashboard(dateStore.getValue(), { announce: false }),
               loadTransportSettings({ silent: true }),
@@ -5558,13 +8265,13 @@
           }
 
           setAuthenticationState(false, null, { resetInputs: !authDraftChanged, clearDashboard: true });
-          setStatus(getTransportLockedMessage(), "warning");
+          setStatus("", "warning", { key: "status.locked" });
           return null;
         })
         .catch(function () {
           const authDraftChanged = getTransportAuthInputSnapshot() !== initialAuthInputSnapshot;
           setAuthenticationState(false, null, { resetInputs: !authDraftChanged, clearDashboard: true });
-          setStatus(getTransportLockedMessage(), "warning");
+          setStatus("", "warning", { key: "status.locked" });
           return null;
         })
         .finally(function () {
@@ -5632,8 +8339,20 @@
       });
     }
 
+    if (settingsArriveAtWorkInput) {
+      settingsArriveAtWorkInput.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
+
     if (settingsTimeInput) {
       settingsTimeInput.addEventListener("change", function () {
+        void saveTransportSettings(readTransportSettingsDraft());
+      });
+    }
+
+    if (settingsExtraCarToleranceInput) {
+      settingsExtraCarToleranceInput.addEventListener("change", function () {
         void saveTransportSettings(readTransportSettingsDraft());
       });
     }
@@ -5817,6 +8536,28 @@
           {
             earliestBoardingInput: aiAgentEarliestBoardingInput,
             arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+            requestKindInputs: aiAgentRequestKindInputs,
+          },
+          state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
+        );
+        if (state.aiAgentFeedbackMessage) {
+          clearAiAgentFeedback();
+          return;
+        }
+        syncAiAgentSettingsControls({ preserveInputs: true });
+      });
+    });
+
+    aiAgentRequestKindInputs.forEach(function (inputElement) {
+      if (!inputElement) {
+        return;
+      }
+      inputElement.addEventListener("change", function () {
+        state.aiAgentSettingsDraft = readAiAgentSettingsDraft(
+          {
+            earliestBoardingInput: aiAgentEarliestBoardingInput,
+            arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+            requestKindInputs: aiAgentRequestKindInputs,
           },
           state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
         );
@@ -5945,6 +8686,11 @@
           syncVehicleTypeDependentDefaults(vehicleForm.elements.tipo.value, vehicleForm);
         });
       }
+      if (vehicleForm.elements.route_kind) {
+        vehicleForm.elements.route_kind.addEventListener("change", function () {
+          syncVehicleModalFields(vehicleModal && vehicleModal.dataset.scope ? vehicleModal.dataset.scope : "extra");
+        });
+      }
 
       vehicleForm.addEventListener("submit", function (event) {
         event.preventDefault();
@@ -5970,12 +8716,19 @@
           })
             .then(function (response) {
               closeVehicleModal();
-              setStatus(localizeTransportApiMessage(response && response.message) || t("status.vehicleUpdated"), "success");
+              const structuredVehicleUpdatedMessage = resolveTransportApiStructuredMessage(response)
+                || String(response && response.message || "").trim();
+              const vehicleUpdatedMessage = structuredVehicleUpdatedMessage || t("status.vehicleUpdated");
+              const vehicleUpdatedOptions = resolveTransportApiStructuredMessageOptions(response)
+                || (structuredVehicleUpdatedMessage ? undefined : { key: "status.vehicleUpdated" });
+              setStatus(vehicleUpdatedMessage, "success", vehicleUpdatedOptions);
               return loadDashboard(dateStore.getValue(), { announce: false });
             })
             .catch(function (error) {
               setVehicleModalFeedback(
-                localizeTransportApiMessage(error && error.message) || t("status.couldNotUpdateVehicle"),
+                resolveTransportApiStructuredMessage(error && error.payload)
+                  || localizeTransportApiMessage(error && error.message)
+                  || t("status.couldNotUpdateVehicle"),
                 "error"
               );
               handleProtectedRequestError(error, t("status.couldNotUpdateVehicle"));
@@ -6005,19 +8758,29 @@
           method: "POST",
           body: JSON.stringify(payload),
         })
-          .then(function () {
+          .then(function (response) {
             const currentDashboardDate = dateStore.getValue();
             let reloadDate = resolveVehicleSaveReloadDate(payload, currentDashboardDate);
 
             closeVehicleModal();
-            setStatus(t("status.vehicleSaved"), "success");
+            const structuredVehicleSavedMessage = resolveTransportApiStructuredMessage(response)
+              || String(response && response.message || "").trim();
+            const vehicleSavedMessage = structuredVehicleSavedMessage || t("status.vehicleSaved");
+            const vehicleSavedOptions = resolveTransportApiStructuredMessageOptions(response)
+              || (structuredVehicleSavedMessage ? undefined : { key: "status.vehicleSaved" });
+            setStatus(vehicleSavedMessage, "success", vehicleSavedOptions);
             if (formatIsoDate(reloadDate) !== formatIsoDate(currentDashboardDate)) {
               reloadDate = setDashboardDateForSilentReload(reloadDate);
             }
             return loadDashboard(reloadDate, { announce: false });
           })
           .catch(function (error) {
-            setVehicleModalFeedback(localizeTransportApiMessage(error && error.message) || t("status.couldNotSaveVehicle"), "error");
+            setVehicleModalFeedback(
+              resolveTransportApiStructuredMessage(error && error.payload)
+                || localizeTransportApiMessage(error && error.message)
+                || t("status.couldNotSaveVehicle"),
+              "error"
+            );
             handleProtectedRequestError(error, t("status.couldNotSaveVehicle"));
           })
           .finally(function () {
@@ -6028,13 +8791,82 @@
       });
     }
 
-    function setStatus(message, tone) {
+    function cloneTransportMessageValues(values) {
+      return values && typeof values === "object" && !Array.isArray(values)
+        ? Object.assign({}, values)
+        : null;
+    }
+
+    function syncStatusMessageCopy(overrideDescriptor) {
       if (!statusMessage) {
         return;
       }
 
-      statusMessage.textContent = message || getDefaultStatusMessage();
-      statusMessage.dataset.tone = tone || "info";
+      const descriptor = overrideDescriptor || {};
+      const statusKey = String(
+        descriptor.key !== undefined ? descriptor.key : state.statusMessageKey
+      ).trim();
+      const statusValues = cloneTransportMessageValues(
+        descriptor.values !== undefined ? descriptor.values : state.statusMessageValues
+      );
+      const fallbackMessage = String(
+        descriptor.message !== undefined ? descriptor.message : state.statusMessageText
+      ).trim();
+      const statusTone = String(
+        descriptor.tone !== undefined ? descriptor.tone : state.statusMessageTone
+      ).trim() || "info";
+
+      let resolvedMessage = "";
+      if (statusKey) {
+        const translatedStatus = t(statusKey, statusValues || undefined);
+        if (translatedStatus && translatedStatus !== statusKey) {
+          resolvedMessage = translatedStatus;
+        } else if (fallbackMessage) {
+          resolvedMessage = fallbackMessage;
+        } else {
+          resolvedMessage = translatedStatus;
+        }
+      } else {
+        resolvedMessage = fallbackMessage;
+      }
+
+      if (!String(resolvedMessage || "").trim()) {
+        resolvedMessage = getDefaultStatusMessage();
+      }
+
+      const normalizedDefaultStatusMessage = String(getDefaultStatusMessage() || "").trim();
+      if (
+        statusKey === DEFAULT_STATUS_MESSAGE_KEY
+        || (!statusKey && String(resolvedMessage || "").trim() === normalizedDefaultStatusMessage)
+      ) {
+        statusMessage.setAttribute("data-i18n-text", DEFAULT_STATUS_MESSAGE_KEY);
+      } else {
+        statusMessage.removeAttribute("data-i18n-text");
+      }
+
+      statusMessage.textContent = resolvedMessage;
+      statusMessage.dataset.tone = statusTone;
+    }
+
+    function setStatus(message, tone, options) {
+      const statusOptions = options || {};
+      const descriptor = {
+        key: String(statusOptions.key || "").trim(),
+        values: cloneTransportMessageValues(statusOptions.values),
+        message: String(message || "").trim(),
+        tone: tone || "info",
+      };
+
+      if (statusOptions.preserveState === true) {
+        syncStatusMessageCopy(descriptor);
+        return;
+      }
+
+      state.statusMessageKey = descriptor.key;
+      state.statusMessageValues = descriptor.values;
+      state.statusMessageText = descriptor.message;
+      state.statusMessageTone = descriptor.tone;
+      syncStatusMessageCopy();
     }
 
     function setVehicleModalFeedback(message, tone) {
@@ -6065,9 +8897,7 @@
       state.aiAgentFeedbackValues = feedbackOptions.values && typeof feedbackOptions.values === "object"
         ? Object.assign({}, feedbackOptions.values)
         : null;
-      state.aiAgentFeedbackMessage = state.aiAgentFeedbackKey
-        ? ""
-        : String(message || "").trim();
+      state.aiAgentFeedbackMessage = String(message || "").trim();
       state.aiAgentFeedbackTone = tone || "info";
       syncAiAgentSettingsControls({ preserveInputs: true });
     }
@@ -6082,9 +8912,7 @@
       state.aiSettingsFeedbackValues = feedbackOptions.values && typeof feedbackOptions.values === "object"
         ? Object.assign({}, feedbackOptions.values)
         : null;
-      state.aiSettingsFeedbackMessage = state.aiSettingsFeedbackKey
-        ? ""
-        : String(message || "").trim();
+      state.aiSettingsFeedbackMessage = String(message || "").trim();
       state.aiSettingsFeedbackTone = tone || "info";
       syncAiSettingsControls({ preserveInputs: true });
     }
@@ -6099,9 +8927,7 @@
       state.aiChangesSummaryValues = summaryOptions.values && typeof summaryOptions.values === "object"
         ? Object.assign({}, summaryOptions.values)
         : null;
-      state.aiChangesSummaryMessage = state.aiChangesSummaryKey
-        ? ""
-        : String(message || "").trim();
+      state.aiChangesSummaryMessage = String(message || "").trim();
       state.aiChangesSummaryTone = tone || "success";
       syncAiChangesSummaryCopy();
     }
@@ -6119,7 +8945,7 @@
 
       if (!state.isAuthenticated) {
         setAiChangesSummary("", "warning", { key: "status.locked" });
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncAiChangesControls();
         return Promise.resolve(null);
       }
@@ -6157,12 +8983,14 @@
           state.aiRouteRunStatus = response || null;
           state.aiRouteSuggestion = response && response.suggestion ? response.suggestion : null;
 
-          const resolvedMessage = localizeTransportApiMessage(response && response.message)
+          const structuredCommandMessage = resolveTransportApiStructuredMessage(response)
             || String(response && response.message || "").trim();
-          const successMessage = resolvedMessage || t(actionCopy.successKey);
+          const successMessage = structuredCommandMessage || t(actionCopy.successKey);
+          const successStatusOptions = resolveTransportApiStructuredMessageOptions(response)
+            || (structuredCommandMessage ? undefined : { key: actionCopy.successKey });
 
           closeAiChangesModal({ force: true });
-          setStatus(successMessage, "success");
+          setStatus(successMessage, "success", successStatusOptions);
           if (shouldRefreshDashboardAfterAiSuggestionCommand(normalizedAction)) {
             requestDashboardRefresh({ announce: false });
           }
@@ -6175,15 +9003,19 @@
             state.aiRouteSuggestion = error.payload.suggestion ? error.payload.suggestion : state.aiRouteSuggestion;
           }
 
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+          const resolvedMessage = resolveTransportApiStructuredMessage(error && error.payload)
+            || localizeTransportApiMessage(error && error.message)
             || String(
               (error && error.payload && error.payload.message)
               || (error && error.message)
               || ""
             ).trim();
-          setAiChangesSummary(resolvedMessage, "error", resolvedMessage
-            ? undefined
-            : { key: actionCopy.errorKey });
+          const commandErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload);
+          setAiChangesSummary(
+            resolvedMessage,
+            "error",
+            commandErrorOptions || (resolvedMessage ? undefined : { key: actionCopy.errorKey })
+          );
           handleProtectedRequestError(error, resolvedMessage || t(actionCopy.errorKey));
           return null;
         })
@@ -6273,10 +9105,13 @@
         })
         .catch(function (error) {
           const handledProtectedError = handleProtectedRequestError(error, t("ai.settingsProjectLoadFailed"));
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+          const resolvedMessage = resolveTransportApiStructuredMessage(error && error.payload)
+            || localizeTransportApiMessage(error && error.message)
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsProjectLoadFailed"));
           const fallbackProjects = normalizeTransportAiSettingsProjectRows(state.aiSettingsProjects);
-          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
+          const projectCatalogErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload)
+            || (resolvedMessage ? undefined : { key: "ai.settingsProjectLoadFailed" });
+          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error", projectCatalogErrorOptions);
           if (fallbackProjects.length) {
             applyTransportAiSettingsProjects(fallbackProjects, preferredProjectId);
           } else {
@@ -6386,7 +9221,9 @@
           }
           const resolvedMessage = errorState.message
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsLoadFailed"));
-          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
+          const aiSettingsLoadErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload)
+            || (resolvedMessage ? undefined : { key: "ai.settingsLoadFailed" });
+          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error", aiSettingsLoadErrorOptions);
           return null;
         })
         .finally(function () {
@@ -6401,7 +9238,7 @@
     function saveTransportAiSettings() {
       if (!state.isAuthenticated) {
         setAiSettingsFeedback("", "warning", { key: "status.locked" });
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncAiSettingsControls({ preserveInputs: true });
         return Promise.resolve(null);
       }
@@ -6466,7 +9303,12 @@
           state.aiSettingsHasApiKey = Boolean(response && response.has_api_key);
           state.aiSettingsApiKeyHint = String(response && response.api_key_hint || "").trim();
           clearAiSettingsFeedback();
-          setStatus(t("ai.settingsSaved"), "success");
+          const structuredAiSettingsSavedMessage = resolveTransportApiStructuredMessage(response)
+            || String(response && response.message || "").trim();
+          const aiSettingsSavedMessage = structuredAiSettingsSavedMessage || t("ai.settingsSaved");
+          const aiSettingsSavedOptions = resolveTransportApiStructuredMessageOptions(response)
+            || (structuredAiSettingsSavedMessage ? undefined : { key: "ai.settingsSaved" });
+          setStatus(aiSettingsSavedMessage, "success", aiSettingsSavedOptions);
           closeAiSettingsModal({ force: true, restoreFocus: true });
           return response || null;
         })
@@ -6484,7 +9326,9 @@
           }
           const resolvedMessage = errorState.message
             || (handledProtectedError ? getTransportSessionExpiredMessage() : t("ai.settingsSaveFailed"));
-          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error");
+          const aiSettingsSaveErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload)
+            || (resolvedMessage ? undefined : { key: "ai.settingsSaveFailed" });
+          setAiSettingsFeedback(resolvedMessage, handledProtectedError ? "warning" : "error", aiSettingsSaveErrorOptions);
           return null;
         })
         .finally(function () {
@@ -6556,7 +9400,9 @@
     function focusAiAgentSettingsField(fieldName) {
       const fieldElement = fieldName === "arrivalAtWorkTime"
         ? aiAgentArrivalAtWorkInput
-        : aiAgentEarliestBoardingInput;
+        : fieldName === "requestKinds"
+          ? aiAgentRequestKindInputs[0]
+          : aiAgentEarliestBoardingInput;
       if (fieldElement && typeof fieldElement.focus === "function") {
         fieldElement.focus();
       }
@@ -6573,14 +9419,17 @@
       state.aiChangesCommandPending = false;
       state.aiChangesPendingAction = "";
 
-      const readyMessage = localizeTransportApiMessage(runStatusResponse && runStatusResponse.message)
+      const readyMessage = resolveTransportApiStructuredMessage(runStatusResponse)
         || String(runStatusResponse && runStatusResponse.message || "").trim();
+      const readyMessageOptions = resolveTransportApiStructuredMessageOptions(runStatusResponse);
 
       closeAiSettingsModal({ force: true });
       closeAiAgentSettingsModal({ force: true });
-      setAiChangesSummary(readyMessage, "success", readyMessage
-        ? undefined
-        : { key: "ai.agentSettingsReadyForReview" });
+      setAiChangesSummary(
+        readyMessage,
+        "success",
+        readyMessageOptions || (readyMessage ? undefined : { key: "ai.agentSettingsReadyForReview" })
+      );
       if (aiChangesModal) {
         applyStaticTranslations();
         aiChangesModal.hidden = false;
@@ -6589,7 +9438,12 @@
           closeButton.focus();
         }
       }
-      setStatus(readyMessage || t("ai.agentSettingsReadyForReview"), "success");
+      const readyStatusMessage = readyMessage || t("ai.agentSettingsReadyForReview");
+      setStatus(
+        readyStatusMessage,
+        "success",
+        readyMessageOptions || (readyMessage ? undefined : { key: "ai.agentSettingsReadyForReview" })
+      );
     }
 
     function closeAiChangesModal(options) {
@@ -6615,7 +9469,7 @@
       closeAiMenu();
 
       if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncAiMenuControls();
         return Promise.resolve(null);
       }
@@ -6626,7 +9480,7 @@
         getSelectedRouteKind()
       );
       if (!latestSuggestionUrl) {
-        setStatus(t("ai.loadLatestSuggestionFailed"), "error");
+        setStatus("", "error", { key: "ai.loadLatestSuggestionFailed" });
         return Promise.resolve(null);
       }
 
@@ -6643,13 +9497,15 @@
         })
         .catch(function (error) {
           if (error && Number(error.status) === 404) {
-            setStatus(t("ai.noSavedSuggestion"), "info");
+            setStatus("", "info", { key: "ai.noSavedSuggestion" });
             return null;
           }
 
           handleProtectedRequestError(
             error,
-            localizeTransportApiMessage(error && error.message) || t("ai.loadLatestSuggestionFailed")
+            resolveTransportApiStructuredMessage(error && error.payload)
+              || localizeTransportApiMessage(error && error.message)
+              || t("ai.loadLatestSuggestionFailed")
           );
           return null;
         })
@@ -6703,13 +9559,16 @@
           state.aiRouteRunStatus = response || null;
           state.aiRouteSuggestion = response && response.suggestion ? response.suggestion : null;
 
-          const responseMessage = localizeTransportApiMessage(response && response.message)
+          const responseMessage = resolveTransportApiStructuredMessage(response)
             || String(response && response.message || "").trim();
-          if (response && response.suggestion_ready && response.suggestion) {
+          const responseMessageOptions = resolveTransportApiStructuredMessageOptions(response);
+          if (hasRenderableTransportAiReview(response)) {
             resetAiRoutePollingBackoff();
-            setAiAgentFeedback(responseMessage, "success", responseMessage
-              ? undefined
-              : { key: "ai.agentSettingsReadyForReview" });
+            setAiAgentFeedback(
+              responseMessage,
+              "success",
+              responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsReadyForReview" })
+            );
             requestDashboardRefresh({ announce: false });
             openAiChangesModal(response);
             return response;
@@ -6717,15 +9576,22 @@
 
           if (!response || response.ok === false || String(response.status || "").trim().toLowerCase() === "failed") {
             resetAiRoutePollingBackoff();
-            setAiAgentFeedback(responseMessage, "error", responseMessage
-              ? undefined
-              : { key: "ai.routeCalculationFailed" });
+            const errorMessage = resolveTransportAiStructuredMessage(response);
+            const baselineComplement = resolveTransportAiBaselineComplement(response);
+            const displayMessage = baselineComplement ? errorMessage + " " + baselineComplement : errorMessage;
+            setAiAgentFeedback(
+              displayMessage,
+              "error",
+              responseMessageOptions || (displayMessage ? undefined : { key: "ai.routeCalculationFailed" })
+            );
             return response || null;
           }
 
-          setAiAgentFeedback(responseMessage, shouldContinuePollingAiRouteRun(response) ? "warning" : "success", responseMessage
-            ? undefined
-            : { key: "ai.agentSettingsSubmitting" });
+          setAiAgentFeedback(
+            responseMessage,
+            shouldContinuePollingAiRouteRun(response) ? "warning" : "success",
+            responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" })
+          );
           if (shouldContinuePollingAiRouteRun(response)) {
             queueAiRouteRunPoll(state.aiRouteRunKey, getNextAiRoutePollDelay());
           } else {
@@ -6736,11 +9602,15 @@
         .catch(function (error) {
           resetAiRoutePollingBackoff();
           const fallbackErrorMessage = t("ai.routeCalculationFailed");
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
+          const resolvedMessage = resolveTransportApiStructuredMessage(error && error.payload)
+            || localizeTransportApiMessage(error && error.message)
             || String(error && error.message || "").trim();
-          setAiAgentFeedback(resolvedMessage, "error", resolvedMessage
-            ? undefined
-            : { key: "ai.routeCalculationFailed" });
+          const pollErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload);
+          setAiAgentFeedback(
+            resolvedMessage,
+            "error",
+            pollErrorOptions || (resolvedMessage ? undefined : { key: "ai.routeCalculationFailed" })
+          );
           handleProtectedRequestError(error, resolvedMessage || fallbackErrorMessage);
           return null;
         })
@@ -6752,7 +9622,7 @@
     function requestAiRoutes() {
       if (!state.isAuthenticated) {
         setAiAgentFeedback("", "warning", { key: "status.locked" });
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         syncAiAgentSettingsControls({ preserveInputs: true });
         return Promise.resolve(null);
       }
@@ -6761,6 +9631,7 @@
         {
           earliestBoardingInput: aiAgentEarliestBoardingInput,
           arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+          requestKindInputs: aiAgentRequestKindInputs,
         },
         state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
       );
@@ -6773,6 +9644,18 @@
         return Promise.resolve(null);
       }
 
+      const dashboardScope = buildTransportAiDashboardScope(
+        getProjectRows(),
+        state.projectVisibility,
+        validation.draft.requestKinds
+      );
+      if (dashboardScope && Array.isArray(dashboardScope.project_ids) && !dashboardScope.project_ids.length) {
+        setAiAgentFeedback("", "error", { key: "ai.agentSettingsNoProjectsSelected" });
+        setStatus("", "error", { key: "ai.agentSettingsNoProjectsSelected" });
+        syncAiAgentSettingsControls({ preserveInputs: true });
+        return Promise.resolve(null);
+      }
+
       state.aiAgentSettingsDraft = validation.draft;
       state.aiRouteRunKey = null;
       state.aiRouteRunStatus = null;
@@ -6780,13 +9663,14 @@
       resetAiRoutePollingBackoff();
       state.aiRouteRequestPending = true;
       clearPendingAiRoutePolling();
-      setAiAgentFeedback("", "info", { key: "ai.agentSettingsSubmitting" });
+      setAiAgentFeedback("", "info", buildAiAgentSubmittingFeedbackOptions(validation.draft.requestKinds));
       syncAiAgentSettingsControls({ preserveInputs: true });
 
       const payload = buildTransportAiRouteCalculationPayload(
         getCurrentServiceDateIso(),
         getSelectedRouteKind(),
-        validation.draft
+        validation.draft,
+        dashboardScope
       );
 
       return requestJson(`${TRANSPORT_API_PREFIX}/ai/route-calculations`, {
@@ -6798,11 +9682,14 @@
           state.aiRouteRunStatus = response || null;
           state.aiRouteSuggestion = null;
 
-          const responseMessage = localizeTransportApiMessage(response && response.message)
+          const responseMessage = resolveTransportApiStructuredMessage(response)
             || String(response && response.message || "").trim();
-          setAiAgentFeedback(responseMessage, response && response.suggestion_ready ? "success" : "warning", responseMessage
-            ? undefined
-            : { key: "ai.agentSettingsSubmitting" });
+          const responseMessageOptions = resolveTransportApiStructuredMessageOptions(response);
+          setAiAgentFeedback(
+            responseMessage,
+            response && response.suggestion_ready ? "success" : "warning",
+            responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" })
+          );
 
           if (state.aiRouteRunKey) {
             return pollAiRouteRun(state.aiRouteRunKey);
@@ -6816,15 +9703,22 @@
             : null;
           state.aiRouteRunStatus = error && error.payload ? error.payload : null;
           state.aiRouteSuggestion = null;
-          const resolvedMessage = localizeTransportApiMessage(error && error.message)
-            || String(
-              (error && error.payload && error.payload.message)
-              || (error && error.message)
-              || ""
-            ).trim();
-          setAiAgentFeedback(resolvedMessage, "error", resolvedMessage
-            ? undefined
-            : { key: "ai.routeCalculationFailed" });
+          const errorPayload = error && error.payload ? error.payload : null;
+          const structuredStartMessage = errorPayload
+            ? resolveTransportAiStructuredMessage(errorPayload)
+            : (resolveTransportApiStructuredMessage(error && error.payload)
+               || localizeTransportApiMessage(error && error.message)
+               || String(error && error.message || "").trim());
+          const startBaselineComplement = errorPayload ? resolveTransportAiBaselineComplement(errorPayload) : null;
+          const resolvedMessage = startBaselineComplement
+            ? structuredStartMessage + " " + startBaselineComplement
+            : structuredStartMessage;
+          const routeStartErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload);
+          setAiAgentFeedback(
+            resolvedMessage,
+            "error",
+            routeStartErrorOptions || (resolvedMessage ? undefined : { key: "ai.routeCalculationFailed" })
+          );
           handleProtectedRequestError(error, resolvedMessage || fallbackErrorMessage);
           return null;
         })
@@ -6911,7 +9805,7 @@
 
     function canOpenVehicleModal(scope) {
       if (!state.isAuthenticated) {
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         return false;
       }
       return true;
@@ -6955,10 +9849,14 @@
       });
       if (vehicleForm.elements.route_kind) {
         if (!isEditMode && normalizedScope === "extra") {
-          vehicleForm.elements.route_kind.value = getSelectedRouteKind();
+          const currentRouteKind = String(vehicleForm.elements.route_kind.value || "").trim();
+          vehicleForm.elements.route_kind.value = Object.prototype.hasOwnProperty.call(ROUTE_KIND_KEYS, currentRouteKind)
+            ? currentRouteKind
+            : getSelectedRouteKind();
         }
         vehicleForm.elements.route_kind.disabled = isEditMode || normalizedScope !== "extra";
       }
+      syncExtraVehicleDepartureFieldCopy(normalizedScope);
       if (vehicleForm.elements.service_date) {
         vehicleForm.elements.service_date.required = !isEditMode && normalizedScope === "extra";
         vehicleForm.elements.service_date.disabled = isEditMode || normalizedScope !== "extra";
@@ -7108,9 +10006,42 @@
       return state.projectVisibility[normalizedProjectName] !== false;
     }
 
+    function getRequestRowProjects(requestRow) {
+      if (!requestRow || typeof requestRow !== "object") {
+        return [];
+      }
+
+      const rawProjectNames = Array.isArray(requestRow.projects) && requestRow.projects.length
+        ? requestRow.projects
+        : [requestRow.projeto];
+      const normalizedProjectNames = [];
+      const seenProjectNames = new Set();
+
+      rawProjectNames.forEach(function (projectName) {
+        const normalizedProjectName = String(projectName || "").trim();
+        if (!normalizedProjectName || seenProjectNames.has(normalizedProjectName)) {
+          return;
+        }
+        seenProjectNames.add(normalizedProjectName);
+        normalizedProjectNames.push(normalizedProjectName);
+      });
+
+      return normalizedProjectNames;
+    }
+
+    function isRequestVisibleForProjects(requestRow) {
+      const requestProjectNames = getRequestRowProjects(requestRow);
+      if (!requestProjectNames.length) {
+        return true;
+      }
+      return requestProjectNames.some(function (projectName) {
+        return isProjectVisible(projectName);
+      });
+    }
+
     function getVisibleRequestsForKind(kind) {
       return getRequestsForKind(kind).filter(function (requestRow) {
-        return isProjectVisible(requestRow.projeto);
+        return isRequestVisibleForProjects(requestRow);
       });
     }
 
@@ -7364,6 +10295,341 @@
       return removeButton;
     }
 
+    function saveRequestRowBoardingTime(requestRow, boardingTime, routeKind) {
+      if (!requestRow || !requestRow.id || !requestRow.service_date) {
+        setStatus("", "error", { key: "status.couldNotSaveBoardingTime" });
+        return Promise.resolve(null);
+      }
+
+      return requestJson(`${TRANSPORT_API_PREFIX}/assignments/boarding-time`, {
+        method: "PUT",
+        body: JSON.stringify({
+          request_id: requestRow.id,
+          service_date: requestRow.service_date,
+          route_kind: getRouteKindForRequestRow(requestRow, routeKind),
+          boarding_time: boardingTime,
+        }),
+      }).then(function (response) {
+        const structuredBoardingTimeMessage = resolveTransportApiStructuredMessage(response)
+          || String(response && response.message || "").trim();
+        const boardingTimeMessage = structuredBoardingTimeMessage || t("status.boardingTimeSaved");
+        const boardingTimeOptions = resolveTransportApiStructuredMessageOptions(response)
+          || (structuredBoardingTimeMessage ? undefined : { key: "status.boardingTimeSaved" });
+        setStatus(boardingTimeMessage, "success", boardingTimeOptions);
+        return loadDashboard(dateStore.getValue(), { announce: false });
+      }).catch(function (error) {
+        if (handleProtectedRequestError(error, t("status.couldNotSaveBoardingTime"))) {
+          return null;
+        }
+        throw error;
+      });
+    }
+
+    function resolveVehicleDetailsScope(vehicle, detailOptions) {
+      const resolvedOptions = detailOptions || {};
+      return String(
+        resolvedOptions.scope !== undefined && resolvedOptions.scope !== null
+          ? resolvedOptions.scope
+          : vehicle && vehicle.service_scope
+      ).trim();
+    }
+
+    function resolveVehicleDetailsRouteKind(vehicle, detailOptions) {
+      const resolvedOptions = detailOptions || {};
+      const scope = resolveVehicleDetailsScope(vehicle, resolvedOptions);
+      return resolvedOptions.routeKind || getRouteKindForVehicle(scope, vehicle);
+    }
+
+    function resolveVehicleDetailsPassengerTime(vehicle, requestRow, detailOptions) {
+      const resolvedOptions = detailOptions || {};
+      const scope = resolveVehicleDetailsScope(vehicle, resolvedOptions);
+      const routeKind = resolveVehicleDetailsRouteKind(vehicle, resolvedOptions);
+
+      return resolveVehiclePassengerOperationalTime(
+        scope,
+        vehicle,
+        requestRow,
+        state.dashboard,
+        state.arriveAtWorkTime,
+        state.vehicleReferenceClock,
+        state.workToHomeTime,
+        routeKind
+      );
+    }
+
+    function buildVehicleDetailsRowViewModels(vehicle, assignedRows, detailOptions) {
+      const resolvedOptions = detailOptions || {};
+      const previewRequestRow = resolvedOptions.previewRequestRow || null;
+      const resolvedRouteKind = resolveVehicleDetailsRouteKind(vehicle, resolvedOptions);
+      const visiblePassengerRows = buildVehiclePassengerPreviewRows(
+        assignedRows,
+        previewRequestRow,
+        VEHICLE_DETAILS_MAX_ROWS
+      );
+
+      return visiblePassengerRows.map(function (requestRow) {
+        const timeState = resolveVehicleDetailsPassengerTime(vehicle, requestRow, resolvedOptions);
+        const normalizedTime = normalizeTransportTimeValue(timeState && timeState.time, "");
+        const hasTime = isValidTransportTimeValue(normalizedTime);
+        const isPreviewRow = Boolean(
+          previewRequestRow
+          && requestRow
+          && Number(requestRow.id) === Number(previewRequestRow.id)
+        );
+        const isConfirmed = String(requestRow && requestRow.assignment_status || "").trim() === "confirmed";
+        const routeKind = getRouteKindForRequestRow(requestRow, resolvedRouteKind);
+
+        return {
+          requestRow,
+          isPreviewRow,
+          isConfirmed,
+          routeKind,
+          timeState,
+          resolvedTime: hasTime ? normalizedTime : "",
+          timeSortValue: hasTime
+            ? String(parseTransportTimeToMinutes(normalizedTime)).padStart(4, "0")
+            : "9999",
+          canEditBoardingTime: Boolean(
+            requestRow
+            && !isPreviewRow
+            && isConfirmed
+            && timeState
+            && timeState.mode === "eta"
+            && timeState.timeField === "boarding_time"
+          ),
+        };
+      });
+    }
+
+    function buildVehicleDetailsColumnDefinitions(vehicle, rowViewModels, detailOptions) {
+      const headerTimeState = rowViewModels.length
+        ? rowViewModels[0].timeState
+        : resolveVehicleDetailsPassengerTime(vehicle, null, detailOptions);
+
+      return [
+        {
+          key: "passenger",
+          headerKey: "vehicleDetails.passengerHeader",
+          headerClassName: "transport-vehicle-passenger-name-header",
+          cellClassName: "transport-vehicle-passenger-name",
+          getSortValue: function (rowViewModel) {
+            return String(rowViewModel && rowViewModel.requestRow && rowViewModel.requestRow.nome || "").trim().toLowerCase();
+          },
+          renderCell: function (rowViewModel) {
+            return createNode(
+              "span",
+              "transport-vehicle-passenger-name-value",
+              String(rowViewModel && rowViewModel.requestRow && rowViewModel.requestRow.nome || "")
+            );
+          },
+        },
+        {
+          key: "operational-time",
+          headerKey: getVehicleDetailsTimeHeaderKey(headerTimeState),
+          headerClassName: "transport-vehicle-passenger-time-header",
+          cellClassName: "transport-vehicle-passenger-time",
+          getSortValue: function (rowViewModel) {
+            return rowViewModel && rowViewModel.timeSortValue ? rowViewModel.timeSortValue : "9999";
+          },
+          renderCell: function (rowViewModel) {
+            return createVehiclePassengerTimeContent(rowViewModel);
+          },
+        },
+        {
+          key: "action",
+          headerKey: "vehicleDetails.actionHeader",
+          headerClassName: "transport-vehicle-passenger-action-header",
+          cellClassName: "transport-vehicle-passenger-status",
+          renderCell: function (rowViewModel) {
+            if (rowViewModel && rowViewModel.requestRow && !rowViewModel.isPreviewRow) {
+              return createPassengerRemoveButton(rowViewModel.requestRow, rowViewModel.routeKind);
+            }
+            return null;
+          },
+        },
+      ];
+    }
+
+    function createVehicleDetailsTableHead(columns) {
+      const tableHead = createNode("thead", "transport-vehicle-passenger-table-head");
+      const headerRow = createNode("tr", "transport-vehicle-passenger-header-row");
+
+      columns.forEach(function (column) {
+        const headerCell = createNode("th", column.headerClassName, t(column.headerKey));
+        headerCell.setAttribute("scope", "col");
+        headerCell.dataset.columnKey = column.key;
+        headerRow.appendChild(headerCell);
+      });
+
+      tableHead.appendChild(headerRow);
+      return tableHead;
+    }
+
+    function createVehicleDetailsTableRow(columns, rowViewModel) {
+      const tableRow = createNode("tr", "transport-vehicle-passenger-row");
+
+      tableRow.dataset.requestId = String(rowViewModel && rowViewModel.requestRow && rowViewModel.requestRow.id || "");
+      tableRow.dataset.timeMode = String(rowViewModel && rowViewModel.timeState && rowViewModel.timeState.mode || "");
+
+      columns.forEach(function (column) {
+        const cell = createNode("td", column.cellClassName);
+        const sortValue = typeof column.getSortValue === "function" ? column.getSortValue(rowViewModel) : "";
+        const content = typeof column.renderCell === "function" ? column.renderCell(rowViewModel) : null;
+
+        cell.dataset.columnKey = column.key;
+        if (column.key === "operational-time") {
+          cell.dataset.timeMode = String(rowViewModel && rowViewModel.timeState && rowViewModel.timeState.mode || "");
+          cell.dataset.timeField = String(rowViewModel && rowViewModel.timeState && rowViewModel.timeState.timeField || "");
+        }
+        if (sortValue !== null && sortValue !== undefined && String(sortValue).trim()) {
+          cell.dataset.sortValue = String(sortValue);
+        }
+
+        if (content) {
+          cell.appendChild(content);
+        } else {
+          cell.innerHTML = "&nbsp;";
+        }
+        tableRow.appendChild(cell);
+      });
+
+      return tableRow;
+    }
+
+    function getVehicleDetailsTimeHeaderKey(timeState) {
+      if (timeState && timeState.mode === "eta") {
+        return "vehicleDetails.boardingHeader";
+      }
+      if (timeState && timeState.mode === "etd") {
+        return "vehicleDetails.departureHeader";
+      }
+      return "vehicleDetails.timeHeader";
+    }
+
+    function createVehiclePassengerTimeValue(timeState) {
+      const resolvedTime = normalizeTransportTimeValue(timeState && timeState.time, "");
+      const hasTime = isValidTransportTimeValue(resolvedTime);
+      return createNode(
+        "span",
+        `transport-vehicle-passenger-time-value${hasTime ? "" : " is-placeholder"}`,
+        hasTime ? resolvedTime : t("vehicleDetails.timeMissing")
+      );
+    }
+
+    function createVehiclePassengerTimeEditor(rowViewModel) {
+      const editor = createNode("div", "transport-vehicle-passenger-time-editor");
+      const input = document.createElement("input");
+      const requestRow = rowViewModel && rowViewModel.requestRow;
+      const routeKind = rowViewModel && rowViewModel.routeKind;
+      const timeState = rowViewModel && rowViewModel.timeState;
+      let committedValue = normalizeTransportTimeValue(rowViewModel && rowViewModel.resolvedTime, "");
+      let isSaving = false;
+
+      input.type = "text";
+      input.value = committedValue;
+      input.maxLength = 5;
+      input.setAttribute("inputmode", "numeric");
+      input.setAttribute("placeholder", t("vehicleDetails.boardingPlaceholder"));
+      input.setAttribute("pattern", "[0-2][0-9]:[0-5][0-9]");
+      input.setAttribute(
+        "aria-label",
+        t("vehicleDetails.boardingInputAria", { name: String(requestRow && requestRow.nome || "") })
+      );
+      input.className = "transport-vehicle-passenger-time-input";
+
+      function syncEditorState() {
+        const currentValue = String(input.value || "").trim();
+        const resolvedValue = normalizeTransportTimeValue(currentValue, "");
+        const hasValue = isValidTransportTimeValue(resolvedValue);
+        editor.classList.toggle("is-placeholder", !hasValue);
+        editor.classList.toggle("is-saving", isSaving);
+        input.classList.toggle("is-placeholder", !hasValue);
+        input.classList.toggle("is-saving", isSaving);
+        input.disabled = isSaving;
+        input.setAttribute("aria-busy", String(isSaving));
+      }
+
+      function restoreCommittedValue() {
+        input.value = committedValue;
+        syncEditorState();
+      }
+
+      function persistBoardingTime() {
+        if (isSaving) {
+          return Promise.resolve(null);
+        }
+
+        const rawValue = String(input.value || "").trim();
+        if (rawValue && !isValidTransportTimeValue(rawValue)) {
+          setStatus("", "warning", { key: "warnings.invalidBoardingTime" });
+          restoreCommittedValue();
+          return Promise.resolve(null);
+        }
+
+        const nextValue = rawValue || "";
+        if (nextValue === committedValue) {
+          syncEditorState();
+          return Promise.resolve(null);
+        }
+
+        isSaving = true;
+        syncEditorState();
+        return saveRequestRowBoardingTime(requestRow, nextValue || null, routeKind)
+          .then(function (result) {
+            isSaving = false;
+            if (result === null) {
+              restoreCommittedValue();
+              return null;
+            }
+
+            committedValue = nextValue;
+            input.value = committedValue;
+            syncEditorState();
+            return result;
+          })
+          .catch(function () {
+            isSaving = false;
+            restoreCommittedValue();
+            return null;
+          });
+      }
+
+      input.addEventListener("input", function () {
+        if (isSaving) {
+          return;
+        }
+        syncEditorState();
+      });
+
+      input.addEventListener("blur", function () {
+        void persistBoardingTime();
+      });
+
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void persistBoardingTime();
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          restoreCommittedValue();
+        }
+      });
+
+      editor.appendChild(input);
+      syncEditorState();
+      return editor;
+    }
+
+    function createVehiclePassengerTimeContent(rowViewModel) {
+      if (rowViewModel && rowViewModel.canEditBoardingTime) {
+        return createVehiclePassengerTimeEditor(rowViewModel);
+      }
+
+      return createVehiclePassengerTimeValue(rowViewModel && rowViewModel.timeState);
+    }
+
     function createVehicleDetailsPanel(vehicle, assignedRows, options) {
       const detailOptions = options || {};
       const previewRequestRow = detailOptions.previewRequestRow || null;
@@ -7371,32 +10637,13 @@
       const passengerTableShell = createNode("div", "transport-vehicle-passenger-table-shell");
       const passengerTable = createNode("table", "transport-vehicle-passenger-table");
       const tableBody = createNode("tbody");
-      const passengerSourceRows = buildVehiclePassengerPreviewRows(assignedRows, previewRequestRow);
-      const visiblePassengerRows = buildVehiclePassengerAwarenessRows(
-        passengerSourceRows,
-        VEHICLE_DETAILS_MAX_ROWS
-      );
+      const rowViewModels = buildVehicleDetailsRowViewModels(vehicle, assignedRows, detailOptions);
+      const columns = buildVehicleDetailsColumnDefinitions(vehicle, rowViewModels, detailOptions);
 
-      if (visiblePassengerRows.length) {
-        visiblePassengerRows.forEach(function (row, index) {
-          const tableRow = createNode("tr", "transport-vehicle-passenger-row");
-          const nameCell = createNode("td", "transport-vehicle-passenger-name", row.name);
-          const statusCell = createNode("td", "transport-vehicle-passenger-status");
-          const sourceRequestRow = passengerSourceRows[index] || null;
-          const isPreviewRow = Boolean(
-            previewRequestRow
-            && sourceRequestRow
-            && Number(sourceRequestRow.id) === Number(previewRequestRow.id)
-          );
-
-          if (sourceRequestRow && !isPreviewRow) {
-            statusCell.appendChild(createPassengerRemoveButton(sourceRequestRow, detailOptions.routeKind));
-          } else {
-            statusCell.innerHTML = "&nbsp;";
-          }
-          tableRow.appendChild(nameCell);
-          tableRow.appendChild(statusCell);
-          tableBody.appendChild(tableRow);
+      if (rowViewModels.length) {
+        passengerTable.appendChild(createVehicleDetailsTableHead(columns));
+        rowViewModels.forEach(function (rowViewModel) {
+          tableBody.appendChild(createVehicleDetailsTableRow(columns, rowViewModel));
         });
 
         passengerTable.appendChild(tableBody);
@@ -7474,7 +10721,7 @@
         removeVehicleFromRoute(vehicle);
       });
 
-      if (Array.isArray(vehicle.pending_fields) && vehicle.pending_fields.length) {
+      if (!isVehicleReadyForAllocation(vehicle)) {
         const actionRow = createNode("div", "transport-vehicle-details-actions");
         const editButton = createNode("button", "transport-secondary-button transport-vehicle-edit-button", t("misc.edit"));
 
@@ -7674,14 +10921,19 @@
       );
     }
 
-    function submitAssignment(payload) {
-      return requestJson(`${TRANSPORT_API_PREFIX}/assignments`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }).then(function () {
-        setStatus(t("status.allocationUpdated"), "success");
-        return loadDashboard(dateStore.getValue(), { announce: false });
-      }).catch(function (error) {
+  function submitAssignment(payload) {
+    return requestJson(`${TRANSPORT_API_PREFIX}/assignments`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }).then(function (response) {
+      const structuredAllocationUpdatedMessage = resolveTransportApiStructuredMessage(response)
+        || String(response && response.message || "").trim();
+      const allocationUpdatedMessage = structuredAllocationUpdatedMessage || t("status.allocationUpdated");
+      const allocationUpdatedOptions = resolveTransportApiStructuredMessageOptions(response)
+        || (structuredAllocationUpdatedMessage ? undefined : { key: "status.allocationUpdated" });
+      setStatus(allocationUpdatedMessage, "success", allocationUpdatedOptions);
+      return loadDashboard(dateStore.getValue(), { announce: false });
+    }).catch(function (error) {
         if (handleProtectedRequestError(error, t("status.couldNotUpdateAllocation"))) {
           return null;
         }
@@ -7691,7 +10943,7 @@
 
     function rejectRequestRow(requestRow) {
       if (!requestRow || !requestRow.id || !requestRow.service_date) {
-        setStatus(t("status.couldNotRejectSelectedRequest"), "error");
+        setStatus("", "error", { key: "status.couldNotRejectSelectedRequest" });
         return Promise.resolve();
       }
 
@@ -7702,8 +10954,13 @@
           service_date: requestRow.service_date,
           route_kind: getRouteKindForRequestRow(requestRow),
         }),
-      }).then(function () {
-        setStatus(t("status.requestRejected"), "success");
+      }).then(function (response) {
+        const structuredRequestRejectedMessage = resolveTransportApiStructuredMessage(response)
+          || String(response && response.message || "").trim();
+        const requestRejectedMessage = structuredRequestRejectedMessage || t("status.requestRejected");
+        const requestRejectedOptions = resolveTransportApiStructuredMessageOptions(response)
+          || (structuredRequestRejectedMessage ? undefined : { key: "status.requestRejected" });
+        setStatus(requestRejectedMessage, "success", requestRejectedOptions);
         return loadDashboard(dateStore.getValue(), { announce: false });
       }).catch(function (error) {
         if (handleProtectedRequestError(error, t("status.couldNotRejectSelectedRequest"))) {
@@ -7715,7 +10972,7 @@
 
     function returnRequestRowToPending(requestRow, routeKind) {
       if (!requestRow || !requestRow.id || !requestRow.service_date) {
-        setStatus(t("status.couldNotUpdateAllocation"), "error");
+        setStatus("", "error", { key: "status.couldNotUpdateAllocation" });
         return Promise.resolve();
       }
 
@@ -7737,7 +10994,7 @@
 
     function removeVehicleFromRoute(vehicle) {
       if (!vehicle || vehicle.schedule_id === null || vehicle.schedule_id === undefined) {
-        setStatus(t("warnings.vehicleCannotBeRemoved"), "error");
+        setStatus("", "error", { key: "warnings.vehicleCannotBeRemoved" });
         return Promise.resolve();
       }
 
@@ -7749,8 +11006,13 @@
           method: "DELETE",
         }
       )
-        .then(function () {
-          setStatus(t("status.vehicleDeleted"), "success");
+        .then(function (response) {
+          const structuredVehicleDeletedMessage = resolveTransportApiStructuredMessage(response)
+            || String(response && response.message || "").trim();
+          const vehicleDeletedMessage = structuredVehicleDeletedMessage || t("status.vehicleDeleted");
+          const vehicleDeletedOptions = resolveTransportApiStructuredMessageOptions(response)
+            || (structuredVehicleDeletedMessage ? undefined : { key: "status.vehicleDeleted" });
+          setStatus(vehicleDeletedMessage, "success", vehicleDeletedOptions);
           return loadDashboard(dateStore.getValue(), { announce: false });
         })
         .catch(function (error) {
@@ -7762,8 +11024,15 @@
       const tileElement = createNode("div", "transport-vehicle-tile");
       const vehicleButton = createNode("button", "transport-vehicle-button");
       const assignedCount = assignedRows.length;
-      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
-      const departureTime = getVehicleDepartureTime(vehicle, effectiveDepartureTime, scope);
+      const departureTime = getVehicleReferenceLabel(
+        scope,
+        vehicle,
+        state.dashboard,
+        state.arriveAtWorkTime,
+        state.vehicleReferenceClock,
+        state.workToHomeTime,
+        vehicle && vehicle.route_kind
+      );
       const vehicleDetailsKey = getVehicleDetailsKey(scope, vehicle.id);
       const draggedRequest = getDraggedRequest();
       const pendingPreview = getPendingAssignmentPreview();
@@ -7784,7 +11053,6 @@
         type: formatPendingVehicleField(vehicle.tipo, mapVehicleTypeLabel),
         occupancy: formatVehicleOccupancyLabel(vehicle, assignedCount),
       });
-      vehicleButton.setAttribute("aria-label", vehicleButton.title);
       vehicleButton.classList.toggle("is-selectable", isDropTarget);
       vehicleButton.classList.toggle("is-preview-target", !!previewRequestRow);
       vehicleButton.classList.toggle("is-details-open", isExpanded);
@@ -7796,7 +11064,7 @@
 
       const iconImage = document.createElement("img");
       iconImage.className = "transport-vehicle-icon";
-      iconImage.src = mapVehicleIconPath(vehicle.tipo);
+      iconImage.src = mapVehicleIconPath(vehicle);
       iconImage.alt = "";
 
       const plateLabel = createPendingVehicleFieldNode("span", "transport-vehicle-plate", vehicle.placa);
@@ -7824,8 +11092,8 @@
       }
       if (pendingAllocationMessage) {
         vehicleButton.title = `${vehicleButton.title} | ${pendingAllocationMessage}`;
-        vehicleButton.setAttribute("aria-label", vehicleButton.title);
       }
+      vehicleButton.setAttribute("aria-label", vehicleButton.title);
       vehicleButton.appendChild(plateLabel);
       vehicleButton.appendChild(iconImage);
       vehicleButton.appendChild(occupancyLabel);
@@ -7893,6 +11161,7 @@
       if (isExpanded) {
         tileElement.expandedDetailsPanel = createVehicleDetailsPanel(vehicle, assignedRows, {
           previewRequestRow,
+          scope,
           routeKind: pendingPreview ? pendingPreview.routeKind : getRouteKindForVehicle(scope, vehicle),
         });
         tileElement.expandedDetailsPanel.dataset.vehicleDetailsPanelKey = vehicleDetailsKey;
@@ -7922,8 +11191,15 @@
           "transport-vehicle-management-occupancy-value",
           formatVehicleOccupancyCount(rowData, rowData.assigned_count)
         );
-        const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
-        const departureTime = getVehicleDepartureTime(rowData, effectiveDepartureTime, scope);
+        const departureTime = getVehicleReferenceLabel(
+          scope,
+          rowData,
+          state.dashboard,
+          state.arriveAtWorkTime,
+          state.vehicleReferenceClock,
+          state.workToHomeTime,
+          rowData && rowData.route_kind
+        );
         const deleteButton = createNode(
           "button",
           "transport-vehicle-delete-button transport-vehicle-management-delete",
@@ -8031,10 +11307,16 @@
       renderProjectList();
       renderRequestTables();
       renderVehiclePanels();
+      const vehiclePanelsRoot = document.getElementById("tela01main_dir");
+      if (vehiclePanelsRoot) {
+        syncVehiclePanelExplicitHeights(vehiclePanelsRoot);
+        updateVehicleGridLayouts(vehiclePanelsRoot);
+      }
       syncRequestSectionToggleState();
     }
 
     function clearDashboard() {
+      clearVehicleReferenceClock();
       renderProjectList();
       REQUEST_SECTION_ORDER.forEach(function (kind) {
         const container = requestContainers[kind];
@@ -8072,7 +11354,7 @@
         }
         state.dashboard = null;
         clearDashboard();
-        setStatus(getTransportLockedMessage(), "warning");
+        setStatus("", "warning", { key: "status.locked" });
         return Promise.resolve(null);
       }
 
@@ -8093,24 +11375,27 @@
       state.pendingAssignmentPreview = null;
       state.dragRequestId = null;
       state.isLoading = true;
+      clearVehicleReferenceModeTimer();
       syncRouteTimeControls();
       if (shouldAnnounce) {
-        setStatus(t("status.loadingDashboard"), "info");
+        setStatus("", "info", { key: "status.loadingDashboard" });
       }
       state.dashboardLoadPromise = requestJson(
         `${TRANSPORT_API_PREFIX}/dashboard?service_date=${encodeURIComponent(serviceDate)}&route_kind=${encodeURIComponent(routeKind)}`
       )
         .then(function (dashboard) {
           state.dashboard = dashboard || null;
+          syncTransportReferenceClock(state.dashboard);
           reconcileProjectVisibility();
           state.selectedRouteKind = (dashboard && dashboard.selected_route) || routeKind;
           syncRouteInputs();
           syncRouteTimeControls();
           if (shouldAnnounce) {
-            setStatus(t("status.dashboardUpdated"), "info");
+            setStatus("", "info", { key: "status.dashboardUpdated" });
           }
           renderDashboard();
           applyStaticTranslations();
+          scheduleVehicleReferenceModeTimer();
         })
         .catch(function (error) {
           state.dashboard = null;
@@ -8120,7 +11405,12 @@
             clearTransportSession(getTransportSessionExpiredMessage());
             return;
           }
-          setStatus(localizeTransportApiMessage(error && error.message) || t("status.couldNotLoadDashboard"), "error");
+          const structuredDashboardErrorMessage = resolveTransportApiStructuredMessage(error && error.payload)
+            || localizeTransportApiMessage(error && error.message);
+          const dashboardErrorMessage = structuredDashboardErrorMessage || t("status.couldNotLoadDashboard");
+          const dashboardErrorOptions = resolveTransportApiStructuredMessageOptions(error && error.payload)
+            || (structuredDashboardErrorMessage ? undefined : { key: "status.couldNotLoadDashboard" });
+          setStatus(dashboardErrorMessage, "error", dashboardErrorOptions);
         })
         .finally(function () {
           const queuedLoad = state.queuedDashboardLoad;
@@ -8143,12 +11433,21 @@
     }
 
     return {
+      __testCreateVehicleDetailsPanel: createVehicleDetailsPanel,
       bootstrapTransportSession,
       closeRouteTimePopover,
       handlePageVisibilityChange,
       loadDashboard,
       refreshVehicleGridLayouts: function () {
-        updateVehicleGridLayouts(document);
+        const vehiclePanelsRoot = document.getElementById("tela01main_dir");
+        if (vehiclePanelsRoot) {
+          syncVehiclePanelExplicitHeights(vehiclePanelsRoot);
+          updateVehicleGridLayouts(vehiclePanelsRoot);
+          syncVehiclePanelResizeHandleState(vehiclePanelsRoot);
+        } else {
+          updateVehicleGridLayouts(document);
+          syncVehiclePanelResizeHandleState(document);
+        }
         scheduleExpandedVehicleDetailsPositionSync();
         syncAiButtonPlacement();
       },
@@ -8165,6 +11464,13 @@
       createDatePanelController(panelElement, dateStore);
     });
     document.querySelectorAll("[data-resize]").forEach(enableResizableDivider);
+    document.querySelectorAll("[data-panel-resize-handle]").forEach(enableVehiclePanelResizeHandle);
+    const vehiclePanelsRoot = document.getElementById("tela01main_dir");
+    if (vehiclePanelsRoot) {
+      syncVehiclePanelExplicitHeights(vehiclePanelsRoot);
+      updateVehicleGridLayouts(vehiclePanelsRoot);
+      syncVehiclePanelResizeHandleState(vehiclePanelsRoot);
+    }
     const pageController = createTransportPageController(dateStore);
     globalScope.CheckingTransportPageController = pageController;
     globalScope.addEventListener("resize", function () {
@@ -8186,15 +11492,22 @@
     clampValue,
     createTransportDateStore,
     extractApiMessage,
+    extractStructuredTransportApiPayload,
     formatApiErrorMessage,
     formatTransportDate,
     formatIsoDate,
+    formatExtraVehicleReferenceLabel,
     getEffectiveWorkToHomeDepartureTime,
+    getExtraVehicleDepartureFieldKey,
     getTransportDateState,
     getDefaultAiAgentSettings,
     getVehicleDepartureTime,
+    getVehicleReferenceLabel,
+    getRoutineVehicleReferenceMode,
     getVehiclePendingAllocationMessage,
     getOrdinalSuffix,
+    localizeTransportApiMessage,
+    resolveTransportApiStructuredMessage,
     isPendingVehicleField,
     isVehicleReadyForAllocation,
     isValidTransportTimeValue,
@@ -8233,14 +11546,22 @@
     resolveVehicleSaveReloadDate,
     readAiAgentSettingsDraft,
     validateAiAgentSettingsDraft,
+    getAiAgentRequestKindLabel,
+    buildAiAgentSubmittingFeedbackOptions,
     buildTransportAiSettingsUpdatePayload,
+    buildTransportAiDashboardScope,
     buildTransportAiRouteCalculationPayload,
     shouldContinuePollingAiRouteRun,
+    hasRenderableTransportAiReview,
+    resolveTransportAiStructuredMessage,
+    resolveTransportAiBaselineComplement,
     getTransportAiSuggestionKey,
     buildTransportAiLatestSuggestionUrl,
     buildTransportAiSuggestionCommandUrl,
     getDefaultTransportAiSettingsDraft,
     normalizeTransportAiSettingsProvider,
+    getTransportAiBidirectionalPlanContract,
+    getTransportAiReviewTargetContract,
     readTransportAiSettingsDraft,
     resolveTransportAiSettingsProviderDefaults,
     shouldRefreshDashboardAfterAiSuggestionCommand,
@@ -8249,16 +11570,32 @@
     renderAiVehicleChanges,
     renderAiPassengerAllocations,
     renderAiRouteItineraries,
+    renderAiChangesAudit,
+    createTransportReferenceClock,
     parsePositiveNumber,
     parseTransportTimeToMinutes,
+    formatRoutineVehicleReferenceLabel,
+    resolveVehiclePassengerOperationalTime,
+    resolveVehicleReferenceMode,
+    getDefaultVehiclePanelHeight,
+    getRoutineVehicleReferenceLabel,
+    isVehiclePanelResizeEnabledForViewport,
+    resolveTransportReferenceNow,
+    resolveRoutineVehicleReferenceMode,
+    resolveNextRoutineVehicleReferenceDelayMs,
+    resolveVehiclePanelExplicitHeight,
+    resolveVehiclePanelResizedHeight,
     resolvePanelSizes,
     resolveResizeConfig,
+    updateVehicleGridLayout,
+    updateVehicleGridLayouts,
     resolveVehicleDetailsPosition,
     startOfLocalDay,
     shiftLocalDay,
   };
 
   if (typeof document !== "undefined") {
+    applyInitialDeclarativeTranslations();
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initTransportPage, { once: true });
     } else {
@@ -8269,6 +11606,14 @@
   globalScope.CheckingTransportPage = transportPageApi;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = transportPageApi;
+    module.exports = Object.assign({}, transportPageApi, {
+      __testCreateVehicleDetailsPanel: function () {
+        const pageController = globalScope.CheckingTransportPageController;
+        if (!pageController || typeof pageController.__testCreateVehicleDetailsPanel !== "function") {
+          throw new Error("Transport page controller test helper is unavailable.");
+        }
+        return pageController.__testCreateVehicleDetailsPanel.apply(pageController, arguments);
+      },
+    });
   }
 })(typeof window !== "undefined" ? window : globalThis);

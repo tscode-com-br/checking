@@ -76,6 +76,25 @@ test('administrators table renders editable profiles and request approval action
   assert.match(adminJs, /data-admin-revoke="\$\{row\.id\}"/);
   assert.match(adminJs, /data-admin-profile-save="\$\{row\.id\}"/);
   assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/requests\/\$\{id\}\/approve`, \{ perfil: profile \}\);/);
-  assert.match(adminJs, /const monitoredProjects = readAdministratorMonitoredProjects\(id\);/);
-  assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/\$\{id\}\/profile`, \{[\s\S]*perfil: profile,[\s\S]*monitored_projects: monitoredProjects,[\s\S]*\}\);/);
+  assert.match(adminJs, /function getAdministratorProjectNames\(row\) \{[\s\S]*normalizeUserProjectMemberships\(row\?\.projects\);[\s\S]*\}/);
+  assert.match(adminJs, /function getAdministratorProjectsSummary\(row\) \{/);
+  assert.match(adminJs, /Projetos reais/);
+  assert.match(adminJs, /Esses vinculos definem o escopo real do administrador\./);
+  assert.match(adminJs, /const projects = readAdministratorProjects\(id\);/);
+  assert.match(adminJs, /postJson\(`\/api\/admin\/administrators\/\$\{id\}\/profile`, \{[\s\S]*perfil: profile,[\s\S]*projects,[\s\S]*\}\);/);
+  assert.doesNotMatch(adminJs, /monitored_projects/);
+});
+
+test('pending and registered users tables use a checkbox project picker with plural membership payloads', () => {
+  assert.match(adminHtml, /<tr><th>RFID<\/th><th>Nome<\/th><th>Chave<\/th><th>Projetos<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>RFID<\/th><th>Nome<\/th><th>Chave<\/th><th>Perfil<\/th><th>Projetos<\/th><th>Endereço<\/th><th>ZIP Code<\/th><th>Cargo<\/th><th>Email<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminJs, /class="secondary-button membership-projects-button"[\s\S]*data-project-membership-toggle="\$\{escapeHtml\(projectMembershipKey\)\}"[\s\S]*>Select<\/button>/);
+  assert.match(adminJs, /class="membership-projects-panel" hidden><\/div>/);
+  assert.match(adminJs, /data-project-membership-back="\$\{escapeHtml\(editorKey\)\}">Back<\/button>/);
+  assert.match(adminJs, /data-project-membership-apply="\$\{escapeHtml\(editorKey\)\}"[\s\S]*>Save<\/button>/);
+  assert.match(adminJs, /const projetos = getProjectMembershipSelectionForSubmit\("pending", id\);/);
+  assert.match(adminJs, /postJson\("\/api\/admin\/users", \{ rfid, nome, chave, projetos \}\)/);
+  assert.match(adminJs, /const projetos = getProjectMembershipSelectionForSubmit\("user", normalizedUserId\);/);
+  assert.match(adminJs, /postJson\("\/api\/admin\/users", \{[\s\S]*perfil: Number\(perfilValue\),[\s\S]*projetos,[\s\S]*end_rua: endRua \|\| null,[\s\S]*\}\);/);
+  assert.match(adminJs, /if \(button\.dataset\.projectMembershipToggle\) \{[\s\S]*openProjectMembershipPanelByKey\(button\.dataset\.projectMembershipToggle\)\.catch/);
 });

@@ -112,7 +112,7 @@ test('transport AI polling backs off explicitly and resets on immediate re-entry
   );
   assert.match(
     transportScript,
-    /if \(response && response\.suggestion_ready && response\.suggestion\) \{[\s\S]*resetAiRoutePollingBackoff\(\);[\s\S]*requestDashboardRefresh\(\{ announce: false \}\);/
+    /if \(hasRenderableTransportAiReview\(response\)\) \{[\s\S]*resetAiRoutePollingBackoff\(\);[\s\S]*requestDashboardRefresh\(\{ announce: false \}\);/
   );
   assert.match(
     transportScript,

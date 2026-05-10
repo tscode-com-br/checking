@@ -83,6 +83,25 @@ class User(Base):
     inactivity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class UserProjectMembership(Base):
+    __tablename__ = "user_project_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "project_id",
+            name="uq_user_project_memberships_user_id_project_id",
+        ),
+        Index("ix_user_project_memberships_user_id", "user_id"),
+        Index("ix_user_project_memberships_project_id", "project_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Vehicle(Base):
     __tablename__ = "vehicles"
     __table_args__ = (
@@ -217,6 +236,7 @@ class TransportAssignment(Base):
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="confirmed")
     response_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    boarding_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     acknowledged_by_user: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assigned_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
@@ -310,12 +330,14 @@ class MobileAppSettings(Base):
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     mixed_zone_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    transport_arrive_at_work_time: Mapped[str] = mapped_column(String(5), nullable=False, default="07:45")
     transport_work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
     transport_last_update_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:00")
     transport_default_car_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     transport_default_minivan_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
     transport_default_van_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     transport_default_bus_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    transport_extra_car_tolerance_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     transport_default_tolerance_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     transport_price_currency_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
     transport_price_rate_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -500,6 +522,7 @@ class TransportAIAppliedRouteStop(Base):
         UniqueConstraint(
             "suggestion_id",
             "vehicle_id",
+            "route_kind",
             "stop_order",
             name="uq_transport_ai_applied_route_stops_vehicle_order",
         ),
@@ -512,7 +535,11 @@ class TransportAIAppliedRouteStop(Base):
             name="ck_transport_ai_applied_route_stops_stop_order_positive",
         ),
         CheckConstraint(
-            "stop_type IN ('pickup', 'destination')",
+            "route_kind IN ('home_to_work', 'work_to_home')",
+            name="ck_transport_ai_applied_route_stops_route_kind_allowed",
+        ),
+        CheckConstraint(
+            "stop_type IN ('pickup', 'destination', 'origin', 'dropoff')",
             name="ck_transport_ai_applied_route_stops_type_allowed",
         ),
         CheckConstraint(
@@ -544,6 +571,7 @@ class TransportAIAppliedRouteStop(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     suggestion_id: Mapped[int] = mapped_column(ForeignKey("transport_ai_suggestions.id"), nullable=False)
     vehicle_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    route_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     stop_order: Mapped[int] = mapped_column(Integer, nullable=False)
     stop_type: Mapped[str] = mapped_column(String(16), nullable=False)
     request_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

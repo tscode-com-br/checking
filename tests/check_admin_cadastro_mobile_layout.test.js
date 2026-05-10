@@ -28,7 +28,8 @@ test('cadastro locations settings include a mixed-zone interval input before the
 });
 
 test('cadastro mobile layout replaces the generic compressed table stack with padded section cards', () => {
-  assert.match(adminCss, /\.cadastro-tab \{[\s\S]*display: grid;[\s\S]*gap: 18px;/);
+  assert.match(adminCss, /\.cadastro-tab \{[\s\S]*gap: 18px;/);
+  assert.match(adminCss, /\.cadastro-tab\.active \{[\s\S]*display: grid;/);
   assert.match(adminCss, /\.cadastro-section-panel \{[\s\S]*display: grid;[\s\S]*gap: 14px;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-section-panel \{[\s\S]*padding: 14px;[\s\S]*border-radius: 16px;[\s\S]*background: linear-gradient\(180deg, #ffffff 0%, #f8fafc 100%\);/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-section-panel \.project-editor-panel \{[\s\S]*padding: 0;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*box-shadow: none;/);
@@ -40,6 +41,10 @@ test('cadastro mobile tables show labels above content and expand maintenance ac
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-table \.pending-actions \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;[\s\S]*width: 100%;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-table \.pending-actions button,[\s\S]*\.cadastro-users-table \.user-actions button,[\s\S]*\.location-actions button,[\s\S]*\.project-editor-actions button,[\s\S]*\.locations-settings-actions button \{[\s\S]*width: 100%;[\s\S]*min-height: 44px;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-users-table \.user-actions \{[\s\S]*grid-template-columns: 1fr;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.membership-projects-button \{[\s\S]*width: 100%;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.membership-projects-panel \{[\s\S]*max-height: none;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.membership-projects-panel-footer \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.membership-projects-panel-footer button \{[\s\S]*width: 100%;[\s\S]*min-height: 44px;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.admin-projects-panel \{[\s\S]*grid-template-columns: 1fr;[\s\S]*max-height: none;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.location-projects-panel \{[\s\S]*max-height: none;/);
 });

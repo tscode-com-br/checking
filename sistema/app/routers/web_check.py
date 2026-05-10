@@ -17,6 +17,7 @@ from ..schemas import (
     WebPasswordLoginRequest,
     WebPasswordRegisterRequest,
     WebPasswordStatusResponse,
+    WebUserSelfRegistrationResponse,
     WebUserSelfRegistrationRequest,
     WebCheckSubmitRequest,
     WebCheckSubmitResponse,
@@ -24,6 +25,9 @@ from ..schemas import (
     WebLocationMatchResponse,
     WebProjectUpdateRequest,
     WebProjectUpdateResponse,
+    WebUserProjectsResponse,
+    WebUserProjectsUpdateRequest,
+    WebUserProjectsUpdateResponse,
     WebTransportActionResponse,
     WebTransportAddressUpdateRequest,
     WebTransportRequestAction,
@@ -41,7 +45,7 @@ from ..services.location_matching import (
     resolve_location_match,
     resolve_submission_local,
 )
-from ..services.managed_locations import filter_locations_for_project
+from ..services.managed_locations import filter_locations_for_projects
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
     get_mixed_zone_interval_minutes,
@@ -57,6 +61,14 @@ from ..services.transport import (
     build_web_transport_state,
     cancel_transport_request_and_assignments,
     upsert_transport_request,
+)
+from ..services.user_projects import (
+    assign_existing_user_active_project,
+    list_user_project_names,
+    normalize_user_project_names,
+    replace_user_project_memberships,
+    resolve_user_active_project,
+    user_belongs_to_project,
 )
 from ..services.user_sync import (
     build_web_check_history_state,
@@ -83,6 +95,9 @@ WEB_CHECK_CHANNEL = FormsSubmitChannel(
     device_id="web-check",
     default_local="Web",
 )
+WEB_NON_OPERATIONAL_SUBMIT_LOCALS = frozenset({
+    "Localização não Cadastrada",
+})
 
 
 def _build_project_row(project: Project) -> ProjectRow:
@@ -106,6 +121,15 @@ def _validate_public_chave(value: str) -> str:
     if len(normalized) != 4 or not normalized.isalnum():
         raise HTTPException(status_code=422, detail="A chave deve ter 4 caracteres alfanumericos")
     return normalized
+
+
+def _reject_non_operational_web_submit_local(local: str | None) -> None:
+    normalized_local = " ".join(str(local or "").strip().split())
+    if normalized_local in WEB_NON_OPERATIONAL_SUBMIT_LOCALS:
+        raise HTTPException(
+            status_code=422,
+            detail="O estado 'Localização não Cadastrada' nao e um local operacional valido para submit pela Web.",
+        )
 
 
 def _get_web_session_chave(request: Request) -> str | None:
@@ -169,6 +193,31 @@ def _build_web_password_status(*, request: Request, user: User | None, chave: st
 
 def _list_web_projects(db: Session) -> list[ProjectRow]:
     return [_build_project_row(project) for project in list_projects(db)]
+
+
+def _normalize_known_web_user_projects(db: Session, project_names: list[str]) -> list[str]:
+    return normalize_user_project_names(
+        ensure_known_project(db, project_name)
+        for project_name in project_names
+    )
+
+
+def _build_web_user_projects_response(db: Session, user: User) -> WebUserProjectsResponse:
+    project_names = list_user_project_names(db, user)
+    return WebUserProjectsResponse(
+        projects=project_names,
+        active_project=resolve_user_active_project(user, project_names),
+    )
+
+
+def _require_known_user_membership_project(db: Session, user: User, project_name: str) -> str:
+    normalized_project_name = ensure_known_project(db, project_name)
+    if not user_belongs_to_project(db, user, normalized_project_name):
+        raise HTTPException(
+            status_code=409,
+            detail="O projeto informado nao pertence aos projetos cadastrados do usuario.",
+        )
+    return normalized_project_name
 
 
 def _require_authenticated_web_user(request: Request, db: Session) -> User:
@@ -321,14 +370,14 @@ def register_web_password(
     )
 
 
-@router.post("/auth/register-user", response_model=WebPasswordActionResponse, status_code=201)
+@router.post("/auth/register-user", response_model=WebUserSelfRegistrationResponse, status_code=201)
 def register_web_user(
     payload: WebUserSelfRegistrationRequest,
     request: Request,
     db: Session = Depends(get_db),
-) -> WebPasswordActionResponse:
+) -> WebUserSelfRegistrationResponse:
     normalized = _validate_public_chave(payload.chave)
-    payload.projeto = ensure_known_project(db, payload.projeto)
+    project_names = _normalize_known_web_user_projects(db, payload.projetos)
     existing_user = find_user_by_chave(db, normalized)
     if existing_user is not None:
         raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
@@ -341,7 +390,7 @@ def register_web_user(
         chave=normalized,
         senha=hash_password(payload.senha),
         nome=payload.nome,
-        projeto=payload.projeto,
+        projeto=project_names[0],
         workplace=None,
         placa=None,
         end_rua=None,
@@ -355,15 +404,19 @@ def register_web_user(
         inactivity_days=0,
     )
     db.add(user)
+    db.flush()
+    replace_user_project_memberships(db, user, project_names)
     db.commit()
     _set_web_session_chave(request, normalized)
     notify_admin_data_changed("admin")
     notify_admin_data_changed("register")
-    return WebPasswordActionResponse(
+    return WebUserSelfRegistrationResponse(
         ok=True,
         authenticated=True,
         has_password=True,
         message="Cadastro concluido com sucesso.",
+        projects=project_names,
+        active_project=user.projeto,
     )
 
 
@@ -372,21 +425,49 @@ def list_web_projects(db: Session = Depends(get_db)) -> list[ProjectRow]:
     return _list_web_projects(db)
 
 
+@router.get("/user-projects", response_model=WebUserProjectsResponse)
+def get_web_user_projects(request: Request, db: Session = Depends(get_db)) -> WebUserProjectsResponse:
+    user = _require_authenticated_web_user(request, db)
+    return _build_web_user_projects_response(db, user)
+
+
+@router.put("/user-projects", response_model=WebUserProjectsUpdateResponse)
+def update_web_user_projects(
+    payload: WebUserProjectsUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebUserProjectsUpdateResponse:
+    user = _require_authenticated_web_user(request, db)
+    project_names = _normalize_known_web_user_projects(db, payload.projects)
+    replace_user_project_memberships(db, user, project_names)
+    db.commit()
+    notify_admin_data_changed("register")
+    return WebUserProjectsUpdateResponse(
+        ok=True,
+        message="Projetos atualizados com sucesso.",
+        projects=project_names,
+        active_project=user.projeto,
+    )
+
+
 @router.put("/project", response_model=WebProjectUpdateResponse)
 def update_web_project(
     payload: WebProjectUpdateRequest,
     request: Request,
     db: Session = Depends(get_db),
 ) -> WebProjectUpdateResponse:
-    user = _require_matching_authenticated_web_user(request, db, payload.chave)
-    payload.projeto = ensure_known_project(db, payload.projeto)
-    if user.projeto == payload.projeto:
-        return WebProjectUpdateResponse(ok=True, message="Projeto atualizado com sucesso.", project=user.projeto)
-
-    user.projeto = payload.projeto
+    user = _require_authenticated_web_user(request, db)
+    project_name = _require_known_user_membership_project(db, user, payload.project)
+    project_names = assign_existing_user_active_project(db, user, project_name)
     db.commit()
     notify_admin_data_changed("register")
-    return WebProjectUpdateResponse(ok=True, message="Projeto atualizado com sucesso.", project=user.projeto)
+    return WebProjectUpdateResponse(
+        ok=True,
+        message="Projeto ativo atualizado com sucesso.",
+        project=project_name,
+        projects=project_names,
+        active_project=user.projeto,
+    )
 
 
 @router.post("/auth/login", response_model=WebPasswordActionResponse)
@@ -610,10 +691,11 @@ def get_web_check_state(
 @router.get("/check/locations", response_model=WebLocationOptionsResponse)
 def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> WebLocationOptionsResponse:
     user = _require_authenticated_web_user(request, db)
+    user_project_names = list_user_project_names(db, user)
     rows = db.execute(
         select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
-    items = [row.local for row in filter_locations_for_project(rows, user.projeto)]
+    items = [row.local for row in filter_locations_for_projects(rows, user_project_names)]
     return WebLocationOptionsResponse(
         items=items,
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
@@ -628,12 +710,13 @@ def match_web_check_location(
     db: Session = Depends(get_db),
 ) -> WebLocationMatchResponse:
     user = _require_authenticated_web_user(request, db)
+    user_project_names = list_user_project_names(db, user)
     accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
     minimum_checkout_distance_meters = get_minimum_checkout_distance_meters_for_project(db, user.projeto)
     all_locations = db.execute(
         select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
     ).scalars().all()
-    locations = filter_locations_for_project(all_locations, user.projeto)
+    locations = filter_locations_for_projects(all_locations, user_project_names)
 
     if not locations:
         return WebLocationMatchResponse(
@@ -641,7 +724,7 @@ def match_web_check_location(
             resolved_local=None,
             label="Sem localização cadastrada",
             status="no_known_locations",
-            message="Nao ha localizacoes conhecidas cadastradas para validar a posicao no projeto atual.",
+            message="Nao ha localizacoes conhecidas cadastradas para validar a posicao nos projetos cadastrados do usuario.",
             accuracy_meters=payload.accuracy_meters,
             accuracy_threshold_meters=accuracy_threshold_meters,
             minimum_checkout_distance_meters=minimum_checkout_distance_meters,
@@ -720,8 +803,9 @@ def submit_web_check(
     request: Request,
     db: Session = Depends(get_db),
 ) -> WebCheckSubmitResponse:
-    payload.projeto = ensure_known_project(db, payload.projeto)
-    _require_matching_authenticated_web_user(request, db, payload.chave)
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    payload.projeto = _require_known_user_membership_project(db, user, payload.projeto)
+    _reject_non_operational_web_submit_local(payload.local)
     response = submit_forms_event(
         db,
         chave=payload.chave,

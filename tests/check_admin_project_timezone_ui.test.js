@@ -28,6 +28,14 @@ test('admin tables expose country and timezone columns for project-aware renderi
   assert.match(adminHtml, /data-sort-table="inactive"[\s\S]*<th>Fuso horário<\/th>[\s\S]*<span>Última Atividade<\/span>/);
 });
 
+test('user membership tables pluralize project headers and filters while event tables stay singular', () => {
+  assert.match(adminHtml, /id="tab-checkin"[\s\S]*Filtrar Projetos[\s\S]*data-presence-filter="projetos"[\s\S]*data-sort-key="projetos"><span>Projetos<\/span>/);
+  assert.match(adminHtml, /id="tab-checkout"[\s\S]*Filtrar Projetos[\s\S]*data-presence-filter="projetos"[\s\S]*data-sort-key="projetos"><span>Projetos<\/span>/);
+  assert.match(adminHtml, /id="tab-inactive"[\s\S]*Filtrar Projetos[\s\S]*data-presence-filter="projetos"[\s\S]*data-sort-key="projetos"><span>Projetos<\/span>/);
+  assert.match(adminHtml, /<tr><th>Recebimento<\/th><th>Chave<\/th><th>Nome<\/th><th>Projeto<\/th><th>Fuso horário<\/th><th>Atividade<\/th><th>Informe<\/th><th>Data<\/th><th data-forms-time-column-header>Hora<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>ID<\/th><th data-events-primary-header-label>Horário<\/th><th>Origem<\/th><th>Ação<\/th><th>Status<\/th><th>Device<\/th><th>Local<\/th><th>RFID<\/th><th>Chave<\/th><th>Projeto<\/th><th>Fuso horário<\/th><th>Ontime<\/th><th>HTTP<\/th><th>Tentativas<\/th><th>Detalhes<\/th><\/tr>/);
+});
+
 test('admin javascript formats and renders timestamps using per-row timezone metadata', () => {
   assert.match(adminJs, /function resolveDisplayTimeZoneName\(timezoneName\) \{/);
   assert.match(adminJs, /function formatDateTime\(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE\) \{/);

@@ -33,8 +33,10 @@ test('check-in and check-out tables share the same fixed-width class', () => {
   assert.match(adminHtml, /data-presence-name-header-label="checkout">Nome</);
   assert.match(adminHtml, /id="checkinFilters" class="presence-controls" data-presence-table="checkin" data-filter-panel="checkin"/);
   assert.match(adminHtml, /id="checkoutFilters" class="presence-controls" data-presence-table="checkout" data-filter-panel="checkout"/);
-  assert.match(adminCss, /\.presence-users-table \{[\s\S]*min-width:\s*1040px;[\s\S]*table-layout:\s*fixed;/);
-  assert.match(adminCss, /\.presence-users-table th:nth-child\(2\),[\s\S]*\.presence-users-table td:nth-child\(2\) \{[\s\S]*width:\s*24%;/);
+  assert.match(adminCss, /\.presence-users-table \{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*table-layout:\s*fixed;/);
+  assert.match(adminCss, /\.presence-users-table th:nth-child\(2\),[\s\S]*\.presence-users-table td:nth-child\(2\) \{[\s\S]*width:\s*20%;/);
+  assert.match(adminCss, /\.presence-users-table th,\s*[\r\n]+\.presence-users-table td \{[\s\S]*font-size:\s*12px;[\s\S]*line-height:\s*1\.2;/);
+  assert.match(adminCss, /\.presence-users-table tbody td \{[\s\S]*font-weight:\s*400;/);
 });
 
 test('admin mobile shell exposes a scrollable tab strip and collapsible filter panels for dense sections', () => {
@@ -110,19 +112,30 @@ test('presence tables use safe activity-time helpers and dynamic labels', () => 
   assert.match(adminJs, /renderEmptyStateRow\(bodyId, 7, options\.emptyMessage \|\| "Nenhum registro encontrado\."\);/);
 });
 
+test('presence tables aggregate plural memberships for project display, sorting and filtering', () => {
+  assert.match(adminJs, /function getUserMembershipProjectNames\(row\) \{/);
+  assert.match(adminJs, /function formatUserMembershipProjects\(row, emptyLabel = "-"\) \{/);
+  assert.match(adminJs, /filterColumns: \["time", "nome", "chave", "projetos", "assiduidade", "local"\],/);
+  assert.match(adminJs, /filterColumns: \["nome", "chave", "projetos", "latest_time", "inactivity_days"\],/);
+  assert.match(adminJs, /const projectsLabel = formatUserMembershipProjects\(row\);/);
+  assert.match(adminJs, /if \(key === "projetos"\) \{[\s\S]*return formatUserMembershipProjects\(row\);/);
+  assert.match(adminJs, /<span class="admin-mobile-card-label">Projetos<\/span><span class="admin-mobile-card-value">\$\{escapeHtml\(projectsLabel\)\}<\/span>/);
+});
+
 test('presence tables use dedicated mobile cards instead of the generic stacked td label layout', () => {
   assert.match(adminJs, /if \(options\.responsiveVariant === "mobile-limited"\) \{[\s\S]*return buildLimitedPresenceMobileCard\(row, timeCell\);[\s\S]*\}/);
-  assert.match(adminJs, /return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">\$\{timeCell\.html\}<\/div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">\$\{escapeHtml\(row\.nome\)\}<\/strong><span class="presence-mobile-card-context"> @ <\/span><span class="presence-mobile-card-local">\$\{localLabel\}<\/span><\/p><\/article>`;/);
-  assert.match(adminJs, /return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">\$\{timeCell\.html\}<\/div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">\$\{escapeHtml\(row\.nome\)\}<\/strong><span class="presence-mobile-card-context"> @ <\/span><span class="presence-mobile-card-local">\$\{localLabel\}<\/span><\/p><\/article>`;/);
-  assert.match(adminCss, /\.presence-mobile-card \{[\s\S]*display:\s*grid;[\s\S]*border-radius:\s*16px;[\s\S]*box-shadow:\s*0 10px 24px rgba\(15, 23, 42, 0\.08\);/);
-  assert.match(adminCss, /\.presence-mobile-card--limited \{[\s\S]*gap:\s*6px;/);
+  assert.match(adminJs, /return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">\$\{timeCell\.html\}<\/div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">\$\{escapeHtml\(row\.nome\)\}<\/span><span class="presence-mobile-card-context"> @ <\/span><span class="presence-mobile-card-local">\$\{localLabel\}<\/span><\/p><\/article>`;/);
+  assert.match(adminJs, /return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">\$\{timeCell\.html\}<\/div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">\$\{escapeHtml\(row\.nome\)\}<\/span><span class="presence-mobile-card-context"> @ <\/span><span class="presence-mobile-card-local">\$\{localLabel\}<\/span><\/p><\/article>`;/);
+  assert.match(adminCss, /\.presence-mobile-card \{[\s\S]*display:\s*grid;[\s\S]*width:\s*100%;[\s\S]*box-sizing:\s*border-box;[\s\S]*padding:\s*8px 10px;[\s\S]*border-radius:\s*10px;[\s\S]*box-shadow:\s*none;/);
+  assert.match(adminCss, /\.presence-mobile-card--limited \{[\s\S]*gap:\s*4px;/);
   assert.match(adminCss, /\.presence-mobile-card-primary \.event-cell,[\s\S]*\.presence-mobile-card-primary \.event-datetime-cell \{[\s\S]*text-align:\s*left;[\s\S]*align-items:\s*flex-start;/);
-  assert.match(adminCss, /\.presence-mobile-card-main \{[\s\S]*font-size:\s*15px;[\s\S]*overflow-wrap:\s*anywhere;/);
-  assert.match(adminCss, /\.presence-mobile-card-name \{[\s\S]*display:\s*inline;[\s\S]*font-size:\s*inherit;/);
-  assert.match(adminCss, /\.presence-mobile-card-context \{[\s\S]*color:\s*#334155;[\s\S]*font-weight:\s*600;/);
-  assert.match(adminCss, /\.presence-mobile-card-local \{[\s\S]*font-size:\s*inherit;[\s\S]*font-weight:\s*600;/);
+  assert.match(adminCss, /\.presence-mobile-card-primary \.event-datetime-line \{[\s\S]*font-size:\s*12px;[\s\S]*font-weight:\s*500;/);
+  assert.match(adminCss, /\.presence-mobile-card-main \{[\s\S]*font-size:\s*12px;[\s\S]*line-height:\s*1\.2;[\s\S]*overflow-wrap:\s*anywhere;/);
+  assert.match(adminCss, /\.presence-mobile-card-name \{[\s\S]*display:\s*inline;[\s\S]*font-size:\s*inherit;[\s\S]*font-weight:\s*400;/);
+  assert.match(adminCss, /\.presence-mobile-card-context \{[\s\S]*color:\s*#334155;[\s\S]*font-weight:\s*400;/);
+  assert.match(adminCss, /\.presence-mobile-card-local \{[\s\S]*font-size:\s*inherit;[\s\S]*font-weight:\s*400;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile"\] tr\.presence-mobile-row,[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile-limited"\] tr\.presence-mobile-row \{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/);
-  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile"\] td\.presence-mobile-card-cell,[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile-limited"\] td\.presence-mobile-card-cell \{[\s\S]*padding:\s*0;[\s\S]*text-align:\s*left;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile"\] td\.presence-mobile-card-cell,[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile-limited"\] td\.presence-mobile-card-cell \{[\s\S]*display:\s*block;[\s\S]*width:\s*100%;[\s\S]*padding:\s*0;[\s\S]*text-align:\s*left;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile"\] td\.presence-mobile-card-cell::before,[\s\S]*\.presence-users-table\[data-presence-render-variant="mobile-limited"\] td\.presence-mobile-card-cell::before \{[\s\S]*content:\s*none;/);
 });
 

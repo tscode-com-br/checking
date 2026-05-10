@@ -71,6 +71,13 @@ test('admin reports controller keeps the tab full-admin only and wires the mutua
   assert.match(adminJs, /input\.addEventListener\("change", \(\) => \{[\s\S]*syncReportsSearchInputs\(input === reportsSearchNomeInput \? "nome" : "chave"\);/);
 });
 
+test('reports person summary distinguishes plural memberships from singular event projects', () => {
+  assert.match(adminJs, /const personProjectsLabel = formatUserMembershipProjects\(person\);/);
+  assert.match(adminJs, /`Projetos: \$\{personProjectsLabel\} \| Projeto ativo: \$\{person\.projeto \|\| "-"\} \| RFID: \$\{person\.rfid \|\| "-"\} \| Fuso horário: \$\{formatTimeZoneLabel\(person\.timezone_label\)\} \| \$\{eventsLabel\}`/);
+  assert.match(adminJs, /row\.source_label \|\| row\.source \|\| "-"/);
+  assert.match(adminJs, /header: "Projeto"/);
+});
+
 test('admin reports styles keep tabs uniform and align the new report search layout', () => {
   assert.match(adminCss, /\.tabs \{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(auto-fit, minmax\(128px, 1fr\)\);/);
   assert.match(adminCss, /\.tabs button \{[\s\S]*width:\s*100%;[\s\S]*justify-content:\s*center;[\s\S]*white-space:\s*normal;/);

@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import desc, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ..models import CheckEvent, Project, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .checking_history import record_checking_history
 from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone
 from .user_activity import mark_user_active
+from .user_projects import assign_user_active_project, ensure_user_active_project_is_member
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
 WEB_IMPORTED_USER_NAME = "Oriundo da Web"
@@ -134,6 +135,7 @@ def ensure_placeholder_user(
     normalized_key = normalize_user_key(chave)
     user = find_user_by_chave(db, normalized_key)
     if user is not None:
+        ensure_user_active_project_is_member(db, user)
         return user, False
 
     timestamp = now_sgt()
@@ -150,6 +152,7 @@ def ensure_placeholder_user(
     )
     db.add(user)
     db.flush()
+    ensure_user_active_project_is_member(db, user)
     return user, True
 
 
@@ -182,7 +185,10 @@ def apply_user_state(
     user.checkin = action == "checkin"
     user.time = event_time
     if projeto:
-        user.projeto = projeto
+        session = object_session(user)
+        if session is None:
+            raise ValueError("O usuário precisa estar associado a uma sessao antes de atualizar o projeto ativo")
+        assign_user_active_project(session, user, projeto)
     if local is not None:
         user.local = local
     mark_user_active(user, activity_time=event_time)

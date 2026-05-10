@@ -98,9 +98,11 @@ from ..services.admin_auth import (
 )
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
 from ..services.admin_project_scope import (
-    dump_admin_monitored_projects,
+    location_matches_effective_admin_scope,
+    project_matches_effective_admin_scope,
     extract_admin_monitored_projects,
-    resolve_effective_admin_monitored_projects,
+    resolve_effective_admin_project_names,
+    user_matches_effective_admin_scope,
 )
 from ..services.event_archives import (
     build_event_archives_zip,
@@ -128,6 +130,7 @@ from ..services.location_settings import (
 from ..services.project_catalog import (
     build_project_fields,
     ensure_known_project,
+    ensure_known_projects,
     list_project_names,
     list_projects,
     resolve_default_project_name,
@@ -142,6 +145,16 @@ from ..services.user_activity import (
     has_exceeded_continuous_inactivity_window,
     is_user_inactive,
     sync_user_inactivity,
+)
+from ..services.user_projects import (
+    add_user_project_membership,
+    ensure_user_active_project_is_member,
+    list_materialized_user_project_names,
+    list_user_project_names,
+    list_user_project_names_map,
+    normalize_user_project_names,
+    replace_user_project_memberships,
+    resolve_user_active_project,
 )
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
 
@@ -430,7 +443,12 @@ def build_report_events_export(
     return file_name, content
 
 
-def build_all_report_events_export(db: Session, *, can_view_activity_time: bool) -> tuple[str, bytes]:
+def build_all_report_events_export(
+    db: Session,
+    *,
+    can_view_activity_time: bool,
+    current_admin: User | None = None,
+) -> tuple[str, bytes]:
     from openpyxl import Workbook
 
     rows = db.execute(
@@ -443,6 +461,42 @@ def build_all_report_events_export(db: Session, *, can_view_activity_time: bool)
             desc(UserSyncEvent.id),
         )
     ).all()
+
+    effective_admin_projects = (
+        resolve_effective_admin_project_names(db, current_admin)
+        if current_admin is not None
+        else None
+    )
+    if current_admin is not None:
+        if not effective_admin_projects:
+            rows = []
+        else:
+            report_users = [user for _, user in rows if user is not None]
+            user_project_names_by_user_id = list_user_project_names_map(db, report_users)
+            rows = [
+                (event, user)
+                for event, user in rows
+                if (
+                    user is not None
+                    and user_matches_effective_admin_scope(
+                        db,
+                        current_admin,
+                        user,
+                        admin_project_names=effective_admin_projects,
+                        user_project_names=user_project_names_by_user_id.get(user.id, []),
+                    )
+                )
+                or (
+                    user is None
+                    and project_matches_effective_admin_scope(
+                        db,
+                        current_admin,
+                        event.projeto,
+                        admin_project_names=effective_admin_projects,
+                        allow_blank=False,
+                    )
+                )
+            ]
 
     projects_by_name = build_report_projects_by_name(
         db,
@@ -560,7 +614,13 @@ def _normalize_report_name_query(value: str | None) -> str | None:
     return normalized or None
 
 
-def resolve_report_user(db: Session, *, chave: str | None, nome: str | None) -> User:
+def resolve_report_user(
+    db: Session,
+    *,
+    chave: str | None,
+    nome: str | None,
+    current_admin: User | None = None,
+) -> User:
     normalized_key = str(chave or "").strip().upper() or None
     normalized_name = _normalize_report_name_query(nome)
 
@@ -571,7 +631,7 @@ def resolve_report_user(db: Session, *, chave: str | None, nome: str | None) -> 
 
     if normalized_key:
         user = find_user_by_chave(db, normalized_key)
-        if user is None:
+        if user is None or not user_matches_effective_admin_scope(db, current_admin, user):
             raise HTTPException(status_code=404, detail="Usuario nao encontrado para a chave informada.")
         return user
 
@@ -581,6 +641,8 @@ def resolve_report_user(db: Session, *, chave: str | None, nome: str | None) -> 
         .where(func.lower(User.nome) == normalized_name.lower())
         .order_by(User.nome, User.id)
     ).scalars().all()
+    if current_admin is not None:
+        matches = [user for user in matches if user_matches_effective_admin_scope(db, current_admin, user)]
     if not matches:
         raise HTTPException(status_code=404, detail="Usuario nao encontrado para o nome informado.")
     if len(matches) > 1:
@@ -599,6 +661,7 @@ def build_report_events_response(db: Session, *, user: User, can_view_activity_t
     ).scalars().all()
 
     projects_by_name = build_report_projects_by_name(db, {user.projeto, *(row.projeto for row in rows)})
+    person_project_names = list_user_project_names(db, user)
 
     person_project_name = str(user.projeto or "").strip().upper() or "-"
     person_project = projects_by_name.get(person_project_name) if person_project_name != "-" else None
@@ -628,6 +691,7 @@ def build_report_events_response(db: Session, *, user: User, can_view_activity_t
             nome=user.nome,
             chave=user.chave,
             projeto=person_project_name,
+            projetos=normalize_user_project_names(person_project_names or [person_project_name]),
             timezone_name=person_timezone_context.timezone_name,
             timezone_label=person_timezone_context.timezone_label,
         ),
@@ -758,7 +822,11 @@ def sort_database_event_payload(items: list[EventRow], sort_by: str, sort_direct
     )
 
 
-def build_database_event_filter_options(db: Session) -> DatabaseEventFilterOptions:
+def build_database_event_filter_options(
+    db: Session,
+    *,
+    allowed_project_names: list[str] | None = None,
+) -> DatabaseEventFilterOptions:
     option_rows = db.execute(
         select(
             CheckEvent.rfid,
@@ -814,7 +882,11 @@ def build_database_event_filter_options(db: Session) -> DatabaseEventFilterOptio
         action=sorted(actions),
         chave=sorted(keys),
         rfid=sorted(seen_rfids),
-        project=sorted(projects),
+        project=(
+            [project_name for project_name in sorted(projects) if project_name in set(allowed_project_names)]
+            if allowed_project_names is not None
+            else sorted(projects)
+        ),
         source=sorted(sources),
         status=sorted(statuses),
     )
@@ -852,22 +924,18 @@ def build_presence_rows(
 ) -> list[UserRow]:
     all_projects = list_projects(db)
     current_time = reference_time or now_sgt()
-    catalog_project_names = [project.name for project in all_projects]
-    effective_admin_projects = (
-        resolve_effective_admin_monitored_projects(current_admin, catalog_project_names)
-        if current_admin is not None
-        else None
-    )
     can_view_activity_time = True if current_admin is None else user_can_view_activity_time(current_admin)
-    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
-    if effective_admin_project_set == set():
+    rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
+    rows, _, effective_admin_projects = filter_users_for_admin_scope(
+        db,
+        rows,
+        current_admin=current_admin,
+    )
+    if current_admin is not None and effective_admin_projects == []:
         return []
 
-    user_query = select(User).order_by(User.nome, User.id)
-    if effective_admin_project_set is not None:
-        user_query = user_query.where(User.projeto.in_(sorted(effective_admin_project_set)))
-    rows = db.execute(user_query).scalars().all()
     latest_activities = resolve_latest_user_activities(db, users=rows)
+    project_names_by_user_id = list_user_project_names_map(db, rows)
     projects_by_name = {project.name: project for project in all_projects}
     payload: list[tuple[datetime, UserRow]] = []
 
@@ -899,6 +967,7 @@ def build_presence_rows(
                 nome=user.nome,
                 chave=user.chave,
                 projeto=user.projeto,
+                projetos=normalize_user_project_names(project_names_by_user_id.get(user.id, [user.projeto])),
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
                 local=latest_activity.local if latest_activity.local is not None else user.local,
@@ -929,13 +998,13 @@ def build_inactive_rows(
     rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
     payload: list[InactiveUserRow] = []
     current_time = reference_time or now_sgt()
-    catalog_project_names = list_project_names(db)
-    effective_admin_projects = (
-        resolve_effective_admin_monitored_projects(current_admin, catalog_project_names)
-        if current_admin is not None
-        else None
+    rows, _, effective_admin_projects = filter_users_for_admin_scope(
+        db,
+        rows,
+        current_admin=current_admin,
     )
     effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
+    project_names_by_user_id = list_user_project_names_map(db, rows)
     project_names = sorted({user.projeto for user in rows if user.projeto})
     projects_by_name = {
         project.name: project
@@ -943,8 +1012,6 @@ def build_inactive_rows(
     } if project_names else {}
 
     for user in rows:
-        if effective_admin_project_set is not None and user.projeto not in effective_admin_project_set:
-            continue
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
             continue
@@ -969,6 +1036,7 @@ def build_inactive_rows(
                 nome=user.nome,
                 chave=user.chave,
                 projeto=user.projeto,
+                projetos=normalize_user_project_names(project_names_by_user_id.get(user.id, [user.projeto])),
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
                 latest_action=latest_activity.action,
@@ -1170,6 +1238,161 @@ def resolve_location_projects_for_upsert(
     return resolved_projects
 
 
+def filter_users_for_admin_scope(
+    db: Session,
+    users: list[User],
+    *,
+    current_admin: User | None,
+) -> tuple[list[User], dict[int, list[str]], list[str] | None]:
+    project_names_by_user_id = list_user_project_names_map(db, users)
+    effective_admin_projects = (
+        resolve_effective_admin_project_names(db, current_admin)
+        if current_admin is not None
+        else None
+    )
+    if effective_admin_projects is None:
+        return users, project_names_by_user_id, None
+    if not effective_admin_projects:
+        return [], project_names_by_user_id, []
+
+    visible_users = [
+        user
+        for user in users
+        if user_matches_effective_admin_scope(
+            db,
+            current_admin,
+            user,
+            admin_project_names=effective_admin_projects,
+            user_project_names=project_names_by_user_id.get(user.id, []),
+        )
+    ]
+    return visible_users, project_names_by_user_id, effective_admin_projects
+
+
+def filter_check_events_for_admin_scope(
+    db: Session,
+    rows: list[CheckEvent],
+    *,
+    current_admin: User | None,
+) -> list[CheckEvent]:
+    effective_admin_projects = (
+        resolve_effective_admin_project_names(db, current_admin)
+        if current_admin is not None
+        else None
+    )
+    if effective_admin_projects is None:
+        return rows
+    if not effective_admin_projects:
+        return []
+
+    rfids_without_project = sorted({row.rfid for row in rows if row.rfid and not row.project})
+    users_by_rfid: dict[str, User] = {}
+    user_project_names_by_user_id: dict[int, list[str]] = {}
+    if rfids_without_project:
+        scoped_users = db.execute(select(User).where(User.rfid.in_(rfids_without_project))).scalars().all()
+        users_by_rfid = {user.rfid: user for user in scoped_users if user.rfid is not None}
+        user_project_names_by_user_id = list_user_project_names_map(db, scoped_users)
+
+    filtered_rows: list[CheckEvent] = []
+    for row in rows:
+        if project_matches_effective_admin_scope(
+            db,
+            current_admin,
+            row.project,
+            admin_project_names=effective_admin_projects,
+            allow_blank=False,
+        ):
+            filtered_rows.append(row)
+            continue
+
+        if row.project:
+            continue
+
+        matched_user = users_by_rfid.get(str(row.rfid or "").strip())
+        if matched_user is not None and user_matches_effective_admin_scope(
+            db,
+            current_admin,
+            matched_user,
+            admin_project_names=effective_admin_projects,
+            user_project_names=user_project_names_by_user_id.get(matched_user.id, []),
+        ):
+            filtered_rows.append(row)
+            continue
+
+        if row.rfid is None:
+            filtered_rows.append(row)
+
+    return filtered_rows
+
+
+def build_pending_registration_scope_maps(
+    db: Session,
+    pending_rows: list[PendingRegistration],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    rfids = sorted({row.rfid for row in pending_rows if row.rfid})
+    latest_scan_local_by_rfid: dict[str, str] = {}
+    if rfids:
+        scan_rows = db.execute(
+            select(CheckEvent.rfid, CheckEvent.local)
+            .where(CheckEvent.rfid.in_(rfids), CheckEvent.request_path == "/api/scan")
+            .order_by(desc(CheckEvent.id))
+        ).all()
+        for rfid, local in scan_rows:
+            normalized_rfid = str(rfid or "").strip()
+            if not normalized_rfid or normalized_rfid in latest_scan_local_by_rfid:
+                continue
+            normalized_local = str(local or "").strip()
+            if normalized_local:
+                latest_scan_local_by_rfid[normalized_rfid] = normalized_local
+
+    location_names = sorted({local for local in latest_scan_local_by_rfid.values() if local})
+    location_projects_by_local: dict[str, list[str]] = {}
+    if location_names:
+        locations = db.execute(select(ManagedLocation).where(ManagedLocation.local.in_(location_names))).scalars().all()
+        location_projects_by_local = {
+            location.local: extract_location_projects(location)
+            for location in locations
+        }
+
+    return latest_scan_local_by_rfid, location_projects_by_local
+
+
+def pending_matches_admin_scope(
+    db: Session,
+    pending_row: PendingRegistration,
+    *,
+    current_admin: User | None,
+    admin_project_names: list[str] | None = None,
+    latest_scan_local_by_rfid: dict[str, str] | None = None,
+    location_projects_by_local: dict[str, list[str]] | None = None,
+) -> bool:
+    effective_admin_projects = (
+        admin_project_names
+        if current_admin is not None
+        else None
+    )
+    if current_admin is not None and effective_admin_projects is None:
+        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    if effective_admin_projects is None:
+        return True
+    if not effective_admin_projects:
+        return False
+
+    latest_scan_local_by_rfid = latest_scan_local_by_rfid or {}
+    location_projects_by_local = location_projects_by_local or {}
+    pending_local = latest_scan_local_by_rfid.get(pending_row.rfid)
+    if not pending_local:
+        return True
+
+    return location_matches_effective_admin_scope(
+        db,
+        current_admin,
+        location_projects_by_local.get(pending_local, []),
+        admin_project_names=effective_admin_projects,
+        allow_global_locations=True,
+    )
+
+
 def normalize_administrator_profile(value: int | str | None) -> int:
     normalized = normalize_user_profile(value)
     if normalized == 9:
@@ -1195,7 +1418,6 @@ def merge_user_profile_values(base_value: int | str | None, extra_value: int | s
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
-    all_project_names = list_project_names(db)
     admin_candidates = db.execute(
         select(User)
         .where(User.perfil != 0)
@@ -1203,12 +1425,15 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
     ).scalars().all()
     admins = [admin for admin in admin_candidates if user_has_admin_access(admin)]
     requests = db.execute(select(AdminAccessRequest).order_by(AdminAccessRequest.requested_at.desc())).scalars().all()
+    all_project_names = list_project_names(db)
 
     rows: list[AdminManagementRow] = []
     for admin in admins:
         status = "password_reset_requested" if admin.senha is None else "active"
         status_label = describe_user_profile(admin.perfil)
-        monitored_projects = resolve_effective_admin_monitored_projects(admin, all_project_names)
+        admin_project_names = list_materialized_user_project_names(db, admin)
+        if not admin_project_names and admin.admin_monitored_projects_json is None:
+            admin_project_names = all_project_names
         if admin.senha is None:
             status_label = f"{status_label} | senha pendente"
         rows.append(
@@ -1218,7 +1443,7 @@ def list_admin_rows(db: Session) -> list[AdminManagementRow]:
                 chave=admin.chave,
                 nome=admin.nome,
                 perfil=admin.perfil,
-                monitored_projects=all_project_names if monitored_projects is None else monitored_projects,
+                projects=admin_project_names,
                 status=status,
                 status_label=status_label,
                 can_revoke=True,
@@ -1764,6 +1989,7 @@ def create_admin_project(
         ),
     )
     db.add(project)
+    db.flush()
     log_event(
         db,
         source="admin",
@@ -1778,6 +2004,7 @@ def create_admin_project(
             f"address={payload.address or '-'}; zip_code={payload.zip_code or '-'}"
         ),
     )
+    add_user_project_membership(db, current_admin, payload.name)
     db.commit()
     db.refresh(project)
     notify_admin_views("register", "event")
@@ -1843,9 +2070,7 @@ def update_admin_project(
             if explicit_projects is None or previous_name not in explicit_projects:
                 continue
 
-            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(
-                [payload.name if project_name == previous_name else project_name for project_name in explicit_projects]
-            )
+            administrator.admin_monitored_projects_json = None
             updated_admin_scopes += 1
 
         existing_distance_rows = db.execute(
@@ -1930,13 +2155,33 @@ def remove_admin_project(
 
     remaining_project_names = sorted(row.name for row in all_projects if row.id != project.id)
     fallback_project = next(iter(remaining_project_names), None)
-    linked_users = db.execute(select(User).where(User.projeto == project.name).order_by(User.id)).scalars().all()
-    blocked_users = [user for user in linked_users if not user_has_admin_access(user)]
+    all_users = db.execute(select(User).order_by(User.id)).scalars().all()
+    project_names_by_user_id = list_user_project_names_map(db, all_users)
+    linked_users = [
+        user
+        for user in all_users
+        if project.name in project_names_by_user_id.get(user.id, [])
+    ]
+
+    blocked_users: list[User] = []
+    reassignment_targets: list[tuple[User, list[str]]] = []
+    for linked_user in linked_users:
+        current_project_names = project_names_by_user_id.get(linked_user.id, [])
+        next_project_names = [project_name for project_name in current_project_names if project_name != project.name]
+        if not next_project_names:
+            if not user_has_admin_access(linked_user):
+                blocked_users.append(linked_user)
+                continue
+            next_project_names = [fallback_project or resolve_default_project_name(db)]
+        reassignment_targets.append((linked_user, next_project_names))
+
     if blocked_users:
         raise HTTPException(status_code=409, detail="Nao e possivel remover um projeto com usuarios vinculados.")
 
-    for linked_user in linked_users:
-        linked_user.projeto = fallback_project or resolve_default_project_name(db)
+    reassigned_user_count = 0
+    for linked_user, next_project_names in reassignment_targets:
+        replace_user_project_memberships(db, linked_user, next_project_names)
+        reassigned_user_count += 1
 
     linked_locations = db.execute(select(ManagedLocation).order_by(ManagedLocation.id)).scalars().all()
     reassigned_location_count = 0
@@ -1965,11 +2210,13 @@ def remove_admin_project(
         if explicit_projects is None or project.name not in explicit_projects:
             continue
 
-        next_projects = [project_name for project_name in explicit_projects if project_name != project.name]
-        if not next_projects or next_projects == remaining_project_names:
-            administrator.admin_monitored_projects_json = None
-        else:
-            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(next_projects)
+        remaining_explicit_projects = [
+            project_name for project_name in explicit_projects if project_name != project.name
+        ]
+        if remaining_explicit_projects:
+            ensure_user_active_project_is_member(db, administrator)
+
+        administrator.admin_monitored_projects_json = None
         updated_admin_scope_count += 1
 
     db.delete(project)
@@ -1983,7 +2230,7 @@ def remove_admin_project(
         http_status=200,
         details=(
             f"updated_by={current_admin.chave}; project_name={project.name}; project_id={project_id}; "
-            f"reassigned_admin_users={len(linked_users)}; reassigned_locations={reassigned_location_count}; "
+            f"reassigned_users={reassigned_user_count}; reassigned_locations={reassigned_location_count}; "
             f"updated_admin_scopes={updated_admin_scope_count}"
         ),
     )
@@ -2019,6 +2266,7 @@ def approve_administrator_request(
 
     existing_admin = db.execute(select(User).where(User.chave == access_request.chave)).scalar_one_or_none()
     default_project_name = resolve_default_project_name(db)
+    known_project_names = set(list_project_names(db))
     requested_profile = normalize_administrator_profile(
         payload.perfil if payload is not None else (access_request.requested_profile or 1)
     )
@@ -2037,35 +2285,45 @@ def approve_administrator_request(
         raise HTTPException(status_code=409, detail="Ja existe um administrador com essa chave.")
 
     timestamp = now_sgt()
+    approved_admin: User
     if existing_admin is None:
-        db.add(
-            User(
-                rfid=None,
-                chave=access_request.chave,
-                senha=access_request.password_hash,
-                perfil=requested_profile,
-                nome=access_request.nome_completo,
-                projeto=default_project_name,
-                admin_monitored_projects_json=None,
-                workplace=None,
-                placa=None,
-                end_rua=None,
-                zip=None,
-                cargo=None,
-                email=None,
-                local=None,
-                checkin=None,
-                time=None,
-                last_active_at=timestamp,
-                inactivity_days=0,
-            )
+        approved_admin = User(
+            rfid=None,
+            chave=access_request.chave,
+            senha=access_request.password_hash,
+            perfil=requested_profile,
+            nome=access_request.nome_completo,
+            projeto=default_project_name,
+            admin_monitored_projects_json=None,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
         )
+        db.add(approved_admin)
+        db.flush()
     else:
+        approved_admin = existing_admin
         existing_admin.nome = access_request.nome_completo
         if requested_profile != TRANSPORT_ACCESS_DIGIT or existing_admin.senha is None:
             existing_admin.senha = access_request.password_hash
         existing_admin.perfil = merge_user_profile_values(existing_admin.perfil, requested_profile)
         existing_admin.admin_monitored_projects_json = None
+
+    approved_project_names = list_user_project_names(db, approved_admin)
+    if not approved_project_names:
+        seed_project_name = str(approved_admin.projeto or "").strip().upper() or default_project_name
+        if seed_project_name not in known_project_names:
+            seed_project_name = default_project_name
+        approved_project_names = [seed_project_name]
+    replace_user_project_memberships(db, approved_admin, approved_project_names)
 
     log_event(
         db,
@@ -2119,19 +2377,17 @@ def update_administrator_profile(
 
     previous_profile = normalize_user_profile(administrator.perfil)
     next_profile = normalize_administrator_profile(payload.perfil)
-    all_project_names = list_project_names(db)
-    previous_monitored_projects = resolve_effective_admin_monitored_projects(administrator, all_project_names)
-    next_monitored_projects = previous_monitored_projects
+    previous_project_names = list_user_project_names(db, administrator)
+    previous_active_project = administrator.projeto
+    next_project_names = previous_project_names
+    administrator.admin_monitored_projects_json = None
 
-    if payload.monitored_projects is not None:
-        if set(payload.monitored_projects) == set(all_project_names):
-            administrator.admin_monitored_projects_json = None
-            next_monitored_projects = None
-        else:
-            administrator.admin_monitored_projects_json = dump_admin_monitored_projects(payload.monitored_projects)
-            next_monitored_projects = extract_admin_monitored_projects(administrator)
+    if payload.projects is not None:
+        replace_user_project_memberships(db, administrator, payload.projects)
+        next_project_names = list_user_project_names(db, administrator)
 
     administrator.perfil = next_profile
+    next_active_project = administrator.projeto
     log_event(
         db,
         source="admin",
@@ -2143,8 +2399,10 @@ def update_administrator_profile(
         details=(
             f"chave={administrator.chave}; old_profile={previous_profile}; "
             f"new_profile={next_profile}; "
-            f"old_monitored_projects={json.dumps(previous_monitored_projects, ensure_ascii=True, separators=(",", ":")) if previous_monitored_projects is not None else 'ALL'}; "
-            f"new_monitored_projects={json.dumps(next_monitored_projects, ensure_ascii=True, separators=(",", ":")) if next_monitored_projects is not None else 'ALL'}; "
+            f"old_projects={json.dumps(previous_project_names, ensure_ascii=True, separators=(",", ":"))}; "
+            f"new_projects={json.dumps(next_project_names, ensure_ascii=True, separators=(",", ":"))}; "
+            f"old_active_project={previous_active_project or '-'}; "
+            f"new_active_project={next_active_project or '-'}; "
             f"updated_by={current_admin.chave}"
         ),
     )
@@ -2366,7 +2624,7 @@ def get_report_events(
     current_admin: User = Depends(require_full_admin_session),
     db: Session = Depends(get_db),
 ) -> ReportEventsResponse:
-    user = resolve_report_user(db, chave=chave, nome=nome)
+    user = resolve_report_user(db, chave=chave, nome=nome, current_admin=current_admin)
     return build_report_events_response(
         db,
         user=user,
@@ -2382,7 +2640,7 @@ def export_report_events(
     db: Session = Depends(get_db),
 ) -> Response:
     can_view_activity_time = user_can_view_activity_time(current_admin)
-    user = resolve_report_user(db, chave=chave, nome=nome)
+    user = resolve_report_user(db, chave=chave, nome=nome, current_admin=current_admin)
     report = build_report_events_response(db, user=user, can_view_activity_time=can_view_activity_time)
     file_name, content = build_report_events_export(
         user=user,
@@ -2404,6 +2662,7 @@ def export_all_report_events(
     file_name, content = build_all_report_events_export(
         db,
         can_view_activity_time=user_can_view_activity_time(current_admin),
+        current_admin=current_admin,
     )
     return Response(
         content=content,
@@ -2442,8 +2701,28 @@ def list_inactive(
 
 
 @router.get("/pending", response_model=list[PendingRow], dependencies=[Depends(require_full_admin_session)])
-def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
+def list_pending(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[PendingRow]:
     rows = db.execute(select(PendingRegistration).order_by(desc(PendingRegistration.last_seen_at))).scalars().all()
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    if not effective_admin_projects:
+        return []
+
+    latest_scan_local_by_rfid, location_projects_by_local = build_pending_registration_scope_maps(db, rows)
+    rows = [
+        row
+        for row in rows
+        if pending_matches_admin_scope(
+            db,
+            row,
+            current_admin=current_admin,
+            admin_project_names=effective_admin_projects,
+            latest_scan_local_by_rfid=latest_scan_local_by_rfid,
+            location_projects_by_local=location_projects_by_local,
+        )
+    ]
     return [
         PendingRow(
             id=r.id,
@@ -2457,8 +2736,30 @@ def list_pending(db: Session = Depends(get_db)) -> list[PendingRow]:
 
 
 @router.get("/locations", response_model=AdminLocationsResponse, dependencies=[Depends(require_full_admin_session)])
-def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
+def list_locations(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminLocationsResponse:
     rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    known_project_names = set(list_project_names(db))
+    rows = [
+        row
+        for row in rows
+        if (
+            location_matches_effective_admin_scope(
+                db,
+                current_admin,
+                extract_location_projects(row),
+                admin_project_names=effective_admin_projects,
+                allow_global_locations=True,
+            )
+            or (
+                bool(extract_location_projects(row))
+                and not any(project_name in known_project_names for project_name in extract_location_projects(row))
+            )
+        )
+    ]
     return AdminLocationsResponse(
         items=[build_location_row(row) for row in rows],
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
@@ -2473,8 +2774,11 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
 )
 def list_project_minimum_checkout_distances(
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> AdminProjectMinimumCheckoutDistanceListResponse:
     rows = list_project_minimum_checkout_distance_rows(db)
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    rows = [row for row in rows if row.project_name in set(effective_admin_projects)]
     return AdminProjectMinimumCheckoutDistanceListResponse(
         items=[
             AdminProjectMinimumCheckoutDistanceRow(
@@ -2496,6 +2800,11 @@ def update_project_minimum_checkout_distances(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminProjectMinimumCheckoutDistanceSaveResponse:
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_project_set = set(effective_admin_projects)
+    if not effective_admin_project_set:
+        raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar configuracoes por projeto.")
+
     current_rows = list_project_minimum_checkout_distance_rows(db)
     previous_values = {
         row.project_name: row.minimum_checkout_distance_meters
@@ -2508,8 +2817,12 @@ def update_project_minimum_checkout_distances(
         )
         for item in payload.items
     ]
+    if any(project_name not in effective_admin_project_set for project_name, _ in normalized_items):
+        raise HTTPException(status_code=403, detail="Nao e possivel alterar projetos fora do seu escopo.")
+
     upsert_project_minimum_checkout_distance_rows(db, normalized_items)
     refreshed_rows = list_project_minimum_checkout_distance_rows(db)
+    refreshed_rows = [row for row in refreshed_rows if row.project_name in effective_admin_project_set]
     changed_rows = [
         f"{row.project_name}:{previous_values.get(row.project_name)}->{row.minimum_checkout_distance_meters}"
         for row in refreshed_rows
@@ -2584,6 +2897,11 @@ def upsert_location(
     if validated_payload.location_id is not None and location is None:
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_project_set = set(effective_admin_projects)
+    if not effective_admin_project_set:
+        raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar localizacoes.")
+
     timestamp = now_sgt()
     coordinates = [
         {"latitude": coordinate.latitude, "longitude": coordinate.longitude}
@@ -2613,6 +2931,29 @@ def upsert_location(
                 validation_message=str(error.detail),
             )
         raise
+
+    existing_location_project_set = set(previous_projects or [])
+    requested_location_project_set = set(location_projects)
+    preserves_existing_detached_projects = (
+        location is not None
+        and requested_location_project_set == existing_location_project_set
+        and bool(requested_location_project_set)
+        and requested_location_project_set.isdisjoint(effective_admin_project_set)
+    )
+
+    if location is not None and not preserves_existing_detached_projects and not location_matches_effective_admin_scope(
+        db,
+        current_admin,
+        existing_location_project_set,
+        admin_project_names=effective_admin_projects,
+        allow_global_locations=False,
+    ):
+        raise HTTPException(status_code=403, detail="Localizacao fora do escopo do administrador.")
+
+    if not preserves_existing_detached_projects and any(
+        project_name not in effective_admin_project_set for project_name in location_projects
+    ):
+        raise HTTPException(status_code=403, detail="Nao e possivel salvar localizacoes com projetos fora do seu escopo.")
 
     primary_coordinate = coordinates[0]
     coordinates_json = dump_location_coordinates(coordinates)
@@ -2737,6 +3078,16 @@ def remove_location(
         )
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    if not location_matches_effective_admin_scope(
+        db,
+        current_admin,
+        extract_location_projects(location),
+        admin_project_names=effective_admin_projects,
+        allow_global_locations=False,
+    ):
+        raise HTTPException(status_code=403, detail="Localizacao fora do escopo do administrador.")
+
     location_name = location.local
     db.delete(location)
     log_event(
@@ -2756,26 +3107,40 @@ def remove_location(
 
 
 @router.get("/users", response_model=list[AdminUserListRow], dependencies=[Depends(require_full_admin_session)])
-def list_users(db: Session = Depends(get_db)) -> list[AdminUserListRow]:
+def list_users(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[AdminUserListRow]:
     rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
-    return [
-        AdminUserListRow(
-            id=r.id,
-            rfid=r.rfid,
-            nome=r.nome,
-            chave=r.chave,
-            perfil=r.perfil,
-            projeto=r.projeto,
-            vehicle_id=r.vehicle_id,
-            workplace=r.workplace,
-            placa=r.placa,
-            end_rua=r.end_rua,
-            zip=r.zip,
-            cargo=r.cargo,
-            email=r.email,
+    rows, project_names_by_user_id, _ = filter_users_for_admin_scope(
+        db,
+        rows,
+        current_admin=current_admin,
+    )
+    payload_rows: list[AdminUserListRow] = []
+    for row in rows:
+        row_projects = project_names_by_user_id.get(row.id, []) if row.id is not None else []
+        active_project = resolve_user_active_project(row, row_projects)
+        payload_rows.append(
+            AdminUserListRow(
+                id=row.id,
+                rfid=row.rfid,
+                nome=row.nome,
+                chave=row.chave,
+                perfil=row.perfil,
+                projeto=active_project,
+                projeto_ativo=active_project,
+                projetos=row_projects,
+                vehicle_id=row.vehicle_id,
+                workplace=row.workplace,
+                placa=row.placa,
+                end_rua=row.end_rua,
+                zip=row.zip,
+                cargo=row.cargo,
+                email=row.email,
+            )
         )
-        for r in rows
-    ]
+    return payload_rows
 
 
 @router.post("/users", dependencies=[Depends(require_full_admin_session)])
@@ -2784,11 +3149,22 @@ def upsert_user(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> dict:
-    payload.projeto = ensure_known_project(db, payload.projeto)
+    requested_project_names = ensure_known_projects(
+        db,
+        payload.projetos or ([payload.projeto] if payload.projeto is not None else []),
+        detail="Um ou mais projetos do usuário nao existem no catalogo atual.",
+    )
     payload_fields = set(getattr(payload, "model_fields_set", set()))
     placa_was_provided = "placa" in payload_fields
     vehicle_id_was_provided = "vehicle_id" in payload_fields
     vehicle_link_was_provided = placa_was_provided or vehicle_id_was_provided
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_project_set = set(effective_admin_projects)
+    if not effective_admin_project_set:
+        raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar usuarios.")
+
+    requested_active_project = ensure_known_project(db, payload.projeto) if payload.projeto is not None else None
+
     user = None
     linked_existing_user = False
     if payload.user_id is not None:
@@ -2846,12 +3222,48 @@ def upsert_user(
         if total_admins <= 1:
             raise HTTPException(status_code=409, detail="Nao e possivel remover o unico administrador ativo do sistema.")
 
+    if user is not None and not user_matches_effective_admin_scope(db, current_admin, user, admin_project_names=effective_admin_projects):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    previous_project_names = list_user_project_names(db, user) if user is not None else []
+    previous_active_project = user.projeto if user is not None else None
+
+    if user is None:
+        unauthorized_projects = [
+            project_name
+            for project_name in requested_project_names
+            if project_name not in effective_admin_project_set
+        ]
+        if unauthorized_projects:
+            raise HTTPException(status_code=403, detail="Nao e possivel vincular o usuario a projetos fora do seu escopo.")
+    else:
+        preserved_projects_outside_scope = [
+            project_name
+            for project_name in previous_project_names
+            if project_name not in effective_admin_project_set
+        ]
+        unauthorized_projects = [
+            project_name
+            for project_name in requested_project_names
+            if project_name not in effective_admin_project_set and project_name not in preserved_projects_outside_scope
+        ]
+        if unauthorized_projects:
+            raise HTTPException(status_code=403, detail="Nao e possivel adicionar projetos fora do seu escopo ao usuario.")
+
+        scoped_requested_projects = [
+            project_name
+            for project_name in requested_project_names
+            if project_name in effective_admin_project_set
+        ]
+        requested_project_names = normalize_user_project_names(
+            [*scoped_requested_projects, *preserved_projects_outside_scope]
+        )
+
     if user:
         previous_key = user.chave
         user.nome = payload.nome
         user.chave = payload.chave
         user.perfil = normalize_user_profile(payload.perfil)
-        user.projeto = payload.projeto
         user.workplace = payload.workplace
         user.rfid = payload.rfid
         if vehicle_link_was_provided:
@@ -2860,6 +3272,13 @@ def upsert_user(
         user.zip = payload.zip
         user.cargo = payload.cargo
         user.email = payload.email
+        replace_user_project_memberships(db, user, requested_project_names)
+        if (
+            requested_active_project is not None
+            and requested_active_project in requested_project_names
+            and requested_active_project in effective_admin_project_set
+        ):
+            user.projeto = requested_active_project
         if previous_key != user.chave:
             db.execute(
                 update(UserSyncEvent)
@@ -2879,7 +3298,7 @@ def upsert_user(
             nome=payload.nome,
             chave=payload.chave,
             perfil=normalize_user_profile(payload.perfil),
-            projeto=payload.projeto,
+            projeto=requested_project_names[0],
             workplace=payload.workplace,
             vehicle_id=linked_vehicle.id if linked_vehicle is not None else None,
             placa=linked_vehicle.placa if linked_vehicle is not None else None,
@@ -2894,6 +3313,11 @@ def upsert_user(
             inactivity_days=0,
         )
         db.add(user)
+        db.flush()
+        replace_user_project_memberships(db, user, requested_project_names)
+
+    current_project_names = list_user_project_names(db, user)
+    current_active_project = user.projeto
 
     pending = None
     if payload.rfid is not None:
@@ -2909,13 +3333,17 @@ def upsert_user(
         status="done",
         message="User registered via admin",
         rfid=payload.rfid,
-        project=payload.projeto,
+        project=current_active_project,
         request_path="/api/admin/users",
         http_status=200,
         submitted_at=now_sgt(),
         details=(
             f"updated_by={current_admin.chave}; chave={payload.chave}; "
             f"nome={payload.nome}; perfil={normalize_user_profile(payload.perfil)}; linked_existing_user={linked_existing_user}; "
+            f"previous_projects={json.dumps(previous_project_names, ensure_ascii=True)}; "
+            f"current_projects={json.dumps(current_project_names, ensure_ascii=True)}; "
+            f"previous_active_project={previous_active_project or '-'}; "
+            f"current_active_project={current_active_project or '-'}; "
             f"placa={(linked_vehicle.placa if vehicle_link_was_provided and linked_vehicle is not None else user.placa) or '-'}; "
             f"vehicle_id={(linked_vehicle.id if vehicle_link_was_provided and linked_vehicle is not None else user.vehicle_id) or '-'}"
         ),
@@ -2950,6 +3378,18 @@ def remove_pending(
             details=f"updated_by={current_admin.chave}; pending_id={pending_id}",
             commit=True,
         )
+        raise HTTPException(status_code=404, detail="Pending registration not found")
+
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    latest_scan_local_by_rfid, location_projects_by_local = build_pending_registration_scope_maps(db, [pending])
+    if not pending_matches_admin_scope(
+        db,
+        pending,
+        current_admin=current_admin,
+        admin_project_names=effective_admin_projects,
+        latest_scan_local_by_rfid=latest_scan_local_by_rfid,
+        location_projects_by_local=location_projects_by_local,
+    ):
         raise HTTPException(status_code=404, detail="Pending registration not found")
 
     pending_rfid = pending.rfid
@@ -2990,6 +3430,27 @@ def remove_user(
             commit=True,
         )
         raise HTTPException(status_code=404, detail="User not found")
+
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_project_set = set(effective_admin_projects)
+    if not effective_admin_project_set:
+        raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode remover usuarios.")
+
+    user_project_names = list_user_project_names(db, user)
+    if not user_matches_effective_admin_scope(
+        db,
+        current_admin,
+        user,
+        admin_project_names=effective_admin_projects,
+        user_project_names=user_project_names,
+    ):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if any(project_name not in effective_admin_project_set for project_name in user_project_names):
+        raise HTTPException(
+            status_code=403,
+            detail="Nao e possivel remover um usuario com projetos fora do seu escopo.",
+        )
 
     if user_has_admin_access(user):
         total_admins = sum(
@@ -3091,6 +3552,7 @@ def list_events(
         .order_by(desc(CheckEvent.id))
         .limit(200)
     ).scalars().all()
+    rows = filter_check_events_for_admin_scope(db, rows, current_admin=current_admin)
     return build_event_row_payload(
         rows,
         db,
@@ -3105,6 +3567,7 @@ def list_events(
 )
 def list_database_events(
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
     action: str | None = Query(default=None),
     project: str | None = Query(default=None),
     source: str | None = Query(default=None),
@@ -3137,12 +3600,37 @@ def list_database_events(
     if normalized_sort_direction not in DATABASE_EVENT_SORT_DIRECTIONS:
         raise HTTPException(status_code=400, detail="Direcao invalida para ordenacao de eventos.")
 
-    filter_options = build_database_event_filter_options(db)
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_project_set = set(effective_admin_projects)
+    filter_options = build_database_event_filter_options(db, allowed_project_names=effective_admin_projects)
+
+    if not effective_admin_project_set:
+        return DatabaseEventListResponse(
+            items=[],
+            total=0,
+            page=1,
+            page_size=page_size,
+            total_pages=1,
+            filter_options=filter_options,
+        )
+
+    if normalized_project and normalized_project not in effective_admin_project_set:
+        return DatabaseEventListResponse(
+            items=[],
+            total=0,
+            page=1,
+            page_size=page_size,
+            total_pages=1,
+            filter_options=filter_options,
+        )
 
     if from_date and to_date and from_date > to_date:
         raise HTTPException(status_code=400, detail="Intervalo de datas invalido para a consulta de eventos.")
 
-    query = select(CheckEvent).where(CheckEvent.action.in_(DATABASE_EVENT_ACTIONS))
+    query = select(CheckEvent).where(
+        CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
+        CheckEvent.project.in_(effective_admin_projects),
+    )
 
     if normalized_action:
         query = query.where(CheckEvent.action == normalized_action)

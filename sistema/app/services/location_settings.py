@@ -15,12 +15,14 @@ DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS = 30
 DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 20
 DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS = 2000
+DEFAULT_TRANSPORT_ARRIVE_AT_WORK_TIME = "07:45"
 DEFAULT_TRANSPORT_WORK_TO_HOME_TIME = "16:45"
 DEFAULT_TRANSPORT_LAST_UPDATE_TIME = "16:00"
 DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS = 3
 DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS = 6
 DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS = 10
 DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS = 40
+DEFAULT_TRANSPORT_EXTRA_CAR_TOLERANCE_MINUTES = 30
 DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES = 5
 DEFAULT_TRANSPORT_PRICE_RATE_UNIT = "day"
 TRANSPORT_PRICE_QUANTUM = Decimal("0.01")
@@ -101,12 +103,14 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             location_update_interval_seconds=DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS,
             location_accuracy_threshold_meters=DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS,
             mixed_zone_interval_minutes=DEFAULT_MIXED_ZONE_INTERVAL_MINUTES,
+            transport_arrive_at_work_time=DEFAULT_TRANSPORT_ARRIVE_AT_WORK_TIME,
             transport_work_to_home_time=DEFAULT_TRANSPORT_WORK_TO_HOME_TIME,
             transport_last_update_time=DEFAULT_TRANSPORT_LAST_UPDATE_TIME,
             transport_default_car_seats=DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS,
             transport_default_minivan_seats=DEFAULT_TRANSPORT_DEFAULT_MINIVAN_SEATS,
             transport_default_van_seats=DEFAULT_TRANSPORT_DEFAULT_VAN_SEATS,
             transport_default_bus_seats=DEFAULT_TRANSPORT_DEFAULT_BUS_SEATS,
+            transport_extra_car_tolerance_minutes=DEFAULT_TRANSPORT_EXTRA_CAR_TOLERANCE_MINUTES,
             transport_default_tolerance_minutes=DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES,
             created_at=timestamp,
             updated_at=timestamp,
@@ -225,6 +229,13 @@ def get_transport_work_to_home_time(db: Session) -> str:
     return settings.transport_work_to_home_time
 
 
+def get_transport_arrive_at_work_time(db: Session) -> str:
+    settings = db.get(MobileAppSettings, 1)
+    if settings is None or not settings.transport_arrive_at_work_time:
+        return DEFAULT_TRANSPORT_ARRIVE_AT_WORK_TIME
+    return settings.transport_arrive_at_work_time
+
+
 def get_transport_last_update_time(db: Session) -> str:
     settings = db.get(MobileAppSettings, 1)
     if settings is None or not settings.transport_last_update_time:
@@ -254,6 +265,13 @@ def get_transport_vehicle_default_seat_counts(db: Session) -> dict[str, int]:
             else DEFAULT_TRANSPORT_DEFAULT_TOLERANCE_MINUTES
         ),
     }
+
+
+def get_transport_extra_car_tolerance_minutes(db: Session) -> int:
+    settings = db.get(MobileAppSettings, 1)
+    if settings is None or settings.transport_extra_car_tolerance_minutes is None:
+        return DEFAULT_TRANSPORT_EXTRA_CAR_TOLERANCE_MINUTES
+    return settings.transport_extra_car_tolerance_minutes
 
 
 def list_transport_currency_options(db: Session) -> list[TransportCurrencyOptionRow]:
@@ -294,8 +312,10 @@ def get_transport_settings_payload(db: Session) -> dict[str, object]:
     default_seat_counts = get_transport_vehicle_default_seat_counts(db)
     pricing_settings = get_transport_pricing_settings(db)
     return {
+        "arrive_at_work_time": get_transport_arrive_at_work_time(db),
         "work_to_home_time": get_transport_work_to_home_time(db),
         "last_update_time": get_transport_last_update_time(db),
+        "extra_car_tolerance_minutes": get_transport_extra_car_tolerance_minutes(db),
         "default_car_seats": default_seat_counts["default_car_seats"],
         "default_minivan_seats": default_seat_counts["default_minivan_seats"],
         "default_van_seats": default_seat_counts["default_van_seats"],
@@ -420,6 +440,20 @@ def upsert_transport_work_to_home_time(
     return settings
 
 
+def upsert_transport_arrive_at_work_time(
+    db: Session,
+    *,
+    arrive_at_work_time: str,
+) -> MobileAppSettings:
+    settings = _get_or_create_mobile_app_settings(db)
+    timestamp = now_sgt()
+
+    settings.transport_arrive_at_work_time = arrive_at_work_time
+    settings.updated_at = timestamp
+    db.flush()
+    return settings
+
+
 def upsert_transport_last_update_time(
     db: Session,
     *,
@@ -429,6 +463,20 @@ def upsert_transport_last_update_time(
     timestamp = now_sgt()
 
     settings.transport_last_update_time = last_update_time
+    settings.updated_at = timestamp
+    db.flush()
+    return settings
+
+
+def upsert_transport_extra_car_tolerance_minutes(
+    db: Session,
+    *,
+    extra_car_tolerance_minutes: int,
+) -> MobileAppSettings:
+    settings = _get_or_create_mobile_app_settings(db)
+    timestamp = now_sgt()
+
+    settings.transport_extra_car_tolerance_minutes = extra_car_tolerance_minutes
     settings.updated_at = timestamp
     db.flush()
     return settings

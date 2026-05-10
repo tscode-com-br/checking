@@ -15,9 +15,10 @@ const checkApp = fs.readFileSync(
 
 test('transport module centralizes request eligibility and blocks missing address locally', () => {
   assert.match(transportScreen, /function canSubmitTransportRequest\(requestKind, options\)/);
-  assert.match(transportScreen, /Cadastre um endereco completo antes de solicitar o transporte\./);
+  assert.match(transportScreen, /function getTransportAddressValidationMessage\(\)/);
+  assert.match(transportScreen, /return translateTransport\('requestBuilder\.addressRequired'\);/);
   assert.match(transportScreen, /function getTransportRequestServiceDateConflictMessage\(requestKind, payload\)/);
-  assert.match(transportScreen, /Ja existe uma solicitacao de transporte ativa para/);
+  assert.match(transportScreen, /return translateTransport\('requestBuilder\.conflictByDate', \{ serviceDateLabel \}\);/);
   assert.match(transportScreen, /return \(dateValue\.getDay\(\) \+ 6\) % 7;/);
   assert.match(transportScreen, /if \(requestAvailability\.shouldOpenAddressEditor\) \{[\s\S]*openTransportAddressEditor\(\);[\s\S]*\}/);
   assert.match(transportScreen, /transportRequestBuilderSubmitButton\.dataset\.transportSubmitDisabled = submitBlocked \? 'true' : 'false';/);

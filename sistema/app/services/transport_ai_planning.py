@@ -8,6 +8,7 @@ import json
 import math
 from datetime import date, datetime
 from numbers import Real
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from ..core.config import Settings, settings
 from ..models import TransportRequest
 from ..schemas import (
     ProjectRow,
+    TransportAgentDashboardScope,
     TransportAgentChangeSummary,
     TransportAgentChangeSummaryByVehicleType,
     TransportAgentCostSummary,
@@ -25,12 +27,17 @@ from ..schemas import (
     TransportAgentPlanningLimits,
     TransportAgentPlanningPartition,
     TransportAgentPlanningRequest,
+    TransportAgentRequestRouteKinds,
+    TransportAgentPlanningRequestCluster,
     TransportAgentPartitionSolveResult,
     TransportAgentRouteMatricesResult,
     TransportAgentRouteStop,
     TransportAgentSolvedRoute,
     TransportAgentSolvedRoutePassenger,
     TransportAgentVehicleAction,
+    TransportAgentVehicleReviewBadge,
+    TransportAgentVehicleReviewRow,
+    TransportAgentVehicleReviewTable,
     TransportAgentVehicleCandidate,
     TransportAgentVehicleCandidatePenaltyConfig,
     TransportAgentVehicleCandidatesPartition,
@@ -51,7 +58,13 @@ from ..schemas import (
 )
 from .location_settings import get_transport_settings_payload
 from .transport_ai_runtime import _build_transport_ai_preflight_issue
-from .transport_proposals import build_transport_operational_snapshot
+from .transport_proposals import (
+    build_transport_dashboard_scope_labels,
+    build_transport_operational_snapshot,
+    build_transport_snapshot_request_scope_index,
+    resolve_transport_operational_dashboard_scope,
+    resolve_transport_operational_dashboard_scope_project_names,
+)
 from .transport_route_cache import (
     get_cached_transport_ai_route_matrix,
     get_cached_transport_ai_route_point,
@@ -67,6 +80,7 @@ from .transport_route_provider import (
     TransportRouteProviderNoRouteError,
     TransportRouteProviderNoResultError,
     build_transport_route_provider,
+    describe_transport_route_matrix_request_plan,
 )
 
 _SUPPORTED_ROUTE_KINDS = {"home_to_work", "work_to_home"}
@@ -156,6 +170,52 @@ def _normalize_country_name(value: str | None) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _normalize_transport_ai_project_label(project_name: str | None) -> str:
+    return " ".join(str(project_name or "").strip().split())
+
+
+def _dedupe_transport_ai_project_labels(project_names: list[str]) -> list[str]:
+    normalized_names: list[str] = []
+    seen_names: set[str] = set()
+
+    for project_name in project_names:
+        normalized_name = _normalize_transport_ai_project_label(project_name)
+        if not normalized_name:
+            continue
+        normalized_key = normalized_name.upper()
+        if normalized_key in seen_names:
+            continue
+        seen_names.add(normalized_key)
+        normalized_names.append(normalized_name)
+
+    return normalized_names
+
+
+def _summarize_transport_ai_project_scope(project_names: list[str], *, max_names: int = 3) -> str:
+    normalized_names = _dedupe_transport_ai_project_labels(project_names)
+    if not normalized_names:
+        return ""
+    if len(normalized_names) <= max_names:
+        return ", ".join(normalized_names)
+    remaining_count = len(normalized_names) - max_names
+    return f"{', '.join(normalized_names[:max_names])}, and {remaining_count} more"
+
+
+def _build_transport_ai_scope_phrase(
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None,
+    project_names: list[str],
+) -> str:
+    scope_labels = build_transport_dashboard_scope_labels(
+        dashboard_scope=dashboard_scope,
+        project_summary=_summarize_transport_ai_project_scope(project_names),
+        project_filter_applied=bool(dashboard_scope and dashboard_scope.project_ids),
+    )
+    if not scope_labels:
+        return ""
+    return f" within the {' and '.join(scope_labels)}"
+
+
 def _has_positive_number(value: object) -> bool:
     return isinstance(value, Real) and not isinstance(value, bool) and value > 0
 
@@ -168,12 +228,17 @@ def _iter_pending_requests_by_scope(
     snapshot: TransportOperationalSnapshot,
     *,
     service_date: date,
+    request_rows_by_scope: dict[str, list[TransportRequestRow]] | None = None,
 ) -> dict[str, list[TransportRequestRow]]:
     requests_by_scope: dict[str, list[TransportRequestRow]] = {}
 
     for request_scope in _REQUEST_SCOPE_ORDER:
         request_rows = sorted(
-            getattr(snapshot, f"{request_scope}_requests"),
+            (
+                list(request_rows_by_scope.get(request_scope, []))
+                if request_rows_by_scope is not None
+                else getattr(snapshot, f"{request_scope}_requests")
+            ),
             key=lambda row: (row.id, row.user_id, row.requested_time),
         )
         pending_rows = [
@@ -419,12 +484,135 @@ def _build_transport_ai_solver_vehicle_units(
     return units
 
 
+def _build_transport_ai_partition_request_index(
+    partition: TransportAgentPlanningPartition,
+) -> dict[int, TransportAgentPlanningRequest]:
+    return {
+        request.request_id: request
+        for request in partition.requests
+    }
+
+
+def _resolve_transport_ai_partition_route_kind(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+) -> str:
+    if partition.request_kind in {"regular", "weekend"}:
+        return "home_to_work"
+
+    request_route_kinds = {
+        request.route_kind
+        for request in partition.requests
+        if request.route_kind in _SUPPORTED_ROUTE_KINDS
+    }
+    if len(request_route_kinds) == 1:
+        return next(iter(request_route_kinds))
+    return planning_input.route_kind
+
+
+def _partition_uses_extra_requested_time_timing(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+) -> bool:
+    return (
+        _resolve_transport_ai_partition_route_kind(
+            planning_input=planning_input,
+            partition=partition,
+        ) in {"home_to_work", "work_to_home"}
+        and partition.request_kind == "extra"
+    )
+
+
+def _route_uses_forward_origin_order(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+) -> bool:
+    return (
+        partition.request_kind == "extra"
+        and _resolve_transport_ai_partition_route_kind(
+            planning_input=planning_input,
+            partition=partition,
+        ) == "work_to_home"
+    )
+
+
+def _route_request_ids_fit_extra_requested_time_cluster(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+    request_ids: tuple[int, ...],
+) -> bool:
+    if not _partition_uses_extra_requested_time_timing(
+        planning_input=planning_input,
+        partition=partition,
+    ):
+        return True
+
+    normalized_request_ids = frozenset(request_ids)
+    if not normalized_request_ids:
+        return False
+
+    if partition.temporal_request_clusters:
+        return any(
+            normalized_request_ids.issubset(frozenset(cluster.request_ids))
+            for cluster in partition.temporal_request_clusters
+            if cluster.request_ids
+        )
+
+    request_by_id = _build_transport_ai_partition_request_index(partition)
+    requested_seconds = [
+        _parse_transport_ai_hhmm_to_seconds(request_by_id[request_id].requested_time)
+        for request_id in normalized_request_ids
+        if request_id in request_by_id
+    ]
+    if len(requested_seconds) != len(normalized_request_ids):
+        return False
+
+    tolerance_seconds = max(0, int(planning_input.settings.extra_car_tolerance_minutes)) * 60
+    return max(requested_seconds) - min(requested_seconds) <= tolerance_seconds
+
+
+def _resolve_extra_route_anchor_requested_time(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+    route: TransportAgentSolvedRoute,
+) -> str | None:
+    if not _partition_uses_extra_requested_time_timing(
+        planning_input=planning_input,
+        partition=partition,
+    ):
+        return None
+
+    normalized_request_ids = frozenset(route.request_ids)
+    if not normalized_request_ids:
+        return None
+
+    for cluster in partition.temporal_request_clusters:
+        if normalized_request_ids.issubset(frozenset(cluster.request_ids)):
+            return cluster.anchor_requested_time
+
+    request_by_id = _build_transport_ai_partition_request_index(partition)
+    requested_times = [
+        request_by_id[request_id].requested_time
+        for request_id in normalized_request_ids
+        if request_id in request_by_id
+    ]
+    if not requested_times:
+        return None
+
+    return max(requested_times, key=_parse_transport_ai_hhmm_to_seconds)
+
+
 def _build_transport_ai_request_point_index(
     route_matrix_partition: TransportAgentRouteMatrixPartition,
 ) -> dict[int, int]:
     request_point_index: dict[int, int] = {}
     for point_index, point in enumerate(route_matrix_partition.points):
-        if point.point_type != "passenger_origin" or point.request_id is None:
+        if point.request_id is None:
             continue
         request_point_index[point.request_id] = point_index
     return request_point_index
@@ -435,12 +623,20 @@ def _evaluate_transport_ai_pickup_order(
     pickup_order_request_ids: tuple[int, ...],
     route_matrix_partition: TransportAgentRouteMatrixPartition,
     request_point_index_by_request_id: dict[int, int],
+    forward_from_anchor: bool = False,
 ) -> tuple[int, int] | None:
     if not pickup_order_request_ids:
         return 0, 0
 
-    indices = [request_point_index_by_request_id[request_id] for request_id in pickup_order_request_ids]
-    indices.append(route_matrix_partition.destination_index)
+    if forward_from_anchor:
+        indices = [route_matrix_partition.destination_index]
+        indices.extend(
+            request_point_index_by_request_id[request_id]
+            for request_id in pickup_order_request_ids
+        )
+    else:
+        indices = [request_point_index_by_request_id[request_id] for request_id in pickup_order_request_ids]
+        indices.append(route_matrix_partition.destination_index)
 
     total_duration_seconds = 0
     total_distance_meters = 0
@@ -460,45 +656,51 @@ def _build_transport_ai_greedy_pickup_order(
     subset_request_ids: tuple[int, ...],
     route_matrix_partition: TransportAgentRouteMatrixPartition,
     request_point_index_by_request_id: dict[int, int],
+    forward_from_anchor: bool = False,
 ) -> tuple[int, ...] | None:
     remaining_request_ids = list(sorted(subset_request_ids))
     if not remaining_request_ids:
         return tuple()
 
     current_index = route_matrix_partition.destination_index
-    reversed_order: list[int] = []
+    greedy_order: list[int] = []
 
     while remaining_request_ids:
+        def leg_sort_key(request_id: int) -> tuple[float, float, int]:
+            from_index = current_index if forward_from_anchor else request_point_index_by_request_id[request_id]
+            to_index = request_point_index_by_request_id[request_id] if forward_from_anchor else current_index
+            duration_seconds = route_matrix_partition.durations_seconds[from_index][to_index]
+            distance_meters = route_matrix_partition.distances_meters[from_index][to_index]
+            return (
+                duration_seconds if duration_seconds is not None else float("inf"),
+                distance_meters if distance_meters is not None else float("inf"),
+                request_id,
+            )
+
         next_request_id = min(
             remaining_request_ids,
-            key=lambda request_id: (
-                route_matrix_partition.durations_seconds[request_point_index_by_request_id[request_id]][current_index]
-                if route_matrix_partition.durations_seconds[request_point_index_by_request_id[request_id]][current_index] is not None
-                else float("inf"),
-                route_matrix_partition.distances_meters[request_point_index_by_request_id[request_id]][current_index]
-                if route_matrix_partition.distances_meters[request_point_index_by_request_id[request_id]][current_index] is not None
-                else float("inf"),
-                request_id,
-            ),
+            key=leg_sort_key,
         )
-        leg_duration_seconds = route_matrix_partition.durations_seconds[
-            request_point_index_by_request_id[next_request_id]
-        ][current_index]
-        leg_distance_meters = route_matrix_partition.distances_meters[
-            request_point_index_by_request_id[next_request_id]
-        ][current_index]
+        from_index = current_index if forward_from_anchor else request_point_index_by_request_id[next_request_id]
+        to_index = request_point_index_by_request_id[next_request_id] if forward_from_anchor else current_index
+        leg_duration_seconds = route_matrix_partition.durations_seconds[from_index][to_index]
+        leg_distance_meters = route_matrix_partition.distances_meters[from_index][to_index]
         if leg_duration_seconds is None or leg_distance_meters is None:
             return None
 
-        reversed_order.append(next_request_id)
+        greedy_order.append(next_request_id)
         current_index = request_point_index_by_request_id[next_request_id]
         remaining_request_ids.remove(next_request_id)
 
-    return tuple(reversed(reversed_order))
+    if forward_from_anchor:
+        return tuple(greedy_order)
+    return tuple(reversed(greedy_order))
 
 
 def _build_transport_ai_best_subset_route(
     *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
     subset_request_ids: tuple[int, ...],
     route_matrix_partition: TransportAgentRouteMatrixPartition,
     request_point_index_by_request_id: dict[int, int],
@@ -508,6 +710,18 @@ def _build_transport_ai_best_subset_route(
     if not normalized_request_ids:
         return None
 
+    forward_from_anchor = _route_uses_forward_origin_order(
+        planning_input=planning_input,
+        partition=partition,
+    )
+
+    if not _route_request_ids_fit_extra_requested_time_cluster(
+        planning_input=planning_input,
+        partition=partition,
+        request_ids=normalized_request_ids,
+    ):
+        return None
+
     if len(normalized_request_ids) <= _TRANSPORT_AI_MAX_EXACT_ROUTE_ORDER_REQUESTS:
         candidate_orders = itertools.permutations(normalized_request_ids)
     else:
@@ -515,6 +729,7 @@ def _build_transport_ai_best_subset_route(
             subset_request_ids=normalized_request_ids,
             route_matrix_partition=route_matrix_partition,
             request_point_index_by_request_id=request_point_index_by_request_id,
+            forward_from_anchor=forward_from_anchor,
         )
         if greedy_order is None:
             return None
@@ -528,6 +743,7 @@ def _build_transport_ai_best_subset_route(
             pickup_order_request_ids=tuple(pickup_order_request_ids),
             route_matrix_partition=route_matrix_partition,
             request_point_index_by_request_id=request_point_index_by_request_id,
+            forward_from_anchor=forward_from_anchor,
         )
         if route_metrics is None:
             continue
@@ -553,6 +769,8 @@ def _build_transport_ai_best_subset_route(
 
 def _build_transport_ai_exact_subset_routes(
     *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
     request_ids: tuple[int, ...],
     route_matrix_partition: TransportAgentRouteMatrixPartition,
     request_point_index_by_request_id: dict[int, int],
@@ -565,6 +783,8 @@ def _build_transport_ai_exact_subset_routes(
     for subset_size in range(1, effective_max_route_passengers + 1):
         for subset_request_ids in itertools.combinations(request_ids, subset_size):
             subset_route = _build_transport_ai_best_subset_route(
+                planning_input=planning_input,
+                partition=partition,
                 subset_request_ids=subset_request_ids,
                 route_matrix_partition=route_matrix_partition,
                 request_point_index_by_request_id=request_point_index_by_request_id,
@@ -685,7 +905,7 @@ def _solve_transport_ai_partition_with_ortools(
     )
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = float(max(1, min(max_runtime_seconds, 3)))
+    solver.parameters.max_time_in_seconds = float(max(1, max_runtime_seconds))
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 0
 
@@ -703,6 +923,8 @@ def _solve_transport_ai_partition_with_ortools(
 
 def _build_transport_ai_greedy_route_option(
     *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
     seed_request_id: int,
     remaining_request_ids: set[int],
     vehicle_unit: _TransportAISolverVehicleUnit,
@@ -712,6 +934,8 @@ def _build_transport_ai_greedy_route_option(
 ) -> _TransportAISolverRouteOption | None:
     selected_request_ids = [seed_request_id]
     best_subset_route = _build_transport_ai_best_subset_route(
+        planning_input=planning_input,
+        partition=partition,
         subset_request_ids=(seed_request_id,),
         route_matrix_partition=route_matrix_partition,
         request_point_index_by_request_id=request_point_index_by_request_id,
@@ -726,6 +950,8 @@ def _build_transport_ai_greedy_route_option(
 
         for candidate_request_id in sorted(remaining_request_ids - set(selected_request_ids)):
             candidate_subset_route = _build_transport_ai_best_subset_route(
+                planning_input=planning_input,
+                partition=partition,
                 subset_request_ids=tuple(sorted([*selected_request_ids, candidate_request_id])),
                 route_matrix_partition=route_matrix_partition,
                 request_point_index_by_request_id=request_point_index_by_request_id,
@@ -778,6 +1004,8 @@ def _build_transport_ai_greedy_route_option(
 
 def _solve_transport_ai_partition_with_heuristic(
     *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
     request_ids: tuple[int, ...],
     vehicle_units: list[_TransportAISolverVehicleUnit],
     route_matrix_partition: TransportAgentRouteMatrixPartition,
@@ -807,6 +1035,8 @@ def _solve_transport_ai_partition_with_heuristic(
         best_option_sort_key: tuple[int, float, int, int, int, str] | None = None
         for vehicle_unit in unused_vehicle_units:
             route_option = _build_transport_ai_greedy_route_option(
+                planning_input=planning_input,
+                partition=partition,
                 seed_request_id=next_seed_request_id,
                 remaining_request_ids=remaining_request_ids,
                 vehicle_unit=vehicle_unit,
@@ -910,6 +1140,8 @@ def _build_transport_ai_partition_solve_result(
     selected_options: list[_TransportAISolverRouteOption],
     issues: list[TransportAIPreflightIssue],
     unallocated_request_ids: list[int],
+    candidate_vehicle_count: int = 0,
+    solver_duration_ms: int | None = None,
 ) -> TransportAgentPartitionSolveResult:
     solved_routes = _build_transport_ai_solved_routes(
         partition=partition,
@@ -932,7 +1164,14 @@ def _build_transport_ai_partition_solve_result(
         total_distance_meters=sum(route.total_distance_meters for route in solved_routes),
         total_vehicles_used=len(solved_routes),
         is_feasible=not unallocated_request_ids and not any(issue.blocking for issue in issues),
+        request_count=len(partition.requests),
+        candidate_vehicle_count=candidate_vehicle_count,
+        solver_duration_ms=solver_duration_ms,
     )
+
+
+def _measure_transport_ai_elapsed_ms(started_at: float) -> int:
+    return max(0, int(round((perf_counter() - started_at) * 1000)))
 
 
 def _build_unroutable_transport_ai_matrix(point_count: int) -> list[list[int | None]]:
@@ -1002,7 +1241,7 @@ def _resolve_transport_ai_route_point_lookup(
     country_name: str,
     reference_time: datetime | None,
     lookup_cache: dict[str, _TransportAgentGeocodeLookup | None],
-) -> tuple[str, _TransportAgentGeocodeLookup | None]:
+) -> tuple[str, _TransportAgentGeocodeLookup | None, str]:
     geocode_request = GeocodeRequest(
         address=address,
         zip_code=zip_code,
@@ -1011,7 +1250,7 @@ def _resolve_transport_ai_route_point_lookup(
     )
     lookup_key = f"{provider.provider}:{country_code}:{geocode_request.normalized_query}"
     if lookup_key in lookup_cache:
-        return lookup_key, lookup_cache[lookup_key]
+        return lookup_key, lookup_cache[lookup_key], "lookup_cache_hit"
 
     cached_route_point = get_cached_transport_ai_route_point(
         db,
@@ -1023,16 +1262,16 @@ def _resolve_transport_ai_route_point_lookup(
     )
     if cached_route_point is not None:
         lookup_cache[lookup_key] = _build_transport_agent_geocode_lookup_from_cache(cached_route_point)
-        return lookup_key, lookup_cache[lookup_key]
+        return lookup_key, lookup_cache[lookup_key], "route_cache_hit"
 
     try:
         geocode_result = provider.geocode(geocode_request)
     except TransportRouteProviderNoResultError:
         lookup_cache[lookup_key] = None
-        return lookup_key, None
+        return lookup_key, None, "provider_no_result"
 
     lookup_cache[lookup_key] = _build_transport_agent_geocode_lookup_from_provider_result(geocode_result)
-    return lookup_key, lookup_cache[lookup_key]
+    return lookup_key, lookup_cache[lookup_key], "provider"
 
 
 def _build_transport_agent_vehicle_type_configs(
@@ -1082,6 +1321,11 @@ def _build_transport_ai_existing_vehicle_candidate(
     if planning_vehicle.vehicle_type is None:
         return None
 
+    partition_route_kind = _resolve_transport_ai_partition_route_kind(
+        planning_input=planning_input,
+        partition=partition,
+    )
+
     default_capacity = planning_vehicle.default_capacity
     if not _has_positive_number(default_capacity) and type_config is not None:
         default_capacity = type_config.default_capacity
@@ -1113,7 +1357,7 @@ def _build_transport_ai_existing_vehicle_candidate(
         vehicle_id=planning_vehicle.vehicle_id,
         schedule_id=planning_vehicle.schedule_id,
         service_scope=planning_vehicle.service_scope,
-        route_kind=planning_input.route_kind,
+        route_kind=partition_route_kind,
         vehicle_type=planning_vehicle.vehicle_type,
         plate=planning_vehicle.plate,
         capacity=int(capacity),
@@ -1142,6 +1386,11 @@ def _build_transport_ai_virtual_vehicle_candidate(
     if not _has_non_negative_number(type_config.default_price):
         return None
 
+    partition_route_kind = _resolve_transport_ai_partition_route_kind(
+        planning_input=planning_input,
+        partition=partition,
+    )
+
     client_vehicle_key = _build_transport_ai_virtual_client_vehicle_key(
         planning_input_hash=planning_input.planning_input_hash,
         partition_key=partition.partition_key,
@@ -1161,7 +1410,7 @@ def _build_transport_ai_virtual_vehicle_candidate(
         vehicle_id=None,
         schedule_id=None,
         service_scope=partition.request_kind,
-        route_kind=planning_input.route_kind,
+        route_kind=partition_route_kind,
         vehicle_type=type_config.vehicle_type,
         plate=None,
         capacity=int(type_config.default_capacity),
@@ -1182,10 +1431,12 @@ def _build_transport_agent_request(
     request_row: TransportRequestRow,
     *,
     project_row: ProjectRow,
+    route_kind: str,
 ) -> TransportAgentPlanningRequest:
     return TransportAgentPlanningRequest(
         request_id=request_row.id,
         request_kind=request_row.request_kind,
+        route_kind=route_kind,
         service_date=request_row.service_date,
         requested_time=request_row.requested_time,
         user_id=request_row.user_id,
@@ -1198,6 +1449,25 @@ def _build_transport_agent_request(
         origin_address=str(request_row.end_rua or "").strip(),
         origin_zip_code=str(request_row.zip or "").strip(),
     )
+
+
+def _resolve_transport_agent_request_route_kinds(
+    *,
+    run_route_kind: str,
+    request_route_kinds: TransportAgentRequestRouteKinds | None,
+) -> dict[str, str]:
+    if run_route_kind not in _SUPPORTED_ROUTE_KINDS:
+        raise ValueError(f"Unsupported route kind for request normalization: {run_route_kind}")
+
+    extra_route_kind = request_route_kinds.extra if request_route_kinds is not None else None
+    if extra_route_kind not in _SUPPORTED_ROUTE_KINDS:
+        extra_route_kind = run_route_kind
+
+    return {
+        "regular": "home_to_work",
+        "weekend": "home_to_work",
+        "extra": extra_route_kind,
+    }
 
 
 def _request_is_ready_for_transport_agent_planning(
@@ -1279,6 +1549,90 @@ def _build_transport_agent_planning_input_hash(
     return hashlib.sha256(_dump_transport_ai_planning_json(payload).encode("utf-8")).hexdigest()
 
 
+def _build_transport_agent_partition_temporal_clusters(
+    *,
+    request_scope: str,
+    partition_key: str,
+    requests: list[TransportAgentPlanningRequest],
+    extra_car_tolerance_minutes: int,
+) -> list[TransportAgentPlanningRequestCluster]:
+    if request_scope != "extra" or not requests:
+        return []
+
+    tolerance_seconds = max(0, int(extra_car_tolerance_minutes)) * 60
+    sorted_requests = sorted(
+        requests,
+        key=lambda row: (
+            _parse_transport_ai_hhmm_to_seconds(row.requested_time),
+            row.request_id,
+            row.user_id,
+        ),
+    )
+    clusters: list[TransportAgentPlanningRequestCluster] = []
+    current_cluster_requests: list[TransportAgentPlanningRequest] = []
+    current_earliest_seconds: int | None = None
+
+    def flush_current_cluster() -> None:
+        nonlocal current_cluster_requests, current_earliest_seconds
+        if not current_cluster_requests:
+            return
+
+        cluster_index = len(clusters) + 1
+        ordered_cluster_requests = list(current_cluster_requests)
+        earliest_requested_time = ordered_cluster_requests[0].requested_time
+        latest_requested_time = ordered_cluster_requests[-1].requested_time
+        clusters.append(
+            TransportAgentPlanningRequestCluster(
+                cluster_key=f"{partition_key}:time-cluster:{cluster_index}",
+                anchor_requested_time=latest_requested_time,
+                earliest_requested_time=earliest_requested_time,
+                latest_requested_time=latest_requested_time,
+                request_ids=[row.request_id for row in ordered_cluster_requests],
+            )
+        )
+        current_cluster_requests = []
+        current_earliest_seconds = None
+
+    for request in sorted_requests:
+        request_seconds = _parse_transport_ai_hhmm_to_seconds(request.requested_time)
+        if not current_cluster_requests:
+            current_cluster_requests = [request]
+            current_earliest_seconds = request_seconds
+            continue
+
+        if current_earliest_seconds is not None and request_seconds - current_earliest_seconds <= tolerance_seconds:
+            current_cluster_requests.append(request)
+            continue
+
+        flush_current_cluster()
+        current_cluster_requests = [request]
+        current_earliest_seconds = request_seconds
+
+    flush_current_cluster()
+    return clusters
+
+
+def _build_transport_ai_partition_batches(
+    *,
+    request_scope: str,
+    partition_key: str,
+    requests: list[TransportAgentPlanningRequest],
+    max_partition_size: int,
+) -> list[tuple[str, list[TransportAgentPlanningRequest]]]:
+    ordered_requests = list(requests)
+    if request_scope == "extra" or max_partition_size <= 0 or len(ordered_requests) <= max_partition_size:
+        return [(partition_key, ordered_requests)]
+
+    # Large weekday/weekend partitions degrade to deterministic batches instead of hard-failing.
+    return [
+        (
+            f"{partition_key}:batch:{batch_index}",
+            ordered_requests[start_index:start_index + max_partition_size],
+        )
+        for batch_index, start_index in enumerate(range(0, len(ordered_requests), max_partition_size), start=1)
+    ]
+
+
 def build_transport_agent_planning_input(
     db: Session,
     *,
@@ -1286,6 +1640,8 @@ def build_transport_agent_planning_input(
     route_kind: str,
     earliest_boarding_time: str,
     arrival_at_work_time: str,
+    request_route_kinds: TransportAgentRequestRouteKinds | None = None,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
     settings_obj: Settings = settings,
     snapshot: TransportOperationalSnapshot | None = None,
     transport_settings: dict[str, object] | None = None,
@@ -1299,23 +1655,41 @@ def build_transport_agent_planning_input(
         service_date=service_date,
         route_kind=route_kind,
     )
+    effective_dashboard_scope = resolve_transport_operational_dashboard_scope(
+        effective_snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    dashboard_scope_project_names = resolve_transport_operational_dashboard_scope_project_names(
+        effective_snapshot,
+        dashboard_scope=effective_dashboard_scope,
+    )
     effective_transport_settings = transport_settings or get_transport_settings_payload(db)
     effective_preflight_issues = preflight_issues or build_transport_ai_preflight_issues(
         db,
         service_date=service_date,
         route_kind=route_kind,
+        dashboard_scope=dashboard_scope,
         settings_obj=settings_obj,
         snapshot=effective_snapshot,
         transport_settings=effective_transport_settings,
+    )
+    effective_request_route_kinds = _resolve_transport_agent_request_route_kinds(
+        run_route_kind=route_kind,
+        request_route_kinds=request_route_kinds,
     )
 
     project_rows_by_normalized_name = {
         _normalize_project_name(project_row.name): project_row
         for project_row in effective_snapshot.projects
     }
+    scoped_request_rows_by_scope = build_transport_snapshot_request_scope_index(
+        effective_snapshot,
+        dashboard_scope=dashboard_scope,
+    )
     pending_requests_by_scope = _iter_pending_requests_by_scope(
         effective_snapshot,
         service_date=service_date,
+        request_rows_by_scope=scoped_request_rows_by_scope,
     )
 
     valid_requests_by_scope: dict[str, list[TransportAgentPlanningRequest]] = {
@@ -1331,7 +1705,11 @@ def build_transport_agent_planning_input(
             if not _request_is_ready_for_transport_agent_planning(request_row, project_row=project_row):
                 continue
 
-            planning_request = _build_transport_agent_request(request_row, project_row=project_row)
+            planning_request = _build_transport_agent_request(
+                request_row,
+                project_row=project_row,
+                route_kind=effective_request_route_kinds[request_scope],
+            )
             valid_requests_by_scope[request_scope].append(planning_request)
             referenced_project_rows[project_row.name] = project_row
             partitions_by_key[(request_scope, project_row.name, project_row.country_code)].append(planning_request)
@@ -1340,21 +1718,41 @@ def build_transport_agent_planning_input(
         effective_snapshot,
         transport_settings=effective_transport_settings,
     )
-    partitions = [
-        TransportAgentPlanningPartition(
-            partition_key=f"{request_scope}:{project_name}:{country_code}",
-            request_kind=request_scope,
-            project_id=referenced_project_rows[project_name].id,
-            project_name=project_name,
-            country_code=country_code,
-            country_name=referenced_project_rows[project_name].country_name,
-            destination_project=referenced_project_rows[project_name],
-            requests=sorted(partition_requests, key=lambda row: (row.request_id, row.user_id, row.requested_time)),
-            candidate_vehicles=list(vehicles_by_scope[request_scope]),
+    extra_car_tolerance_minutes = int(effective_transport_settings.get("extra_car_tolerance_minutes", 30))
+    max_partition_size = max(1, int(settings_obj.transport_ai_max_passengers_per_run))
+    partitions: list[TransportAgentPlanningPartition] = []
+    for request_scope, project_name, country_code in sorted(partitions_by_key):
+        partition_requests = partitions_by_key[(request_scope, project_name, country_code)]
+        partition_key = f"{request_scope}:{project_name}:{country_code}"
+        sorted_partition_requests = sorted(
+            partition_requests,
+            key=lambda row: (row.request_id, row.user_id, row.requested_time),
         )
-        for request_scope, project_name, country_code in sorted(partitions_by_key)
-        for partition_requests in [partitions_by_key[(request_scope, project_name, country_code)]]
-    ]
+        for batch_partition_key, batch_requests in _build_transport_ai_partition_batches(
+            request_scope=request_scope,
+            partition_key=partition_key,
+            requests=sorted_partition_requests,
+            max_partition_size=max_partition_size,
+        ):
+            partitions.append(
+                TransportAgentPlanningPartition(
+                    partition_key=batch_partition_key,
+                    request_kind=request_scope,
+                    project_id=referenced_project_rows[project_name].id,
+                    project_name=project_name,
+                    country_code=country_code,
+                    country_name=referenced_project_rows[project_name].country_name,
+                    destination_project=referenced_project_rows[project_name],
+                    requests=list(batch_requests),
+                    temporal_request_clusters=_build_transport_agent_partition_temporal_clusters(
+                        request_scope=request_scope,
+                        partition_key=batch_partition_key,
+                        requests=list(batch_requests),
+                        extra_car_tolerance_minutes=extra_car_tolerance_minutes,
+                    ),
+                    candidate_vehicles=list(vehicles_by_scope[request_scope]),
+                )
+            )
 
     planning_input = TransportAgentPlanningInput(
         planning_input_hash="0" * 64,
@@ -1362,6 +1760,8 @@ def build_transport_agent_planning_input(
         route_kind=route_kind,
         snapshot_key=effective_snapshot.snapshot_key,
         captured_at=effective_snapshot.captured_at,
+        dashboard_scope=effective_dashboard_scope,
+        dashboard_scope_project_names=dashboard_scope_project_names,
         limits=TransportAgentPlanningLimits(
             earliest_boarding_time=earliest_boarding_time,
             arrival_at_work_time=arrival_at_work_time,
@@ -1371,6 +1771,7 @@ def build_transport_agent_planning_input(
         settings=TransportAgentPlanningSettings(
             work_to_home_time=str(effective_transport_settings["work_to_home_time"]),
             last_update_time=str(effective_transport_settings["last_update_time"]),
+            extra_car_tolerance_minutes=extra_car_tolerance_minutes,
             default_tolerance_minutes=int(effective_transport_settings["default_tolerance_minutes"]),
             price_currency_code=effective_transport_settings.get("price_currency_code"),
             price_rate_unit=str(effective_transport_settings["price_rate_unit"]),
@@ -1412,13 +1813,19 @@ def resolve_transport_ai_route_points(
     persisted_lookup_keys: set[str] = set()
     issues: list[TransportAIPreflightIssue] = []
     resolved_partitions: list[TransportAgentResolvedRoutePointsPartition] = []
+    total_geocode_provider_calls = 0
+    total_geocode_cache_hits = 0
+    total_geocode_failures = 0
 
     try:
         for partition in planning_input.partitions:
             destination_point: TransportAgentResolvedRoutePoint | None = None
             passenger_points: list[TransportAgentResolvedRoutePoint] = []
+            partition_geocode_provider_calls = 0
+            partition_geocode_cache_hits = 0
+            partition_geocode_failures = 0
 
-            destination_lookup_key, destination_lookup = _resolve_transport_ai_route_point_lookup(
+            destination_lookup_key, destination_lookup, destination_lookup_origin = _resolve_transport_ai_route_point_lookup(
                 db,
                 provider=effective_provider,
                 address=partition.destination_project.address,
@@ -1428,6 +1835,13 @@ def resolve_transport_ai_route_points(
                 reference_time=reference_time,
                 lookup_cache=lookup_cache,
             )
+            if destination_lookup_origin in {"lookup_cache_hit", "route_cache_hit"} and destination_lookup is not None:
+                partition_geocode_cache_hits += 1
+            elif destination_lookup_origin == "provider":
+                partition_geocode_provider_calls += 1
+            elif destination_lookup_origin == "provider_no_result":
+                partition_geocode_provider_calls += 1
+                partition_geocode_failures += 1
             if destination_lookup is None:
                 issues.append(
                     _build_transport_ai_route_point_issue(
@@ -1499,7 +1913,7 @@ def resolve_transport_ai_route_points(
                 )
 
             for request in partition.requests:
-                passenger_lookup_key, passenger_lookup = _resolve_transport_ai_route_point_lookup(
+                passenger_lookup_key, passenger_lookup, passenger_lookup_origin = _resolve_transport_ai_route_point_lookup(
                     db,
                     provider=effective_provider,
                     address=request.origin_address,
@@ -1509,6 +1923,13 @@ def resolve_transport_ai_route_points(
                     reference_time=reference_time,
                     lookup_cache=lookup_cache,
                 )
+                if passenger_lookup_origin in {"lookup_cache_hit", "route_cache_hit"} and passenger_lookup is not None:
+                    partition_geocode_cache_hits += 1
+                elif passenger_lookup_origin == "provider":
+                    partition_geocode_provider_calls += 1
+                elif passenger_lookup_origin == "provider_no_result":
+                    partition_geocode_provider_calls += 1
+                    partition_geocode_failures += 1
                 if passenger_lookup is None:
                     issues.append(
                         _build_transport_ai_route_point_issue(
@@ -1595,8 +2016,14 @@ def resolve_transport_ai_route_points(
                     country_name=partition.country_name,
                     destination_point=destination_point,
                     passenger_points=sorted(passenger_points, key=lambda point: (point.request_id or 0, point.source_id)),
+                    geocode_provider_call_count=partition_geocode_provider_calls,
+                    geocode_cache_hit_count=partition_geocode_cache_hits,
+                    geocode_failure_count=partition_geocode_failures,
                 )
             )
+            total_geocode_provider_calls += partition_geocode_provider_calls
+            total_geocode_cache_hits += partition_geocode_cache_hits
+            total_geocode_failures += partition_geocode_failures
 
         return TransportAgentResolvedRoutePointsResult(
             planning_input_hash=planning_input.planning_input_hash,
@@ -1607,6 +2034,9 @@ def resolve_transport_ai_route_points(
                 len(partition.passenger_points) + (1 if partition.destination_point is not None else 0)
                 for partition in resolved_partitions
             ),
+            total_geocode_provider_calls=total_geocode_provider_calls,
+            total_geocode_cache_hits=total_geocode_cache_hits,
+            total_geocode_failures=total_geocode_failures,
         )
     finally:
         close_method = getattr(effective_provider, "close", None)
@@ -1629,6 +2059,8 @@ def build_transport_ai_route_matrices(
     effective_profile = str(profile or settings_obj.mapbox_matrix_profile)
     resolved_partitions: list[TransportAgentRouteMatrixPartition] = []
     issues: list[TransportAIPreflightIssue] = []
+    total_matrix_provider_calls = 0
+    total_matrix_chunks = 0
 
     try:
         for partition in resolved_route_points.partitions:
@@ -1641,6 +2073,12 @@ def build_transport_ai_route_matrices(
                 for point in points
             ]
             coordinate_pairs = [coordinate.as_pair() for coordinate in coordinates]
+            request_plan = describe_transport_route_matrix_request_plan(
+                provider_name=effective_provider.provider,
+                profile=effective_profile,
+                source_count=len(coordinates),
+                destination_count=len(coordinates),
+            )
 
             cached_route_matrix = get_cached_transport_ai_route_matrix(
                 db,
@@ -1653,6 +2091,10 @@ def build_transport_ai_route_matrices(
             )
 
             matrix_cached = cached_route_matrix is not None
+            partition_matrix_request_count = 0
+            partition_matrix_chunk_count = 0
+            source_chunk_size = None
+            destination_chunk_size = None
             pair_issues: list[TransportAIPreflightIssue] = []
             if cached_route_matrix is not None:
                 matrix_result = _build_transport_ai_matrix_result_from_cache(
@@ -1681,6 +2123,10 @@ def build_transport_ai_route_matrices(
                 except TransportRouteProviderNoRouteError:
                     durations_seconds = _build_unroutable_transport_ai_matrix(len(points))
                     distances_meters = _build_unroutable_transport_ai_matrix(len(points))
+                    partition_matrix_request_count = int(request_plan["matrix_request_count"] or 0)
+                    partition_matrix_chunk_count = int(request_plan["matrix_chunk_count"] or 0)
+                    source_chunk_size = request_plan["source_chunk_size"]
+                    destination_chunk_size = request_plan["destination_chunk_size"]
                     issues.append(
                         _build_transport_ai_route_matrix_issue(
                             code="route_matrix_partition_no_route",
@@ -1691,6 +2137,10 @@ def build_transport_ai_route_matrices(
                         )
                     )
                 else:
+                    partition_matrix_request_count = int(matrix_result.matrix_request_count or 0)
+                    partition_matrix_chunk_count = int(matrix_result.matrix_chunk_count or 0)
+                    source_chunk_size = matrix_result.source_chunk_size
+                    destination_chunk_size = matrix_result.destination_chunk_size
                     durations_seconds = _normalize_transport_ai_matrix(matrix_result.durations_seconds)
                     if matrix_result.distances_meters is None:
                         distances_meters = _build_unroutable_transport_ai_matrix(len(points))
@@ -1730,8 +2180,14 @@ def build_transport_ai_route_matrices(
                     cached=matrix_cached,
                     durations_seconds=durations_seconds,
                     distances_meters=distances_meters,
+                    matrix_request_count=partition_matrix_request_count,
+                    matrix_chunk_count=partition_matrix_chunk_count,
+                    source_chunk_size=source_chunk_size,
+                    destination_chunk_size=destination_chunk_size,
                 )
             )
+            total_matrix_provider_calls += partition_matrix_request_count
+            total_matrix_chunks += partition_matrix_chunk_count
 
         return TransportAgentRouteMatricesResult(
             planning_input_hash=resolved_route_points.planning_input_hash,
@@ -1740,6 +2196,8 @@ def build_transport_ai_route_matrices(
             partitions=resolved_partitions,
             issues=issues,
             total_matrices=len(resolved_partitions),
+            total_matrix_provider_calls=total_matrix_provider_calls,
+            total_matrix_chunks=total_matrix_chunks,
         )
     finally:
         close_method = getattr(effective_provider, "close", None)
@@ -1815,6 +2273,7 @@ def solve_transport_ai_partition(
     vehicle_candidates_partition: TransportAgentVehicleCandidatesPartition,
     prefer_ortools: bool = True,
 ) -> TransportAgentPartitionSolveResult:
+    solve_started_at = perf_counter()
     partition = next(
         (row for row in planning_input.partitions if row.partition_key == route_matrix_partition.partition_key),
         None,
@@ -1827,6 +2286,7 @@ def solve_transport_ai_partition(
         raise ValueError("The vehicle candidates partition does not match the route matrix partition")
 
     request_ids = tuple(sorted(request.request_id for request in partition.requests))
+    candidate_vehicle_count = len(vehicle_candidates_partition.candidates)
     if not request_ids:
         return _build_transport_ai_partition_solve_result(
             planning_input=planning_input,
@@ -1835,6 +2295,8 @@ def solve_transport_ai_partition(
             selected_options=[],
             issues=[],
             unallocated_request_ids=[],
+            candidate_vehicle_count=candidate_vehicle_count,
+            solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
         )
 
     request_point_index_by_request_id = _build_transport_ai_request_point_index(route_matrix_partition)
@@ -1857,6 +2319,8 @@ def solve_transport_ai_partition(
                 )
             ],
             unallocated_request_ids=missing_request_ids,
+            candidate_vehicle_count=candidate_vehicle_count,
+            solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
         )
 
     vehicle_units = _build_transport_ai_solver_vehicle_units(
@@ -1878,12 +2342,22 @@ def solve_transport_ai_partition(
                 )
             ],
             unallocated_request_ids=list(request_ids),
+            candidate_vehicle_count=candidate_vehicle_count,
+            solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
         )
 
-    available_window_seconds = (
-        _parse_transport_ai_hhmm_to_seconds(planning_input.limits.arrival_at_work_time)
-        - _parse_transport_ai_hhmm_to_seconds(planning_input.limits.earliest_boarding_time)
+    partition_route_kind = _resolve_transport_ai_partition_route_kind(
+        planning_input=planning_input,
+        partition=partition,
     )
+    if partition_route_kind == "home_to_work":
+        available_window_seconds = max(
+            0,
+            _parse_transport_ai_hhmm_to_seconds(planning_input.limits.arrival_at_work_time)
+            - _parse_transport_ai_hhmm_to_seconds(planning_input.limits.earliest_boarding_time),
+        )
+    else:
+        available_window_seconds = 24 * 60 * 60
     max_route_passengers = min(
         len(request_ids),
         max(vehicle_unit.candidate.capacity for vehicle_unit in vehicle_units),
@@ -1891,6 +2365,8 @@ def solve_transport_ai_partition(
     subset_routes: dict[tuple[int, ...], _TransportAISolverSubsetRoute] = {}
     if len(request_ids) <= _TRANSPORT_AI_MAX_EXACT_SOLVER_REQUESTS:
         subset_routes = _build_transport_ai_exact_subset_routes(
+            planning_input=planning_input,
+            partition=partition,
             request_ids=request_ids,
             route_matrix_partition=route_matrix_partition,
             request_point_index_by_request_id=request_point_index_by_request_id,
@@ -1913,6 +2389,8 @@ def solve_transport_ai_partition(
 
     if selected_options is None:
         selected_options = _solve_transport_ai_partition_with_heuristic(
+            planning_input=planning_input,
+            partition=partition,
             request_ids=request_ids,
             vehicle_units=vehicle_units,
             route_matrix_partition=route_matrix_partition,
@@ -1937,6 +2415,8 @@ def solve_transport_ai_partition(
                 )
             ],
             unallocated_request_ids=list(request_ids),
+            candidate_vehicle_count=candidate_vehicle_count,
+            solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
         )
 
     allocated_request_ids = sorted(
@@ -1963,6 +2443,8 @@ def solve_transport_ai_partition(
             unallocated_request_ids=[
                 request_id for request_id in request_ids if request_id not in allocated_request_id_set
             ],
+            candidate_vehicle_count=candidate_vehicle_count,
+            solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
         )
 
     return _build_transport_ai_partition_solve_result(
@@ -1972,6 +2454,8 @@ def solve_transport_ai_partition(
         selected_options=selected_options,
         issues=[],
         unallocated_request_ids=[],
+        candidate_vehicle_count=candidate_vehicle_count,
+        solver_duration_ms=_measure_transport_ai_elapsed_ms(solve_started_at),
     )
 
 
@@ -1985,71 +2469,169 @@ def schedule_transport_ai_route_times(
     if partition_solve_result.partition_key != route_matrix_partition.partition_key:
         raise ValueError("The partition solve result does not match the route matrix partition")
 
+    partition = next(
+        (row for row in planning_input.partitions if row.partition_key == partition_solve_result.partition_key),
+        None,
+    )
+    if partition is None:
+        raise ValueError(
+            f"Partition '{partition_solve_result.partition_key}' was not found in the planning input"
+        )
+
     request_point_index_by_request_id = _build_transport_ai_request_point_index(route_matrix_partition)
     issues = list(partition_solve_result.issues)
     earliest_boarding_seconds = _parse_transport_ai_hhmm_to_seconds(planning_input.limits.earliest_boarding_time)
     configured_arrival_seconds = _parse_transport_ai_hhmm_to_seconds(planning_input.limits.arrival_at_work_time)
     effective_arrival_time = arrival_at_work_time or planning_input.limits.arrival_at_work_time
     effective_arrival_seconds = _parse_transport_ai_hhmm_to_seconds(effective_arrival_time)
-
-    if effective_arrival_seconds > configured_arrival_seconds:
-        issues.append(
-            _build_transport_ai_route_schedule_issue(
-                code="transport_ai_route_arrival_after_limit",
-                message=(
-                    f"Partition '{partition_solve_result.partition_key}' cannot project arrival at "
-                    f"'{effective_arrival_time}' because the configured latest arrival is "
-                    f"'{planning_input.limits.arrival_at_work_time}'."
-                ),
-            )
-        )
+    partition_route_kind = _resolve_transport_ai_partition_route_kind(
+        planning_input=planning_input,
+        partition=partition,
+    )
+    forward_from_anchor = _route_uses_forward_origin_order(
+        planning_input=planning_input,
+        partition=partition,
+    )
 
     scheduled_routes: list[TransportAgentSolvedRoute] = []
     for route in partition_solve_result.routes:
+        route_effective_arrival_time = effective_arrival_time
+        route_effective_arrival_seconds = effective_arrival_seconds
+        route_departure_seconds: int | None = None
+        enforce_arrival_limit = partition_route_kind == "home_to_work"
+        if arrival_at_work_time is None:
+            route_anchor_requested_time = _resolve_extra_route_anchor_requested_time(
+                planning_input=planning_input,
+                partition=partition,
+                route=route,
+            )
+            if route_anchor_requested_time is not None:
+                if partition_route_kind == "home_to_work":
+                    route_effective_arrival_time = route_anchor_requested_time
+                    route_effective_arrival_seconds = _parse_transport_ai_hhmm_to_seconds(
+                        route_effective_arrival_time
+                    )
+                elif forward_from_anchor:
+                    route_departure_seconds = _parse_transport_ai_hhmm_to_seconds(route_anchor_requested_time)
+                    route_effective_arrival_seconds = (
+                        route_departure_seconds
+                        + _round_transport_ai_duration_seconds_to_minute_ceiling(route.total_duration_seconds)
+                    )
+                    route_effective_arrival_time = _format_transport_ai_seconds_to_hhmm(
+                        route_effective_arrival_seconds
+                    )
+                else:
+                    route_effective_arrival_seconds = (
+                        _parse_transport_ai_hhmm_to_seconds(route_anchor_requested_time)
+                        + _round_transport_ai_duration_seconds_to_minute_ceiling(route.total_duration_seconds)
+                    )
+                    route_effective_arrival_time = _format_transport_ai_seconds_to_hhmm(
+                        route_effective_arrival_seconds
+                    )
+                enforce_arrival_limit = False
+
+        if enforce_arrival_limit and route_effective_arrival_seconds > configured_arrival_seconds:
+            issues.append(
+                _build_transport_ai_route_schedule_issue(
+                    code="transport_ai_route_arrival_after_limit",
+                    message=(
+                        f"Route '{route.route_key}' cannot project arrival at '{route_effective_arrival_time}' "
+                        f"because the configured latest arrival is '{planning_input.limits.arrival_at_work_time}'."
+                    ),
+                )
+            )
+
         passenger_seconds_by_request_id: dict[int, int] = {}
-        next_point_index = route_matrix_partition.destination_index
         total_duration_seconds = 0
         total_distance_meters = 0
 
-        for request_id in reversed(route.pickup_order_request_ids):
-            point_index = request_point_index_by_request_id.get(request_id)
-            if point_index is None:
-                issues.append(
-                    _build_transport_ai_route_schedule_issue(
-                        code="transport_ai_route_schedule_request_point_missing",
-                        message=(
-                            f"Route '{route.route_key}' does not have a resolved matrix point for request "
-                            f"'{request_id}'."
-                        ),
-                    )
+        if forward_from_anchor:
+            if route_departure_seconds is None:
+                route_departure_seconds = (
+                    route_effective_arrival_seconds
+                    - _round_transport_ai_duration_seconds_to_minute_ceiling(route.total_duration_seconds)
                 )
-                passenger_seconds_by_request_id.clear()
-                break
-
-            duration_seconds = route_matrix_partition.durations_seconds[point_index][next_point_index]
-            distance_meters = route_matrix_partition.distances_meters[point_index][next_point_index]
-            if duration_seconds is None or distance_meters is None:
-                issues.append(
-                    _build_transport_ai_route_schedule_issue(
-                        code="transport_ai_route_schedule_pair_no_route",
-                        message=(
-                            f"Route '{route.route_key}' is missing a routable segment for request "
-                            f"'{request_id}'."
-                        ),
+            next_point_index = route_matrix_partition.destination_index
+            for request_id in route.pickup_order_request_ids:
+                point_index = request_point_index_by_request_id.get(request_id)
+                if point_index is None:
+                    issues.append(
+                        _build_transport_ai_route_schedule_issue(
+                            code="transport_ai_route_schedule_request_point_missing",
+                            message=(
+                                f"Route '{route.route_key}' does not have a resolved matrix point for request "
+                                f"'{request_id}'."
+                            ),
+                        )
                     )
-                )
-                passenger_seconds_by_request_id.clear()
-                break
+                    passenger_seconds_by_request_id.clear()
+                    break
 
-            total_duration_seconds += duration_seconds
-            total_distance_meters += distance_meters
-            rounded_offset_seconds = _round_transport_ai_duration_seconds_to_minute_ceiling(total_duration_seconds)
-            passenger_seconds_by_request_id[request_id] = effective_arrival_seconds - rounded_offset_seconds
-            next_point_index = point_index
+                duration_seconds = route_matrix_partition.durations_seconds[next_point_index][point_index]
+                distance_meters = route_matrix_partition.distances_meters[next_point_index][point_index]
+                if duration_seconds is None or distance_meters is None:
+                    issues.append(
+                        _build_transport_ai_route_schedule_issue(
+                            code="transport_ai_route_schedule_pair_no_route",
+                            message=(
+                                f"Route '{route.route_key}' is missing a routable segment for request "
+                                f"'{request_id}'."
+                            ),
+                        )
+                    )
+                    passenger_seconds_by_request_id.clear()
+                    break
+
+                total_duration_seconds += duration_seconds
+                total_distance_meters += distance_meters
+                rounded_offset_seconds = _round_transport_ai_duration_seconds_to_minute_ceiling(total_duration_seconds)
+                passenger_seconds_by_request_id[request_id] = route_departure_seconds + rounded_offset_seconds
+                next_point_index = point_index
+        else:
+            next_point_index = route_matrix_partition.destination_index
+            for request_id in reversed(route.pickup_order_request_ids):
+                point_index = request_point_index_by_request_id.get(request_id)
+                if point_index is None:
+                    issues.append(
+                        _build_transport_ai_route_schedule_issue(
+                            code="transport_ai_route_schedule_request_point_missing",
+                            message=(
+                                f"Route '{route.route_key}' does not have a resolved matrix point for request "
+                                f"'{request_id}'."
+                            ),
+                        )
+                    )
+                    passenger_seconds_by_request_id.clear()
+                    break
+
+                duration_seconds = route_matrix_partition.durations_seconds[point_index][next_point_index]
+                distance_meters = route_matrix_partition.distances_meters[point_index][next_point_index]
+                if duration_seconds is None or distance_meters is None:
+                    issues.append(
+                        _build_transport_ai_route_schedule_issue(
+                            code="transport_ai_route_schedule_pair_no_route",
+                            message=(
+                                f"Route '{route.route_key}' is missing a routable segment for request "
+                                f"'{request_id}'."
+                            ),
+                        )
+                    )
+                    passenger_seconds_by_request_id.clear()
+                    break
+
+                total_duration_seconds += duration_seconds
+                total_distance_meters += distance_meters
+                rounded_offset_seconds = _round_transport_ai_duration_seconds_to_minute_ceiling(total_duration_seconds)
+                passenger_seconds_by_request_id[request_id] = route_effective_arrival_seconds - rounded_offset_seconds
+                next_point_index = point_index
 
         scheduled_passengers = []
         for passenger in sorted(route.passengers, key=lambda row: (row.pickup_order, row.request_id)):
-            scheduled_pickup_seconds = passenger_seconds_by_request_id.get(passenger.request_id)
+            scheduled_pickup_seconds = (
+                route_departure_seconds
+                if forward_from_anchor
+                else passenger_seconds_by_request_id.get(passenger.request_id)
+            )
             scheduled_pickup_time = None
             if scheduled_pickup_seconds is not None and scheduled_pickup_seconds >= 0:
                 scheduled_pickup_time = _format_transport_ai_seconds_to_hhmm(scheduled_pickup_seconds)
@@ -2058,7 +2640,7 @@ def schedule_transport_ai_route_times(
                 passenger.model_copy(update={"scheduled_pickup_time": scheduled_pickup_time})
             )
 
-        if route.pickup_order_request_ids:
+        if route.pickup_order_request_ids and partition_route_kind == "home_to_work":
             first_pickup_seconds = passenger_seconds_by_request_id.get(route.pickup_order_request_ids[0])
             if first_pickup_seconds is not None and first_pickup_seconds < earliest_boarding_seconds:
                 issues.append(
@@ -2075,7 +2657,7 @@ def schedule_transport_ai_route_times(
             route.model_copy(
                 update={
                     "passengers": scheduled_passengers,
-                    "projected_arrival_time": effective_arrival_time,
+                    "projected_arrival_time": route_effective_arrival_time,
                     "total_duration_seconds": total_duration_seconds,
                     "total_distance_meters": total_distance_meters,
                 }
@@ -2108,6 +2690,391 @@ def _build_transport_ai_plan_issue(
         blocking=blocking,
         request_id=request_id,
         vehicle_id=vehicle_id,
+    )
+
+
+def _build_transport_ai_derived_return_leg(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+    route_matrix_partition: TransportAgentRouteMatrixPartition,
+    request_by_id: dict[int, TransportAgentPlanningRequest],
+    request_point_index_by_request_id: dict[int, int],
+    route: TransportAgentSolvedRoute,
+    vehicle_ref: str,
+    client_vehicle_key: str,
+) -> tuple[
+    list[TransportAgentPassengerAllocation],
+    TransportAgentVehicleItinerary | None,
+    list[TransportProposalValidationIssue],
+]:
+    if partition.request_kind not in {"regular", "weekend"} or route.route_kind != "home_to_work":
+        return [], None, []
+    if route.projected_arrival_time is None:
+        return [], None, [
+            _build_transport_ai_plan_issue(
+                code="transport_ai_return_leg_outbound_schedule_missing",
+                message=(
+                    f"Route '{route.route_key}' cannot derive a work_to_home leg because the outbound arrival time is missing."
+                ),
+                vehicle_id=route.vehicle_id,
+            )
+        ]
+
+    destination_point = route_matrix_partition.points[route_matrix_partition.destination_index]
+    departure_time = planning_input.settings.work_to_home_time
+    departure_seconds = _parse_transport_ai_hhmm_to_seconds(departure_time)
+    passenger_by_request_id = {
+        passenger.request_id: passenger
+        for passenger in route.passengers
+    }
+
+    stops = [
+        TransportAgentRouteStop(
+            stop_order=0,
+            stop_type="pickup",
+            request_id=None,
+            user_id=None,
+            passenger_name=None,
+            project_name=partition.project_name,
+            address=destination_point.address,
+            zip_code=destination_point.zip_code,
+            country_code=destination_point.country_code,
+            longitude=destination_point.longitude,
+            latitude=destination_point.latitude,
+            scheduled_time=departure_time,
+            duration_from_previous_seconds=None,
+            distance_from_previous_meters=None,
+        )
+    ]
+    passenger_allocations: list[TransportAgentPassengerAllocation] = []
+    issues: list[TransportProposalValidationIssue] = []
+    previous_point_index = route_matrix_partition.destination_index
+    total_duration_seconds = 0
+    total_distance_meters = 0
+
+    for dropoff_order, request_id in enumerate(reversed(route.pickup_order_request_ids)):
+        request_row = request_by_id.get(request_id)
+        passenger = passenger_by_request_id.get(request_id)
+        if request_row is None or passenger is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_return_leg_passenger_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing outbound passenger data required to derive the return leg for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+        if passenger.scheduled_pickup_time is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_return_leg_outbound_schedule_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing the outbound pickup time required to derive the return leg for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        point_index = request_point_index_by_request_id.get(request_id)
+        if point_index is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_return_leg_point_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing a resolved home point required to derive the return leg for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        duration_from_previous_seconds = route_matrix_partition.durations_seconds[previous_point_index][point_index]
+        distance_from_previous_meters = route_matrix_partition.distances_meters[previous_point_index][point_index]
+        if duration_from_previous_seconds is None or distance_from_previous_meters is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_return_leg_segment_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing a reverse matrix segment required to derive the return leg for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        total_duration_seconds += duration_from_previous_seconds
+        total_distance_meters += distance_from_previous_meters
+        scheduled_dropoff_time = _format_transport_ai_seconds_to_hhmm(
+            departure_seconds + _round_transport_ai_duration_seconds_to_minute_ceiling(total_duration_seconds)
+        )
+
+        passenger_allocations.append(
+            TransportAgentPassengerAllocation(
+                request_id=request_row.request_id,
+                request_kind=request_row.request_kind,
+                service_date=planning_input.service_date,
+                route_kind="work_to_home",
+                vehicle_ref=vehicle_ref,
+                user_id=request_row.user_id,
+                chave=request_row.chave,
+                nome=request_row.nome,
+                project_name=request_row.project_name,
+                pickup_order=dropoff_order,
+                scheduled_pickup_time=departure_time,
+                scheduled_dropoff_time=scheduled_dropoff_time,
+                projected_arrival_time=scheduled_dropoff_time,
+                rationale=(
+                    f"Derive request '{request_row.request_id}' return timing from outbound route '{route.route_key}' using {vehicle_ref}."
+                ),
+            )
+        )
+
+        point = route_matrix_partition.points[point_index]
+        stops.append(
+            TransportAgentRouteStop(
+                stop_order=len(stops),
+                stop_type="destination",
+                request_id=request_row.request_id,
+                user_id=request_row.user_id,
+                passenger_name=request_row.nome,
+                project_name=request_row.project_name,
+                address=point.address,
+                zip_code=point.zip_code,
+                country_code=point.country_code,
+                longitude=point.longitude,
+                latitude=point.latitude,
+                scheduled_time=scheduled_dropoff_time,
+                duration_from_previous_seconds=duration_from_previous_seconds,
+                distance_from_previous_meters=distance_from_previous_meters,
+            )
+        )
+        previous_point_index = point_index
+
+    projected_completion_time = passenger_allocations[-1].scheduled_dropoff_time if passenger_allocations else departure_time
+    return (
+        passenger_allocations,
+        TransportAgentVehicleItinerary(
+            route_key=f"{route.route_key}:work_to_home",
+            partition_key=route.partition_key,
+            vehicle_ref=vehicle_ref,
+            service_scope=route.service_scope,
+            route_kind="work_to_home",
+            vehicle_type=route.vehicle_type,
+            vehicle_id=route.vehicle_id,
+            schedule_id=route.schedule_id,
+            client_vehicle_key=client_vehicle_key,
+            plate=route.plate,
+            project_name=partition.project_name,
+            country_code=partition.country_code,
+            country_name=partition.country_name,
+            estimated_cost=0.0,
+            total_duration_seconds=total_duration_seconds,
+            total_distance_meters=total_distance_meters,
+            projected_arrival_time=projected_completion_time,
+            stops=stops,
+        ),
+        issues,
+    )
+
+
+def _build_transport_ai_extra_work_to_home_leg(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    partition: TransportAgentPlanningPartition,
+    route_matrix_partition: TransportAgentRouteMatrixPartition,
+    request_by_id: dict[int, TransportAgentPlanningRequest],
+    request_point_index_by_request_id: dict[int, int],
+    route: TransportAgentSolvedRoute,
+    vehicle_ref: str,
+    client_vehicle_key: str,
+) -> tuple[
+    list[TransportAgentPassengerAllocation],
+    TransportAgentVehicleItinerary | None,
+    list[TransportProposalValidationIssue],
+]:
+    if partition.request_kind != "extra" or route.route_kind != "work_to_home":
+        return [], None, []
+
+    passenger_by_request_id = {
+        passenger.request_id: passenger
+        for passenger in route.passengers
+    }
+    departure_time = next(
+        (
+            passenger.scheduled_pickup_time
+            for passenger in sorted(route.passengers, key=lambda row: (row.pickup_order, row.request_id))
+            if passenger.scheduled_pickup_time is not None
+        ),
+        None,
+    )
+    if departure_time is None and route.projected_arrival_time is not None:
+        departure_seconds = (
+            _parse_transport_ai_hhmm_to_seconds(route.projected_arrival_time)
+            - _round_transport_ai_duration_seconds_to_minute_ceiling(route.total_duration_seconds)
+        )
+        departure_time = _format_transport_ai_seconds_to_hhmm(departure_seconds)
+    if departure_time is None:
+        return [], None, [
+            _build_transport_ai_plan_issue(
+                code="transport_ai_extra_return_departure_missing",
+                message=(
+                    f"Route '{route.route_key}' is missing the departure time required to build the extra work_to_home itinerary."
+                ),
+                vehicle_id=route.vehicle_id,
+            )
+        ]
+
+    departure_seconds = _parse_transport_ai_hhmm_to_seconds(departure_time)
+    origin_point = route_matrix_partition.points[route_matrix_partition.destination_index]
+    stops = [
+        TransportAgentRouteStop(
+            stop_order=0,
+            stop_type="pickup",
+            request_id=None,
+            user_id=None,
+            passenger_name=partition.project_name,
+            project_name=partition.project_name,
+            address=origin_point.address,
+            zip_code=origin_point.zip_code,
+            country_code=origin_point.country_code,
+            longitude=origin_point.longitude,
+            latitude=origin_point.latitude,
+            scheduled_time=departure_time,
+            duration_from_previous_seconds=None,
+            distance_from_previous_meters=None,
+        )
+    ]
+    passenger_allocations: list[TransportAgentPassengerAllocation] = []
+    issues: list[TransportProposalValidationIssue] = []
+    previous_point_index = route_matrix_partition.destination_index
+    total_duration_seconds = 0
+    total_distance_meters = 0
+
+    for dropoff_order, request_id in enumerate(route.pickup_order_request_ids):
+        request_row = request_by_id.get(request_id)
+        passenger = passenger_by_request_id.get(request_id)
+        if request_row is None or passenger is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_extra_return_passenger_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing passenger data required to build the extra work_to_home itinerary for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        point_index = request_point_index_by_request_id.get(request_id)
+        if point_index is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_extra_return_point_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing a resolved home point required to build the extra work_to_home itinerary for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        duration_from_previous_seconds = route_matrix_partition.durations_seconds[previous_point_index][point_index]
+        distance_from_previous_meters = route_matrix_partition.distances_meters[previous_point_index][point_index]
+        if duration_from_previous_seconds is None or distance_from_previous_meters is None:
+            issues.append(
+                _build_transport_ai_plan_issue(
+                    code="transport_ai_extra_return_segment_missing",
+                    message=(
+                        f"Route '{route.route_key}' is missing a forward matrix segment required to build the extra work_to_home itinerary for request '{request_id}'."
+                    ),
+                    request_id=request_id,
+                    vehicle_id=route.vehicle_id,
+                )
+            )
+            return [], None, issues
+
+        total_duration_seconds += duration_from_previous_seconds
+        total_distance_meters += distance_from_previous_meters
+        scheduled_dropoff_time = _format_transport_ai_seconds_to_hhmm(
+            departure_seconds + _round_transport_ai_duration_seconds_to_minute_ceiling(total_duration_seconds)
+        )
+
+        passenger_allocations.append(
+            TransportAgentPassengerAllocation(
+                request_id=request_row.request_id,
+                request_kind=request_row.request_kind,
+                service_date=planning_input.service_date,
+                route_kind="work_to_home",
+                vehicle_ref=vehicle_ref,
+                user_id=request_row.user_id,
+                chave=request_row.chave,
+                nome=request_row.nome,
+                project_name=request_row.project_name,
+                pickup_order=dropoff_order,
+                scheduled_pickup_time=departure_time,
+                scheduled_dropoff_time=scheduled_dropoff_time,
+                projected_arrival_time=scheduled_dropoff_time,
+                rationale=(
+                    f"Assign request '{request_row.request_id}' to work_to_home route '{route.route_key}' using {vehicle_ref}."
+                ),
+            )
+        )
+
+        point = route_matrix_partition.points[point_index]
+        stops.append(
+            TransportAgentRouteStop(
+                stop_order=len(stops),
+                stop_type="destination",
+                request_id=request_row.request_id,
+                user_id=request_row.user_id,
+                passenger_name=request_row.nome,
+                project_name=request_row.project_name,
+                address=point.address,
+                zip_code=point.zip_code,
+                country_code=point.country_code,
+                longitude=point.longitude,
+                latitude=point.latitude,
+                scheduled_time=scheduled_dropoff_time,
+                duration_from_previous_seconds=duration_from_previous_seconds,
+                distance_from_previous_meters=distance_from_previous_meters,
+            )
+        )
+        previous_point_index = point_index
+
+    projected_completion_time = passenger_allocations[-1].scheduled_dropoff_time if passenger_allocations else departure_time
+    return (
+        passenger_allocations,
+        TransportAgentVehicleItinerary(
+            route_key=route.route_key,
+            partition_key=route.partition_key,
+            vehicle_ref=vehicle_ref,
+            service_scope=route.service_scope,
+            route_kind="work_to_home",
+            vehicle_type=route.vehicle_type,
+            vehicle_id=route.vehicle_id,
+            schedule_id=route.schedule_id,
+            client_vehicle_key=client_vehicle_key,
+            plate=route.plate,
+            project_name=partition.project_name,
+            country_code=partition.country_code,
+            country_name=partition.country_name,
+            estimated_cost=float(route.estimated_cost),
+            total_duration_seconds=total_duration_seconds,
+            total_distance_meters=total_distance_meters,
+            projected_arrival_time=projected_completion_time,
+            stops=stops,
+        ),
+        issues,
     )
 
 
@@ -2175,6 +3142,7 @@ def _build_transport_ai_plan_key(
     vehicle_actions: list[TransportAgentVehicleAction],
     passenger_allocations: list[TransportAgentPassengerAllocation],
     route_itineraries: list[TransportAgentVehicleItinerary],
+    vehicle_review_tables: list[TransportAgentVehicleReviewTable],
     validation_issues: list[TransportProposalValidationIssue],
 ) -> str:
     payload = {
@@ -2182,6 +3150,7 @@ def _build_transport_ai_plan_key(
         "vehicle_actions": [action.model_dump(mode="json") for action in vehicle_actions],
         "passenger_allocations": [allocation.model_dump(mode="json") for allocation in passenger_allocations],
         "route_itineraries": [itinerary.model_dump(mode="json") for itinerary in route_itineraries],
+        "vehicle_review_tables": [table.model_dump(mode="json") for table in vehicle_review_tables],
         "validation_issues": [issue.model_dump(mode="json") for issue in validation_issues],
     }
     digest = hashlib.sha256(_dump_transport_ai_planning_json(payload).encode("utf-8")).hexdigest()
@@ -2236,6 +3205,275 @@ def _build_transport_ai_plan_objective_summary(
     return (
         f"Suggested {cost_summary.suggested_vehicle_count} vehicles across {route_count} routes, {delta_text}, "
         f"for an estimated total of {suggested_cost_text}; {issue_text}."
+    )
+
+
+def _humanize_transport_ai_review_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(str(value).strip().split())
+    if not normalized:
+        return None
+    return normalized.replace("_", " ").title()
+
+
+def _build_transport_ai_vehicle_review_action_tone(
+    action_type: str | None,
+) -> str:
+    if action_type == "create":
+        return "success"
+    if action_type == "update":
+        return "warning"
+    if action_type == "remove_from_day":
+        return "error"
+    if action_type == "keep":
+        return "neutral"
+    return "info"
+
+
+def _build_transport_ai_vehicle_review_badges(
+    *,
+    action: TransportAgentVehicleAction | None,
+    service_scope: str | None,
+    route_kind: str | None,
+) -> list[TransportAgentVehicleReviewBadge]:
+    badges: list[TransportAgentVehicleReviewBadge] = []
+    service_scope_label = _humanize_transport_ai_review_label(service_scope)
+    if service_scope_label:
+        badges.append(
+            TransportAgentVehicleReviewBadge(
+                text=service_scope_label,
+                tone="info",
+            )
+        )
+    route_kind_label = _humanize_transport_ai_review_label(route_kind)
+    if route_kind_label:
+        badges.append(
+            TransportAgentVehicleReviewBadge(
+                text=route_kind_label,
+                tone="neutral",
+            )
+        )
+    if action is not None:
+        action_label = _humanize_transport_ai_review_label(action.action_type)
+        if action_label:
+            badges.append(
+                TransportAgentVehicleReviewBadge(
+                    text=action_label,
+                    tone=_build_transport_ai_vehicle_review_action_tone(action.action_type),
+                )
+            )
+    return badges
+
+
+def _normalize_transport_ai_vehicle_review_address(
+    stop: TransportAgentRouteStop | None,
+) -> str | None:
+    if stop is None:
+        return None
+    normalized_address = " ".join(str(stop.address).strip().split())
+    if not normalized_address:
+        return None
+
+    parts = [segment.strip() for segment in normalized_address.split(",") if segment.strip()]
+    removable_suffixes = {
+        str(stop_value).strip().upper()
+        for stop_value in (stop.zip_code, stop.country_code)
+        if stop_value is not None and str(stop_value).strip()
+    }
+    while len(parts) > 1 and parts[-1].upper() in removable_suffixes:
+        parts.pop()
+    if parts:
+        return ", ".join(parts)
+    return normalized_address
+
+
+def _resolve_transport_ai_vehicle_review_ref(
+    action: TransportAgentVehicleAction,
+) -> str | None:
+    after_vehicle_ref = action.after.get("vehicle_ref")
+    if isinstance(after_vehicle_ref, str) and after_vehicle_ref.strip():
+        return after_vehicle_ref.strip()
+    if action.vehicle_id is not None:
+        return f"existing:{action.vehicle_id}"
+    if action.client_vehicle_key is None:
+        return None
+    normalized_key = action.client_vehicle_key.strip()
+    if not normalized_key:
+        return None
+    if normalized_key.startswith(("existing:", "new:")):
+        return normalized_key
+    return f"new:{normalized_key}"
+
+
+def _build_transport_ai_vehicle_review_tables(
+    *,
+    vehicle_actions: list[TransportAgentVehicleAction],
+    passenger_allocations: list[TransportAgentPassengerAllocation],
+    route_itineraries: list[TransportAgentVehicleItinerary],
+) -> list[TransportAgentVehicleReviewTable]:
+    action_by_vehicle_ref: dict[str, TransportAgentVehicleAction] = {}
+    for action in vehicle_actions:
+        vehicle_ref = _resolve_transport_ai_vehicle_review_ref(action)
+        if vehicle_ref is None or vehicle_ref in action_by_vehicle_ref:
+            continue
+        action_by_vehicle_ref[vehicle_ref] = action
+
+    allocations_by_vehicle_ref: defaultdict[str, list[TransportAgentPassengerAllocation]] = defaultdict(list)
+    for allocation in passenger_allocations:
+        allocations_by_vehicle_ref[allocation.vehicle_ref].append(allocation)
+
+    itineraries_by_vehicle_ref: defaultdict[str, list[TransportAgentVehicleItinerary]] = defaultdict(list)
+    pickup_stop_by_vehicle_request: dict[tuple[str, int], TransportAgentRouteStop] = {}
+    for itinerary in route_itineraries:
+        itineraries_by_vehicle_ref[itinerary.vehicle_ref].append(itinerary)
+        if itinerary.route_kind != "home_to_work":
+            continue
+        for stop in itinerary.stops:
+            if stop.stop_type != "pickup" or stop.request_id is None:
+                continue
+            pickup_stop_by_vehicle_request.setdefault((itinerary.vehicle_ref, stop.request_id), stop)
+
+    vehicle_refs = sorted(set(allocations_by_vehicle_ref) | set(itineraries_by_vehicle_ref))
+    review_tables: list[TransportAgentVehicleReviewTable] = []
+    for vehicle_ref in vehicle_refs:
+        action = action_by_vehicle_ref.get(vehicle_ref)
+        allocations_by_request_id: defaultdict[int, dict[str, TransportAgentPassengerAllocation]] = defaultdict(dict)
+        for allocation in allocations_by_vehicle_ref.get(vehicle_ref, []):
+            allocations_by_request_id[allocation.request_id].setdefault(allocation.route_kind, allocation)
+
+        grouped_itineraries = sorted(
+            itineraries_by_vehicle_ref.get(vehicle_ref, []),
+            key=lambda itinerary: (itinerary.partition_key, itinerary.route_key),
+        )
+        primary_itinerary = grouped_itineraries[0] if grouped_itineraries else None
+
+        rows = []
+        for request_id, allocations_by_route_kind in sorted(
+            allocations_by_request_id.items(),
+            key=lambda item: (
+                0 if "home_to_work" in item[1] else 1,
+                item[1]["home_to_work"].pickup_order if "home_to_work" in item[1] else next(iter(item[1].values())).pickup_order,
+                item[1]["home_to_work"].scheduled_pickup_time if "home_to_work" in item[1] else next(iter(item[1].values())).scheduled_pickup_time,
+                item[0],
+            ),
+        ):
+            home_to_work_allocation = allocations_by_route_kind.get("home_to_work")
+            work_to_home_allocation = allocations_by_route_kind.get("work_to_home")
+            primary_allocation = home_to_work_allocation or work_to_home_allocation
+            if primary_allocation is None:
+                continue
+
+            home_to_work_boarding = (
+                home_to_work_allocation.scheduled_pickup_time
+                if home_to_work_allocation is not None
+                else None
+            )
+            work_to_home_dropoff = (
+                work_to_home_allocation.scheduled_dropoff_time
+                or work_to_home_allocation.projected_arrival_time
+                if work_to_home_allocation is not None
+                else None
+            )
+            rows.append(
+                TransportAgentVehicleReviewRow(
+                    request_id=request_id,
+                    user_id=primary_allocation.user_id,
+                    request_kind=primary_allocation.request_kind,
+                    pickup_order=(
+                        home_to_work_allocation.pickup_order
+                        if home_to_work_allocation is not None
+                        else primary_allocation.pickup_order
+                    ),
+                    user_name=primary_allocation.nome,
+                    user_address=_normalize_transport_ai_vehicle_review_address(
+                        pickup_stop_by_vehicle_request.get((vehicle_ref, request_id))
+                    ),
+                    home_to_work_boarding=home_to_work_boarding,
+                    home_to_work_boarding_is_placeholder=home_to_work_boarding is None,
+                    work_to_home_dropoff=work_to_home_dropoff,
+                    work_to_home_dropoff_is_placeholder=work_to_home_dropoff is None,
+                )
+            )
+
+        service_scope = (
+            primary_itinerary.service_scope
+            if primary_itinerary is not None
+            else action.service_scope if action is not None else None
+        )
+        route_kind_values = {
+            allocation.route_kind
+            for allocations_by_route_kind in allocations_by_request_id.values()
+            for allocation in allocations_by_route_kind.values()
+        }
+        if not route_kind_values:
+            route_kind_values = {itinerary.route_kind for itinerary in grouped_itineraries}
+        route_kind = next(iter(route_kind_values)) if len(route_kind_values) == 1 else None
+        vehicle_type = (
+            primary_itinerary.vehicle_type
+            if primary_itinerary is not None
+            else action.after.get("vehicle_type") if action is not None else None
+        )
+        plate = (
+            primary_itinerary.plate
+            if primary_itinerary is not None
+            else action.after.get("plate") if action is not None else None
+        )
+        client_vehicle_key = (
+            primary_itinerary.client_vehicle_key
+            if primary_itinerary is not None
+            else action.client_vehicle_key if action is not None else None
+        )
+        vehicle_label = str(plate or client_vehicle_key or vehicle_ref)
+        estimated_cost = (
+            float(sum(itinerary.estimated_cost for itinerary in grouped_itineraries))
+            if grouped_itineraries
+            else None
+        )
+        if estimated_cost is None and action is not None:
+            raw_estimated_cost = action.after.get("estimated_cost")
+            if isinstance(raw_estimated_cost, Real):
+                estimated_cost = float(raw_estimated_cost)
+
+        review_tables.append(
+            TransportAgentVehicleReviewTable(
+                vehicle_ref=vehicle_ref,
+                vehicle_label=vehicle_label,
+                service_scope=service_scope,
+                vehicle_type=vehicle_type,
+                route_kind=route_kind,
+                vehicle_id=(
+                    primary_itinerary.vehicle_id
+                    if primary_itinerary is not None
+                    else action.vehicle_id if action is not None else None
+                ),
+                schedule_id=(
+                    primary_itinerary.schedule_id
+                    if primary_itinerary is not None
+                    else action.schedule_id if action is not None else None
+                ),
+                client_vehicle_key=client_vehicle_key,
+                plate=plate,
+                estimated_cost=estimated_cost,
+                action_type=action.action_type if action is not None else None,
+                action_key=action.action_key if action is not None else None,
+                action_rationale=action.rationale if action is not None else None,
+                header_badges=_build_transport_ai_vehicle_review_badges(
+                    action=action,
+                    service_scope=service_scope,
+                    route_kind=route_kind,
+                ),
+                rows=rows,
+            )
+        )
+
+    return sorted(
+        review_tables,
+        key=lambda table: (
+            table.service_scope or "",
+            table.vehicle_label,
+            table.vehicle_ref,
+        ),
     )
 
 
@@ -2390,6 +3628,32 @@ def build_transport_agent_plan_from_solver_result(
             stops: list[TransportAgentRouteStop] = []
             previous_point_index: int | None = None
 
+            if route_matrix_partition is not None:
+                extra_return_allocations, extra_return_itinerary, extra_return_issues = _build_transport_ai_extra_work_to_home_leg(
+                    planning_input=planning_input,
+                    partition=partition,
+                    route_matrix_partition=route_matrix_partition,
+                    request_by_id=request_by_id,
+                    request_point_index_by_request_id=request_point_index_by_request_id,
+                    route=route,
+                    vehicle_ref=vehicle_ref,
+                    client_vehicle_key=action_client_vehicle_key,
+                )
+                if extra_return_allocations or extra_return_itinerary is not None or extra_return_issues:
+                    passenger_allocations.extend(extra_return_allocations)
+                    allocated_request_ids.update(allocation.request_id for allocation in extra_return_allocations)
+                    if extra_return_itinerary is not None:
+                        route_itineraries.append(extra_return_itinerary)
+                    for extra_return_issue in extra_return_issues:
+                        add_validation_issue(
+                            code=extra_return_issue.code,
+                            message=extra_return_issue.message,
+                            blocking=extra_return_issue.blocking,
+                            request_id=extra_return_issue.request_id,
+                            vehicle_id=extra_return_issue.vehicle_id,
+                        )
+                    continue
+
             for stop_order, request_id in enumerate(route.pickup_order_request_ids):
                 request_row = request_by_id.get(request_id)
                 passenger = passenger_by_request_id.get(request_id)
@@ -2421,7 +3685,7 @@ def build_transport_agent_plan_from_solver_result(
                         request_id=request_row.request_id,
                         request_kind=request_row.request_kind,
                         service_date=planning_input.service_date,
-                        route_kind=planning_input.route_kind,
+                        route_kind=route.route_kind,
                         vehicle_ref=vehicle_ref,
                         user_id=request_row.user_id,
                         chave=request_row.chave,
@@ -2554,6 +3818,28 @@ def build_transport_agent_plan_from_solver_result(
                     )
                 )
 
+                derived_return_allocations, derived_return_itinerary, derived_return_issues = _build_transport_ai_derived_return_leg(
+                    planning_input=planning_input,
+                    partition=partition,
+                    route_matrix_partition=route_matrix_partition,
+                    request_by_id=request_by_id,
+                    request_point_index_by_request_id=request_point_index_by_request_id,
+                    route=route,
+                    vehicle_ref=vehicle_ref,
+                    client_vehicle_key=action_client_vehicle_key,
+                )
+                passenger_allocations.extend(derived_return_allocations)
+                if derived_return_itinerary is not None:
+                    route_itineraries.append(derived_return_itinerary)
+                for derived_return_issue in derived_return_issues:
+                    add_validation_issue(
+                        code=derived_return_issue.code,
+                        message=derived_return_issue.message,
+                        blocking=derived_return_issue.blocking,
+                        request_id=derived_return_issue.request_id,
+                        vehicle_id=derived_return_issue.vehicle_id,
+                    )
+
         for request_id in sorted(partition_result.unallocated_request_ids):
             add_validation_issue(
                 code="transport_ai_request_unallocated",
@@ -2589,7 +3875,13 @@ def build_transport_agent_plan_from_solver_result(
     )
     passenger_allocations = sorted(
         passenger_allocations,
-        key=lambda allocation: (allocation.project_name, allocation.vehicle_ref, allocation.pickup_order, allocation.request_id),
+        key=lambda allocation: (
+            allocation.project_name,
+            allocation.vehicle_ref,
+            0 if allocation.route_kind == "home_to_work" else 1,
+            allocation.pickup_order,
+            allocation.request_id,
+        ),
     )
     route_itineraries = sorted(
         route_itineraries,
@@ -2665,12 +3957,18 @@ def build_transport_agent_plan_from_solver_result(
             for vehicle_type, counts in sorted(change_counts_by_vehicle_type.items())
         ],
     )
+    vehicle_review_tables = _build_transport_ai_vehicle_review_tables(
+        vehicle_actions=vehicle_actions,
+        passenger_allocations=passenger_allocations,
+        route_itineraries=route_itineraries,
+    )
 
     plan_key = _build_transport_ai_plan_key(
         planning_input_hash=planning_input.planning_input_hash,
         vehicle_actions=vehicle_actions,
         passenger_allocations=passenger_allocations,
         route_itineraries=route_itineraries,
+        vehicle_review_tables=vehicle_review_tables,
         validation_issues=validation_issues,
     )
     return TransportAgentPlan(
@@ -2687,6 +3985,7 @@ def build_transport_agent_plan_from_solver_result(
         vehicle_actions=vehicle_actions,
         passenger_allocations=passenger_allocations,
         route_itineraries=route_itineraries,
+        vehicle_review_tables=vehicle_review_tables,
         cost_summary=cost_summary,
         change_summary=change_summary,
         validation_issues=validation_issues,
@@ -2765,6 +4064,11 @@ def build_transport_proposal_from_agent_plan(
                 route_kind=allocation.route_kind,
                 suggested_status="confirmed",
                 vehicle_id=vehicle_id,
+                boarding_time=(
+                    allocation.scheduled_pickup_time
+                    if allocation.route_kind == "home_to_work"
+                    else None
+                ),
                 response_message="Transport AI suggestion applied.",
                 rationale=allocation.rationale,
             )
@@ -2817,6 +4121,7 @@ def build_transport_ai_preflight_issues(
     *,
     service_date: date,
     route_kind: str,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
     settings_obj: Settings = settings,
     snapshot: TransportOperationalSnapshot | None = None,
     transport_settings: dict[str, object] | None = None,
@@ -2836,6 +4141,14 @@ def build_transport_ai_preflight_issues(
         db,
         service_date=service_date,
         route_kind=route_kind,
+    )
+    effective_dashboard_scope = resolve_transport_operational_dashboard_scope(
+        effective_snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    dashboard_scope_project_names = resolve_transport_operational_dashboard_scope_project_names(
+        effective_snapshot,
+        dashboard_scope=effective_dashboard_scope,
     )
     effective_transport_settings = transport_settings or get_transport_settings_payload(db)
 
@@ -2863,9 +4176,14 @@ def build_transport_ai_preflight_issues(
             )
         )
 
+    scoped_request_rows_by_scope = build_transport_snapshot_request_scope_index(
+        effective_snapshot,
+        dashboard_scope=dashboard_scope,
+    )
     pending_requests_by_scope = _iter_pending_requests_by_scope(
         effective_snapshot,
         service_date=service_date,
+        request_rows_by_scope=scoped_request_rows_by_scope,
     )
     eligible_requests = [
         request_row
@@ -2874,30 +4192,21 @@ def build_transport_ai_preflight_issues(
     ]
 
     if not eligible_requests:
+        scope_phrase = _build_transport_ai_scope_phrase(
+            dashboard_scope=dashboard_scope,
+            project_names=dashboard_scope_project_names,
+        )
         return issues + [
             _build_transport_ai_preflight_issue(
                 code="no_eligible_requests",
                 message=(
                     "No pending transport requests are eligible for "
-                    f"{service_date.isoformat()} on route '{route_kind}'."
+                    f"{service_date.isoformat()} on route '{route_kind}'{scope_phrase}."
                 ),
                 setting_name="service_date",
                 blocking=False,
             )
         ]
-
-    max_passengers_per_run = settings_obj.transport_ai_max_passengers_per_run
-    if max_passengers_per_run > 0 and len(eligible_requests) > max_passengers_per_run:
-        issues.append(
-            _build_transport_ai_preflight_issue(
-                code="max_passengers_per_run_exceeded",
-                message=(
-                    f"The selected date and route have {len(eligible_requests)} pending passengers, "
-                    f"which exceeds the configured limit of {max_passengers_per_run}."
-                ),
-                setting_name="transport_ai_max_passengers_per_run",
-            )
-        )
 
     project_rows_by_name = {
         _normalize_project_name(project_row.name): project_row

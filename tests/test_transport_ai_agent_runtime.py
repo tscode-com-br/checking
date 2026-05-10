@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sistema.app.core.config import Settings
 from sistema.app.database import Base
 from sistema.app.models import AdminUser, MobileAppSettings, Project, TransportAIRun, TransportRequest, User, Vehicle, TransportVehicleSchedule
+from sistema.app.schemas import TransportAgentRouteMatricesResult
 from sistema.app.services import location_settings as location_settings_module
+from sistema.app.services import transport_ai_agent as transport_ai_agent_module
 from sistema.app.services.transport_ai_agent import (
     TransportAILangChainToolContext,
     build_transport_ai_chat_model_for_provider,
@@ -24,7 +26,15 @@ from sistema.app.services.transport_ai_llm_settings import (
     TransportAILlmRuntimeSettings,
     upsert_transport_ai_llm_settings,
 )
+from sistema.app.services.transport_ai_planning import (
+    build_transport_agent_plan_from_solver_result,
+    build_transport_agent_planning_input,
+    build_transport_ai_vehicle_candidates,
+    schedule_transport_ai_route_times,
+    solve_transport_ai_partition,
+)
 from sistema.app.services.transport_route_provider import FakeTransportRouteProvider
+from tests.test_transport_ai_planning import _build_dense_solver_matrix, _build_solver_route_matrix_partition
 
 
 def _build_settings(**overrides) -> Settings:
@@ -53,7 +63,7 @@ def _fixture_timestamp() -> datetime:
     return datetime(2026, 5, 2, 8, 0, 0, tzinfo=ZoneInfo("Asia/Singapore"))
 
 
-def _configure_transport_settings(session: Session) -> None:
+def _configure_transport_settings(session: Session, *, extra_car_tolerance_minutes: int = 30) -> None:
     location_settings_module.upsert_transport_vehicle_default_seat_counts(
         session,
         default_car_seats=3,
@@ -75,6 +85,7 @@ def _configure_transport_settings(session: Session) -> None:
     if settings_row is not None:
         settings_row.transport_work_to_home_time = "16:45"
         settings_row.transport_last_update_time = "16:00"
+        settings_row.transport_extra_car_tolerance_minutes = extra_car_tolerance_minutes
     session.flush()
 
 
@@ -145,13 +156,19 @@ def _create_user(
     return user
 
 
-def _create_transport_request(session: Session, *, user_id: int, service_date: date) -> TransportRequest:
+def _create_transport_request(
+    session: Session,
+    *,
+    user_id: int,
+    service_date: date,
+    requested_time: str = "08:00",
+) -> TransportRequest:
     timestamp = _fixture_timestamp()
     request = TransportRequest(
         user_id=user_id,
         request_kind="extra",
         recurrence_kind="single_date",
-        requested_time="08:00",
+        requested_time=requested_time,
         selected_weekdays_json=None,
         single_date=service_date,
         created_via="admin",
@@ -165,7 +182,13 @@ def _create_transport_request(session: Session, *, user_id: int, service_date: d
     return request
 
 
-def _create_extra_vehicle_candidate(session: Session, *, placa: str, service_date: date) -> Vehicle:
+def _create_extra_vehicle_candidate(
+    session: Session,
+    *,
+    placa: str,
+    service_date: date,
+    route_kind: str = "home_to_work",
+) -> Vehicle:
     timestamp = _fixture_timestamp()
     vehicle = Vehicle(
         placa=placa,
@@ -181,7 +204,7 @@ def _create_extra_vehicle_candidate(session: Session, *, placa: str, service_dat
     schedule = TransportVehicleSchedule(
         vehicle_id=vehicle.id,
         service_scope="extra",
-        route_kind="home_to_work",
+        route_kind=route_kind,
         recurrence_kind="single_date",
         service_date=service_date,
         weekday=None,
@@ -299,6 +322,17 @@ class _FakeChatModel:
     def with_structured_output(self, schema, **kwargs):
         self.structured_output_calls.append({"schema": schema, **kwargs})
         return _FakeStructuredRunnable(self)
+
+
+def test_load_transport_ai_route_planner_prompt_uses_v4_failure_contract():
+    transport_ai_agent_module.load_transport_ai_route_planner_prompt.cache_clear()
+
+    prompt_text = transport_ai_agent_module.load_transport_ai_route_planner_prompt()
+
+    assert "retry_feedback" in prompt_text
+    assert "Never invent a parallel failure taxonomy" in prompt_text
+    assert "Do not speculate about Mapbox, OpenAI, DeepSeek" in prompt_text
+    assert "leave those fields empty rather than inventing new values" in prompt_text
 
 
 def test_build_transport_ai_chat_model_for_deepseek_uses_openai_compatible_adapter(monkeypatch):
@@ -1192,8 +1226,240 @@ def test_run_transport_ai_agent_returns_valid_plan_in_deterministic_mode_without
             assert result.validation_result.ok is True
             assert result.raw_model_response_json is None
             assert result.attempt_count == 1
+            assert result.observability is not None
+            assert result.observability.total_eligible_request_count == 1
+            assert result.observability.partition_count == 1
+            assert result.observability.route_provider == "fake"
+            assert result.observability.phase_durations_ms.geocode_ms is not None
+            assert result.observability.phase_durations_ms.matrix_ms is not None
+            assert result.observability.phase_durations_ms.solve_ms is not None
+            assert result.observability.phase_durations_ms.validation_ms is not None
+            assert result.observability.partitions[0].solver_algorithm in {"heuristic", "ortools"}
             assert run.status == "proposed"
             assert run.completed_at is not None
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_marks_route_provider_failure_in_observability(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_route_provider_failure.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="deterministic",
+            openai_api_key=None,
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME1F", address="1 Marina Boulevard", zip_code="018989")
+            user = _create_user(
+                session,
+                chave="R1F1",
+                nome="Runtime Worker Route Failure",
+                projeto=project.name,
+                address="99 Unknown Test Avenue",
+                zip_code="999999",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7102A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_execution_failed"
+            assert result.observability is not None
+            assert result.observability.failure_layer == "route_provider"
+            assert result.observability.failed_phase == "geocode"
+            assert result.observability.geocode_provider_call_count >= 1
+            assert run.status == "failed"
+
+            planning_payload = json.loads(run.planning_input_json)
+            assert planning_payload["observability"]["failure_layer"] == "route_provider"
+            assert planning_payload["observability"]["failed_phase"] == "geocode"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_deterministic_mode_respects_extra_tolerance_clusters_for_home_to_work(tmp_path, monkeypatch):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_extra_tolerance.db")
+    try:
+        service_date = date(2026, 5, 4)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="deterministic",
+            openai_api_key=None,
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        def _fake_execute_transport_ai_deterministic_plan(*, context: TransportAILangChainToolContext):
+            planning_input = build_transport_agent_planning_input(
+                context.db,
+                service_date=context.service_date,
+                route_kind=context.route_kind,
+                earliest_boarding_time=context.earliest_boarding_time,
+                arrival_at_work_time=context.arrival_at_work_time,
+                settings_obj=context.settings_obj,
+            )
+            context.state.planning_input = planning_input
+
+            vehicle_candidates_by_key = {
+                partition.partition_key: partition
+                for partition in build_transport_ai_vehicle_candidates(planning_input=planning_input).partitions
+            }
+            route_matrix_partitions = []
+            partition_solve_results = []
+            for partition in planning_input.partitions:
+                route_matrix_partition = _build_solver_route_matrix_partition(
+                    partition=partition,
+                    durations_seconds=_build_dense_solver_matrix(
+                        passenger_count=len(partition.requests),
+                        between_passenger_seconds=300,
+                        passenger_to_destination_seconds=600,
+                    ),
+                )
+                route_matrix_partitions.append(route_matrix_partition)
+                partition_solve_results.append(
+                    schedule_transport_ai_route_times(
+                        planning_input=planning_input,
+                        route_matrix_partition=route_matrix_partition,
+                        partition_solve_result=solve_transport_ai_partition(
+                            planning_input=planning_input,
+                            route_matrix_partition=route_matrix_partition,
+                            vehicle_candidates_partition=vehicle_candidates_by_key[partition.partition_key],
+                        ),
+                    )
+                )
+
+            route_matrices_result = TransportAgentRouteMatricesResult(
+                planning_input_hash=planning_input.planning_input_hash,
+                provider="fake",
+                profile=context.settings_obj.mapbox_matrix_profile,
+                partitions=route_matrix_partitions,
+                issues=[],
+                total_matrices=len(route_matrix_partitions),
+            )
+            plan = build_transport_agent_plan_from_solver_result(
+                planning_input=planning_input,
+                route_matrices_result=route_matrices_result,
+                partition_solve_results=partition_solve_results,
+            )
+            validation_result = transport_ai_agent_module._validate_transport_ai_plan_deterministically(
+                planning_input=planning_input,
+                plan=plan,
+            )
+            return plan, validation_result
+
+        monkeypatch.setattr(
+            transport_ai_agent_module,
+            "_execute_transport_ai_deterministic_plan",
+            _fake_execute_transport_ai_deterministic_plan,
+        )
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-TOL", address="1 Marina Boulevard", zip_code="018989")
+
+            users_and_times = [
+                ("RT31", "Runtime Worker Cluster One", "10 Bayfront Avenue", "018956", "19:00"),
+                ("RT32", "Runtime Worker Cluster Two", "12 Bayfront Avenue", "018957", "19:20"),
+                ("RT33", "Runtime Worker Cluster Three", "14 Bayfront Avenue", "018958", "19:45"),
+            ]
+            created_requests = []
+            for chave, nome, address, zip_code, requested_time in users_and_times:
+                user = _create_user(
+                    session,
+                    chave=chave,
+                    nome=nome,
+                    projeto=project.name,
+                    address=address,
+                    zip_code=zip_code,
+                )
+                request = _create_transport_request(
+                    session,
+                    user_id=user.id,
+                    service_date=service_date,
+                    requested_time=requested_time,
+                )
+                created_requests.append(request)
+
+            _create_extra_vehicle_candidate(session, placa="SBA7199A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            run.earliest_boarding_time = "18:30"
+            run.arrival_at_work_time = "19:45"
+            session.flush()
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+
+            assert result.plan is not None
+            assert result.validation_result is not None
+            assert result.validation_result.ok is True
+            assert run.status == "proposed"
+            assert run.completed_at is not None
+
+            planning_input_payload = json.loads(run.planning_input_json or "{}")
+            assert planning_input_payload["settings"]["extra_car_tolerance_minutes"] == 30
+            extra_partition = next(
+                partition
+                for partition in planning_input_payload["partitions"]
+                if partition["partition_key"] == f"extra:{project.name}:{project.country_code}"
+            )
+            assert [cluster["request_ids"] for cluster in extra_partition["temporal_request_clusters"]] == [
+                [created_requests[0].id, created_requests[1].id],
+                [created_requests[2].id],
+            ]
+            assert [cluster["anchor_requested_time"] for cluster in extra_partition["temporal_request_clusters"]] == [
+                "19:20",
+                "19:45",
+            ]
+
+            allocations_by_request_id = {
+                allocation.request_id: allocation
+                for allocation in result.plan.passenger_allocations
+            }
+            first_vehicle_ref = allocations_by_request_id[created_requests[0].id].vehicle_ref
+            second_vehicle_ref = allocations_by_request_id[created_requests[1].id].vehicle_ref
+            third_vehicle_ref = allocations_by_request_id[created_requests[2].id].vehicle_ref
+
+            assert first_vehicle_ref == second_vehicle_ref
+            assert third_vehicle_ref != first_vehicle_ref
+            assert allocations_by_request_id[created_requests[0].id].projected_arrival_time == "19:20"
+            assert allocations_by_request_id[created_requests[1].id].projected_arrival_time == "19:20"
+            assert allocations_by_request_id[created_requests[2].id].projected_arrival_time == "19:45"
+
+            route_itineraries = sorted(
+                result.plan.route_itineraries,
+                key=lambda itinerary: itinerary.projected_arrival_time,
+            )
+            assert len(route_itineraries) == 2
+            assert route_itineraries[0].route_kind == "home_to_work"
+            assert route_itineraries[0].projected_arrival_time == "19:20"
+            assert route_itineraries[1].projected_arrival_time == "19:45"
     finally:
         engine.dispose()
 
@@ -1267,6 +1533,14 @@ def test_run_transport_ai_agent_retries_invalid_response_until_plan_valid(tmp_pa
             assert result.plan.plan_key == valid_plan.plan_key
             assert result.attempt_count == 2
             assert len(fake_model.invocations) == 2
+            retry_feedback = json.loads(fake_model.invocations[1][-1].content)
+            assert retry_feedback["retry_feedback"]["error_code"] == "transport_ai_agent_invalid_response"
+            assert retry_feedback["retry_feedback"]["message_key"] == "transport_ai.error.llm_invalid_response"
+            assert retry_feedback["retry_feedback"]["message_params"] == {
+                "provider": "OpenAI",
+                "model": run.llm_model,
+            }
+            assert "invalid structured output" in retry_feedback["retry_feedback"]["technical_detail"]
             assert run.status == "proposed"
     finally:
         engine.dispose()
@@ -1333,10 +1607,338 @@ def test_run_transport_ai_agent_marks_run_failed_after_retry_exhaustion(tmp_path
 
             assert result.plan is None
             assert result.error_code == "transport_ai_agent_invalid_response"
+            assert result.message_key == "transport_ai.error.llm_invalid_response"
+            assert result.message_params == {"provider": "OpenAI", "model": run.llm_model}
+            assert result.issues[0].code == "transport_ai_agent_invalid_response"
+            assert "did not match the expected TransportAgentPlan schema" in result.issues[0].message
+            assert result.issues[0].message_key == "transport_ai.error.llm_invalid_response"
+            assert result.issues[0].message_params == {"provider": "OpenAI", "model": run.llm_model}
             assert run.status == "failed"
             assert run.error_code == "transport_ai_agent_invalid_response"
             assert run.completed_at is not None
             assert len(fake_model.invocations) == 2
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_marks_openai_invoke_failure_with_technical_issue(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_openai_invoke_failure.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(transport_ai_agent_mode="agent")
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME5", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-5005",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RT05",
+                nome="Runtime Worker Five",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7005A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            fake_model = _FakeChatModel([
+                RuntimeError("openai upstream gateway timeout"),
+            ])
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=fake_model,
+                max_validation_retries=0,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_model_invoke_failed"
+            assert result.message_key == "transport_ai.error.llm_invoke_failed"
+            assert result.message_params == {"provider": "OpenAI", "model": run.llm_model}
+            assert result.issues[0].code == "transport_ai_agent_model_invoke_failed"
+            assert "openai upstream gateway timeout" in result.issues[0].message
+            assert result.issues[0].message_key == "transport_ai.error.llm_invoke_failed"
+            assert result.issues[0].message_params == {"provider": "OpenAI", "model": run.llm_model}
+            assert run.status == "failed"
+            assert run.error_code == "transport_ai_agent_model_invoke_failed"
+            session.refresh(run)
+            persisted_issues = json.loads(run.preflight_issues_json)
+            assert persisted_issues[0]["code"] == "transport_ai_agent_model_invoke_failed"
+            assert persisted_issues[0]["message_key"] == "transport_ai.error.llm_invoke_failed"
+            assert persisted_issues[0]["message_params"] == {"provider": "OpenAI", "model": run.llm_model}
+            assert persisted_issues[0]["source"] == "run_error"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_marks_deepseek_invoke_failure_with_technical_issue(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_deepseek_invoke_failure.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="agent",
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME6", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="deepseek",
+                api_key="deepseek-runtime-6006",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RT06",
+                nome="Runtime Worker Six",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7006A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model="deepseek-v4-pro",
+            )
+            session.commit()
+
+            fake_model = _FakeChatModel([
+                RuntimeError("deepseek upstream connection dropped"),
+            ])
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=fake_model,
+                max_validation_retries=0,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_model_invoke_failed"
+            assert result.message_key == "transport_ai.error.llm_invoke_failed"
+            assert result.message_params == {"provider": "DeepSeek", "model": "deepseek-v4-pro"}
+            assert result.issues[0].code == "transport_ai_agent_model_invoke_failed"
+            assert "deepseek upstream connection dropped" in result.issues[0].message
+            assert result.issues[0].message_key == "transport_ai.error.llm_invoke_failed"
+            assert result.issues[0].message_params == {"provider": "DeepSeek", "model": "deepseek-v4-pro"}
+            assert run.status == "failed"
+            assert run.error_code == "transport_ai_agent_model_invoke_failed"
+            session.refresh(run)
+            persisted_issues = json.loads(run.preflight_issues_json)
+            assert persisted_issues[0]["code"] == "transport_ai_agent_model_invoke_failed"
+            assert persisted_issues[0]["message_key"] == "transport_ai.error.llm_invoke_failed"
+            assert persisted_issues[0]["message_params"] == {"provider": "DeepSeek", "model": "deepseek-v4-pro"}
+            assert persisted_issues[0]["source"] == "run_error"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_distinguishes_plan_invalid_after_response_from_schema_error(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_plan_invalid_after_response.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(transport_ai_agent_mode="agent")
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME7", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="openai",
+                api_key="sk-project-runtime-7007",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RT07",
+                nome="Runtime Worker Seven",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7007A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+            invalid_plan = valid_plan.model_copy(update={"passenger_allocations": []})
+            fake_model = _FakeChatModel([
+                {
+                    "raw": AIMessage(content="attempt one"),
+                    "parsed": invalid_plan,
+                    "parsing_error": None,
+                },
+                {
+                    "raw": AIMessage(content="attempt two"),
+                    "parsed": invalid_plan,
+                    "parsing_error": None,
+                },
+            ])
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=fake_model,
+                max_validation_retries=1,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_plan_invalid_after_response"
+            assert result.message_key == "transport_ai.error.llm_plan_invalid_after_response"
+            assert result.message_params == {"provider": "OpenAI", "model": run.llm_model}
+            assert result.issues[0].code == "transport_ai_agent_plan_invalid_after_response"
+            assert "invalid plan" in result.issues[0].message.lower()
+            assert result.issues[0].message_key == "transport_ai.error.llm_plan_invalid_after_response"
+            assert result.issues[0].message_params == {"provider": "OpenAI", "model": run.llm_model}
+            retry_feedback = json.loads(fake_model.invocations[1][-1].content)
+            assert retry_feedback["retry_feedback"]["error_code"] == "transport_ai_agent_plan_invalid_after_response"
+            assert retry_feedback["retry_feedback"]["message_key"] == "transport_ai.error.llm_plan_invalid_after_response"
+            assert retry_feedback["retry_feedback"]["message_params"] == {
+                "provider": "OpenAI",
+                "model": run.llm_model,
+            }
+            assert run.status == "failed"
+            assert run.error_code == "transport_ai_agent_plan_invalid_after_response"
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_distinguishes_model_invoke_failed_from_deterministic_plan_invalid(tmp_path, monkeypatch):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_deterministic_invalid.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(transport_ai_agent_mode="deterministic")
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME8", address="1 Marina Boulevard", zip_code="018989")
+            user = _create_user(
+                session,
+                chave="RT08",
+                nome="Runtime Worker Eight",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7008A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+
+            def _fake_execute_transport_ai_deterministic_plan(*, context, run):
+                tools_by_name = {
+                    tool.name: tool
+                    for tool in build_transport_ai_langchain_tools(context=context)
+                }
+                tools_by_name["load_planning_input"].invoke({})
+                assert context.state.planning_input is not None
+                planning_input = context.state.planning_input
+                return valid_plan, transport_ai_agent_module.TransportAIValidateTransportPlanToolOutput(
+                    ok=False,
+                    can_apply=False,
+                    planning_input_hash=planning_input.planning_input_hash,
+                    plan_key=valid_plan.plan_key,
+                    total_requests=sum(len(partition.requests) for partition in planning_input.partitions),
+                    allocated_request_count=len(valid_plan.passenger_allocations),
+                    request_issue_count=1,
+                    blocking_issue_count=1,
+                    warning_issue_count=0,
+                    unaccounted_request_ids=[valid_plan.passenger_allocations[0].request_id],
+                    issues=[
+                        transport_ai_agent_module.TransportAILangChainToolIssue(
+                            code="transport_ai_request_unallocated",
+                            message="Request 1 could not be allocated to a feasible route.",
+                            blocking=True,
+                            request_id=valid_plan.passenger_allocations[0].request_id,
+                        )
+                    ],
+                )
+
+            monkeypatch.setattr(
+                transport_ai_agent_module,
+                "_execute_transport_ai_deterministic_plan",
+                _fake_execute_transport_ai_deterministic_plan,
+            )
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_deterministic_plan_invalid"
+            assert result.message_key == "transport_ai.error.deterministic_plan_invalid"
+            assert result.message_params == {}
+            assert result.issues[0].code == "transport_ai_deterministic_plan_invalid"
+            assert result.issues[0].message_key == "transport_ai.error.deterministic_plan_invalid"
+            assert result.error_code != "transport_ai_agent_model_invoke_failed"
+            assert run.status == "failed"
+            assert run.error_code == "transport_ai_deterministic_plan_invalid"
     finally:
         engine.dispose()
 

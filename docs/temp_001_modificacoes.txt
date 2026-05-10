@@ -1,0 +1,127 @@
+AJUSTES NO DASHBOARD DE TRANSPORTE ('sistema\app\static\transport')
+
+Precisamos de um plano robusto, muito bem detalhado e minucioso para executar cada uma das modificações listadas abaixo no dashboard 'Transport'. Eis as modificações a serem implementadas:
+
+### Modificação 1:
+
+Existem 2 horários de referência para os veículos rotineiros (REGULAR e WEEKEND).
+O primeiro é o horário de chegada no ambiente de trabalho (trecho home to work): deve ser criado um campo no container 'Preferências' do widget 'Configurações' que se abre quando o usuário clica no link 'Configurações do Dashboard'. No momento, temos o campo 'Horário de Work to Home:'. Precisamos criar o campo 'Arrive at Work:'. Reorganize os campos de forma que nenhuma label quebre linha na versão 'desktop' do dashboard.
+O segundo é o horário de partida do local de trabalho para as casas dos usuários (trecho work to home): está definido no campo 'Horário de Work to Home:', no container 'Preferências' do widget 'Configurações' que se abre quando o administrador clica no link 'Configurações do Dashboard'.
+Quando o veículo é mostrado em uma das duas telas (WEEKEND e REGULAR), mostre uma label de acordo com o horário do dia: se o horário do dia for entre 30 minutos após o horário definido em 'Arrive at Work:' e 30 minutos após o horário definido em 'Horário de Work to Home:', então mostre a label 'ETD XX:XX h'. Porém, se o horário do dia for entre 30 minutos após o horário definido em 'Horário de Work to Home:' e 30 minutos após o horário definido em 'Arrive at Work:', então mostre a label 'ETA YY:YY h'.
+
+- ETD XX:XXh deve ser definido com o valor que está no campo 'Horário de Work to Home:'. ETD significa 'Estimated Time of Departure'. No momento, o padrão é 16:45h, então deve haver uma label embaixo de todos os veículos rotineiros (REGULAR e WEEKEND) mostrando 'ETD 16:45h'. Se o administrador alterar o valor do campo 'Horário de Work to Home:' que está no topo do dashboard para alterar a ETD exclusivamente para uma data, então a label dos veículos rotineiros para a data específica devem ter as labels também alteradas.
+
+- ETA YY:YYh deve ser definido com o valor que está no campo 'Arrive at Work:'. ETA significa 'Estimated Time of Arrival'. No momento, o padrão é 07:45h, então deve haver uma label embaixo de todos os veículos rotineiros (REGULAR e WEEKEND) mostrando 'ETA 07:45h'.
+
+O plano para executar a modificação 1 deve ser escrito no arquivo temp_001_1.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 2:
+
+As labels 'ETD' e 'ETA' para os veículos EXTRA devem ser definidos no momento do cadastro do veículo. Caso o agente de IA cadastre um ou mais veículos EXTRA, então o agente de IA deve cadastrar um ETA, se o veículo for na parte da manhã, para transportar o usuário no trecho 'Home to Work', ou o agente de IA deve cadastrar um ETD, se o veículo for na parte da tarde, para transportar o usuário no trecho 'Work to Home'. Estes horários devem ser baseados no horário em que o usuário deseja o veículo e no tempo em que o veículo vai levar para percorrer todo o trecho.
+Se mais usuários também pedirem veículo EXTRA, então o agente de IA deve considerar que o usuário pode esperar até 30 minutos após o horário requisitado para embarcar no veículo, de forma que seja possível conciliar mais usuários no mesmo veículo, se isto for aplicável.
+
+Exemplo: Admita que um usuário tenha solicitado um veículo extra para o trecho 'work to home' em uma determinada data, para as 19:00h. Em seguida, outro usuário solicitou um veículo extra para o mesmo trecho, mesma data, porém, para as 19:20h. O agente de IA deve considerar que a diferença de horário é menor que 30 minutos, e o horário mais tarde deve prevalecer.
+
+Esta diferença de 30 minutos deve ser definida no campo 'Extra Car Tolerance:', a ser criado no container 'Preferências' do widget 'Configurações' que se abre quando o administrador clica no link 'Configurações do Dashboard'. O valor padrão deve ser de 30 minutos.
+
+O plano para executar a modificação 2 deve ser escrito no arquivo temp_001_2.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 3:
+
+Se o usuário pedir um veículo extraordinário para a mesma data em que já está alocado em algum veículo rotineiro em dia útil ou em fim de semana, quando a alocação no veículo extraordinário for confirmada, o usuário deve ser removido do veículo rotineiro, exclusivamente, na data e na rota do veículo extraordinário. Por exemplo: se o usuário pedir um veículo extraordinário para a manhã do dia seguinte, então o usuário deve ser removido do veículo rotineiro no trecho Casa-Trabalho. Outro exemplo: se o usuário solicitar um veículo extraordinário para a tarde ou a noite, quando a alocação do usuário for confirmada em um veículo extraordinário, então o usuário deve ser removido do veículo rotineiro naquela data e no trecho Trabalho-Casa.
+
+O plano para executar a modificação 3 deve ser escrito no arquivo temp_001_3.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 4:
+
+A lista de usuários passada para a IA realizar o cálculo de rotas deve ser a mesma lista que está sendo visualizada pelo administrador do website. Se o administrador do website estiver visualizando apenas usuários de um determinado projeto, então apenas usuários deste projeto devem ser passados para a IA realizar o cálculo de rotas. Verifique se isto já está ocorrendo. Se não tiver, então ajuste o código para que funcione desta forma.
+
+O plano para executar a modificação 4 deve ser escrito no arquivo temp_001_4.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 5:
+
+Quando o administrador clicar no botão 'IA' e clicar em 'Calcular Rotas', mostre um widget para que o administrador selecione qual lista de usuários o agente de IA deve receber para realizar o cálculo de rotas. Mostre em formado de checkboxes as três listas 'EXTRA', 'WEEKEND' e 'REGULAR'. O agente de IA deve calcular as rotas apenas para a lista de usuários marcada. O administrador pode enviar quantas listas quiser e o agente de IA deve calcular separadamente as rotas para cada lista de usuários.
+
+O plano para executar a modificação 5 deve ser escrito no arquivo temp_001_5.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 6:
+
+Pode haver casos em que usuários são cadastrados em mais de um projeto ao mesmo tempo. Estes usuários devem ser mostrados caso um ou mais projetos em que estes usuários estejam cadastrados sejam selecionados pelo administrador no link 'Lista de Projetos'.  A regra de que o usuário só pode estar alocado em um veículo por trecho precisa continuar valendo. 
+
+Exemplo 1: um usuário está cadastrado em dois projetos: P80 e P83. Tanto o administrador do projeto P80 como o administrador do projeto P83 poderão alocar o usuário em um veículo (qualquer veículo).
+
+Exemplo 2: o usuário pode ir para o trabalho pela manhã em um veículo rotineiro. Caso solicite um veículo extra durante o dia para voltar pra casa em um horário diferente do horário do veículo rotineiro, definido em 'Horário de Work to Home:', no container 'Preferências' do widget 'Configurações' que se abre quando o administrador clica no link 'Configurações do Dashboard', então na data em que o usuário solicitou o veículo EXTRA, o usuário deverá ser removido do veículo rotineiro exclusivamente no trecho em que solicitou um veículo EXTRA. Do trecho seguinte em diante, o usuário deve permanecer no veículo rotineiro em que estava antes de solicitar o veículo EXTRA.
+
+O plano para executar a modificação 6 deve ser escrito no arquivo temp_001_6.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 7:
+
+Quando a altura de alguma lista de usuários é ajustada, a altura das telas com os veículos cadastrados também têm as alturas modificadas. Faça com que as três telas que mostram os veículos cadastrados (EXTRA, WEEKEND e REGULAR) tenham suas alturas absolutamente independentes.
+
+O plano para executar a modificação 7 deve ser escrito no arquivo temp_001_7.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 8:
+
+Permita que usuários possam ser alocados em veículos sem informação de placa e cor, tanto pelo administrador como pelo agente de IA. Quando os veículos forem criados pela IA, Cadastre a placa 'Plate XXX' sendo 'XXX' um valor sequencial gerado até que o administrador corrija o valor com a placa correta do veículo. Se possível, altere a cor do ícone do veículo de branco para laranja
+
+O plano para executar a modificação 8 deve ser escrito no arquivo temp_001_8.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 9:
+
+A tabela operacional que aparece quando o administrador clica sobre um veículo no dashboard possui duas colunas: o nome do usuário e um botão para remover o usuário da lista. Inclua uma coluna entre as colunas 'nome do usuário' e o 'botão para remover o usuário' com a hora em que o usuário deve embarcar no veículo. Se a label do veículo for ETD XX:XXh, então mostre, ao lado de cada usuário, o horário de partida do veículo do local do trabalho. Se a label do veículo for ETA YY;YYh, então mostre, ao lado de cada usuário, o horário em que cada usuário deverá embarcar no veículo para cumprir o trecho 'home to work'. Este horário pode ser inserido manualmente, ou pode ser inserido pelo agente de IA, pois o agente de IA já calcula o momento em que cada usuário deve embarcar para cumprir o trecho 'home to work'.
+
+O plano para executar a modificação 9 deve ser escrito no arquivo temp_001_9.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 10:
+
+Após o agente de IA calcular as rotas, o resultado do cálculo é mostrado, porém, este resultado está sendo apresentado com o layout muito confuso. Esta modificação trata da tabela de review da IA exibida após o cálculo de rotas, e não da tabela operacional aberta ao clicar em um veículo no dashboard. Mostre apenas uma tabela para cada veículo, que contemple os dois trechos: 'home to work' e 'work to home'. Organize a tabela por ordem de embarque no trecho 'home to work'. Não precisa de tabela para o trecho 'work to home', apesar de precisar calcular as rotas para determinar que horas cada usuário chega em casa.
+
+- 'Nome do Usuário': preencha com o nome completo do usuário.
+- 'Endereço do Usuário': preencha com o endereço do usuário. Não precisa de ZIP Code e nem de país.
+- 'Home to Work - Embarque': Horário em que o usuário deve embarcar no veículo no trecho 'Home to Work', de manhã, indo para o trabalho.
+- 'Work to Home - Desembarque': Horário em que o usuário deve desembarcar do veículo no trecho 'work to home', de noite, indo para casa.
+
+Por fim, mostre uma tabela com informações gerenciais, mostrando quantitativo de veículos, custo individual e total e o que mais couber na tabela.
+
+O plano para executar a modificação 10 deve ser escrito no arquivo temp_001_10.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 11:
+
+Para os alocar os usuários nos veículos rotineiros (REGULAR e WEEKEND), o agente de IA deve considerar para o cálculo de rota apenas o trecho 'home to work'. O trecho 'work to home' será realizado pelo mesmo veículo, seguindo a mesma rota, ao contrário. Então, para preencher a hora em que o usuário chegará em casa no trecho 'work to home', utilize os mesmos usuários do trecho 'home to work' de cada veículo e calcule a melhor rota e os horários em que cada usuário chegará em casa. Este valor deve ser preenchido na coluna 'Work to Home - Desembarque' da tabela de review da IA definida na modificação 10. Esta modificação não altera, por si só, a tabela operacional aberta ao clicar em um veículo no dashboard.
+Para os veículos EXTRA, o agente de IA deve calcular individualmente as rotas específicas para cada veículo, considerando se o veículo está buscando os usuários em casa e transportando para o trabalho, ou se o veículo está saindo do local de trabalho e transportando as pessoas para casa. O trecho do veículo solicitado pelo usuário deve ser considerado para tomar esta decisão.
+
+O plano para executar a modificação 11 deve ser escrito no arquivo temp_001_11.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 12:
+
+Trate os erros que ocorrerem.
+
+Por exemplo, ao clicar em 'Calcular Rotas', retornou o seguinte erro:
+
+'Deterministic transport AI execution produced an invalid plan: Request '74' in partition 'regular:P80:SG' could not be allocated to a feasible route. | Request '75' in partition 'regular:P80:SG' could not be allocated to a feasible route. | Request '76' in partition 'regular:P80:SG' could not be allocated to a feasible route. | Request '77' in partition 'regular:P80:SG' could not be allocated to a feasible route. | Request '78' in partition 'regular:P80:SG' could not be allocated to a feasibl...'
+
+ou
+
+'Transport AI planning validation failed after resetting eligible requests. Baseline restored.' quando tentei calcular rotas com 100 usuários. Isto deveria ser permitido. Não deveria ter limite de usuários.
+
+A mensagem não está amigável para o administrador e para o usuário (quando aplicável). Se esta mensagem veio do agente de IA, inclua no prompt um tratamento adequado das mensagens de erro.
+
+O plano para executar a modificação 12 deve ser escrito no arquivo temp_001_12.md a ser criado dentro da pasta 'Docs'.
+
+
+### Modificação 13:
+
+Cadastre absolutamente todos os textos que aparecem para o administrador no i18n para que os textos sigam o idioma selecionado pelo administrador.
+
+O plano para executar a modificação 13 deve ser escrito no arquivo temp_001_13.md a ser criado dentro da pasta 'Docs'.

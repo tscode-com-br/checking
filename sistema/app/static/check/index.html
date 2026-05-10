@@ -51,7 +51,7 @@
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
           data-projects-endpoint="/api/web/projects"
-          data-project-update-endpoint="/api/web/project"
+          data-user-projects-endpoint="/api/web/user-projects"
           data-locations-endpoint="/api/web/check/locations"
           data-location-endpoint="/api/web/check/location"
         >
@@ -140,8 +140,27 @@
             </label>
 
             <div class="check-field auth-field auth-field-button">
-              <span class="auth-field-spacer" aria-hidden="true">Ação</span>
-              <button id="passwordActionButton" type="button" class="auth-action-button">Senha</button>
+              <span class="auth-field-spacer" aria-hidden="true">Ajustes</span>
+              <button
+                id="settingsButton"
+                type="button"
+                class="secondary-button settings-trigger-button"
+                aria-label="Abrir ajustes"
+                aria-controls="settingsDialog"
+                aria-expanded="false"
+                title="Abrir ajustes"
+              >
+                <img
+                  class="settings-trigger-icon"
+                  src="/assets/icons/config.webp"
+                  alt=""
+                  width="24"
+                  height="24"
+                  aria-hidden="true"
+                  decoding="async"
+                />
+                <span class="visually-hidden">Abrir ajustes</span>
+              </button>
             </div>
           </div>
 
@@ -183,12 +202,23 @@
           </fieldset>
 
           <div class="form-row">
-            <label id="projectField" class="check-field check-field-compact" for="projectSelect">
-              <span>Projeto</span>
-              <select id="projectSelect" name="projeto">
-                <option value="">Carregando projetos...</option>
-              </select>
-            </label>
+            <div id="projectField" class="check-field check-field-projects" aria-live="polite">
+              <span>Projetos</span>
+              <button
+                id="projectMembershipButton"
+                type="button"
+                class="project-membership-button"
+                aria-controls="projectMembershipPanel"
+                aria-expanded="false"
+              >
+                <span id="projectMembershipSummary" class="project-membership-summary">Carregando projetos...</span>
+                <span class="project-membership-link">Alterar</span>
+              </button>
+              <div id="projectMembershipPanel" class="project-membership-panel is-hidden" hidden>
+                <p id="projectMembershipStatus" class="project-membership-status">Selecione ao menos um projeto.</p>
+                <div id="projectMembershipOptions" class="project-membership-options" role="group" aria-label="Projetos do usuário"></div>
+              </div>
+            </div>
 
             <label id="locationSelectField" class="check-field check-field-grow" for="manualLocationSelect">
               <span>Local</span>
@@ -307,12 +337,18 @@
                 />
               </label>
 
-              <label class="check-field" for="registrationProjectSelect">
-                <span>Projeto</span>
-                <select id="registrationProjectSelect" name="cadastro_projeto" required>
-                  <option value="">Carregando projetos...</option>
-                </select>
-              </label>
+              <div class="check-field registration-project-field">
+                <span>Projetos</span>
+                <p id="registrationProjectHint" class="registration-project-hint">Selecione um ou mais projetos.</p>
+                <div
+                  id="registrationProjectOptions"
+                  class="project-membership-options registration-project-options"
+                  role="group"
+                  aria-label="Projetos do cadastro"
+                >
+                  <p class="project-membership-empty">Carregando projetos...</p>
+                </div>
+              </div>
 
               <label class="check-field" for="registrationEmailInput">
                 <span>E-Mail</span>
@@ -355,6 +391,60 @@
               <div class="password-dialog-actions">
                 <button id="registrationDialogBackButton" type="button" class="secondary-button">Voltar</button>
                 <button id="registrationDialogSubmitButton" type="submit" class="submit-button">Enviar</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <div id="settingsDialogBackdrop" class="password-dialog-backdrop settings-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="settingsDialog"
+          class="password-dialog settings-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settingsDialogTitle"
+          hidden
+        >
+          <div class="password-dialog-card settings-dialog-card">
+            <div class="password-dialog-header settings-dialog-header">
+              <h2 id="settingsDialogTitle">Ajustes</h2>
+            </div>
+
+            <form id="settingsDialogForm" class="password-dialog-form settings-dialog-form" novalidate>
+              <label class="check-field settings-option-row settings-option-row-inline" for="settingsLanguageSelect">
+                <span>Idioma</span>
+                <select id="settingsLanguageSelect" class="settings-option-select" name="idioma">
+                  <option value="zh">Chinese</option>
+                  <option value="en">English</option>
+                  <option value="id">Indonesian</option>
+                  <option value="ms">Malay</option>
+                  <option value="pt" selected>Portuguese</option>
+                  <option value="tl">Tagalog (Filipino)</option>
+                </select>
+              </label>
+
+              <div class="settings-option-row settings-option-row-inline">
+                <span class="settings-option-label">Resetar Senha</span>
+                <button id="settingsResetPasswordButton" type="button" class="secondary-button settings-option-action">Resetar Senha</button>
+              </div>
+
+              <div class="settings-option-row settings-option-row-inline">
+                <span class="settings-option-label">Permitir localização</span>
+                <button id="settingsLocationPermissionButton" type="button" class="secondary-button settings-option-action">Permitir localização</button>
+              </div>
+
+              <div class="settings-option-row settings-option-row-inline">
+                <span class="settings-option-label">Suporte</span>
+                <button id="settingsSupportButton" type="button" class="secondary-button settings-option-action">Suporte</button>
+              </div>
+
+              <div class="settings-option-row settings-option-row-inline">
+                <span class="settings-option-label">Sobre</span>
+                <button id="settingsAboutButton" type="button" class="secondary-button settings-option-action">Sobre</button>
+              </div>
+
+              <div class="password-dialog-actions settings-dialog-actions">
+                <button id="settingsDialogBackButton" type="button" class="secondary-button">Voltar</button>
               </div>
             </form>
           </div>
@@ -516,6 +606,8 @@
 
     <script src="automatic-activities.js"></script>
     <script src="web-client-state.js"></script>
+    <script src="i18n-dictionaries.js"></script>
+    <script src="i18n.js"></script>
     <script src="transport-screen.js"></script>
     <script src="app.js"></script>
   </body>

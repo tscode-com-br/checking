@@ -15,19 +15,23 @@
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
   const projectsEndpoint = form.dataset.projectsEndpoint || '/api/web/projects';
-  const projectUpdateEndpoint = form.dataset.projectUpdateEndpoint || '/api/web/project';
+  const userProjectsEndpoint = form.dataset.userProjectsEndpoint || '/api/web/user-projects';
   const locationsEndpoint = form.dataset.locationsEndpoint || '/api/web/check/locations';
   const locationEndpoint = form.dataset.locationEndpoint || '/api/web/check/location';
   const automaticActivities = window.CheckingWebAutomaticActivities;
   const clientState = window.CheckingWebClientState;
+  const checkI18n = window.CheckingWebI18n;
   const chaveInput = document.getElementById('chaveInput');
   const passwordInput = document.getElementById('passwordInput');
-  const passwordActionButton = document.getElementById('passwordActionButton');
-  const requestRegistrationButton = document.getElementById('requestRegistrationButton');
+  const settingsButton = document.getElementById('settingsButton');
   const chaveAuthField = chaveInput ? chaveInput.closest('.auth-field') : null;
   const passwordAuthField = passwordInput ? passwordInput.closest('.auth-field') : null;
   const projectField = document.getElementById('projectField');
-  const projectSelect = document.getElementById('projectSelect');
+  const projectMembershipButton = document.getElementById('projectMembershipButton');
+  const projectMembershipSummary = document.getElementById('projectMembershipSummary');
+  const projectMembershipPanel = document.getElementById('projectMembershipPanel');
+  const projectMembershipOptions = document.getElementById('projectMembershipOptions');
+  const projectMembershipStatus = document.getElementById('projectMembershipStatus');
   const locationSelectField = document.getElementById('locationSelectField');
   const informeField = document.getElementById('informeField');
   const manualLocationSelect = document.getElementById('manualLocationSelect');
@@ -60,12 +64,21 @@
   const registrationForm = document.getElementById('registrationForm');
   const registrationChaveInput = document.getElementById('registrationChaveInput');
   const registrationNameInput = document.getElementById('registrationNameInput');
-  const registrationProjectSelect = document.getElementById('registrationProjectSelect');
+  const registrationProjectHint = document.getElementById('registrationProjectHint');
+  const registrationProjectOptions = document.getElementById('registrationProjectOptions');
   const registrationEmailInput = document.getElementById('registrationEmailInput');
   const registrationPasswordInput = document.getElementById('registrationPasswordInput');
   const registrationConfirmPasswordInput = document.getElementById('registrationConfirmPasswordInput');
   const registrationDialogBackButton = document.getElementById('registrationDialogBackButton');
   const registrationDialogSubmitButton = document.getElementById('registrationDialogSubmitButton');
+  const settingsDialog = document.getElementById('settingsDialog');
+  const settingsDialogBackdrop = document.getElementById('settingsDialogBackdrop');
+  const settingsLanguageSelect = document.getElementById('settingsLanguageSelect');
+  const settingsResetPasswordButton = document.getElementById('settingsResetPasswordButton');
+  const settingsLocationPermissionButton = document.getElementById('settingsLocationPermissionButton');
+  const settingsSupportButton = document.getElementById('settingsSupportButton');
+  const settingsAboutButton = document.getElementById('settingsAboutButton');
+  const settingsDialogBackButton = document.getElementById('settingsDialogBackButton');
   const transportScreen = document.getElementById('transportScreen');
   const transportScreenBackdrop = document.getElementById('transportScreenBackdrop');
   const transportScreenHeaderBackButton = document.getElementById('transportScreenHeaderBackButton');
@@ -112,7 +125,7 @@
     submitButton,
     refreshLocationButton,
   ].filter(Boolean);
-  const authControls = [chaveInput, passwordInput, passwordActionButton, requestRegistrationButton].filter(Boolean);
+  const authControls = [chaveInput, passwordInput, settingsButton].filter(Boolean);
   const highlightedAuthFields = [chaveAuthField, passwordAuthField].filter(Boolean);
   const passwordDialogControls = [
     oldPasswordInput,
@@ -124,12 +137,19 @@
   const registrationDialogControls = [
     registrationChaveInput,
     registrationNameInput,
-    registrationProjectSelect,
     registrationEmailInput,
     registrationPasswordInput,
     registrationConfirmPasswordInput,
     registrationDialogBackButton,
     registrationDialogSubmitButton,
+  ].filter(Boolean);
+  const settingsDialogControls = [
+    settingsLanguageSelect,
+    settingsResetPasswordButton,
+    settingsLocationPermissionButton,
+    settingsSupportButton,
+    settingsAboutButton,
+    settingsDialogBackButton,
   ].filter(Boolean);
   const transportScreenControls = [
     transportAddressToggleButton,
@@ -156,15 +176,17 @@
   const locationMeasurementStorageKey = 'checking.web.location.measurement.enabled';
   const locationMeasurementConsoleLabel = '[checking.location.measurement]';
   const locationMeasurementSessionLimit = 120;
+  const checkingWebSupportWhatsAppPhone = '5521992174446';
+  const checkingWebManualPath = './manual.html';
   const DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 20;
   const defaultManualLocationLabel = 'Escritório Principal';
   const accuracyFallbackManualLocationLabel = 'Precisao Insuficiente';
   const transportAutoRefreshIntervalMs = 10000;
   const transportRealtimeRefreshDebounceMs = 220;
-  let allowedProjectValues = Array.from(projectSelect.options)
-    .map((option) => String(option.value || '').trim().toUpperCase())
-    .filter(Boolean);
+  let allowedProjectValues = [];
   let defaultProjectValue = allowedProjectValues[0] || '';
+  let currentUserProjectValues = defaultProjectValue ? [defaultProjectValue] : [];
+  let lastCommittedUserProjectValues = currentUserProjectValues.slice();
   const lifecycleTriggerCooldownMs = 1200;
   const lifecycleDataReuseWindowMs = 5000;
   const passwordVerificationDebounceMs = 260;
@@ -189,50 +211,34 @@
     startup: lifecycleLocationCapturePlan,
     submit_guard: enforcedLocationCapturePlan,
     manual_refresh: enforcedLocationCapturePlan,
+    settings_permission: enforcedLocationCapturePlan,
     automatic_activities_enable: enforcedLocationCapturePlan,
     automatic_activities_disable: enforcedLocationCapturePlan,
     visibility: lifecycleLocationCapturePlan,
     focus: lifecycleLocationCapturePlan,
     pageshow: lifecycleLocationCapturePlan,
   });
-  const weekdayFormatter = new Intl.DateTimeFormat('pt-BR', {
+  let weekdayFormatter = new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
   });
-  const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  let dateFormatter = new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
-  const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+  let timeFormatter = new Intl.DateTimeFormat('pt-BR', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
   });
-  const transportRequestKindLabels = {
-    regular: 'Dias Úteis',
-    weekend: 'Fim de Semana',
-    extra: 'Data Específica',
-  };
-  const transportRequestStatusLabels = {
-    pending: 'Pendente',
-    confirmed: 'Confirmado',
-    realized: 'Realizado',
-    rejected: 'Rejeitado',
-    cancelled: 'Cancelado',
-  };
-  const transportRequestWeekdayLabels = {
-    0: 'Seg',
-    1: 'Ter',
-    2: 'Qua',
-    3: 'Qui',
-    4: 'Sex',
-    5: 'Sáb',
-    6: 'Dom',
-  };
+  const transportRequestKindLabels = {};
+  const transportRequestStatusLabels = {};
+  const transportRequestWeekdayLabels = {};
+  const transportRequestWeekdayFullLabels = {};
   const transportRequestBuilderConfigs = {
     regular: {
-      subtitle: 'Selecione os dias úteis desejados para esta solicitação.',
+      subtitle: '',
       allowedWeekdays: [0, 1, 2, 3, 4],
       defaultSelectedWeekdays: [0, 1, 2, 3, 4],
       showWeekdays: true,
@@ -240,7 +246,7 @@
       showTime: false,
     },
     weekend: {
-      subtitle: 'Selecione os dias de fim de semana desejados para esta solicitação.',
+      subtitle: '',
       allowedWeekdays: [5, 6],
       defaultSelectedWeekdays: [5],
       showWeekdays: true,
@@ -248,7 +254,7 @@
       showTime: false,
     },
     extra: {
-      subtitle: 'Confira a data e o horário antes de solicitar.',
+      subtitle: '',
       allowedWeekdays: [],
       defaultSelectedWeekdays: [],
       showWeekdays: false,
@@ -278,6 +284,7 @@
   let locationAccuracyThresholdMeters = null;
   let mixedZoneIntervalMinutes = DEFAULT_MIXED_ZONE_INTERVAL_MINUTES;
   let gpsLocationPermissionGranted = false;
+  let lastKnownLocationPermissionState = null;
   let lifecycleRefreshInProgress = false;
   let lifecycleUpdateRequestTimeoutId = null;
   let locationRefreshLoading = false;
@@ -297,6 +304,7 @@
   let transportRealtimeRefreshPending = false;
   let projectCatalogPromise = null;
   let projectCatalogLoading = false;
+  let userProjectsLoading = false;
   let authenticatedApplicationLoadPromise = null;
   let authenticatedApplicationLoadFingerprint = '';
   let authenticatedApplicationReadyFingerprint = '';
@@ -311,6 +319,9 @@
   let lastVerifiedPassword = '';
   let lastObservedPasswordFieldValue = '';
   let passwordDialogMode = 'change';
+  let currentAuthenticationAssistanceStateKey = '';
+  let lastAutoOpenedAuthenticationAssistanceStateKey = '';
+  let lastDismissedAuthenticationAssistanceStateKey = '';
 
   function resolveTransportEventTargetElement(event) {
     const target = event ? event.target : null;
@@ -392,6 +403,199 @@
   const transportRequestDismissHoldDelayMs = 420;
   const transportRequestDismissMoveTolerancePx = 14;
 
+  function resolveCheckLanguageCode(languageCode, fallbackCode) {
+    if (checkI18n && typeof checkI18n.resolveLanguageCode === 'function') {
+      return checkI18n.resolveLanguageCode(languageCode, fallbackCode);
+    }
+    return String(languageCode || fallbackCode || 'pt').trim().toLowerCase() || 'pt';
+  }
+
+  function getActiveCheckLanguageCode() {
+    if (checkI18n && typeof checkI18n.getActiveLanguageCode === 'function') {
+      return checkI18n.getActiveLanguageCode();
+    }
+    return 'pt';
+  }
+
+  function setActiveCheckLanguageCode(languageCode) {
+    if (checkI18n && typeof checkI18n.setActiveLanguageCode === 'function') {
+      return checkI18n.setActiveLanguageCode(languageCode);
+    }
+    return resolveCheckLanguageCode(languageCode);
+  }
+
+  function getCheckLanguage(languageCode) {
+    if (checkI18n && typeof checkI18n.getLanguage === 'function') {
+      return checkI18n.getLanguage(languageCode || getActiveCheckLanguageCode());
+    }
+    return {
+      code: 'pt',
+      label: 'Portuguese',
+      nativeLabel: 'Português',
+      locale: 'pt-BR',
+    };
+  }
+
+  function getCheckDictionary(languageCode) {
+    if (checkI18n && typeof checkI18n.getDictionary === 'function') {
+      return checkI18n.getDictionary(languageCode || getActiveCheckLanguageCode());
+    }
+    return {};
+  }
+
+  function t(keyPath, values) {
+    if (checkI18n && typeof checkI18n.t === 'function') {
+      return checkI18n.t(keyPath, values, getActiveCheckLanguageCode());
+    }
+    return String(keyPath || '');
+  }
+
+  function getCheckLocale() {
+    const activeLanguage = getCheckLanguage();
+    return activeLanguage && typeof activeLanguage.locale === 'string' && activeLanguage.locale
+      ? activeLanguage.locale
+      : 'pt-BR';
+  }
+
+  function createKnownDictionaryMessageIndex(dictionaryNode, prefix, indexMap) {
+    const node = dictionaryNode && typeof dictionaryNode === 'object' ? dictionaryNode : {};
+    const currentPrefix = prefix ? `${prefix}.` : '';
+    Object.entries(node).forEach(([key, value]) => {
+      const nextKeyPath = `${currentPrefix}${key}`;
+      if (typeof value === 'string') {
+        indexMap.set(value, nextKeyPath);
+        return;
+      }
+      if (value && typeof value === 'object') {
+        createKnownDictionaryMessageIndex(value, nextKeyPath, indexMap);
+      }
+    });
+  }
+
+  const knownPtDictionaryMessageIndex = (() => {
+    const indexMap = new Map();
+    const defaultDictionary = getCheckDictionary('pt');
+    createKnownDictionaryMessageIndex(defaultDictionary, '', indexMap);
+    return indexMap;
+  })();
+
+  function localizeKnownApiMessage(message, options) {
+    const rawMessage = typeof message === 'string' ? message.trim() : '';
+    if (!rawMessage) {
+      return '';
+    }
+
+    if (getActiveCheckLanguageCode() === 'pt') {
+      return rawMessage;
+    }
+
+    const exactKeyPath = knownPtDictionaryMessageIndex.get(rawMessage);
+    if (exactKeyPath) {
+      const translatedMessage = t(exactKeyPath);
+      return typeof translatedMessage === 'string' && translatedMessage
+        ? translatedMessage
+        : rawMessage;
+    }
+
+    const settings = options || {};
+    const conflictPrefix = 'Ja existe uma solicitacao de transporte ativa para ';
+    const ptConflictGeneric = 'Ja existe uma solicitacao de transporte ativa para essa data.';
+    if (rawMessage === ptConflictGeneric) {
+      return t('transport.requestBuilder.conflictGeneric');
+    }
+    if (rawMessage.startsWith(conflictPrefix) && rawMessage.endsWith('.')) {
+      const serviceDateLabel = rawMessage.slice(conflictPrefix.length, -1).trim();
+      return t('transport.requestBuilder.conflictByDate', {
+        serviceDateLabel,
+        ...(settings.values || {}),
+      });
+    }
+
+    return rawMessage;
+  }
+
+  function localizeKnownLocationLabel(label) {
+    const normalizedLabel = String(label || '').trim();
+    if (!normalizedLabel) {
+      return '';
+    }
+
+    if (normalizedLabel === defaultManualLocationLabel) {
+      return t('location.defaultManualLocationLabel');
+    }
+    if (normalizedLabel === accuracyFallbackManualLocationLabel) {
+      return t('location.accuracyFallbackManualLocationLabel');
+    }
+    if (normalizedLabel === automaticActivities.AUTOMATIC_CHECKOUT_LOCATION) {
+      return t('location.outsideWorkplaceLabel');
+    }
+    if (normalizedLabel === automaticActivities.AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION) {
+      return t('location.unregisteredLocationLabel');
+    }
+    if (normalizedLabel === automaticActivities.MIXED_ZONE_LOCATION) {
+      return t('location.mixedZoneLabel');
+    }
+    if (automaticActivities.isCheckoutZoneLocationName(normalizedLabel)) {
+      return t('location.checkoutZoneLabel');
+    }
+
+    return localizeKnownApiMessage(normalizedLabel) || normalizedLabel;
+  }
+
+  function formatTransportVehicleTypeLabel(value) {
+    const formattedValue = clientState && typeof clientState.formatTransportVehicleType === 'function'
+      ? clientState.formatTransportVehicleType(value)
+      : String(value || '').trim();
+    return formattedValue || '--';
+  }
+
+  function copyObjectValues(target, source) {
+    Object.keys(target).forEach((key) => {
+      delete target[key];
+    });
+    Object.entries(source || {}).forEach(([key, value]) => {
+      target[key] = value;
+    });
+  }
+
+  function refreshLocaleFormatters() {
+    const locale = getCheckLocale();
+    weekdayFormatter = new Intl.DateTimeFormat(locale, {
+      weekday: 'long',
+    });
+    dateFormatter = new Intl.DateTimeFormat(locale, {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    timeFormatter = new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  }
+
+  function syncTranslatedRuntimeLabels() {
+    copyObjectValues(transportRequestKindLabels, {
+      regular: typeof t === 'function' ? t('transport.kinds.regular') : 'Dias Úteis',
+      weekend: typeof t === 'function' ? t('transport.kinds.weekend') : 'Fim de Semana',
+      extra: typeof t === 'function' ? t('transport.kinds.extra') : 'Data Específica',
+    });
+    copyObjectValues(transportRequestStatusLabels, {
+      pending: typeof t === 'function' ? t('transport.statusLabels.pending') : 'Pendente',
+      confirmed: typeof t === 'function' ? t('transport.statusLabels.confirmed') : 'Confirmado',
+      realized: typeof t === 'function' ? t('transport.statusLabels.realized') : 'Realizado',
+      rejected: typeof t === 'function' ? t('transport.statusLabels.rejected') : 'Rejeitado',
+      cancelled: typeof t === 'function' ? t('transport.statusLabels.cancelled') : 'Cancelado',
+    });
+    copyObjectValues(transportRequestWeekdayLabels, getCheckDictionary().transport.weekdays.short);
+    copyObjectValues(transportRequestWeekdayFullLabels, getCheckDictionary().transport.weekdays.full);
+    transportRequestBuilderConfigs.regular.subtitle = t('transport.requestBuilder.regularSubtitle');
+    transportRequestBuilderConfigs.weekend.subtitle = t('transport.requestBuilder.weekendSubtitle');
+    transportRequestBuilderConfigs.extra.subtitle = t('transport.requestBuilder.extraSubtitle');
+  }
+
   function isStandaloneShortcutMode() {
     return Boolean(
       (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
@@ -400,11 +604,15 @@
   }
 
   function getLocationPermissionContainerLabel() {
-    return isStandaloneShortcutMode() ? 'neste atalho/app' : 'neste navegador';
+    return isStandaloneShortcutMode()
+      ? t('location.appContextLabel')
+      : t('location.browserContextLabel');
   }
 
   function getLocationPromptSourceLabel() {
-    return isStandaloneShortcutMode() ? 'pelo atalho/app' : 'pelo navegador';
+    return isStandaloneShortcutMode()
+      ? t('location.appSourceLabel')
+      : t('location.browserSourceLabel');
   }
 
   function isUserInteractionLocked() {
@@ -805,7 +1013,7 @@
   }
 
   function isAnyDialogOpen() {
-    return isPasswordDialogOpen() || isRegistrationDialogOpen() || isTransportScreenOpen();
+    return isPasswordDialogOpen() || isRegistrationDialogOpen() || isSettingsDialogOpen() || isTransportScreenOpen();
   }
 
   function isPasswordActionBusy() {
@@ -847,23 +1055,161 @@
     return passwordDialogMode === 'register';
   }
 
-  function resolvePasswordActionButtonLabel() {
-    if (authState.statusLoading) {
-      return 'Verificando...';
+  function resolveAuthenticationAssistanceStateKey(options) {
+    const settings = options || {};
+    const normalizedChave = sanitizeChave(
+      settings.chave !== undefined
+        ? settings.chave
+        : (authState.chave || chaveInput.value)
+    );
+    const statusResolved = settings.statusResolved !== undefined
+      ? Boolean(settings.statusResolved)
+      : authState.statusResolved;
+    const statusErrored = settings.statusErrored !== undefined
+      ? Boolean(settings.statusErrored)
+      : authState.statusErrored;
+    const found = settings.found !== undefined ? Boolean(settings.found) : authState.found;
+    const hasPassword = settings.hasPassword !== undefined ? Boolean(settings.hasPassword) : authState.hasPassword;
+
+    if (normalizedChave.length !== 4 || !statusResolved || statusErrored) {
+      return '';
     }
-    if (passwordRegisterInProgress) {
-      return 'Aguarde';
+
+    if (!found) {
+      return `${normalizedChave}:missing-user`;
     }
-    if (userSelfRegistrationInProgress) {
-      return 'Aguarde';
+
+    if (!hasPassword) {
+      return `${normalizedChave}:missing-password`;
     }
-    if (isMissingUserRegistrationState()) {
-      return 'Chave?';
+
+    return '';
+  }
+
+  function resetAuthenticationAssistanceAutoOpenState() {
+    currentAuthenticationAssistanceStateKey = '';
+    lastAutoOpenedAuthenticationAssistanceStateKey = '';
+    lastDismissedAuthenticationAssistanceStateKey = '';
+  }
+
+  function syncAuthenticationAssistanceAutoOpenState(options) {
+    const nextStateKey = resolveAuthenticationAssistanceStateKey(options);
+    if (nextStateKey !== currentAuthenticationAssistanceStateKey) {
+      currentAuthenticationAssistanceStateKey = nextStateKey;
+      lastAutoOpenedAuthenticationAssistanceStateKey = '';
+      lastDismissedAuthenticationAssistanceStateKey = '';
     }
-    if (isMissingPasswordRegistrationState()) {
-      return 'Senha?';
+    return nextStateKey;
+  }
+
+  function markCurrentAuthenticationAssistanceDialogAsManuallyDismissed() {
+    if (!currentAuthenticationAssistanceStateKey) {
+      return;
     }
-    return 'Senha';
+    lastDismissedAuthenticationAssistanceStateKey = currentAuthenticationAssistanceStateKey;
+  }
+
+  function maybeAutoOpenAuthenticationAssistanceDialog() {
+    const stateKey = currentAuthenticationAssistanceStateKey;
+    if (
+      !stateKey
+      || stateKey === lastAutoOpenedAuthenticationAssistanceStateKey
+      || stateKey === lastDismissedAuthenticationAssistanceStateKey
+      || isSettingsDialogOpen()
+      || isTransportScreenOpen()
+    ) {
+      return false;
+    }
+
+    if (stateKey.endsWith(':missing-user')) {
+      lastAutoOpenedAuthenticationAssistanceStateKey = stateKey;
+      if (!isRegistrationDialogOpen()) {
+        openRegistrationDialog();
+      }
+      return true;
+    }
+
+    if (stateKey.endsWith(':missing-password')) {
+      lastAutoOpenedAuthenticationAssistanceStateKey = stateKey;
+      if (!isPasswordDialogOpen()) {
+        openPasswordDialog();
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  function canOpenPasswordChangeFromSettings() {
+    return authState.statusResolved
+      && !authState.statusErrored
+      && authState.hasPassword
+      && isApplicationUnlocked();
+  }
+
+  function resolveSupportRequestChave() {
+    const authenticatedChave = authState.authenticated ? sanitizeChave(authState.chave) : '';
+    if (authenticatedChave.length === 4) {
+      return authenticatedChave;
+    }
+
+    const typedChave = getActiveChave();
+    return typedChave.length === 4 ? typedChave : '';
+  }
+
+  function canOpenSupportFromSettings() {
+    return resolveSupportRequestChave().length === 4;
+  }
+
+  function buildCheckingWebSupportMessage(chave) {
+    const supportKey = sanitizeChave(chave);
+    return typeof t === 'function'
+      ? t('support.messageTemplate', { chave: supportKey })
+      : `Preciso de ajuda com a aplicacao Web. Minha chave e ${supportKey}.`;
+  }
+
+  function buildCheckingWebSupportWhatsAppUrl(chave) {
+    return `https://wa.me/${checkingWebSupportWhatsAppPhone}?text=${encodeURIComponent(buildCheckingWebSupportMessage(chave))}`;
+  }
+
+  function openSecondarySurface(url) {
+    if (typeof url !== 'string' || !url) {
+      return false;
+    }
+
+    if (typeof window.open === 'function') {
+      const openedWindow = window.open(url, '_blank', 'noopener');
+      if (openedWindow && typeof openedWindow === 'object') {
+        try {
+          openedWindow.opener = null;
+        } catch (error) {
+          // Ignore cross-origin opener assignment failures.
+        }
+      }
+      return true;
+    }
+
+    if (window.location && typeof window.location.assign === 'function') {
+      window.location.assign(url);
+      return true;
+    }
+
+    return false;
+  }
+
+  function openCheckingWebSupport() {
+    const supportChave = resolveSupportRequestChave();
+    if (supportChave.length !== 4) {
+      return false;
+    }
+
+    closeSettingsDialog({ restoreFocus: false });
+    return openSecondarySurface(buildCheckingWebSupportWhatsAppUrl(supportChave));
+  }
+
+  function openCheckingWebManual() {
+    closeSettingsDialog({ restoreFocus: false });
+    return openSecondarySurface(checkingWebManualPath);
   }
 
   function clearPasswordVerificationTimer() {
@@ -907,6 +1253,270 @@
     });
   }
 
+  function populateSettingsLanguageOptions() {
+    if (!settingsLanguageSelect || !checkI18n || !Array.isArray(checkI18n.languages)) {
+      return;
+    }
+
+    const activeLanguageCode = getActiveCheckLanguageCode();
+    settingsLanguageSelect.replaceChildren();
+    checkI18n.languages.forEach((language) => {
+      const optionElement = document.createElement('option');
+      optionElement.value = language.code;
+      optionElement.textContent = language.label;
+      optionElement.selected = language.code === activeLanguageCode;
+      settingsLanguageSelect.append(optionElement);
+    });
+    settingsLanguageSelect.value = activeLanguageCode;
+  }
+
+  function applyTextContent(element, value) {
+    if (!element) {
+      return;
+    }
+    element.textContent = value;
+  }
+
+  function applyStaticTranslations() {
+    if (document && typeof document.title === 'string') {
+      document.title = t('document.title');
+    }
+    if (document && document.documentElement) {
+      document.documentElement.lang = getCheckLocale();
+    }
+    populateSettingsLanguageOptions();
+
+    if (appHeader) {
+      const brandLabel = appHeader.querySelector('.header-logo-text');
+      applyTextContent(brandLabel, t('auth.brand'));
+    }
+
+    if (form) {
+      form.setAttribute('aria-label', t('auth.checkFormAria'));
+    }
+
+    const historyTitle = document.getElementById('historyTitle');
+    const checkoutHistoryLabel = lastCheckoutItem
+      ? lastCheckoutItem.querySelector('.history-label')
+      : null;
+    const authCredentialsRow = document.querySelector('.auth-credentials-row');
+    const chaveLabelText = chaveAuthField ? chaveAuthField.querySelector('span') : null;
+    const passwordLabelText = passwordAuthField ? passwordAuthField.querySelector('span') : null;
+    const settingsSpacerLabel = document.querySelector('.auth-field-spacer');
+    const settingsButtonHiddenLabel = settingsButton
+      ? settingsButton.querySelector('.visually-hidden')
+      : null;
+    const registrationLegendLabel = document.querySelector('#registrationField .legend-toggle-label');
+    const registrationLegendTitle = document.querySelector('#registrationField .check-group-legend-row > span:last-child');
+    const checkinActionLabel = document.querySelector('label.choice-card input[name="action"][value="checkin"] + span');
+    const checkoutActionLabel = document.querySelector('label.choice-card input[name="action"][value="checkout"] + span');
+    const transportActionLabel = transportButton ? transportButton.querySelector('span') : null;
+    const informeLegend = informeField ? informeField.querySelector('legend') : null;
+    const normalInformeLabel = document.querySelector('label.choice-card input[name="informe"][value="normal"] + span');
+    const retroativoInformeLabel = document.querySelector('label.choice-card input[name="informe"][value="retroativo"] + span');
+    const projectFieldLabel = projectField ? projectField.querySelector('span') : null;
+    const projectMembershipLink = projectMembershipButton
+      ? projectMembershipButton.querySelector('.project-membership-link')
+      : null;
+    const locationFieldLabel = locationSelectField ? locationSelectField.querySelector('span') : null;
+    const passwordOldLabel = passwordDialogOldPasswordField
+      ? passwordDialogOldPasswordField.querySelector('span')
+      : null;
+    const passwordNewLabel = newPasswordInput
+      ? newPasswordInput.closest('label') && newPasswordInput.closest('label').querySelector('span')
+      : null;
+    const passwordConfirmLabel = confirmPasswordInput
+      ? confirmPasswordInput.closest('label') && confirmPasswordInput.closest('label').querySelector('span')
+      : null;
+    const registrationNote = registrationDialog
+      ? registrationDialog.querySelector('.registration-dialog-note')
+      : null;
+    const registrationKeyLabel = registrationChaveInput
+      ? registrationChaveInput.closest('label') && registrationChaveInput.closest('label').querySelector('span')
+      : null;
+    const registrationNameLabel = registrationNameInput
+      ? registrationNameInput.closest('label') && registrationNameInput.closest('label').querySelector('span')
+      : null;
+    const registrationProjectsLabel = registrationDialog
+      ? registrationDialog.querySelector('.registration-project-field > span')
+      : null;
+    const registrationEmailLabel = registrationEmailInput
+      ? registrationEmailInput.closest('label') && registrationEmailInput.closest('label').querySelector('span')
+      : null;
+    const registrationPasswordLabel = registrationPasswordInput
+      ? registrationPasswordInput.closest('label') && registrationPasswordInput.closest('label').querySelector('span')
+      : null;
+    const registrationConfirmPasswordLabel = registrationConfirmPasswordInput
+      ? registrationConfirmPasswordInput.closest('label') && registrationConfirmPasswordInput.closest('label').querySelector('span')
+      : null;
+    const settingsLanguageLabel = settingsLanguageSelect
+      ? settingsLanguageSelect.closest('label') && settingsLanguageSelect.closest('label').querySelector('span')
+      : null;
+    const settingsOptionLabels = Array.from(document.querySelectorAll('.settings-option-label'));
+    const transportTitle = document.getElementById('transportScreenTitle');
+    const transportOptionInstruction = document.getElementById('transportOptionInstruction');
+    const transportHistoryLabel = transportRequestHistorySection
+      ? transportRequestHistorySection.querySelector('.transport-request-history-label')
+      : null;
+    const transportAddressLabel = transportAddressInput
+      ? transportAddressInput.closest('label') && transportAddressInput.closest('label').querySelector('span')
+      : null;
+    const transportZipLabel = transportZipInput
+      ? transportZipInput.closest('label') && transportZipInput.closest('label').querySelector('span')
+      : null;
+    const transportWeekdayGroupLabel = transportRequestWeekdayGroup
+      ? transportRequestWeekdayGroup.querySelector('.transport-request-builder-label')
+      : null;
+    const transportDateLabel = transportRequestDateInput
+      ? transportRequestDateInput.closest('label') && transportRequestDateInput.closest('label').querySelector('span')
+      : null;
+    const transportTimeLabel = transportRequestTimeInput
+      ? transportRequestTimeInput.closest('label') && transportRequestTimeInput.closest('label').querySelector('span')
+      : null;
+
+    applyTextContent(historyTitle, t('history.lastCheckinLabel'));
+    applyTextContent(checkoutHistoryLabel, t('history.lastCheckoutLabel'));
+    applyTextContent(document.getElementById('locationTitle'), t('location.title'));
+    applyTextContent(chaveLabelText, t('auth.keyLabel'));
+    applyTextContent(passwordLabelText, t('auth.passwordLabel'));
+    applyTextContent(settingsSpacerLabel, t('auth.settingsSpacer'));
+    applyTextContent(settingsButtonHiddenLabel, t('auth.openSettingsAria'));
+    applyTextContent(document.getElementById('requestRegistrationButton'), t('auth.requestRegistrationButton'));
+    applyTextContent(registrationLegendLabel, t('registration.automaticActivitiesLabel'));
+    applyTextContent(registrationLegendTitle, t('registration.sectionTitle'));
+    applyTextContent(checkinActionLabel, t('registration.checkinLabel'));
+    applyTextContent(checkoutActionLabel, t('registration.checkoutLabel'));
+    applyTextContent(transportActionLabel, t('registration.transportTestingLabel'));
+    applyTextContent(informeLegend, t('registration.informeTitle'));
+    applyTextContent(normalInformeLabel, t('registration.informeNormalLabel'));
+    applyTextContent(retroativoInformeLabel, t('registration.informeRetroativoLabel'));
+    applyTextContent(projectFieldLabel, t('projects.label'));
+    applyTextContent(projectMembershipLink, t('projects.changeButton'));
+    applyTextContent(locationFieldLabel, t('location.title'));
+    applyTextContent(passwordOldLabel, t('passwordDialog.oldPasswordLabel'));
+    applyTextContent(passwordNewLabel, t('passwordDialog.newPasswordLabel'));
+    applyTextContent(passwordConfirmLabel, t('passwordDialog.confirmPasswordLabel'));
+    applyTextContent(document.getElementById('registrationDialogTitle'), t('registrationDialog.title'));
+    applyTextContent(registrationNote, t('registrationDialog.note'));
+    applyTextContent(registrationKeyLabel, t('registrationDialog.keyLabel'));
+    applyTextContent(registrationNameLabel, t('registrationDialog.fullNameLabel'));
+    applyTextContent(registrationProjectsLabel, t('registrationDialog.projectsLabel'));
+    applyTextContent(registrationEmailLabel, t('registrationDialog.emailLabel'));
+    applyTextContent(registrationPasswordLabel, t('registrationDialog.passwordLabel'));
+    applyTextContent(registrationConfirmPasswordLabel, t('registrationDialog.confirmPasswordLabel'));
+    applyTextContent(document.getElementById('settingsDialogTitle'), t('settings.title'));
+    applyTextContent(settingsLanguageLabel, t('settings.languageLabel'));
+    applyTextContent(settingsOptionLabels[0], t('settings.resetPasswordLabel'));
+    applyTextContent(settingsOptionLabels[1], t('settings.allowLocationLabel'));
+    applyTextContent(settingsOptionLabels[2], t('settings.supportLabel'));
+    applyTextContent(settingsOptionLabels[3], t('settings.aboutLabel'));
+    applyTextContent(settingsResetPasswordButton, t('settings.resetPasswordLabel'));
+    applyTextContent(settingsLocationPermissionButton, t('settings.allowLocationLabel'));
+    applyTextContent(settingsSupportButton, t('settings.supportLabel'));
+    applyTextContent(settingsAboutButton, t('settings.aboutLabel'));
+    applyTextContent(settingsDialogBackButton, t('settings.backButton'));
+    applyTextContent(transportTitle, t('transport.title'));
+    applyTextContent(transportOptionInstruction, t('transport.optionInstruction'));
+    applyTextContent(transportHistoryLabel, t('transport.historyTitle'));
+    applyTextContent(transportAddressLabel, t('transport.addressLabel'));
+    applyTextContent(transportZipLabel, t('transport.zipLabel'));
+    applyTextContent(transportWeekdayGroupLabel, t('transport.requestBuilder.selectDaysLabel'));
+    applyTextContent(transportDateLabel, t('transport.requestBuilder.dateLabel'));
+    applyTextContent(transportTimeLabel, t('transport.requestBuilder.timeLabel'));
+
+    if (authCredentialsRow) {
+      authCredentialsRow.setAttribute('aria-label', t('auth.credentialsAria'));
+    }
+    if (chaveInput) {
+      chaveInput.placeholder = t('auth.keyPlaceholder');
+    }
+    if (passwordInput) {
+      passwordInput.placeholder = t('auth.passwordPlaceholder');
+    }
+    if (settingsButton) {
+      settingsButton.setAttribute('aria-label', t('auth.openSettingsAria'));
+      settingsButton.setAttribute('title', t('auth.openSettingsTitle'));
+    }
+    if (refreshLocationButton) {
+      refreshLocationButton.setAttribute('aria-label', locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel'));
+      refreshLocationButton.setAttribute('title', locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel'));
+    }
+    if (refreshLocationButtonLabel) {
+      refreshLocationButtonLabel.textContent = locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel');
+    }
+    if (registrationProjectOptions) {
+      registrationProjectOptions.setAttribute('aria-label', t('projects.registrationProjectsAria'));
+    }
+    if (projectMembershipOptions) {
+      projectMembershipOptions.setAttribute('aria-label', t('projects.userProjectsAria'));
+    }
+    if (registrationEmailInput) {
+      registrationEmailInput.placeholder = t('registrationDialog.emailPlaceholder');
+    }
+    if (transportScreenHeaderBackButton) {
+      transportScreenHeaderBackButton.setAttribute('aria-label', t('transport.backToMainAria'));
+    }
+    if (transportAddressToggleButton) {
+      transportAddressToggleButton.textContent = t('transport.addressToggleLabel');
+    }
+    if (transportAddressInput) {
+      transportAddressInput.placeholder = t('transport.addressPlaceholder');
+    }
+    if (transportZipInput) {
+      transportZipInput.placeholder = t('transport.zipPlaceholder');
+    }
+    if (transportRegularButton) {
+      transportRegularButton.setAttribute('aria-label', t('transport.kinds.regular'));
+      const label = transportRegularButton.querySelector('.transport-option-button-label');
+      if (label) {
+        label.innerHTML = t('transport.kinds.regular').replace(' ', '<br />');
+      }
+    }
+    if (transportWeekendButton) {
+      transportWeekendButton.setAttribute('aria-label', t('transport.kinds.weekend'));
+      const label = transportWeekendButton.querySelector('.transport-option-button-label');
+      if (label) {
+        label.innerHTML = t('transport.kinds.weekend').replace(' ', '<br />');
+      }
+    }
+    if (transportExtraButton) {
+      transportExtraButton.setAttribute('aria-label', t('transport.kinds.extra'));
+      const label = transportExtraButton.querySelector('.transport-option-button-label');
+      if (label) {
+        label.innerHTML = t('transport.kinds.extra').replace(' ', '<br />');
+      }
+    }
+    transportRequestWeekdayOptions.forEach((optionElement) => {
+      const weekdayValue = String(optionElement && optionElement.getAttribute('data-weekday') || '').trim();
+      const labelElement = optionElement ? optionElement.querySelector('span') : null;
+      applyTextContent(labelElement, transportRequestWeekdayFullLabels[weekdayValue] || weekdayValue);
+    });
+  }
+
+  function applyLanguageSelection(languageCode, options) {
+    const settings = options || {};
+    const resolvedLanguageCode = setActiveCheckLanguageCode(languageCode);
+    if (settings.persist !== false && checkI18n && typeof checkI18n.setStoredLanguageCode === 'function') {
+      checkI18n.setStoredLanguageCode(resolvedLanguageCode);
+    }
+    refreshLocaleFormatters();
+    syncTranslatedRuntimeLabels();
+    applyStaticTranslations();
+    if (settings.reapplyDynamicState !== false) {
+      syncPasswordDialogPresentation();
+      syncProjectMembershipControls();
+      syncManualLocationControl();
+      if (latestHistoryState) {
+        applyHistoryState(latestHistoryState);
+      } else {
+        renderTransportScreen();
+      }
+      syncFormControlStates();
+      renderNotifications();
+    }
+    return resolvedLanguageCode;
+  }
+
   function syncPasswordDialogPresentation() {
     const isRegisterMode = isPasswordRegistrationDialogMode();
 
@@ -914,7 +1524,9 @@
       passwordDialog.setAttribute('data-mode', passwordDialogMode);
     }
     if (passwordDialogTitle) {
-      passwordDialogTitle.textContent = isRegisterMode ? 'Cadastrar Senha' : 'Alterar Senha';
+      passwordDialogTitle.textContent = isRegisterMode
+        ? t('passwordDialog.titleRegister')
+        : t('passwordDialog.titleChange');
     }
     if (passwordDialogOldPasswordField) {
       passwordDialogOldPasswordField.classList.toggle('is-registration-placeholder', isRegisterMode);
@@ -1022,7 +1634,7 @@
 
     syncAuthenticationFieldHighlights();
 
-    projectSelect.disabled = dialogOpen
+    const projectMembershipDisabled = dialogOpen
       || lockActive
       || !unlocked
       || submitInProgress
@@ -1030,9 +1642,30 @@
       || passwordChangeInProgress
       || userSelfRegistrationInProgress
       || projectCatalogLoading
+      || userProjectsLoading
       || projectUpdateInProgress
       || allowedProjectValues.length === 0
       || (automaticActivitiesEnabled && !manualOverrideActive);
+
+    if (projectMembershipButton) {
+      projectMembershipButton.disabled = projectMembershipDisabled;
+      projectMembershipButton.setAttribute('aria-disabled', String(projectMembershipDisabled));
+    }
+
+    if (projectMembershipOptions && typeof projectMembershipOptions.querySelectorAll === 'function') {
+      const selectedProjectCount = readSelectedProjectMembershipValues().length || resolveCurrentUserProjectValues().length;
+      Array.from(projectMembershipOptions.querySelectorAll('input[name="userProjectMembership"]')).forEach((input) => {
+        input.disabled = projectMembershipDisabled || (selectedProjectCount === 1 && input.checked);
+      });
+    }
+
+    if (projectMembershipDisabled) {
+      closeProjectMembershipPanel();
+    }
+
+    if (projectMembershipStatus) {
+      projectMembershipStatus.textContent = resolveProjectMembershipStatusText();
+    }
 
     processControls.forEach((control) => {
       if (!control) {
@@ -1073,26 +1706,48 @@
         return;
       }
 
-      if (control === passwordActionButton) {
-        const activeChave = getActiveChave();
-        const canOpenRegistration = isMissingUserRegistrationState();
-        const canOpenPasswordRegistration = isMissingPasswordRegistrationState();
-        const canOpenPasswordChange = authState.statusResolved && !authState.statusErrored && authState.hasPassword;
-        control.textContent = resolvePasswordActionButtonLabel();
-        control.classList.toggle('is-attention', isPasswordActionAssistanceModeActive());
-        control.classList.toggle('is-pending', passwordRegisterInProgress);
-        control.disabled = dialogOpen
-          || lockActive
-          || submitInProgress
-          || authBusy
-          || activeChave.length !== 4
-          || (!canOpenRegistration && !canOpenPasswordRegistration && !canOpenPasswordChange);
+      if (control === settingsButton) {
+        control.disabled = dialogOpen || lockActive || submitInProgress || authBusy || passwordLoginInProgress;
+        control.setAttribute('aria-disabled', String(control.disabled));
+        return;
+      }
+    });
+
+    settingsDialogControls.forEach((control) => {
+      if (!control) {
         return;
       }
 
-      if (control === requestRegistrationButton) {
-        control.disabled = dialogOpen || lockActive || submitInProgress || authBusy || userSelfRegistrationInProgress;
+      if (control === settingsDialogBackButton) {
+        control.disabled = false;
+        return;
       }
+
+      if (control === settingsResetPasswordButton) {
+        control.disabled = !canOpenPasswordChangeFromSettings();
+        control.setAttribute('aria-disabled', String(control.disabled));
+        return;
+      }
+
+      if (control === settingsLocationPermissionButton) {
+        control.disabled = locationRefreshLoading || isLocationPermissionEffectivelySharedWithWebApp();
+        control.setAttribute('aria-disabled', String(control.disabled));
+        return;
+      }
+
+      if (control === settingsSupportButton) {
+        control.disabled = !canOpenSupportFromSettings();
+        control.setAttribute('aria-disabled', String(control.disabled));
+        return;
+      }
+
+      if (control instanceof window.HTMLButtonElement) {
+        control.disabled = false;
+        control.setAttribute('aria-disabled', 'false');
+        return;
+      }
+
+      control.disabled = false;
     });
 
     passwordDialogControls.forEach((control) => {
@@ -1109,8 +1764,8 @@
         const isRegisterMode = isPasswordRegistrationDialogMode();
         control.disabled = passwordChangeInProgress || !canSubmitPasswordDialog();
         control.textContent = passwordChangeInProgress
-          ? (isRegisterMode ? 'Salvando...' : 'Alterando...')
-          : (isRegisterMode ? 'Salvar' : 'Alterar');
+          ? (isRegisterMode ? `${t('passwordDialog.submitRegisterButton')}...` : `${t('passwordDialog.submitChangeButton')}...`)
+          : (isRegisterMode ? t('passwordDialog.submitRegisterButton') : t('passwordDialog.submitChangeButton'));
         return;
       }
 
@@ -1134,17 +1789,21 @@
 
       if (control === registrationDialogSubmitButton) {
         control.disabled = userSelfRegistrationInProgress;
-        control.textContent = userSelfRegistrationInProgress ? 'Enviando...' : 'Enviar';
-        return;
-      }
-
-      if (control === registrationProjectSelect) {
-        control.disabled = userSelfRegistrationInProgress || projectCatalogLoading || allowedProjectValues.length === 0;
+        control.textContent = userSelfRegistrationInProgress
+          ? `${t('registrationDialog.submitButton')}...`
+          : t('registrationDialog.submitButton');
         return;
       }
 
       control.disabled = userSelfRegistrationInProgress;
     });
+
+    if (registrationProjectOptions && typeof registrationProjectOptions.querySelectorAll === 'function') {
+      const registrationProjectsDisabled = userSelfRegistrationInProgress || projectCatalogLoading || allowedProjectValues.length === 0;
+      Array.from(registrationProjectOptions.querySelectorAll('input[name="registrationProjectMembership"]')).forEach((input) => {
+        input.disabled = registrationProjectsDisabled;
+      });
+    }
 
     if (transportButton) {
       const transportButtonLocked = dialogOpen || lockActive || submitInProgress || authBusy || passwordLoginInProgress;
@@ -1166,14 +1825,18 @@
 
       if (control === transportAddressSubmitButton) {
         control.disabled = transportBusy;
-        control.textContent = transportAddressSaveInProgress ? 'Cadastrando...' : 'Cadastrar';
+        control.textContent = transportAddressSaveInProgress
+          ? `${t('transport.addressSubmitButton')}...`
+          : t('transport.addressSubmitButton');
         return;
       }
 
       if (control === transportRequestBuilderSubmitButton) {
         const transportSubmitBlocked = control.dataset.transportSubmitDisabled === 'true';
         control.disabled = transportBusy || transportSubmitBlocked;
-        control.textContent = transportRequestInProgress ? 'Solicitando...' : 'Solicitar';
+        control.textContent = transportRequestInProgress
+          ? (typeof t === 'function' ? `${t('transport.requestBuilder.submitButton')}...` : 'Solicitando...')
+          : (typeof t === 'function' ? t('transport.requestBuilder.submitButton') : 'Solicitar');
         control.setAttribute('aria-disabled', String(transportBusy || transportSubmitBlocked));
         return;
       }
@@ -1219,10 +1882,10 @@
     locationRefreshLoading = Boolean(isLoading);
     refreshLocationButton.classList.toggle('is-loading', locationRefreshLoading);
     refreshLocationButton.setAttribute('aria-busy', String(locationRefreshLoading));
-    refreshLocationButton.setAttribute('aria-label', locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização');
-    refreshLocationButton.setAttribute('title', locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização');
+    refreshLocationButton.setAttribute('aria-label', locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel'));
+    refreshLocationButton.setAttribute('title', locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel'));
     if (refreshLocationButtonLabel) {
-      refreshLocationButtonLabel.textContent = locationRefreshLoading ? 'Atualizando localização' : 'Atualizar localização';
+      refreshLocationButtonLabel.textContent = locationRefreshLoading ? t('location.refreshBusyLabel') : t('location.refreshLabel');
     }
     syncFormControlStates();
   }
@@ -1277,19 +1940,23 @@
   }
 
   function describeAutomaticActivity(action) {
-    return action === 'checkout' ? 'check-out' : 'check-in';
+    return action === 'checkout'
+      ? t('registration.checkOutLowerLabel')
+      : t('registration.checkInLowerLabel');
   }
 
   function buildLocationCompletionMessage(payload) {
     const detailMessage = payload && typeof payload.message === 'string'
-      ? payload.message.trim()
+      ? localizeKnownApiMessage(payload.message).trim()
       : '';
 
     if (!detailMessage) {
-      return 'Atualização da localização concluída.';
+      return t('location.completionStatus');
     }
 
-    return `Atualização da localização concluída. ${detailMessage}`;
+    return t('location.completionStatusWithDetail', {
+      detail: detailMessage,
+    });
   }
 
   function resolveLocationCompletionTone(payload) {
@@ -2107,11 +2774,21 @@
     recentLocationResolutionPayload = null;
     recentLocationResolutionAt = 0;
     recentLocationResolutionChave = '';
-    setLocationPresentation('Aguardando autenticação.', '', null, '--', { suppressNotification: true });
+    setLocationPresentation(t('auth.waitingAuthentication'), '', null, '--', { suppressNotification: true });
+  }
+
+  function resolveAuthenticationPromptMessage() {
+    if (authState && authState.authenticated) {
+      return '';
+    }
+    if (authState && authState.hasPassword) {
+      return t('auth.enterPasswordPrompt');
+    }
+    return t('auth.createPasswordPrompt');
   }
 
   function setAuthenticationPrompt(message) {
-    const promptMessage = message || clientState.resolveAuthenticationPromptMessage(authState);
+    const promptMessage = localizeKnownApiMessage(message) || resolveAuthenticationPromptMessage();
     if (promptMessage) {
       setStatus(promptMessage, 'error');
     }
@@ -2131,16 +2808,35 @@
     setAuthenticationPrompt(settings.message);
   }
 
+  function routeToUnknownUserSelfRegistration(chave) {
+    const normalizedChave = sanitizeChave(chave || chaveInput.value);
+    applyAuthenticationLockedState({
+      chave: normalizedChave,
+      found: false,
+      hasPassword: false,
+      message: unknownWebUserDetail,
+    });
+    syncAuthenticationAssistanceAutoOpenState({
+      chave: normalizedChave,
+      found: false,
+      hasPassword: false,
+      statusResolved: normalizedChave.length === 4,
+      statusErrored: false,
+    });
+    openRegistrationDialog();
+  }
+
   function handleExpiredAuthentication(options) {
     const settings = options || {};
     closePasswordDialog();
     closeRegistrationDialog();
+    closeSettingsDialog({ restoreFocus: false });
     closeTransportScreen();
     applyAuthenticationLockedState({
       chave: settings.chave || chaveInput.value,
       found: settings.found !== false,
       hasPassword: settings.hasPassword !== false,
-      message: settings.message || 'Digite sua senha para iniciar.',
+      message: localizeKnownApiMessage(settings.message) || t('auth.enterPasswordPrompt'),
     });
   }
 
@@ -2197,6 +2893,72 @@
     }
   }
 
+  function isSettingsDialogOpen() {
+    return Boolean(settingsDialog && !settingsDialog.hidden);
+  }
+
+  function closeSettingsDialog(options) {
+    const settings = options || {};
+    if (!settingsDialog || !settingsDialogBackdrop || settingsDialog.hidden) {
+      return;
+    }
+
+    dismissActiveKeyboard();
+    settingsDialog.hidden = true;
+    settingsDialogBackdrop.hidden = true;
+    settingsDialog.classList.add('is-hidden');
+    settingsDialogBackdrop.classList.add('is-hidden');
+    if (settingsButton) {
+      settingsButton.setAttribute('aria-expanded', 'false');
+    }
+    syncFormControlStates();
+    realignViewport();
+    if (settings.restoreFocus !== false && settingsButton && typeof settingsButton.focus === 'function') {
+      settingsButton.focus();
+    }
+  }
+
+  function openSettingsDialog() {
+    if (!settingsDialog || !settingsDialogBackdrop) {
+      return;
+    }
+
+    if (isPasswordDialogOpen() || isRegistrationDialogOpen() || isTransportScreenOpen()) {
+      return;
+    }
+
+    closeProjectMembershipPanel();
+    settingsDialog.hidden = false;
+    settingsDialogBackdrop.hidden = false;
+    settingsDialog.classList.remove('is-hidden');
+    settingsDialogBackdrop.classList.remove('is-hidden');
+    if (settingsButton) {
+      settingsButton.setAttribute('aria-expanded', 'true');
+    }
+    syncFormControlStates();
+    void queryLocationPermissionState();
+    realignViewport();
+    if (settingsLanguageSelect && typeof settingsLanguageSelect.focus === 'function') {
+      settingsLanguageSelect.focus();
+      return;
+    }
+    if (settingsDialogBackButton && typeof settingsDialogBackButton.focus === 'function') {
+      settingsDialogBackButton.focus();
+    }
+  }
+
+  function dismissPasswordDialogManually() {
+    if (isPasswordRegistrationDialogMode()) {
+      markCurrentAuthenticationAssistanceDialogAsManuallyDismissed();
+    }
+    closePasswordDialog();
+  }
+
+  function dismissRegistrationDialogManually() {
+    markCurrentAuthenticationAssistanceDialogAsManuallyDismissed();
+    closeRegistrationDialog();
+  }
+
   function closeRegistrationDialog() {
     if (!registrationDialog || !registrationDialogBackdrop || registrationDialog.hidden) {
       return;
@@ -2225,8 +2987,16 @@
 
     const activeChave = getActiveChave();
     const initialPassword = clientState.isPasswordLengthValid(passwordInput.value) ? passwordInput.value : '';
+    const persistedSettings = clientState.resolvePersistedUserSettings(
+      readPersistedUserSettingsMap(),
+      activeChave,
+      resolveCurrentUserSettingsDefaults()
+    );
     registrationChaveInput.value = activeChave;
-    syncProjectSelectOptions({ registrationValue: projectSelect.value });
+    syncProjectMembershipControls({
+      registrationProjectValues: persistedSettings.projects,
+      registrationValue: persistedSettings.activeProject,
+    });
     registrationPasswordInput.value = initialPassword;
     registrationConfirmPasswordInput.value = initialPassword;
     registrationDialog.hidden = false;
@@ -2247,7 +3017,7 @@
   function buildProtectedRequestError(response, payload) {
     if (response.status === 401) {
       handleExpiredAuthentication({ chave: chaveInput.value, hasPassword: true });
-      const authError = new Error('Digite sua senha para iniciar.');
+      const authError = new Error(t('auth.enterPasswordPrompt'));
       authError.status = response.status;
       authError.payload = payload;
       authError.isAuthExpired = true;
@@ -3450,6 +4220,36 @@
     }
   }
 
+  const initialCheckLanguageCode = checkI18n && typeof checkI18n.resolveInitialLanguageCode === 'function'
+    ? checkI18n.resolveInitialLanguageCode()
+    : resolveCheckLanguageCode('pt');
+  applyLanguageSelection(initialCheckLanguageCode, {
+    persist: false,
+    reapplyDynamicState: false,
+  });
+
+  const transportScreenConfig = {
+    transportStateEndpoint,
+    transportStreamEndpoint,
+    transportAddressEndpoint,
+    transportRequestEndpoint,
+    transportCancelEndpoint,
+    transportAutoRefreshIntervalMs,
+    transportRealtimeRefreshDebounceMs,
+    transportRequestDismissHoldDelayMs,
+    transportRequestDismissMoveTolerancePx,
+    transportRequestKindLabels,
+    transportRequestStatusLabels,
+    transportRequestWeekdayLabels,
+    transportRequestWeekdayFullLabels,
+    transportRequestBuilderConfigs,
+    getDateFormatter: () => dateFormatter,
+    formatTransportVehicleTypeLabel,
+    localizeKnownApiMessage,
+    t: (keyPath, values) => t(`transport.${keyPath}`, values),
+    userTransportLocalStateStorageKey,
+  };
+
   const transportScreenModule = window.CheckingWebTransportScreen.create({
     buildProtectedRequestError,
     clearTransportInlineStatus,
@@ -3495,23 +4295,7 @@
       transportUiState,
       transportRequestSwipeState,
     },
-    config: {
-      transportStateEndpoint,
-      transportStreamEndpoint,
-      transportAddressEndpoint,
-      transportRequestEndpoint,
-      transportCancelEndpoint,
-      transportAutoRefreshIntervalMs,
-      transportRealtimeRefreshDebounceMs,
-      transportRequestDismissHoldDelayMs,
-      transportRequestDismissMoveTolerancePx,
-      transportRequestKindLabels,
-      transportRequestStatusLabels,
-      transportRequestWeekdayLabels,
-      transportRequestBuilderConfigs,
-      dateFormatter,
-      userTransportLocalStateStorageKey,
-    },
+    config: transportScreenConfig,
     runtime: {
       getTransportStateLoading: () => transportStateLoading,
       setTransportStateLoading: (value) => {
@@ -3584,7 +4368,16 @@
       clearProtectedClientState();
       setAuthenticationPrompt(payload && payload.message);
     }
+
+    syncAuthenticationAssistanceAutoOpenState({
+      chave: normalizedChave,
+      found: authState.found,
+      hasPassword: authState.hasPassword,
+      statusResolved: authState.statusResolved,
+      statusErrored: authState.statusErrored,
+    });
     syncFormControlStates();
+    maybeAutoOpenAuthenticationAssistanceDialog();
   }
 
   async function fetchAuthenticationStatus(chave, signal) {
@@ -3634,7 +4427,7 @@
     }
 
     const verificationToken = passwordVerificationRequestToken;
-    setStatus('Senha sendo verificada.', 'neutral');
+    setStatus(t('passwordDialog.validatingStatus'), 'neutral');
     passwordVerificationTimeoutId = window.setTimeout(() => {
       void attemptPasswordLogin({
         silentValidation: true,
@@ -3660,7 +4453,7 @@
         chave: normalizedChave,
         found: authState.found,
         hasPassword: authState.hasPassword,
-        message: 'Digite sua senha para iniciar.',
+        message: t('auth.enterPasswordPrompt'),
       });
       void logoutWebSession({ silent: true });
     }
@@ -3677,7 +4470,7 @@
       });
     } else if (normalizedChave.length === 4 && authState.hasPassword && !currentPassword) {
       clearPasswordVerificationTimer();
-      setAuthenticationPrompt('Digite sua senha para iniciar.');
+      setAuthenticationPrompt(t('auth.enterPasswordPrompt'));
     } else {
       clearPasswordVerificationTimer();
     }
@@ -3766,13 +4559,19 @@
     const pendingLoad = (async () => {
       await loadProjectCatalog({ showError: false });
       restorePersistedUserSettingsForChave(normalizedChave);
+      await loadCurrentUserProjectMemberships({ showError: false });
       await loadManualLocations();
       if (!isApplicationUnlocked(normalizedChave)) {
         return false;
       }
 
       if (settings.showReadyMessage) {
-        setStatus('Autenticação concluída. Atualizando a aplicação...', 'info');
+        setStatus(
+          typeof t === 'function'
+            ? t('status.authenticationCompleted')
+            : 'Autenticação concluída. Atualizando a aplicação...',
+          'info'
+        );
       }
 
       await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
@@ -3803,6 +4602,7 @@
     }
 
     if (normalizedChave.length !== 4) {
+      resetAuthenticationAssistanceAutoOpenState();
       authState.chave = '';
       authState.found = false;
       authState.hasPassword = false;
@@ -3865,7 +4665,7 @@
         found: false,
         hasPassword: false,
         statusErrored: true,
-        message: error instanceof Error ? error.message : 'Não foi possível consultar o status da senha.',
+        message: error instanceof Error ? localizeKnownApiMessage(error.message) : t('passwordDialog.statusLoadFailed'),
       });
       return null;
     } finally {
@@ -3873,79 +4673,6 @@
         authStatusAbortController = null;
       }
       authState.statusLoading = false;
-      syncFormControlStates();
-    }
-  }
-
-  async function registerPasswordForCurrentUser() {
-    const normalizedChave = getActiveChave();
-    const password = passwordInput.value;
-
-    if (normalizedChave.length !== 4) {
-      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
-      chaveInput.focus();
-      return false;
-    }
-
-    if (!clientState.isPasswordLengthValid(password)) {
-      setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
-      passwordInput.focus();
-      return false;
-    }
-
-    await loadProjectCatalog({ showError: true });
-    if (!allowedProjectValues.length) {
-      setStatus('Nenhum projeto está disponível no momento.', 'error');
-      return false;
-    }
-
-    passwordRegisterInProgress = true;
-    syncFormControlStates();
-    setStatus('Cadastrando senha...', 'info');
-
-    try {
-      const response = await fetch(authRegisterEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          chave: normalizedChave,
-          projeto: projectSelect.value,
-          senha: password,
-        }),
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw createRequestError(response, payload);
-      }
-
-      authState.chave = normalizedChave;
-      authState.found = true;
-      authState.hasPassword = true;
-      authState.authenticated = true;
-      authState.passwordVerified = true;
-      authState.statusResolved = true;
-      authState.statusErrored = false;
-      lastVerifiedPassword = password;
-      lastObservedPasswordFieldValue = password;
-      persistPasswordForChave(normalizedChave, password);
-      syncFormControlStates();
-      dismissActiveKeyboard();
-      setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
-      await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
-      return true;
-    } catch (error) {
-      if (isUnknownUserError(error)) {
-        openRegistrationDialog();
-        return false;
-      }
-      setStatus(error instanceof Error ? error.message : 'Não foi possível cadastrar a senha.', 'error');
-      return false;
-    } finally {
-      passwordRegisterInProgress = false;
       syncFormControlStates();
     }
   }
@@ -3972,8 +4699,8 @@
       if (!settings.silentValidation) {
         setStatus(
           settings.allowPartialVerification
-            ? 'Digite sua senha para iniciar.'
-            : 'A senha deve ter entre 3 e 10 caracteres.',
+            ? t('auth.enterPasswordPrompt')
+            : t('passwordDialog.newPasswordInvalid'),
           'error'
         );
       }
@@ -3983,7 +4710,7 @@
     passwordLoginInProgress = true;
     syncFormControlStates();
     if (!settings.silentValidation) {
-      setStatus('Senha sendo verificada.', 'neutral');
+      setStatus(t('passwordDialog.validatingStatus'), 'neutral');
     }
 
     try {
@@ -4019,11 +4746,12 @@
       lastVerifiedPassword = password;
       lastObservedPasswordFieldValue = password;
       persistPasswordForChave(normalizedChave, password);
+      resetAuthenticationAssistanceAutoOpenState();
       syncFormControlStates();
 
       dismissActiveKeyboard();
       if (settings.showReadyMessage !== false) {
-        setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
+        setStatus(t('status.userAuthenticated'), 'success');
       }
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
       return true;
@@ -4034,7 +4762,7 @@
 
       if (isUnknownUserError(error)) {
         closePasswordDialog();
-        openRegistrationDialog();
+        routeToUnknownUserSelfRegistration(normalizedChave);
         return false;
       }
 
@@ -4043,8 +4771,8 @@
         found: true,
         hasPassword: true,
         message: settings.allowPartialVerification
-          ? 'Digite sua senha para iniciar.'
-          : (error instanceof Error ? error.message : 'Não foi possível validar a senha.'),
+          ? t('auth.enterPasswordPrompt')
+          : (error instanceof Error ? localizeKnownApiMessage(error.message) : t('passwordDialog.validationFailed')),
       });
       return false;
     } finally {
@@ -4063,42 +4791,37 @@
     const confirmPassword = confirmPasswordInput.value;
 
     if (normalizedChave.length !== 4) {
-      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      setStatus(t('auth.invalidFourCharacterKey'), 'error');
       closePasswordDialog();
       return;
     }
 
     if (!registerPasswordMode && !clientState.isPasswordLengthValid(oldPassword)) {
-      setStatus('A senha antiga deve ter entre 3 e 10 caracteres.', 'error');
+      setStatus(t('passwordDialog.oldPasswordInvalid'), 'error');
       oldPasswordInput.focus();
       return;
     }
 
     if (!clientState.isPasswordLengthValid(newPassword)) {
-      setStatus('A nova senha deve ter entre 3 e 10 caracteres.', 'error');
+      setStatus(t('passwordDialog.newPasswordInvalid'), 'error');
       newPasswordInput.focus();
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setStatus('A confirmação da nova senha não confere.', 'error');
+      setStatus(t('passwordDialog.confirmMismatch'), 'error');
       confirmPasswordInput.focus();
       return;
     }
 
     passwordChangeInProgress = true;
     syncFormControlStates();
-    setStatus(registerPasswordMode ? 'Salvando senha...' : 'Alterando senha...', 'info');
+    setStatus(
+      registerPasswordMode ? t('passwordDialog.savingStatus') : t('passwordDialog.changingStatus'),
+      'info'
+    );
 
     try {
-      if (registerPasswordMode) {
-        await loadProjectCatalog({ showError: true });
-        if (!allowedProjectValues.length) {
-          setStatus('Nenhum projeto está disponível no momento.', 'error');
-          return;
-        }
-      }
-
       const response = await fetch(registerPasswordMode ? authRegisterEndpoint : authChangeEndpoint, {
         method: 'POST',
         headers: {
@@ -4109,7 +4832,6 @@
           registerPasswordMode
             ? {
               chave: normalizedChave,
-              projeto: projectSelect.value,
               senha: newPassword,
             }
             : {
@@ -4136,17 +4858,21 @@
       lastObservedPasswordFieldValue = newPassword;
       passwordInput.value = newPassword;
       persistPasswordForChave(normalizedChave, newPassword);
+      resetAuthenticationAssistanceAutoOpenState();
       closePasswordDialog();
       dismissActiveKeyboard();
-      setStatus('Usuário autenticado. Iniciando atualizações.', 'success');
+      setStatus(t('status.userAuthenticated'), 'success');
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
     } catch (error) {
       if (isUnknownUserError(error)) {
         closePasswordDialog();
-        openRegistrationDialog();
+        routeToUnknownUserSelfRegistration(normalizedChave);
         return;
       }
-      setStatus(error instanceof Error ? error.message : 'Não foi possível alterar a senha.', 'error');
+      setStatus(
+        error instanceof Error ? localizeKnownApiMessage(error.message) : t('passwordDialog.changeFailed'),
+        'error'
+      );
     } finally {
       passwordChangeInProgress = false;
       syncFormControlStates();
@@ -4158,13 +4884,18 @@
 
     await loadProjectCatalog({ showError: true });
     if (!allowedProjectValues.length) {
-      setStatus('Nenhum projeto está disponível no momento.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registrationDialog.noProjectsAvailable')
+          : 'Nenhum projeto está disponível no momento.',
+        'error'
+      );
       return;
     }
 
     const normalizedChave = sanitizeChave(registrationChaveInput.value);
     const nome = String(registrationNameInput.value || '').trim().replace(/\s+/g, ' ');
-    const projeto = registrationProjectSelect.value;
+    const projetos = readSelectedRegistrationProjectValues();
     const email = String(registrationEmailInput.value || '').trim();
     const password = registrationPasswordInput.value;
     const confirmPassword = registrationConfirmPasswordInput.value;
@@ -4174,44 +4905,73 @@
     registrationEmailInput.value = email;
 
     if (normalizedChave.length !== 4) {
-      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      setStatus(
+        typeof t === 'function' ? t('auth.invalidFourCharacterKey') : 'Informe uma chave com 4 caracteres alfanuméricos.',
+        'error'
+      );
       registrationChaveInput.focus();
       return;
     }
 
     if (nome.length < 3) {
-      setStatus('Informe o nome completo.', 'error');
+      setStatus(
+        typeof t === 'function' ? t('registrationDialog.fullNameRequired') : 'Informe o nome completo.',
+        'error'
+      );
       registrationNameInput.focus();
       return;
     }
 
-    if (!String(projeto || '').trim()) {
-      setStatus('Selecione um projeto.', 'error');
-      registrationProjectSelect.focus();
+    if (!projetos.length) {
+      setStatus(
+        typeof t === 'function' ? t('projects.selectAtLeastOne') : 'Selecione ao menos um projeto.',
+        'error'
+      );
+      focusRegistrationProjectOptions();
       return;
     }
 
     if (email && email.indexOf('@') === -1) {
-      setStatus('Informe um e-mail válido ou deixe o campo em branco.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registrationDialog.emailInvalid')
+          : 'Informe um e-mail válido ou deixe o campo em branco.',
+        'error'
+      );
       registrationEmailInput.focus();
       return;
     }
 
     if (!clientState.isPasswordLengthValid(password)) {
-      setStatus('A senha deve ter entre 3 e 10 caracteres.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registrationDialog.passwordInvalid')
+          : 'A senha deve ter entre 3 e 10 caracteres.',
+        'error'
+      );
       registrationPasswordInput.focus();
       return;
     }
 
     if (password !== confirmPassword) {
-      setStatus('A confirmação da nova senha não confere.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registrationDialog.confirmMismatch')
+          : 'A confirmação da nova senha não confere.',
+        'error'
+      );
       registrationConfirmPasswordInput.focus();
       return;
     }
 
     userSelfRegistrationInProgress = true;
     syncFormControlStates();
-  setStatus('Enviando solicitação de cadastro...', 'info');
+    setStatus(
+      typeof t === 'function'
+        ? t('registrationDialog.submittingStatus')
+        : 'Enviando solicitação de cadastro...',
+      'info'
+    );
 
     try {
       const response = await fetch(authUserRegisterEndpoint, {
@@ -4223,7 +4983,7 @@
         body: JSON.stringify({
           chave: normalizedChave,
           nome,
-          projeto,
+          projetos,
           email: email || null,
           senha: password,
           confirmar_senha: confirmPassword,
@@ -4237,10 +4997,10 @@
 
       chaveInput.value = normalizedChave;
       passwordInput.value = password;
-      lastCommittedProjectValue = normalizeKnownProjectValue(projeto, defaultProjectValue);
-      syncProjectSelectOptions({ mainValue: lastCommittedProjectValue, registrationValue: lastCommittedProjectValue });
+      if (Array.isArray(payload.projects) && payload.projects.length && payload.active_project) {
+        applyCurrentUserProjectMemberships(payload);
+      }
       writePersistedChave(normalizedChave);
-      persistCurrentUserSettings();
 
       authState.chave = normalizedChave;
       authState.found = true;
@@ -4248,17 +5008,29 @@
       authState.authenticated = true;
       authState.passwordVerified = true;
       authState.statusResolved = true;
+      authState.statusErrored = false;
       lastVerifiedPassword = password;
       lastObservedPasswordFieldValue = password;
       persistPasswordForChave(normalizedChave, password);
+      resetAuthenticationAssistanceAutoOpenState();
 
       closeRegistrationDialog();
       dismissActiveKeyboard();
       syncFormControlStates();
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
-      setStatus('Cadastro concluído com sucesso.', 'success');
+      setStatus(
+        typeof t === 'function' ? t('registrationDialog.successStatus') : 'Cadastro concluído com sucesso.',
+        'success'
+      );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação de cadastro.', 'error');
+      setStatus(
+        error instanceof Error
+          ? (typeof localizeKnownApiMessage === 'function' ? localizeKnownApiMessage(error.message) : error.message)
+          : (typeof t === 'function'
+              ? t('registrationDialog.submitFailed')
+              : 'Não foi possível enviar a solicitação de cadastro.'),
+        'error'
+      );
     } finally {
       userSelfRegistrationInProgress = false;
       syncFormControlStates();
@@ -4284,15 +5056,15 @@
   }
 
   function parseErrorMessage(payload) {
-    if (!payload) return 'Não foi possível concluir a operação.';
-    if (typeof payload.detail === 'string') return payload.detail;
+    if (!payload) return t('status.operationFailed');
+    if (typeof payload.detail === 'string') return localizeKnownApiMessage(payload.detail);
     if (Array.isArray(payload.detail)) {
       return payload.detail
-        .map((entry) => entry.msg || entry.message || 'Erro de validação.')
+        .map((entry) => localizeKnownApiMessage(entry.msg || entry.message) || t('status.validationError'))
         .join(' ');
     }
-    if (typeof payload.message === 'string') return payload.message;
-    return 'Não foi possível concluir a operação.';
+    if (typeof payload.message === 'string') return localizeKnownApiMessage(payload.message);
+    return t('status.operationFailed');
   }
 
   function buildClientEventId() {
@@ -4371,48 +5143,246 @@
     }
   }
 
+  function resolveProjectCatalogFallbackValues() {
+    return allowedProjectValues.length ? [allowedProjectValues[0]] : [];
+  }
+
   function normalizeKnownProjectValue(projectValue, fallbackProject) {
     const normalizedFallback = String(fallbackProject || defaultProjectValue || allowedProjectValues[0] || '').trim().toUpperCase();
     return clientState.normalizeProjectValue(projectValue, allowedProjectValues, normalizedFallback);
   }
 
-  function syncProjectSelectOptions(options) {
-    const settings = options || {};
-    const mainValue = normalizeKnownProjectValue(
-      settings.mainValue !== undefined ? settings.mainValue : projectSelect.value,
-      defaultProjectValue
+  function normalizeKnownProjectValues(projectValues, fallbackProjects) {
+    const normalizedFallbackProjects = clientState.normalizeProjectValues(
+      Array.isArray(fallbackProjects) ? fallbackProjects : [fallbackProjects],
+      allowedProjectValues,
+      resolveProjectCatalogFallbackValues()
     );
-    const registrationValue = normalizeKnownProjectValue(
-      settings.registrationValue !== undefined ? settings.registrationValue : (registrationProjectSelect.value || mainValue),
-      mainValue || defaultProjectValue
+    return clientState.normalizeProjectValues(
+      projectValues,
+      allowedProjectValues,
+      normalizedFallbackProjects
+    );
+  }
+
+  function resolveCurrentUserProjectValues() {
+    return normalizeKnownProjectValues(
+      currentUserProjectValues,
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : resolveProjectCatalogFallbackValues()
+    );
+  }
+
+  function resolveCommittedProjectValue() {
+    const fallbackProject = resolveCurrentUserProjectValues()[0] || defaultProjectValue;
+    return normalizeKnownProjectValue(lastCommittedProjectValue || fallbackProject, fallbackProject);
+  }
+
+  function resolveProjectMembershipSummaryText(projectValues) {
+    const resolvedProjects = normalizeKnownProjectValues(projectValues, resolveCurrentUserProjectValues());
+    if (resolvedProjects.length) {
+      return resolvedProjects.join(', ');
+    }
+
+    return projectCatalogLoading || userProjectsLoading
+      ? t('projects.loadingProjects')
+      : t('projects.noneAvailableShort');
+  }
+
+  function resolveProjectMembershipStatusText() {
+    if (projectUpdateInProgress) {
+      return t('projects.updatingProjects');
+    }
+    if (projectCatalogLoading || userProjectsLoading) {
+      return t('projects.loadingProjects');
+    }
+    if (!allowedProjectValues.length) {
+      return t('projects.noneAvailableSentence');
+    }
+    return t('projects.selectAtLeastOne');
+  }
+
+  function setProjectMembershipPanelOpen(isOpen) {
+    if (!projectMembershipPanel || !projectMembershipButton) {
+      return;
+    }
+
+    const shouldOpen = Boolean(isOpen)
+      && !projectMembershipButton.disabled
+      && !(projectField && projectField.classList.contains('is-hidden'));
+    projectMembershipPanel.hidden = !shouldOpen;
+    projectMembershipPanel.classList.toggle('is-hidden', !shouldOpen);
+    projectMembershipButton.setAttribute('aria-expanded', String(shouldOpen));
+  }
+
+  function closeProjectMembershipPanel() {
+    setProjectMembershipPanelOpen(false);
+  }
+
+  function readSelectedProjectMembershipValues() {
+    if (!projectMembershipOptions || typeof projectMembershipOptions.querySelectorAll !== 'function') {
+      return resolveCurrentUserProjectValues();
+    }
+
+    return Array.from(projectMembershipOptions.querySelectorAll('input[name="userProjectMembership"]:checked'))
+      .map((input) => String(input.value || '').trim().toUpperCase())
+      .filter(Boolean);
+  }
+
+  function syncProjectMembershipOptions(projectValues) {
+    if (projectMembershipSummary) {
+      projectMembershipSummary.textContent = resolveProjectMembershipSummaryText(projectValues);
+    }
+
+    if (projectMembershipStatus) {
+      projectMembershipStatus.textContent = resolveProjectMembershipStatusText();
+    }
+
+    if (!projectMembershipOptions) {
+      return;
+    }
+
+    const resolvedProjects = normalizeKnownProjectValues(
+      projectValues,
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : resolveProjectCatalogFallbackValues()
     );
 
-    [
-      [projectSelect, mainValue],
-      [registrationProjectSelect, registrationValue],
-    ].forEach(([selectElement, selectedValue]) => {
-      if (!selectElement) {
-        return;
-      }
+    currentUserProjectValues = resolvedProjects;
+    projectMembershipOptions.replaceChildren();
 
-      selectElement.textContent = '';
-      if (!allowedProjectValues.length) {
-        const placeholderOption = document.createElement('option');
-        placeholderOption.value = '';
-        placeholderOption.textContent = projectCatalogLoading ? 'Carregando projetos...' : 'Nenhum projeto disponível';
-        selectElement.appendChild(placeholderOption);
-        selectElement.value = '';
-        return;
-      }
+    if (!allowedProjectValues.length) {
+      const emptyState = document.createElement('p');
+      emptyState.className = 'project-membership-empty';
+      emptyState.textContent = projectCatalogLoading || userProjectsLoading
+        ? t('projects.loadingProjects')
+        : t('projects.noneAvailableShort');
+      projectMembershipOptions.append(emptyState);
+      return;
+    }
 
-      allowedProjectValues.forEach((projectName) => {
-        const option = document.createElement('option');
-        option.value = projectName;
-        option.textContent = projectName;
-        selectElement.appendChild(option);
-      });
-      selectElement.value = selectedValue;
+    const interactionDisabled = !isApplicationUnlocked()
+      || projectCatalogLoading
+      || userProjectsLoading
+      || projectUpdateInProgress;
+
+    allowedProjectValues.forEach((projectName) => {
+      const optionLabel = document.createElement('label');
+      optionLabel.className = 'project-membership-option';
+
+      const optionInput = document.createElement('input');
+      optionInput.type = 'checkbox';
+      optionInput.name = 'userProjectMembership';
+      optionInput.value = projectName;
+      optionInput.checked = resolvedProjects.includes(projectName);
+      optionInput.disabled = interactionDisabled || (resolvedProjects.length === 1 && optionInput.checked);
+
+      const optionText = document.createElement('span');
+      optionText.textContent = projectName;
+
+      optionLabel.append(optionInput, optionText);
+      projectMembershipOptions.append(optionLabel);
     });
+  }
+
+  function resolveRegistrationProjectHintText() {
+    if (projectCatalogLoading) {
+      return t('registrationDialog.loadingProjects');
+    }
+    if (!allowedProjectValues.length) {
+      return t('projects.noneAvailableSentence');
+    }
+    return t('registrationDialog.projectsHint');
+  }
+
+  function focusRegistrationProjectOptions() {
+    if (!registrationProjectOptions || typeof registrationProjectOptions.querySelector !== 'function') {
+      return;
+    }
+
+    const firstInput = registrationProjectOptions.querySelector('input[name="registrationProjectMembership"]');
+    if (firstInput && typeof firstInput.focus === 'function') {
+      firstInput.focus();
+    }
+  }
+
+  function readSelectedRegistrationProjectValues() {
+    if (!registrationProjectOptions || typeof registrationProjectOptions.querySelectorAll !== 'function') {
+      return [];
+    }
+
+    return Array.from(registrationProjectOptions.querySelectorAll('input[name="registrationProjectMembership"]:checked'))
+      .map((input) => String(input.value || '').trim().toUpperCase())
+      .filter(Boolean);
+  }
+
+  function syncRegistrationProjectOptions(projectValues) {
+    if (registrationProjectHint) {
+      registrationProjectHint.textContent = resolveRegistrationProjectHintText();
+    }
+
+    if (!registrationProjectOptions) {
+      return;
+    }
+
+    const resolvedProjects = normalizeKnownProjectValues(
+      projectValues,
+      resolveProjectCatalogFallbackValues()
+    );
+
+    registrationProjectOptions.replaceChildren();
+
+    if (!allowedProjectValues.length) {
+      const emptyState = document.createElement('p');
+      emptyState.className = 'project-membership-empty';
+      emptyState.textContent = projectCatalogLoading
+        ? t('registrationDialog.loadingProjects')
+        : t('projects.noneAvailableShort');
+      registrationProjectOptions.append(emptyState);
+      return;
+    }
+
+    const interactionDisabled = userSelfRegistrationInProgress || projectCatalogLoading;
+    allowedProjectValues.forEach((projectName) => {
+      const optionLabel = document.createElement('label');
+      optionLabel.className = 'project-membership-option';
+
+      const optionInput = document.createElement('input');
+      optionInput.type = 'checkbox';
+      optionInput.name = 'registrationProjectMembership';
+      optionInput.value = projectName;
+      optionInput.checked = resolvedProjects.includes(projectName);
+      optionInput.disabled = interactionDisabled;
+
+      const optionText = document.createElement('span');
+      optionText.textContent = projectName;
+
+      optionLabel.append(optionInput, optionText);
+      registrationProjectOptions.append(optionLabel);
+    });
+  }
+
+  function syncProjectMembershipControls(options) {
+    const settings = options || {};
+    const selectedRegistrationProjects = readSelectedRegistrationProjectValues();
+    const nextProjectValues = normalizeKnownProjectValues(
+      settings.projectValues !== undefined ? settings.projectValues : resolveCurrentUserProjectValues(),
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : resolveProjectCatalogFallbackValues()
+    );
+    const mainValue = normalizeKnownProjectValue(
+      settings.mainValue !== undefined ? settings.mainValue : (lastCommittedProjectValue || nextProjectValues[0]),
+      nextProjectValues[0] || defaultProjectValue
+    );
+    const nextRegistrationProjectValues = normalizeKnownProjectValues(
+      settings.registrationProjectValues !== undefined
+        ? settings.registrationProjectValues
+        : (selectedRegistrationProjects.length
+            ? selectedRegistrationProjects
+            : [settings.registrationValue !== undefined ? settings.registrationValue : mainValue]),
+      [settings.registrationValue !== undefined ? settings.registrationValue : mainValue]
+    );
+
+    currentUserProjectValues = nextProjectValues;
+    syncProjectMembershipOptions(nextProjectValues);
+    syncRegistrationProjectOptions(nextRegistrationProjectValues);
   }
 
   function setProjectCatalog(projectRows, options) {
@@ -4425,13 +5395,26 @@
 
     allowedProjectValues = nextProjects;
     defaultProjectValue = nextProjects[0] || '';
+    currentUserProjectValues = normalizeKnownProjectValues(
+      currentUserProjectValues,
+      resolveProjectCatalogFallbackValues()
+    );
+    lastCommittedUserProjectValues = normalizeKnownProjectValues(
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : currentUserProjectValues,
+      currentUserProjectValues.length ? currentUserProjectValues : resolveProjectCatalogFallbackValues()
+    );
     lastCommittedProjectValue = normalizeKnownProjectValue(lastCommittedProjectValue, defaultProjectValue);
-    syncProjectSelectOptions({
-      mainValue: settings.mainValue !== undefined ? settings.mainValue : projectSelect.value,
+    syncProjectMembershipControls({
+      projectValues: settings.projectValues !== undefined ? settings.projectValues : currentUserProjectValues,
+      mainValue: settings.mainValue !== undefined ? settings.mainValue : lastCommittedProjectValue,
+      registrationProjectValues:
+        settings.registrationProjectValues !== undefined
+          ? settings.registrationProjectValues
+          : readSelectedRegistrationProjectValues(),
       registrationValue:
         settings.registrationValue !== undefined
           ? settings.registrationValue
-          : (registrationProjectSelect.value || projectSelect.value),
+          : lastCommittedProjectValue,
     });
     syncFormControlStates();
   }
@@ -4443,7 +5426,7 @@
 
     const settings = options || {};
     projectCatalogLoading = true;
-    syncProjectSelectOptions();
+    syncProjectMembershipControls();
     syncFormControlStates();
     projectCatalogPromise = fetch(projectsEndpoint, {
       method: 'GET',
@@ -4462,14 +5445,14 @@
       })
       .catch((error) => {
         if (settings.showError !== false) {
-          setStatus(error instanceof Error ? error.message : 'Não foi possível carregar os projetos.', 'error');
+          setStatus(error instanceof Error ? localizeKnownApiMessage(error.message) : t('projects.loadFailed'), 'error');
         }
-        syncProjectSelectOptions();
+        syncProjectMembershipControls();
         return allowedProjectValues;
       })
       .finally(() => {
         projectCatalogLoading = false;
-        syncProjectSelectOptions();
+        syncProjectMembershipControls();
         syncFormControlStates();
         projectCatalogPromise = null;
       });
@@ -4478,8 +5461,13 @@
   }
 
   function resolveCurrentUserSettingsDefaults() {
+    const fallbackProjects = resolveCurrentUserProjectValues();
     return {
-      project: defaultProjectValue,
+      projects: fallbackProjects,
+      activeProject: normalizeKnownProjectValue(
+        lastCommittedProjectValue,
+        fallbackProjects[0] || defaultProjectValue
+      ),
       automaticActivitiesEnabled: false,
       allowedProjects: allowedProjectValues,
     };
@@ -4492,9 +5480,21 @@
       resolveCurrentUserSettingsDefaults()
     );
 
-    syncProjectSelectOptions({
-      mainValue: resolvedSettings.project,
-      registrationValue: resolvedSettings.project,
+    currentUserProjectValues = normalizeKnownProjectValues(
+      resolvedSettings.projects,
+      resolveProjectCatalogFallbackValues()
+    );
+    lastCommittedUserProjectValues = currentUserProjectValues.slice();
+    lastCommittedProjectValue = normalizeKnownProjectValue(
+      resolvedSettings.activeProject,
+      currentUserProjectValues[0] || defaultProjectValue
+    );
+
+    syncProjectMembershipControls({
+      projectValues: currentUserProjectValues,
+      mainValue: lastCommittedProjectValue,
+      registrationProjectValues: currentUserProjectValues,
+      registrationValue: lastCommittedProjectValue,
     });
     if (automaticActivitiesToggle) {
       automaticActivitiesToggle.checked = resolvedSettings.automaticActivitiesEnabled;
@@ -4540,7 +5540,8 @@
       readPersistedUserSettingsMap(),
       normalizedChave,
       {
-        project: normalizeKnownProjectValue(projectSelect.value, defaultProjectValue),
+        projects: resolveCurrentUserProjectValues(),
+        activeProject: resolveCommittedProjectValue(),
         automaticActivitiesEnabled: Boolean(
           automaticActivitiesToggle && automaticActivitiesToggle.checked
         ),
@@ -4550,11 +5551,96 @@
     writePersistedUserSettingsMap(nextSettingsMap);
   }
 
+  function applyCurrentUserProjectMemberships(payload) {
+    const committedProjects = normalizeKnownProjectValues(
+      payload && payload.projects,
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : resolveProjectCatalogFallbackValues()
+    );
+    const committedProject = normalizeKnownProjectValue(
+      payload && payload.active_project,
+      committedProjects[0] || defaultProjectValue
+    );
+
+    currentUserProjectValues = committedProjects;
+    lastCommittedUserProjectValues = committedProjects.slice();
+    lastCommittedProjectValue = committedProject;
+    syncProjectMembershipControls({
+      projectValues: committedProjects,
+      mainValue: committedProject,
+      registrationProjectValues: committedProjects,
+      registrationValue: committedProject,
+    });
+    if (latestHistoryState && typeof latestHistoryState === 'object') {
+      latestHistoryState.projeto = committedProject;
+    }
+    persistCurrentUserSettings();
+    return { committedProjects, committedProject };
+  }
+
+  async function loadCurrentUserProjectMemberships(options) {
+    if (!isApplicationUnlocked()) {
+      return null;
+    }
+
+    const settings = options || {};
+    userProjectsLoading = true;
+    syncProjectMembershipControls();
+    syncFormControlStates();
+    try {
+      const response = await fetch(userProjectsEndpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw buildProtectedRequestError(response, payload);
+      }
+
+      applyCurrentUserProjectMemberships(payload);
+      return payload;
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        return null;
+      }
+
+      if (settings.showError !== false) {
+        setStatus(
+          error instanceof Error ? localizeKnownApiMessage(error.message) : t('projects.userProjectsLoadFailed'),
+          'error'
+        );
+      }
+      syncProjectMembershipControls();
+      return null;
+    } finally {
+      userProjectsLoading = false;
+      syncProjectMembershipControls();
+      syncFormControlStates();
+    }
+  }
+
   async function updateCurrentUserProjectSelection() {
     const normalizedChave = getActiveChave();
-    const nextProject = normalizeKnownProjectValue(projectSelect.value, lastCommittedProjectValue || defaultProjectValue);
+    const nextProjects = normalizeKnownProjectValues(
+      readSelectedProjectMembershipValues(),
+      lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : resolveProjectCatalogFallbackValues()
+    );
     const manualOverrideActive = isAccuracyTooLowManualFallbackActive();
-    syncProjectSelectOptions({ mainValue: nextProject });
+    syncProjectMembershipControls({ projectValues: nextProjects, mainValue: lastCommittedProjectValue });
+
+    if (!nextProjects.length) {
+      syncProjectMembershipControls({
+        projectValues: lastCommittedUserProjectValues,
+        mainValue: lastCommittedProjectValue || defaultProjectValue,
+      });
+      setStatus(
+        typeof t === 'function' ? t('projects.selectAtLeastOne') : 'Selecione ao menos um projeto.',
+        'error'
+      );
+      return false;
+    }
 
     if (
       normalizedChave.length !== 4
@@ -4569,15 +5655,14 @@
     projectUpdateInProgress = true;
     syncFormControlStates();
     try {
-      const response = await fetch(projectUpdateEndpoint, {
+      const response = await fetch(userProjectsEndpoint, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          chave: normalizedChave,
-          projeto: nextProject,
+          projects: nextProjects,
         }),
       });
 
@@ -4586,26 +5671,33 @@
         throw buildProtectedRequestError(response, payload);
       }
 
-      const committedProject = normalizeKnownProjectValue(payload && payload.project, nextProject);
-      lastCommittedProjectValue = committedProject;
-      syncProjectSelectOptions({ mainValue: committedProject });
-      if (latestHistoryState && typeof latestHistoryState === 'object') {
-        latestHistoryState.projeto = committedProject;
-      }
-      persistCurrentUserSettings();
+      applyCurrentUserProjectMemberships(payload);
       await loadManualLocations();
-      setStatus(payload && payload.message ? payload.message : 'Projeto atualizado com sucesso.', 'success');
+      setStatus(
+        (typeof localizeKnownApiMessage === 'function' ? localizeKnownApiMessage(payload && payload.message) : (payload && payload.message))
+          || (typeof t === 'function' ? t('projects.updatedSuccess') : 'Projetos atualizados com sucesso.'),
+        'success'
+      );
       return true;
     } catch (error) {
       if (error && error.isAuthExpired) {
         return false;
       }
 
-      syncProjectSelectOptions({ mainValue: lastCommittedProjectValue || defaultProjectValue });
-      setStatus(error instanceof Error ? error.message : 'Não foi possível atualizar o projeto.', 'error');
+      syncProjectMembershipControls({
+        projectValues: lastCommittedUserProjectValues,
+        mainValue: lastCommittedProjectValue || defaultProjectValue,
+      });
+      setStatus(
+        error instanceof Error
+          ? (typeof localizeKnownApiMessage === 'function' ? localizeKnownApiMessage(error.message) : error.message)
+          : (typeof t === 'function' ? t('projects.updateFailed') : 'Não foi possível atualizar os projetos.'),
+        'error'
+      );
       return false;
     } finally {
       projectUpdateInProgress = false;
+      syncProjectMembershipControls();
       syncFormControlStates();
     }
   }
@@ -4628,8 +5720,27 @@
     syncManualLocationControl();
   }
 
+  function resolveDisplayedLocationLabel(matchPayload) {
+    const locationLabel = matchPayload && typeof matchPayload.label === 'string'
+      ? matchPayload.label
+      : '';
+    return localizeKnownLocationLabel(locationLabel);
+  }
+
+  function resolveMatchedOperationalLocation(matchPayload) {
+    if (!matchPayload || !matchPayload.matched) {
+      return null;
+    }
+
+    const resolvedLocal = String(matchPayload.resolved_local || '').trim();
+    return resolvedLocal || null;
+  }
+
   function setResolvedLocation(matchPayload) {
-    currentLocationMatch = matchPayload && matchPayload.matched ? matchPayload : null;
+    const matchedOperationalLocation = resolveMatchedOperationalLocation(matchPayload);
+    currentLocationMatch = matchedOperationalLocation
+      ? { ...matchPayload, resolved_local: matchedOperationalLocation }
+      : null;
     currentLocationResolutionStatus = matchPayload && typeof matchPayload.status === 'string'
       ? matchPayload.status
       : null;
@@ -4648,7 +5759,7 @@
     writeStorageFlag(locationPermissionGrantedKey, false);
     setResolvedLocation(null);
     setGpsLocationPermissionGranted(false);
-    setLocationPresentation('Sem Permissão', '', null, '--', { suppressNotification: true });
+    setLocationPresentation(t('location.noPermissionLabel'), '', null, '--', { suppressNotification: true });
   }
 
   function isAutomaticActivitiesEnabled() {
@@ -4669,7 +5780,7 @@
 
   function fetchWebState(chave) {
     if (!isApplicationUnlocked(chave)) {
-      return Promise.reject(new Error('Digite sua senha para iniciar.'));
+      return Promise.reject(new Error(t('auth.enterPasswordPrompt')));
     }
 
     return fetch(`${stateEndpoint}?chave=${encodeURIComponent(chave)}`, {
@@ -4706,6 +5817,10 @@
     return automaticActivities.resolveAutomaticCheckInLocation(locationPayload);
   }
 
+  function isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal) {
+    return automaticActivities.isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal);
+  }
+
   function resolveAutomaticLocationAction(locationPayload, remoteState) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
 
@@ -4721,7 +5836,12 @@
   async function submitAutomaticActivity({ action, local, suppressStatus }) {
     const chave = sanitizeChave(chaveInput.value);
     if (!isApplicationUnlocked(chave)) {
-      throw new Error('Digite sua senha para iniciar.');
+      throw new Error(t('auth.enterPasswordPrompt'));
+    }
+
+    const submittedLocal = resolveFinalSubmittableLocationValue(local);
+    if (!submittedLocal) {
+      return null;
     }
 
     const response = await fetch(submitEndpoint, {
@@ -4731,9 +5851,9 @@
       },
       body: JSON.stringify({
         chave,
-        projeto: projectSelect.value,
+        projeto: resolveCommittedProjectValue(),
         action,
-        local,
+        local: submittedLocal,
         informe: getSelectedInformeValue(),
         event_time: new Date().toISOString(),
         client_event_id: buildClientEventId(),
@@ -4753,11 +5873,11 @@
     if (!suppressStatus) {
       setStatus(
         action === 'checkin'
-          ? 'Check-In automático concluído.'
+          ? t('status.automaticCheckinCompleted')
           : (
-              isCheckoutZoneLocationName(local)
-                ? 'Check-Out automático concluído.'
-                : 'Check-Out automático concluído.'
+              isCheckoutZoneLocationName(submittedLocal)
+                ? t('status.automaticCheckoutCompleted')
+                : t('status.automaticCheckoutCompleted')
             ),
         'success'
       );
@@ -4796,11 +5916,14 @@
       })
     ) {
       const automaticAction = resolveAutomaticLocationAction(locationPayload, remoteState);
-      await submitAutomaticActivity({
+      const submittedPayload = await submitAutomaticActivity({
         action: automaticAction,
         local: locationPayload.resolved_local,
         suppressStatus: settings.suppressStatus,
       });
+      if (!submittedPayload) {
+        return noActivityResult;
+      }
       return {
         performed: true,
         action: automaticAction,
@@ -4813,11 +5936,14 @@
       && !locationPayload.matched
       && shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState)
     ) {
-      await submitAutomaticActivity({
+      const submittedPayload = await submitAutomaticActivity({
         action: 'checkout',
         local: automaticCheckoutLocation,
         suppressStatus: settings.suppressStatus,
       });
+      if (!submittedPayload) {
+        return noActivityResult;
+      }
       return {
         performed: true,
         action: 'checkout',
@@ -4827,11 +5953,17 @@
 
     if (locationPayload && shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState)) {
       const automaticLocal = resolveAutomaticCheckInLocation(locationPayload);
-      await submitAutomaticActivity({
+      if (!isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal)) {
+        return noActivityResult;
+      }
+      const submittedPayload = await submitAutomaticActivity({
         action: 'checkin',
         local: automaticLocal,
         suppressStatus: settings.suppressStatus,
       });
+      if (!submittedPayload) {
+        return noActivityResult;
+      }
       return {
         performed: true,
         action: 'checkin',
@@ -4844,12 +5976,45 @@
 
   function buildAccuracyText(accuracyMeters, thresholdMeters) {
     if (typeof accuracyMeters !== 'number' || !Number.isFinite(accuracyMeters)) {
-      return thresholdMeters ? `Limite ${Math.round(thresholdMeters)} m` : '--';
+      return thresholdMeters
+        ? (typeof t === 'function'
+            ? t('location.accuracyLimitTemplate', { limit: Math.round(thresholdMeters) })
+            : `Limite ${Math.round(thresholdMeters)} m`)
+        : '--';
     }
     if (typeof thresholdMeters !== 'number' || !Number.isFinite(thresholdMeters)) {
-      return `Precisão ${formatMeters(accuracyMeters)}`;
+      return typeof t === 'function'
+        ? t('location.accuracyTemplate', { accuracy: formatMeters(accuracyMeters) })
+        : `Precisão ${formatMeters(accuracyMeters)}`;
     }
-    return `Precisão ${formatMeters(accuracyMeters)} / Limite ${Math.round(thresholdMeters)} m`;
+    return typeof t === 'function'
+      ? t('location.accuracyCombinedTemplate', {
+        accuracy: formatMeters(accuracyMeters),
+        limit: Math.round(thresholdMeters),
+      })
+      : `Precisão ${formatMeters(accuracyMeters)} / Limite ${Math.round(thresholdMeters)} m`;
+  }
+
+  function normalizeLocationPermissionState(value) {
+    return value === 'granted' || value === 'denied' || value === 'prompt'
+      ? value
+      : null;
+  }
+
+  function setLastKnownLocationPermissionState(value) {
+    const normalizedState = normalizeLocationPermissionState(value);
+    if (lastKnownLocationPermissionState === normalizedState) {
+      return;
+    }
+
+    lastKnownLocationPermissionState = normalizedState;
+    syncFormControlStates();
+  }
+
+  function isLocationPermissionEffectivelySharedWithWebApp() {
+    return gpsLocationPermissionGranted
+      || readStorageFlag(locationPermissionGrantedKey)
+      || lastKnownLocationPermissionState === 'granted';
   }
 
   function canShowAutomaticActivitiesField() {
@@ -4871,6 +6036,9 @@
 
   function setGpsLocationPermissionGranted(value) {
     gpsLocationPermissionGranted = Boolean(value);
+    if (gpsLocationPermissionGranted) {
+      setLastKnownLocationPermissionState('granted');
+    }
     syncAutomaticActivitiesAvailability();
     syncProjectVisibility();
     syncManualLocationControl();
@@ -4917,7 +6085,9 @@
     if (!nextValues.length) {
       const emptyOption = document.createElement('option');
       emptyOption.value = '';
-      emptyOption.textContent = placeholder || 'Sem localizações cadastradas';
+      emptyOption.textContent = placeholder || (
+        typeof t === 'function' ? t('location.noKnownLocations') : 'Sem localizações cadastradas'
+      );
       manualLocationSelect.append(emptyOption);
       manualLocationSelect.value = '';
       return;
@@ -4926,7 +6096,9 @@
     nextValues.forEach((value) => {
       const option = document.createElement('option');
       option.value = value;
-      option.textContent = value;
+      option.textContent = typeof localizeKnownLocationLabel === 'function'
+        ? localizeKnownLocationLabel(value)
+        : value;
       manualLocationSelect.append(option);
     });
 
@@ -4945,7 +6117,9 @@
     if (!shouldAllowManualLocationSelection()) {
       setLocationSelectOptions(availableLocations, displayedLocation || getDefaultManualLocation(), {
         allowTemporaryValue: true,
-        placeholder: displayedLocation || 'Aguardando localização.',
+        placeholder: displayedLocation || (
+          typeof t === 'function' ? t('location.waitingLabel') : 'Aguardando localização.'
+        ),
       });
       syncFormControlStates();
       return;
@@ -4955,7 +6129,7 @@
       ? manualLocationSelect.value
       : getDefaultManualLocation();
     setLocationSelectOptions(manualLocationOptions, nextManualValue, {
-      placeholder: 'Sem localizações cadastradas',
+      placeholder: typeof t === 'function' ? t('location.noKnownLocations') : 'Sem localizações cadastradas',
     });
     syncFormControlStates();
   }
@@ -4965,7 +6139,22 @@
       return manualLocationSelect.value || null;
     }
 
-    return currentLocationMatch ? currentLocationMatch.resolved_local : null;
+    return resolveMatchedOperationalLocation(currentLocationMatch);
+  }
+
+  function isSyntheticFailureLocationValue(local) {
+    const normalizedLocal = String(local || '').trim();
+    return normalizedLocal === automaticActivities.AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION
+      || normalizedLocal === accuracyFallbackManualLocationLabel;
+  }
+
+  function resolveFinalSubmittableLocationValue(local) {
+    const normalizedLocal = String(local || '').trim();
+    if (!normalizedLocal || isSyntheticFailureLocationValue(normalizedLocal)) {
+      return null;
+    }
+
+    return normalizedLocal;
   }
 
   async function loadManualLocations() {
@@ -5009,15 +6198,19 @@
 
   async function queryLocationPermissionState() {
     if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+      setLastKnownLocationPermissionState(null);
       return null;
     }
 
     try {
       const permissionStatus = await navigator.permissions.query({ name: 'geolocation' });
-      return permissionStatus && typeof permissionStatus.state === 'string'
+      const permissionState = permissionStatus && typeof permissionStatus.state === 'string'
         ? permissionStatus.state
         : null;
+      setLastKnownLocationPermissionState(permissionState);
+      return permissionState;
     } catch {
+      setLastKnownLocationPermissionState(null);
       return null;
     }
   }
@@ -5043,7 +6236,7 @@
 
   async function matchCurrentPosition(position, measurementSession) {
     if (!isApplicationUnlocked()) {
-      throw new Error('Digite sua senha para iniciar.');
+      throw new Error(t('auth.enterPasswordPrompt'));
     }
 
     const accuracyMeters = readPositionAccuracyMeters(position);
@@ -5093,10 +6286,12 @@
     };
     setLocationAccuracyThresholdMeters(payload.accuracy_threshold_meters);
     const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
-    const locationMessage = payload.status === 'matched' ? '' : payload.message;
+    const locationMessage = payload.status === 'matched'
+      ? ''
+      : localizeKnownApiMessage(payload.message);
     setResolvedLocation(payload);
     setLocationPresentation(
-      payload.label,
+      resolveDisplayedLocationLabel(payload),
       locationMessage,
       toneByStatus[payload.status] || null,
       accuracyText,
@@ -5109,8 +6304,8 @@
 
     if (!error || typeof error.code !== 'number') {
       setLocationPresentation(
-        'Localização indisponível',
-        'Não foi possível consultar a localização neste momento.',
+        t('location.unavailableLabel'),
+        t('location.unavailableMessage'),
         'error',
         '--',
         options
@@ -5125,8 +6320,8 @@
 
     if (error.code === 2) {
       setLocationPresentation(
-        'Localização indisponível',
-        'Não foi possível obter uma posição válida do aparelho.',
+        t('location.unavailableLabel'),
+        t('location.noValidPosition'),
         'error',
         '--',
         options
@@ -5136,8 +6331,8 @@
 
     if (error.code === 3) {
       setLocationPresentation(
-        'Tempo esgotado',
-        'A busca pela localização demorou mais do que o esperado.',
+        t('location.timeoutLabel'),
+        t('location.timeoutMessage'),
         'warning',
         '--',
         options
@@ -5146,8 +6341,8 @@
     }
 
     setLocationPresentation(
-      'Localização indisponível',
-      'Não foi possível consultar a localização neste momento.',
+      t('location.unavailableLabel'),
+      t('location.unavailableMessage'),
       'error',
       '--',
       options
@@ -5171,10 +6366,10 @@
       recentLocationResolutionChave = '';
       setResolvedLocation(null);
       setLocationPresentation(
-        'Indisponível',
+        t('location.unavailableShort'),
         suppressNotification
           ? ''
-          : 'A captura de localização requer HTTPS e suporte do navegador.',
+          : t('location.captureRequiresSupport'),
         'error',
         '--',
         { suppressNotification }
@@ -5215,10 +6410,12 @@
 
       if (settings.showDetectingState) {
         setLocationPresentation(
-          'Detectando...',
+          t('location.detectingLabel'),
           settings.interactive
-            ? `Aguardando a confirmação da localização exata ${getLocationPromptSourceLabel()}.`
-            : 'Atualizando a localização atual do aparelho.',
+            ? (isStandaloneShortcutMode()
+                ? t('location.exactConfirmationApp')
+                : t('location.exactConfirmationBrowser'))
+            : t('location.updatingDeviceLocation'),
           null,
           '--',
           { suppressNotification }
@@ -5308,6 +6505,54 @@
     });
   }
 
+  async function requestPreciseLocationPermissionFromSettings() {
+    if (isLocationPermissionEffectivelySharedWithWebApp()) {
+      syncFormControlStates();
+      return null;
+    }
+
+    if (!window.isSecureContext) {
+      setStatus(
+        typeof t === 'function'
+          ? t('location.secureContextRequired')
+          : 'A localização precisa requer uma conexão segura (HTTPS).',
+        'error'
+      );
+      return null;
+    }
+
+    if (!navigator.geolocation) {
+      setStatus(
+        typeof t === 'function'
+          ? t('location.browserUnsupported')
+          : 'Este navegador não oferece suporte à localização precisa.',
+        'error'
+      );
+      return null;
+    }
+
+    const permissionState = await queryLocationPermissionState();
+    if (permissionState === 'denied') {
+      setLocationWithoutPermission();
+      setStatus(
+        typeof t === 'function'
+          ? t('location.permissionBlocked')
+          : 'A permissão de localização está bloqueada no navegador. Libere o acesso ao site nas configurações do navegador.',
+        'warning'
+      );
+      return null;
+    }
+
+    return runWithLockedUserInteraction(async () => resolveCurrentLocation({
+      interactive: true,
+      forceRefresh: true,
+      measurementTrigger: 'settings_permission',
+      showDetectingState: true,
+      showCompletionStatus: true,
+      suppressNotification: false,
+    }));
+  }
+
   async function updateLocationForLifecycleSequence(options) {
     const settings = options || {};
     return resolveCurrentLocation({
@@ -5322,7 +6567,7 @@
 
   async function ensureLocationReadyForSubmit() {
     if (!isApplicationUnlocked()) {
-      throw new Error('Digite sua senha para iniciar.');
+      throw new Error(t('auth.enterPasswordPrompt'));
     }
 
     if (locationRequestPromise) {
@@ -5376,7 +6621,9 @@
 
   function setSubmitting(isSubmitting) {
     submitInProgress = Boolean(isSubmitting);
-    submitButton.textContent = submitInProgress ? 'Enviando...' : 'Registrar';
+    submitButton.textContent = submitInProgress
+      ? `${t('registration.submitButton')}...`
+      : t('registration.submitButton');
     syncFormControlStates();
   }
 
@@ -5494,8 +6741,15 @@
     }
     if (state && state.projeto) {
       const committedProject = normalizeKnownProjectValue(state.projeto, defaultProjectValue);
+      lastCommittedUserProjectValues = normalizeKnownProjectValues(
+        lastCommittedUserProjectValues.length ? lastCommittedUserProjectValues : [committedProject],
+        [committedProject]
+      );
       lastCommittedProjectValue = committedProject;
-      syncProjectSelectOptions({ mainValue: committedProject });
+      syncProjectMembershipControls({
+        projectValues: lastCommittedUserProjectValues,
+        mainValue: committedProject,
+      });
       persistCurrentUserSettings();
     }
     renderHistoryValue(lastCheckinValue, state && state.last_checkin_at);
@@ -5543,7 +6797,7 @@
     const controller = new AbortController();
     historyAbortController = controller;
     if (settings.showLoadingMessage !== false && !settings.suppressMessages) {
-      setHistoryMessage('Consultando histórico...', 'info');
+      setHistoryMessage(t('history.loadingMessage'), 'info');
     }
 
     try {
@@ -5567,7 +6821,7 @@
       applyHistoryState(payload);
       if (!payload.found) {
         if (!settings.suppressMessages) {
-          setHistoryMessage('Nenhum registro encontrado para esta chave.');
+          setHistoryMessage(t('history.notFoundMessage'));
         } else {
           setHistoryMessage('');
         }
@@ -5576,7 +6830,7 @@
 
       if (!payload.last_checkin_at && !payload.last_checkout_at) {
         if (!settings.suppressMessages) {
-          setHistoryMessage('Nenhum check-in ou check-out registrado para esta chave.');
+          setHistoryMessage(t('history.noRecordsMessage'));
         } else {
           setHistoryMessage('');
         }
@@ -5584,7 +6838,7 @@
       }
 
       if (!settings.silentSuccessMessage && !settings.suppressMessages) {
-        setHistoryMessage('Histórico atualizado para a chave informada.', 'success');
+        setHistoryMessage(t('history.updatedMessage'), 'success');
       } else {
         setHistoryMessage('');
       }
@@ -5603,7 +6857,7 @@
 
       applyHistoryState(null);
       if (!settings.suppressMessages) {
-        setHistoryMessage('Não foi possível consultar o histórico desta chave.', 'error');
+        setHistoryMessage(t('history.loadFailed'), 'error');
       } else {
         setHistoryMessage('');
       }
@@ -5644,7 +6898,11 @@
     lifecycleRefreshInProgress = true;
 
     try {
-      setSequenceStatus('Atualizando as atividades.....');
+      setSequenceStatus(
+        typeof t === 'function'
+          ? t('status.updatingActivitiesSequence')
+          : 'Atualizando as atividades.....'
+      );
       const remoteState = await refreshHistory(normalized, {
         showLoadingMessage: false,
         silentSuccessMessage: true,
@@ -5653,7 +6911,11 @@
         cacheWindowMs: lifecycleDataReuseWindowMs,
       });
 
-      setSequenceStatus('Atualizando a localização.....');
+      setSequenceStatus(
+        typeof t === 'function'
+          ? t('status.updatingLocationSequence')
+          : 'Atualizando a localização.....'
+      );
       const locationPayload = await updateLocationForLifecycleSequence({
         triggerSource: settings.triggerSource,
         forceRefresh: settings.forceRefresh,
@@ -5663,7 +6925,11 @@
       });
 
       if (isAutomaticActivitiesEnabled()) {
-        setSequenceStatus('Realizando check-in ou check-out, se aplicável.....');
+        setSequenceStatus(
+          typeof t === 'function'
+            ? t('status.runningAutomaticActivitySequence')
+            : 'Realizando check-in ou check-out, se aplicável.....'
+        );
         await runAutomaticActivitiesIfNeeded(locationPayload, {
           suppressStatus: true,
           remoteState,
@@ -5673,7 +6939,10 @@
       restorePersistedUserSettingsForChave(normalized);
       setNotificationMessage('history', '', null);
       setNotificationMessage('location', '', null);
-      setStatus('Aplicação atualizada com sucesso.', 'success');
+      setStatus(
+        typeof t === 'function' ? t('status.applicationUpdated') : 'Aplicação atualizada com sucesso.',
+        'success'
+      );
       return true;
     } catch (error) {
       if (error && error.isAuthExpired) {
@@ -5681,8 +6950,10 @@
       }
 
       const message = error instanceof Error
-        ? error.message
-        : 'Não foi possível atualizar a aplicação neste momento.';
+        ? (typeof localizeKnownApiMessage === 'function' ? localizeKnownApiMessage(error.message) : error.message)
+        : (typeof t === 'function'
+            ? t('status.applicationUpdateFailed')
+            : 'Não foi possível atualizar a aplicação neste momento.');
       setNotificationMessage('history', '', null);
       setNotificationMessage('location', '', null);
       setStatus(message, 'error');
@@ -5731,7 +7002,7 @@
   async function runAutomaticActivitiesEnableSequence() {
     const normalizedChave = sanitizeChave(chaveInput.value);
     if (normalizedChave.length !== 4) {
-      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      setStatus(t('auth.invalidFourCharacterKey'), 'error');
       return;
     }
 
@@ -5742,7 +7013,7 @@
 
     await runWithLockedUserInteraction(async () => {
       try {
-        setStatus('Atualização em andamento.', 'info');
+        setStatus(t('status.automaticUpdatesRunning'), 'info');
 
         const locationPayload = await resolveCurrentLocation({
           interactive: true,
@@ -5758,21 +7029,23 @@
 
         if (automaticActivityResult.performed) {
           setStatus(
-            `Atualizações concluídas com ${describeAutomaticActivity(automaticActivityResult.action)} realizado.`,
+            t('status.automaticUpdatesCompletedWithActivity', {
+              activity: describeAutomaticActivity(automaticActivityResult.action),
+            }),
             'success'
           );
           return;
         }
 
-        setStatus('Atualizações concluídas sem atividades realizadas.', 'success');
+        setStatus(t('status.automaticUpdatesCompletedWithoutActivity'), 'success');
       } catch (error) {
         if (error && error.isAuthExpired) {
           return;
         }
 
         const message = error instanceof Error
-          ? error.message
-          : 'Não foi possível concluir as atualizações automáticas neste momento.';
+          ? localizeKnownApiMessage(error.message)
+          : t('status.automaticUpdatesFailed');
         setStatus(message, 'error');
       }
     });
@@ -5786,6 +7059,9 @@
 
     projectField.classList.toggle('is-hidden', hideProjectField);
     projectField.setAttribute('aria-hidden', String(hideProjectField));
+    if (hideProjectField) {
+      closeProjectMembershipPanel();
+    }
     locationSelectField.classList.toggle('is-hidden', hideLocationField);
     locationSelectField.setAttribute('aria-hidden', String(hideLocationField));
 
@@ -5859,6 +7135,7 @@
     );
 
     if (shouldResetResolvedKeyState) {
+      resetAuthenticationAssistanceAutoOpenState();
       clearTypedPasswordAuthentication();
       authState.found = false;
       authState.hasPassword = false;
@@ -5892,6 +7169,7 @@
     authState.chave = '';
     authState.found = false;
     authState.hasPassword = false;
+    resetAuthenticationAssistanceAutoOpenState();
     clearTypedPasswordAuthentication();
     authState.statusResolved = false;
     authState.statusErrored = false;
@@ -5929,38 +7207,52 @@
     event.preventDefault();
     if (authState.hasPassword) {
       void attemptPasswordLogin({ showReadyMessage: true, allowPartialVerification: true });
-      return;
-    }
-
-    if (authState.statusResolved && !authState.found) {
-      openRegistrationDialog();
-      return;
-    }
-
-    if (authState.statusResolved && authState.found && !authState.hasPassword) {
-      openPasswordDialog();
     }
   });
 
-  passwordActionButton.addEventListener('click', () => {
-    if (authState.statusResolved && !authState.found) {
-      openRegistrationDialog();
-      return;
-    }
+  if (settingsButton) {
+    settingsButton.addEventListener('click', openSettingsDialog);
+  }
 
-    if (authState.statusResolved && authState.found && !authState.hasPassword) {
+  if (settingsDialogBackButton) {
+    settingsDialogBackButton.addEventListener('click', closeSettingsDialog);
+  }
+
+  if (settingsDialogBackdrop) {
+    settingsDialogBackdrop.addEventListener('click', closeSettingsDialog);
+  }
+
+  if (settingsResetPasswordButton) {
+    settingsResetPasswordButton.addEventListener('click', () => {
+      if (!canOpenPasswordChangeFromSettings()) {
+        return;
+      }
+
+      closeSettingsDialog({ restoreFocus: false });
       openPasswordDialog();
-      return;
-    }
+    });
+  }
 
-    if (authState.hasPassword) {
-      openPasswordDialog();
-    }
-  });
+  if (settingsLocationPermissionButton) {
+    settingsLocationPermissionButton.addEventListener('click', () => {
+      void requestPreciseLocationPermissionFromSettings();
+    });
+  }
 
-  if (requestRegistrationButton) {
-    requestRegistrationButton.addEventListener('click', () => {
-      openRegistrationDialog();
+  if (settingsSupportButton) {
+    settingsSupportButton.addEventListener('click', openCheckingWebSupport);
+  }
+
+  if (settingsAboutButton) {
+    settingsAboutButton.addEventListener('click', openCheckingWebManual);
+  }
+
+  if (settingsLanguageSelect) {
+    settingsLanguageSelect.addEventListener('change', () => {
+      applyLanguageSelection(settingsLanguageSelect.value, {
+        persist: true,
+        reapplyDynamicState: true,
+      });
     });
   }
 
@@ -6144,9 +7436,31 @@
     input.addEventListener('change', syncProjectVisibility);
   });
 
-  projectSelect.addEventListener('change', () => {
-    void updateCurrentUserProjectSelection();
-  });
+  if (projectMembershipButton) {
+    projectMembershipButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      setProjectMembershipPanelOpen(projectMembershipPanel && projectMembershipPanel.hidden);
+    });
+  }
+
+  if (projectMembershipOptions) {
+    projectMembershipOptions.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.name !== 'userProjectMembership') {
+        return;
+      }
+
+      const selectedProjects = readSelectedProjectMembershipValues();
+      if (!selectedProjects.length) {
+        target.checked = true;
+        setStatus(t('projects.selectAtLeastOne'), 'error');
+        syncFormControlStates();
+        return;
+      }
+
+      void updateCurrentUserProjectSelection();
+    });
+  }
 
   if (automaticActivitiesToggle) {
     automaticActivitiesToggle.addEventListener('change', () => {
@@ -6166,12 +7480,34 @@
         return;
       }
 
-      setStatus('Atividades automáticas desabilitadas.', 'success');
+      setStatus(t('status.automaticActivitiesDisabled'), 'success');
     });
   }
 
+  document.addEventListener('click', (event) => {
+    if (!projectField || !projectMembershipPanel || projectMembershipPanel.hidden) {
+      return;
+    }
+
+    const target = resolveTransportEventTargetElement(event);
+    if (target && projectField.contains(target)) {
+      return;
+    }
+
+    closeProjectMembershipPanel();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeProjectMembershipPanel();
+    }
+  });
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      if (isSettingsDialogOpen()) {
+        void queryLocationPermissionState();
+      }
       scheduleViewportLayoutMetricsSync();
       schedulePasswordAutofillSync();
       requestLifecycleUpdateFromUi('visibility');
@@ -6219,12 +7555,17 @@
     chaveInput.value = chave;
 
     if (isAutomaticActivitiesEnabled() && !isAccuracyTooLowManualFallbackActive()) {
-      setStatus('Desative Atividades Automáticas para registrar manualmente.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registration.disableAutomaticActivitiesForManualSubmit')
+          : 'Desative Atividades Automáticas para registrar manualmente.',
+        'error'
+      );
       return;
     }
 
     if (chave.length !== 4) {
-      setStatus('Informe uma chave com 4 caracteres alfanuméricos.', 'error');
+      setStatus(t('auth.invalidFourCharacterKey'), 'error');
       chaveInput.focus();
       return;
     }
@@ -6236,7 +7577,12 @@
     }
 
     if (shouldAllowManualLocationSelection() && !manualLocationSelect.value) {
-      setStatus('Selecione uma localização antes de registrar.', 'error');
+      setStatus(
+        typeof t === 'function'
+          ? t('registration.selectLocationBeforeSubmit')
+          : 'Selecione uma localização antes de registrar.',
+        'error'
+      );
       manualLocationSelect.focus();
       return;
     }
@@ -6246,6 +7592,19 @@
 
     try {
       await ensureLocationReadyForSubmit();
+      const submittedLocal = resolveFinalSubmittableLocationValue(resolveSubmittedLocationValue());
+      if (!submittedLocal) {
+        setStatus(
+          typeof t === 'function'
+            ? t('registration.selectLocationBeforeSubmit')
+            : 'Selecione uma localização antes de registrar.',
+          'error'
+        );
+        if (shouldAllowManualLocationSelection()) {
+          manualLocationSelect.focus();
+        }
+        return;
+      }
 
       const response = await fetch(submitEndpoint, {
         method: 'POST',
@@ -6254,9 +7613,9 @@
         },
         body: JSON.stringify({
           chave,
-          projeto: projectSelect.value,
+          projeto: resolveCommittedProjectValue(),
           action: selectedAction,
-          local: resolveSubmittedLocationValue(),
+          local: submittedLocal,
           informe: getSelectedInformeValue(),
           event_time: new Date().toISOString(),
           client_event_id: buildClientEventId(),
@@ -6273,7 +7632,9 @@
         applyHistoryState(payload.state);
       }
       setStatus(
-        selectedAction === 'checkout' ? 'Check-Out concluído.' : 'Check-In concluído.',
+        selectedAction === 'checkout'
+          ? t('status.checkoutCompleted')
+          : t('status.checkinCompleted'),
         'success'
       );
     } catch (error) {
@@ -6281,7 +7642,9 @@
         return;
       }
 
-      const message = error instanceof Error ? error.message : 'Falha de comunicação com a API.';
+      const message = error instanceof Error
+        ? localizeKnownApiMessage(error.message)
+        : t('status.apiCommunicationFailure');
       setStatus(message, 'error');
     } finally {
       setSubmitting(false);
@@ -6289,11 +7652,11 @@
   });
 
   if (passwordDialogBackButton) {
-    passwordDialogBackButton.addEventListener('click', closePasswordDialog);
+    passwordDialogBackButton.addEventListener('click', dismissPasswordDialogManually);
   }
 
   if (passwordDialogBackdrop) {
-    passwordDialogBackdrop.addEventListener('click', closePasswordDialog);
+    passwordDialogBackdrop.addEventListener('click', dismissPasswordDialogManually);
   }
 
   if (passwordChangeForm) {
@@ -6307,11 +7670,11 @@
   });
 
   if (registrationDialogBackButton) {
-    registrationDialogBackButton.addEventListener('click', closeRegistrationDialog);
+    registrationDialogBackButton.addEventListener('click', dismissRegistrationDialogManually);
   }
 
   if (registrationDialogBackdrop) {
-    registrationDialogBackdrop.addEventListener('click', closeRegistrationDialog);
+    registrationDialogBackdrop.addEventListener('click', dismissRegistrationDialogManually);
   }
 
   if (registrationForm) {
@@ -6339,12 +7702,17 @@
     }
 
     if (event.key === 'Escape' && isRegistrationDialogOpen()) {
-      closeRegistrationDialog();
+      dismissRegistrationDialogManually();
+      return;
+    }
+
+    if (event.key === 'Escape' && isSettingsDialogOpen()) {
+      closeSettingsDialog();
       return;
     }
 
     if (event.key === 'Escape' && isPasswordDialogOpen()) {
-      closePasswordDialog();
+      dismissPasswordDialogManually();
     }
   });
 
@@ -6353,6 +7721,10 @@
   syncAutomaticActivitiesToggle();
   clearProtectedClientState();
   syncFormControlStates();
+  applyLanguageSelection(getActiveCheckLanguageCode(), {
+    persist: false,
+    reapplyDynamicState: true,
+  });
   setAuthenticationPrompt();
 
   const persistedChave = readPersistedChave();

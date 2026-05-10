@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..models import TransportRequest, Vehicle
 from ..schemas import (
+    ProjectRow,
+    TransportAgentDashboardScope,
     TransportOperationalAppliedAssignment,
     TransportOperationalProposal,
     TransportOperationalProposalSummary,
@@ -18,6 +20,7 @@ from ..schemas import (
     TransportProposalAuditResult,
     TransportProposalDecision,
     TransportProposalValidationIssue,
+    TransportRequestRow,
 )
 from .time_utils import now_sgt
 from .transport_assignment_operations import upsert_transport_assignment_with_persistence
@@ -26,6 +29,197 @@ from .transport_dashboard_queries import build_transport_dashboard
 
 def _count_snapshot_requests(snapshot: TransportOperationalSnapshot) -> int:
     return len(snapshot.regular_requests) + len(snapshot.weekend_requests) + len(snapshot.extra_requests)
+
+
+_TRANSPORT_SNAPSHOT_REQUEST_SCOPES = ("regular", "weekend", "extra")
+
+
+def _normalize_snapshot_project_name(project_name: str | None) -> str:
+    return str(project_name or "").strip().upper()
+
+
+def _list_snapshot_request_project_names(request_row: TransportRequestRow) -> list[str]:
+    raw_project_names = getattr(request_row, "projects", None)
+    if not isinstance(raw_project_names, list) or not raw_project_names:
+        raw_project_names = [request_row.projeto]
+
+    normalized_project_names: list[str] = []
+    seen_project_names: set[str] = set()
+    for project_name in raw_project_names:
+        normalized_project_name = _normalize_snapshot_project_name(project_name)
+        if not normalized_project_name or normalized_project_name in seen_project_names:
+            continue
+        seen_project_names.add(normalized_project_name)
+        normalized_project_names.append(normalized_project_name)
+    return normalized_project_names
+
+
+def _summarize_transport_dashboard_scope_labels(labels: list[str], *, max_names: int = 3) -> str:
+    normalized_labels = [str(label or "").strip() for label in labels if str(label or "").strip()]
+    if not normalized_labels:
+        return ""
+    if len(normalized_labels) <= max_names:
+        return ", ".join(normalized_labels)
+    remaining_count = len(normalized_labels) - max_names
+    return f"{', '.join(normalized_labels[:max_names])}, and {remaining_count} more"
+
+
+def list_transport_dashboard_scope_request_kind_labels(
+    dashboard_scope: TransportAgentDashboardScope | None,
+    *,
+    include_all: bool = True,
+) -> list[str]:
+    if dashboard_scope is None:
+        return []
+
+    selected_request_kinds = {str(request_kind or "").strip().lower() for request_kind in dashboard_scope.request_kinds}
+    ordered_labels = [
+        request_scope.upper()
+        for request_scope in _TRANSPORT_SNAPSHOT_REQUEST_SCOPES
+        if request_scope in selected_request_kinds
+    ]
+    if not include_all and len(ordered_labels) >= len(_TRANSPORT_SNAPSHOT_REQUEST_SCOPES):
+        return []
+    return ordered_labels
+
+
+def build_transport_dashboard_scope_labels(
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None,
+    project_summary: str = "",
+    project_filter_applied: bool | None = None,
+    include_all_request_kinds: bool = False,
+    max_request_kind_names: int = 3,
+) -> list[str]:
+    if dashboard_scope is None:
+        return []
+
+    scope_labels: list[str] = []
+    request_kind_labels = list_transport_dashboard_scope_request_kind_labels(
+        dashboard_scope,
+        include_all=include_all_request_kinds,
+    )
+    if request_kind_labels:
+        request_kind_summary = _summarize_transport_dashboard_scope_labels(
+            request_kind_labels,
+            max_names=max_request_kind_names,
+        )
+        request_kind_scope_label = "selected request kind" if len(request_kind_labels) == 1 else "selected request kinds"
+        scope_labels.append(f"{request_kind_scope_label} ({request_kind_summary})")
+
+    apply_project_filter = bool(dashboard_scope.project_ids) if project_filter_applied is None else bool(project_filter_applied)
+    if apply_project_filter:
+        scope_labels.append(
+            f"selected projects ({project_summary})"
+            if project_summary
+            else "selected project scope"
+        )
+
+    return scope_labels
+
+
+def resolve_transport_operational_dashboard_scope(
+    snapshot: TransportOperationalSnapshot,
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
+) -> TransportAgentDashboardScope | None:
+    if dashboard_scope is None:
+        return None
+
+    available_project_ids = {
+        int(project_row.id)
+        for project_row in snapshot.projects
+        if getattr(project_row, "id", None) is not None
+    }
+    return TransportAgentDashboardScope(
+        project_ids=[
+            project_id
+            for project_id in dashboard_scope.project_ids
+            if project_id in available_project_ids
+        ],
+        request_kinds=list(dashboard_scope.request_kinds),
+    )
+
+
+def list_transport_operational_dashboard_scope_projects(
+    snapshot: TransportOperationalSnapshot,
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
+) -> list[ProjectRow]:
+    effective_dashboard_scope = resolve_transport_operational_dashboard_scope(
+        snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    if effective_dashboard_scope is None:
+        return []
+
+    selected_project_ids = set(effective_dashboard_scope.project_ids)
+    return sorted(
+        [
+            project_row
+            for project_row in snapshot.projects
+            if int(project_row.id) in selected_project_ids
+        ],
+        key=lambda project_row: (_normalize_snapshot_project_name(project_row.name), int(project_row.id)),
+    )
+
+
+def resolve_transport_operational_dashboard_scope_project_names(
+    snapshot: TransportOperationalSnapshot,
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
+) -> list[str]:
+    return [
+        project_row.name
+        for project_row in list_transport_operational_dashboard_scope_projects(
+            snapshot,
+            dashboard_scope=dashboard_scope,
+        )
+    ]
+
+
+def build_transport_snapshot_request_scope_index(
+    snapshot: TransportOperationalSnapshot,
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
+) -> dict[str, list[TransportRequestRow]]:
+    request_rows_by_scope = {
+        request_scope: list(getattr(snapshot, f"{request_scope}_requests"))
+        for request_scope in _TRANSPORT_SNAPSHOT_REQUEST_SCOPES
+    }
+    effective_dashboard_scope = resolve_transport_operational_dashboard_scope(
+        snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    if effective_dashboard_scope is None:
+        return request_rows_by_scope
+
+    selected_request_kinds = set(effective_dashboard_scope.request_kinds)
+    apply_project_filter = bool(dashboard_scope and dashboard_scope.project_ids)
+    selected_project_names = set()
+    if apply_project_filter:
+        selected_project_ids = set(effective_dashboard_scope.project_ids)
+        selected_project_names = {
+            _normalize_snapshot_project_name(project_row.name)
+            for project_row in snapshot.projects
+            if project_row.id in selected_project_ids
+        }
+
+    return {
+        request_scope: [
+            request_row
+            for request_row in request_rows_by_scope[request_scope]
+            if request_scope in selected_request_kinds
+            and (
+                not apply_project_filter
+                or any(
+                    project_name in selected_project_names
+                    for project_name in _list_snapshot_request_project_names(request_row)
+                )
+            )
+        ]
+        for request_scope in _TRANSPORT_SNAPSHOT_REQUEST_SCOPES
+    }
 
 
 def _count_snapshot_vehicles(snapshot: TransportOperationalSnapshot) -> int:
@@ -353,12 +547,13 @@ def build_transport_operational_snapshot(
     route_kind: str,
     captured_at: datetime | None = None,
 ) -> TransportOperationalSnapshot:
+    effective_captured_at = captured_at or now_sgt()
     dashboard = build_transport_dashboard(
         db,
         service_date=service_date,
         route_kind=route_kind,
+        generated_at=effective_captured_at,
     )
-    effective_captured_at = captured_at or now_sgt()
     dashboard_data = dashboard.model_dump(exclude={"selected_date", "selected_route"})
     return TransportOperationalSnapshot(
         snapshot_key=(
@@ -714,6 +909,7 @@ def apply_transport_operational_proposal(
             route_kind=decision.route_kind,
             status=decision.suggested_status,
             vehicle=vehicle,
+            boarding_time=decision.boarding_time,
             response_message=decision.response_message,
             admin_user_id=actor.id,
         )

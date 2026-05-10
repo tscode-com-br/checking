@@ -6,6 +6,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from sistema.app.services.transport_ai_agent import TRANSPORT_AI_PROMPT_VERSION
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,7 +66,7 @@ def _build_route_calculation_script(
     patch_block = ""
     if patch_failure:
         patch_block = textwrap.dedent(
-            """
+            f"""
             def _fake_run_transport_ai_agent(*, db, run, settings_obj, provider=None, model=None, max_validation_retries=None):
                 run.status = "failed"
                 run.error_code = "synthetic_route_failure"
@@ -75,7 +77,7 @@ def _build_route_calculation_script(
                 return TransportAIAgentRunResult(
                     plan=None,
                     raw_model_response_json=None,
-                    prompt_version="transport_ai_route_planner_v1",
+                    prompt_version={TRANSPORT_AI_PROMPT_VERSION!r},
                     openai_model=settings_obj.openai_model,
                     attempt_count=1,
                     error_code="synthetic_route_failure",
@@ -87,7 +89,7 @@ def _build_route_calculation_script(
         ).strip()
     elif patch_success:
         patch_block = textwrap.dedent(
-            """
+            f"""
             def _fake_run_transport_ai_agent(*, db, run, settings_obj, provider=None, model=None, max_validation_retries=None):
                 run.status = "proposed"
                 run.updated_at = _fixture_timestamp()
@@ -124,7 +126,7 @@ def _build_route_calculation_script(
                         validation_issues=[],
                     ),
                     raw_model_response_json=None,
-                    prompt_version="transport_ai_route_planner_v1",
+                    prompt_version={TRANSPORT_AI_PROMPT_VERSION!r},
                     openai_model=run.openai_model,
                     attempt_count=1,
                 )

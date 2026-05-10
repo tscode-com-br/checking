@@ -1,11 +1,12 @@
 import json
 from datetime import date
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..core.config import normalize_transport_ai_agent_mode, settings
@@ -20,16 +21,21 @@ from ..models import (
     Vehicle,
 )
 from ..schemas import (
+    TransportAIObservabilitySummary,
     TransportAIRunDiagnosticsEntry,
     TransportAIRunDiagnosticsResponse,
     TransportAIPreflightCheckResult,
     TransportAIPreflightIssue,
     TransportAISettingsResponse,
     TransportAISettingsUpdateRequest,
+    TransportAgentDashboardScope,
     TransportAgentPlan,
+    TransportAgentPlanningInput,
     TransportAgentRouteStop,
     TransportAgentRouteRequest,
     TransportAgentRunIssue,
+    TransportAgentSuggestionAudit,
+    TransportAgentSuggestionAuditCluster,
     TransportAgentRunStartResponse,
     TransportAgentRunStatusResponse,
     TransportAgentRunSuggestion,
@@ -38,6 +44,7 @@ from ..schemas import (
     TransportProposalDecision,
     TransportProposalValidationIssue,
     TransportVehicleCreate,
+    TransportVehicleScheduleUpdate,
     TransportVehicleUpdate,
 )
 from ..services.admin_auth import require_transport_session
@@ -84,8 +91,15 @@ from ..services.transport_ai_runs import (
 from ..services.transport_ai_runtime import (
     build_transport_ai_concurrency_limit_issue,
     count_transport_ai_active_runs,
+    resolve_transport_ai_failure_category,
+    resolve_transport_ai_message_descriptor,
+    resolve_transport_ai_review_state,
     resolve_transport_ai_shared_llm_runtime_context,
     validate_transport_ai_runtime_configuration,
+)
+from ..services.transport_proposals import (
+    build_transport_dashboard_scope_labels,
+    list_transport_dashboard_scope_request_kind_labels,
 )
 from ..services.transport_proposals import (
     apply_transport_operational_proposal,
@@ -95,7 +109,11 @@ from ..services.transport_proposals import (
     validate_transport_operational_proposal,
 )
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
-from ..services.transport_vehicle_schedule import vehicle_schedule_applies_to_date
+from ..services.transport_vehicle_schedule import (
+    find_transport_vehicle_schedule,
+    update_transport_vehicle_schedule,
+    vehicle_schedule_applies_to_date,
+)
 
 
 router = APIRouter(
@@ -171,6 +189,17 @@ _TRANSPORT_AI_USAGE_COST_KEYS = (
     "call_cost",
     "total_cost",
 )
+_TRANSPORT_AI_SETTINGS_MESSAGE_KEY_BY_DETAIL = {
+    "Transport AI project does not exist.": "ai.settingsProjectMissing",
+    "Transport AI API key is required.": "ai.settingsKeyRequired",
+    "Transport AI API key is required when creating LLM settings.": "ai.settingsKeyRequired",
+    "Transport AI API key is required when changing the LLM provider.": "ai.settingsProviderKeyRequired",
+    "Transport AI API key is required when no encrypted key has been stored yet.": "ai.settingsKeyRequired",
+    "The configured Transport AI LLM provider is no longer supported. Select OpenAI or DeepSeek and save the AI settings again.": (
+        "ai.settingsProviderUnsupported"
+    ),
+    "Transport AI settings encryption is unavailable.": "ai.settingsEncryptionUnavailable",
+}
 
 
 def _transport_ai_router_json_dumps(value: object) -> str:
@@ -181,10 +210,245 @@ def _transport_ai_router_json_loads(value: str | None) -> object | None:
     normalized = str(value or "").strip()
     if not normalized:
         return None
+
+
+def _resolve_transport_ai_settings_message_key(detail: str, default_key: str) -> str:
+    normalized_detail = str(detail or "").strip()
+    if not normalized_detail:
+        return default_key
+    return _TRANSPORT_AI_SETTINGS_MESSAGE_KEY_BY_DETAIL.get(normalized_detail, default_key)
+
+
+def _build_transport_ai_router_issue(
+    *,
+    code: str,
+    message: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    issue: dict[str, object] = {"code": code}
+    normalized_message = str(message or "").strip()
+    if normalized_message:
+        issue["message"] = normalized_message
+    if extra:
+        issue.update(extra)
+    return issue
+
+
+def _raise_transport_ai_router_structured_http_error(
+    *,
+    status_code: int,
+    message: str,
+    message_key: str,
+    error_code: str,
+    message_params: dict[str, object] | None = None,
+    issues: list[dict[str, object]] | None = None,
+    technical_detail: str | None = None,
+) -> None:
+    normalized_technical_detail = str(technical_detail or "").strip() or None
+    normalized_issues = list(issues or [])
+    if not normalized_issues:
+        normalized_issues = [
+            _build_transport_ai_router_issue(
+                code=error_code,
+                message=normalized_technical_detail,
+            )
+        ]
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "message": message,
+            "message_key": message_key,
+            "message_params": dict(message_params or {}),
+            "error_code": error_code,
+            "issues": normalized_issues,
+            "technical_detail": normalized_technical_detail,
+        },
+    )
     try:
         return json.loads(normalized)
     except (TypeError, ValueError):
         return None
+
+
+def _measure_transport_ai_router_elapsed_ms(started_at: float) -> int:
+    return max(0, int(round((perf_counter() - started_at) * 1000)))
+
+
+def _resolve_transport_ai_router_llm_summary_fields(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    llm_provider: str | None,
+    llm_model: str | None,
+    llm_reasoning_effort: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    unique_snapshots = {
+        (snapshot.provider, snapshot.model_name, snapshot.reasoning_effort)
+        for snapshot in planning_input.llm_runtime_projects
+    }
+    if len(unique_snapshots) == 1:
+        return next(iter(unique_snapshots))
+    if len(unique_snapshots) > 1:
+        return ("multiple", "multiple", "multiple")
+    return (
+        str(llm_provider or "").strip().lower() or None,
+        str(llm_model or "").strip() or None,
+        str(llm_reasoning_effort or "").strip().lower() or None,
+    )
+
+
+def _ensure_transport_ai_planning_observability(
+    *,
+    planning_input: TransportAgentPlanningInput,
+    route_provider: str | None,
+    llm_provider: str | None,
+    llm_model: str | None,
+    llm_reasoning_effort: str | None,
+) -> TransportAgentPlanningInput:
+    llm_provider, llm_model, llm_reasoning_effort = _resolve_transport_ai_router_llm_summary_fields(
+        planning_input=planning_input,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        llm_reasoning_effort=llm_reasoning_effort,
+    )
+    if planning_input.observability is None:
+        observability = TransportAIObservabilitySummary(
+            total_eligible_request_count=planning_input.total_requests,
+            partition_count=len(planning_input.partitions),
+            route_provider=route_provider,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            llm_reasoning_effort=llm_reasoning_effort,
+            partitions=[
+                {
+                    "partition_key": partition.partition_key,
+                    "request_kind": partition.request_kind,
+                    "project_name": partition.project_name,
+                    "eligible_request_count": len(partition.requests),
+                    "candidate_vehicle_count": len(partition.candidate_vehicles),
+                }
+                for partition in planning_input.partitions
+            ],
+        )
+        return planning_input.model_copy(update={"observability": observability})
+
+    planning_input.observability.total_eligible_request_count = planning_input.total_requests
+    planning_input.observability.partition_count = len(planning_input.partitions)
+    planning_input.observability.route_provider = route_provider
+    planning_input.observability.llm_provider = llm_provider
+    planning_input.observability.llm_model = llm_model
+    planning_input.observability.llm_reasoning_effort = llm_reasoning_effort
+    return planning_input
+
+
+def _load_transport_ai_run_planning_input_model(run: TransportAIRun) -> TransportAgentPlanningInput | None:
+    planning_input_json = str(run.planning_input_json or "").strip()
+    if not planning_input_json:
+        return None
+    try:
+        return TransportAgentPlanningInput.model_validate_json(planning_input_json)
+    except Exception:
+        return None
+
+
+def _set_transport_ai_planning_phase_duration(
+    planning_input: TransportAgentPlanningInput,
+    *,
+    phase_field: str,
+    duration_ms: int,
+) -> TransportAgentPlanningInput:
+    effective_planning_input = planning_input
+    if effective_planning_input.observability is None:
+        effective_planning_input = _ensure_transport_ai_planning_observability(
+            planning_input=effective_planning_input,
+            route_provider=None,
+            llm_provider=None,
+            llm_model=None,
+            llm_reasoning_effort=None,
+        )
+    current_duration = getattr(effective_planning_input.observability.phase_durations_ms, phase_field)
+    setattr(
+        effective_planning_input.observability.phase_durations_ms,
+        phase_field,
+        max(duration_ms, 0) if current_duration is None else current_duration + max(duration_ms, 0),
+    )
+    return effective_planning_input
+
+
+def _mark_transport_ai_planning_observability_failure(
+    planning_input: TransportAgentPlanningInput,
+    *,
+    failure_layer: str,
+    failed_phase: str,
+) -> TransportAgentPlanningInput:
+    effective_planning_input = planning_input
+    if effective_planning_input.observability is None:
+        effective_planning_input = _ensure_transport_ai_planning_observability(
+            planning_input=effective_planning_input,
+            route_provider=None,
+            llm_provider=None,
+            llm_model=None,
+            llm_reasoning_effort=None,
+        )
+    if not effective_planning_input.observability.failure_layer:
+        effective_planning_input.observability.failure_layer = failure_layer
+    if not effective_planning_input.observability.failed_phase:
+        effective_planning_input.observability.failed_phase = failed_phase
+    return effective_planning_input
+
+
+def _extract_transport_ai_run_observability(run: TransportAIRun) -> TransportAIObservabilitySummary | None:
+    payload = _transport_ai_router_json_loads(run.planning_input_json)
+    if not isinstance(payload, dict):
+        return None
+    raw_observability = payload.get("observability")
+    if not isinstance(raw_observability, dict):
+        return None
+    try:
+        return TransportAIObservabilitySummary.model_validate(raw_observability)
+    except Exception:
+        return None
+
+
+def _build_transport_ai_observability_event_summary(
+    observability: TransportAIObservabilitySummary | None,
+) -> dict[str, object] | None:
+    if observability is None:
+        return None
+
+    compact_partitions = [
+        {
+            "partition_key": partition.partition_key,
+            "request_kind": partition.request_kind,
+            "eligible_request_count": partition.eligible_request_count,
+            "matrix_chunk_count": partition.matrix_chunk_count,
+            "solver_algorithm": partition.solver_algorithm,
+        }
+        for partition in sorted(
+            observability.partitions,
+            key=lambda partition: (-partition.eligible_request_count, partition.partition_key),
+        )[:3]
+    ]
+    phase_durations = {
+        key: value
+        for key, value in observability.phase_durations_ms.model_dump(mode="json").items()
+        if value is not None
+    }
+    return {
+        "total_eligible_request_count": observability.total_eligible_request_count,
+        "partition_count": observability.partition_count,
+        "route_provider": observability.route_provider,
+        "llm_provider": observability.llm_provider,
+        "llm_model": observability.llm_model,
+        "llm_attempt_count": observability.llm_attempt_count,
+        "geocode_provider_call_count": observability.geocode_provider_call_count,
+        "matrix_provider_call_count": observability.matrix_provider_call_count,
+        "matrix_chunk_count": observability.matrix_chunk_count,
+        "failure_layer": observability.failure_layer,
+        "failed_phase": observability.failed_phase,
+        "phase_durations_ms": phase_durations,
+        "partitions": compact_partitions,
+        "remaining_partition_count": max(0, len(observability.partitions) - len(compact_partitions)),
+    }
 
 
 def _truncate_transport_ai_router_message(message: str, *, max_length: int = 500) -> str:
@@ -207,6 +471,285 @@ def _sanitize_transport_ai_router_message(
         ),
         max_length=max_length,
     )
+
+
+_TRANSPORT_AI_ROUTER_BASELINE_RESTORE_NOTE_ALIASES = (
+    ("Baseline restored.", "Baseline restored successfully."),
+    ("Baseline restored successfully.", "Baseline restored successfully."),
+    ("Baseline restore raised an unexpected error.", "Baseline restore raised an unexpected error."),
+    (
+        "Baseline restore remains available but requires manual review.",
+        "Baseline restore remains available but requires manual review.",
+    ),
+)
+
+
+def _normalize_transport_ai_router_message_text(
+    message: str,
+    *,
+    extra_literal_secrets: tuple[str | None, ...] = (),
+) -> str:
+    return " ".join(
+        sanitize_transport_ai_string(
+            str(message or ""),
+            extra_literal_secrets=extra_literal_secrets,
+        ).strip().split()
+    )
+
+
+def _ensure_transport_ai_router_sentence(message: str) -> str:
+    normalized = " ".join(str(message or "").strip().split())
+    if not normalized:
+        return ""
+    if normalized.endswith((".", "!", "?")):
+        return normalized
+    return f"{normalized}."
+
+
+def _resolve_transport_ai_router_restore_note(message: str) -> str | None:
+    normalized = _normalize_transport_ai_router_message_text(message)
+    if not normalized:
+        return None
+    for suffix, resolved_note in _TRANSPORT_AI_ROUTER_BASELINE_RESTORE_NOTE_ALIASES:
+        if normalized.endswith(suffix):
+            return resolved_note
+    return None
+
+
+def _strip_transport_ai_router_restore_note(message: str) -> str:
+    normalized = _normalize_transport_ai_router_message_text(message)
+    if not normalized:
+        return ""
+    for suffix, _resolved_note in _TRANSPORT_AI_ROUTER_BASELINE_RESTORE_NOTE_ALIASES:
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)].strip()
+    return normalized
+
+
+def _is_transport_ai_router_generic_failure_message(message: str) -> bool:
+    normalized = _strip_transport_ai_router_restore_note(message)
+    if not normalized:
+        return True
+    return (
+        normalized == "Transport AI runtime preflight failed."
+        or normalized == "Transport AI route calculation failed."
+        or normalized.startswith("Transport AI planning validation failed")
+        or normalized.startswith("Transport AI route calculation has no eligible pending requests")
+    )
+
+
+def _resolve_transport_ai_router_primary_issue_message(issues: list[object] | None) -> str | None:
+    normalized_issues = list(issues or [])
+    for issue in normalized_issues:
+        issue_message = _normalize_transport_ai_router_message_text(getattr(issue, "message", ""))
+        if issue_message and bool(getattr(issue, "blocking", True)):
+            return issue_message
+    for issue in normalized_issues:
+        issue_message = _normalize_transport_ai_router_message_text(getattr(issue, "message", ""))
+        if issue_message:
+            return issue_message
+    return None
+
+
+def _resolve_transport_ai_router_primary_issue_code(issues: list[object] | None) -> str | None:
+    normalized_issues = list(issues or [])
+    for issue in normalized_issues:
+        issue_code = str(getattr(issue, "code", "") or "").strip().lower()
+        if issue_code and bool(getattr(issue, "blocking", True)):
+            return issue_code
+    for issue in normalized_issues:
+        issue_code = str(getattr(issue, "code", "") or "").strip().lower()
+        if issue_code:
+            return issue_code
+    return None
+
+
+def _compose_transport_ai_router_failure_message(
+    *,
+    headline: str,
+    restore_note: str | None = None,
+    max_length: int = 500,
+) -> str:
+    normalized_headline = _ensure_transport_ai_router_sentence(headline)
+    if not restore_note:
+        return _truncate_transport_ai_router_message(normalized_headline, max_length=max_length)
+
+    normalized_restore_note = _ensure_transport_ai_router_sentence(restore_note)
+    combined_message = f"{normalized_headline} {normalized_restore_note}"
+    if len(combined_message) <= max_length:
+        return combined_message
+    if len(normalized_headline) >= max_length:
+        return _truncate_transport_ai_router_message(normalized_headline, max_length=max_length)
+
+    remaining_length = max_length - len(normalized_headline) - 1
+    if remaining_length <= 0:
+        return normalized_headline
+    return f"{normalized_headline} {_truncate_transport_ai_router_message(normalized_restore_note, max_length=remaining_length)}"
+
+
+def _build_transport_ai_router_failure_contract(
+    *,
+    message: str,
+    error_code: str | None = None,
+    issues: list[object] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    route_provider: str | None = None,
+    extra_literal_secrets: tuple[str | None, ...] = (),
+    max_length: int = 500,
+) -> tuple[str, str | None, dict[str, object]]:
+    normalized_message = _normalize_transport_ai_router_message_text(
+        message,
+        extra_literal_secrets=extra_literal_secrets,
+    )
+    restore_note = _resolve_transport_ai_router_restore_note(normalized_message)
+    normalized_headline = _strip_transport_ai_router_restore_note(normalized_message)
+    primary_issue_message = _resolve_transport_ai_router_primary_issue_message(issues)
+    effective_error_code = error_code or _resolve_transport_ai_router_primary_issue_code(issues)
+    message_descriptor = resolve_transport_ai_message_descriptor(
+        error_code=effective_error_code,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        route_provider=route_provider,
+    )
+
+    message_key: str | None = None
+    message_params: dict[str, object] = {}
+
+    if message_descriptor is not None:
+        normalized_headline = message_descriptor.message
+        message_key = message_descriptor.message_key
+        message_params = dict(message_descriptor.message_params)
+
+    if message_descriptor is None and primary_issue_message and (
+        _is_transport_ai_router_generic_failure_message(normalized_message) or not normalized_headline
+    ):
+        normalized_headline = primary_issue_message
+    elif not normalized_headline:
+        normalized_headline = primary_issue_message or "Transport AI route calculation failed."
+
+    return (
+        _compose_transport_ai_router_failure_message(
+            headline=normalized_headline,
+            restore_note=restore_note,
+            max_length=max_length,
+        ),
+        message_key,
+        message_params,
+    )
+
+
+def _build_transport_ai_router_failure_message(
+    *,
+    message: str,
+    error_code: str | None = None,
+    issues: list[object] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    route_provider: str | None = None,
+    extra_literal_secrets: tuple[str | None, ...] = (),
+    max_length: int = 500,
+) -> str:
+    resolved_message, _message_key, _message_params = _build_transport_ai_router_failure_contract(
+        message=message,
+        error_code=error_code,
+        issues=issues,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        route_provider=route_provider,
+        extra_literal_secrets=extra_literal_secrets,
+        max_length=max_length,
+    )
+    return resolved_message
+
+
+def _normalize_transport_ai_router_project_name(project_name: str | None) -> str:
+    return " ".join(str(project_name or "").strip().split())
+
+
+def _dedupe_transport_ai_router_project_names(project_names: list[str]) -> list[str]:
+    normalized_names: list[str] = []
+    seen_names: set[str] = set()
+
+    for project_name in project_names:
+        normalized_name = _normalize_transport_ai_router_project_name(project_name)
+        if not normalized_name:
+            continue
+        normalized_key = normalized_name.upper()
+        if normalized_key in seen_names:
+            continue
+        seen_names.add(normalized_key)
+        normalized_names.append(normalized_name)
+
+    return normalized_names
+
+
+def _summarize_transport_ai_router_project_scope(project_names: list[str], *, max_names: int = 3) -> str:
+    normalized_names = _dedupe_transport_ai_router_project_names(project_names)
+    if not normalized_names:
+        return ""
+    if len(normalized_names) <= max_names:
+        return ", ".join(normalized_names)
+    remaining_count = len(normalized_names) - max_names
+    return f"{', '.join(normalized_names[:max_names])}, and {remaining_count} more"
+
+
+def _resolve_transport_ai_dashboard_scope_project_names(
+    db: Session,
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None,
+) -> list[str]:
+    if dashboard_scope is None or not dashboard_scope.project_ids:
+        return []
+
+    project_rows = db.execute(
+        select(Project)
+        .where(Project.id.in_(dashboard_scope.project_ids))
+        .order_by(Project.name.asc(), Project.id.asc())
+    ).scalars().all()
+    return _dedupe_transport_ai_router_project_names([
+        project_row.name
+        for project_row in project_rows
+    ])
+
+
+def _build_transport_ai_dashboard_scope_audit_details(
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None,
+    project_names: list[str],
+    max_preview_names: int = 5,
+) -> dict[str, object]:
+    normalized_project_names = _dedupe_transport_ai_router_project_names(project_names)
+    normalized_request_kind_labels = list_transport_dashboard_scope_request_kind_labels(
+        dashboard_scope,
+        include_all=True,
+    )
+    return {
+        "dashboard_scope": (
+            dashboard_scope.model_dump(mode="json")
+            if dashboard_scope is not None
+            else None
+        ),
+        "dashboard_scope_project_names": normalized_project_names[:max_preview_names],
+        "dashboard_scope_project_count": len(normalized_project_names),
+        "dashboard_scope_request_kind_labels": normalized_request_kind_labels[:max_preview_names],
+        "dashboard_scope_request_kind_count": len(normalized_request_kind_labels),
+    }
+
+
+def _build_transport_ai_dashboard_scope_phrase(
+    *,
+    dashboard_scope: TransportAgentDashboardScope | None,
+    project_names: list[str],
+) -> str:
+    scope_labels = build_transport_dashboard_scope_labels(
+        dashboard_scope=dashboard_scope,
+        project_summary=_summarize_transport_ai_router_project_scope(project_names),
+        project_filter_applied=bool(dashboard_scope and dashboard_scope.project_ids),
+    )
+    if not scope_labels:
+        return ""
+    return f" for the {' and '.join(scope_labels)}"
 
 
 def _record_transport_ai_settings_failure_event(
@@ -261,6 +804,8 @@ def _build_transport_ai_run_preflight_issues(run: TransportAIRun) -> list[Transp
             continue
         code = item.get("code")
         message = item.get("message")
+        raw_source = str(item.get("source") or "run_preflight").strip().lower()
+        source = raw_source if raw_source in {"run_preflight", "run_error"} else "run_preflight"
         if not code or not message:
             continue
         issues.append(
@@ -268,7 +813,7 @@ def _build_transport_ai_run_preflight_issues(run: TransportAIRun) -> list[Transp
                 code=str(code),
                 message=_truncate_transport_ai_router_message(str(message)),
                 blocking=bool(item.get("blocking", True)),
-                source="run_preflight",
+                source=source,
                 setting_name=item.get("setting_name"),
                 request_id=item.get("request_id"),
                 vehicle_id=item.get("vehicle_id"),
@@ -279,6 +824,8 @@ def _build_transport_ai_run_preflight_issues(run: TransportAIRun) -> list[Transp
 
 def _build_transport_ai_poll_suggestion_response(
     suggestion,
+    *,
+    run: TransportAIRun | None = None,
 ) -> tuple[TransportAgentRunSuggestion | None, list[TransportAgentRunIssue]]:
     if suggestion is None:
         return None, []
@@ -325,6 +872,7 @@ def _build_transport_ai_poll_suggestion_response(
         )
         for issue in plan.validation_issues
     ]
+    suggestion_audit = _build_transport_ai_suggestion_audit(run=run) if run is not None else None
     return (
         TransportAgentRunSuggestion(
             suggestion_key=suggestion.suggestion_key,
@@ -337,6 +885,7 @@ def _build_transport_ai_poll_suggestion_response(
             applied_at=suggestion.applied_at,
             discarded_at=suggestion.discarded_at,
             plan=plan,
+            audit=suggestion_audit,
         ),
         issues,
     )
@@ -392,11 +941,17 @@ def _build_transport_ai_run_status_message(
     run: TransportAIRun,
     suggestion,
     suggestion_response: TransportAgentRunSuggestion | None,
+    issues: list[TransportAgentRunIssue],
 ) -> str:
     if run.status == "failed":
-        if run.error_message:
-            return _truncate_transport_ai_router_message(run.error_message)
-        return "Transport AI route calculation failed."
+        return _build_transport_ai_router_failure_message(
+            message=run.error_message or "Transport AI route calculation failed.",
+            error_code=run.error_code,
+            issues=issues,
+            llm_provider=run.llm_provider,
+            llm_model=run.llm_model,
+            route_provider=run.route_provider,
+        )
     if run.status == "requested":
         return "Transport AI route calculation was requested."
     if run.status == "baseline_saved":
@@ -418,6 +973,25 @@ def _build_transport_ai_run_status_message(
     if run.status == "cancelled":
         return "Transport AI suggestion was cancelled and the baseline was restored."
     return "Transport AI route calculation status is unavailable."
+
+
+def _resolve_transport_ai_run_status_message_contract(
+    *,
+    run: TransportAIRun,
+    suggestion,
+    suggestion_response: TransportAgentRunSuggestion | None,
+) -> tuple[str | None, dict[str, object]]:
+    if run.status == "proposed" and suggestion_response is not None:
+        return "ai.agentSettingsReadyForReview", {}
+    if run.status == "saved":
+        return "ai.changesSaved", {}
+    if run.status == "applied":
+        return "ai.changesApplied", {}
+    if run.status == "cancelled":
+        return "ai.changesCancelled", {}
+    if run.status == "proposed" and suggestion is None:
+        return "ai.routeCalculationFailed", {}
+    return None, {}
 
 
 def _extract_transport_ai_issue_codes(raw_value: str | None) -> tuple[list[str], int]:
@@ -561,6 +1135,25 @@ def _build_transport_ai_runs_diagnostics_response(
         usage_summary = _extract_transport_ai_usage_summary(
             suggestion.raw_model_response_json if suggestion is not None else None
         )
+        observability = _extract_transport_ai_run_observability(run)
+        diagnostics_message_key: str | None = None
+        diagnostics_message_params: dict[str, object] = {}
+        diagnostics_error_message = (
+            _truncate_transport_ai_router_message(
+                sanitize_transport_ai_string(run.error_message),
+            )
+            if run.error_message
+            else None
+        )
+        if run.error_code:
+            diagnostics_error_message, diagnostics_message_key, diagnostics_message_params = _build_transport_ai_router_failure_contract(
+                message=run.error_message or "Transport AI route calculation failed.",
+                error_code=run.error_code,
+                issues=[],
+                llm_provider=llm_fields["llm_provider"],
+                llm_model=llm_fields["llm_model"],
+                route_provider=run.route_provider,
+            )
         entries.append(
             TransportAIRunDiagnosticsEntry(
                 run_key=run.run_key,
@@ -580,16 +1173,13 @@ def _build_transport_ai_runs_diagnostics_response(
                 completed_at=run.completed_at,
                 duration_seconds=_build_transport_ai_run_duration_seconds(run=run, reference_time=reference_time),
                 error_code=run.error_code,
-                error_message=(
-                    _truncate_transport_ai_router_message(
-                        sanitize_transport_ai_string(run.error_message),
-                    )
-                    if run.error_message
-                    else None
-                ),
+                error_message=diagnostics_error_message,
+                message_key=diagnostics_message_key,
+                message_params=diagnostics_message_params,
                 preflight_issue_codes=preflight_issue_codes,
                 validation_issue_codes=validation_issue_codes,
                 blocking_issue_count=preflight_blocking_count + validation_blocking_count,
+                observability=observability,
                 **usage_summary,
             )
         )
@@ -602,8 +1192,10 @@ def _build_transport_ai_run_status_response(
     suggestion,
 ) -> TransportAgentRunStatusResponse:
     llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
-    suggestion_response, suggestion_issues = _build_transport_ai_poll_suggestion_response(suggestion)
+    suggestion_response, suggestion_issues = _build_transport_ai_poll_suggestion_response(suggestion, run=run)
     issues = [*_build_transport_ai_run_preflight_issues(run), *suggestion_issues]
+    issue_codes = [issue.code for issue in issues if issue.code]
+    suggestion_issue_codes = [issue.code for issue in suggestion_issues if issue.code]
     has_blocking_issues = any(issue.blocking for issue in issues)
     suggestion_status = suggestion.status if suggestion is not None else None
     suggestion_ready = suggestion_response is not None and suggestion_status in {"shown", "saved"}
@@ -620,6 +1212,39 @@ def _build_transport_ai_run_status_response(
         and run.status in {"proposed", "saved"}
     )
     can_cancel_restore = suggestion_response is not None and suggestion_status in {"shown", "saved"} and run.status in {"proposed", "saved"}
+    failure_category = (
+        resolve_transport_ai_failure_category(
+            error_code=run.error_code,
+            issue_codes=issue_codes,
+        )
+        if run.status == "failed"
+        else None
+    )
+    review_state = resolve_transport_ai_review_state(
+        run_status=run.status,
+        has_suggestion=suggestion_response is not None,
+        suggestion_issue_codes=suggestion_issue_codes,
+    )
+    message_key, message_params = _resolve_transport_ai_run_status_message_contract(
+        run=run,
+        suggestion=suggestion,
+        suggestion_response=suggestion_response,
+    )
+    message_text = _build_transport_ai_run_status_message(
+        run=run,
+        suggestion=suggestion,
+        suggestion_response=suggestion_response,
+        issues=issues,
+    )
+    if run.status == "failed":
+        message_text, message_key, message_params = _build_transport_ai_router_failure_contract(
+            message=run.error_message or "Transport AI route calculation failed.",
+            error_code=run.error_code,
+            issues=issues,
+            llm_provider=llm_fields["llm_provider"],
+            llm_model=llm_fields["llm_model"],
+            route_provider=run.route_provider,
+        )
     return TransportAgentRunStatusResponse(
         ok=run.status != "failed",
         run_key=run.run_key,
@@ -629,11 +1254,12 @@ def _build_transport_ai_run_status_response(
         llm_provider=llm_fields["llm_provider"],
         llm_model=llm_fields["llm_model"],
         llm_reasoning_effort=llm_fields["llm_reasoning_effort"],
-        message=_build_transport_ai_run_status_message(
-            run=run,
-            suggestion=suggestion,
-            suggestion_response=suggestion_response,
-        ),
+        message=message_text,
+        message_key=message_key,
+        message_params=message_params,
+        error_code=run.error_code,
+        failure_category=failure_category,
+        review_state=review_state,
         issues=issues,
         suggestion_key=suggestion.suggestion_key if suggestion is not None else None,
         suggestion_ready=suggestion_ready,
@@ -647,21 +1273,157 @@ def _build_transport_ai_run_status_response(
     )
 
 
+def _normalize_transport_ai_audit_hash(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        return None
+    return normalized
+
+
+def _normalize_transport_ai_audit_time(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    hour_text, separator, minute_text = normalized.partition(":")
+    if separator != ":":
+        return None
+    if len(hour_text) != 2 or len(minute_text) != 2:
+        return None
+    if not hour_text.isdigit() or not minute_text.isdigit():
+        return None
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _normalize_transport_ai_audit_request_ids(value: object) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    request_ids: list[int] = []
+    for item in value:
+        try:
+            request_id = int(item)
+        except (TypeError, ValueError):
+            continue
+        if request_id < 1:
+            continue
+        request_ids.append(request_id)
+    return request_ids
+
+
+def _build_transport_ai_suggestion_audit(
+    *,
+    run: TransportAIRun,
+) -> TransportAgentSuggestionAudit | None:
+    planning_input_payload = _transport_ai_router_json_loads(run.planning_input_json)
+    if not isinstance(planning_input_payload, dict):
+        planning_input_payload = {}
+
+    settings_payload = planning_input_payload.get("settings")
+    extra_car_tolerance_minutes = None
+    if isinstance(settings_payload, dict):
+        try:
+            candidate_tolerance = int(settings_payload.get("extra_car_tolerance_minutes"))
+        except (TypeError, ValueError):
+            candidate_tolerance = None
+        if candidate_tolerance is not None and candidate_tolerance >= 0:
+            extra_car_tolerance_minutes = candidate_tolerance
+
+    extra_clusters: list[TransportAgentSuggestionAuditCluster] = []
+    partitions_payload = planning_input_payload.get("partitions")
+    if isinstance(partitions_payload, list):
+        for partition_payload in partitions_payload:
+            if not isinstance(partition_payload, dict):
+                continue
+            if str(partition_payload.get("request_kind") or "").strip().lower() != "extra":
+                continue
+            partition_key = str(partition_payload.get("partition_key") or "").strip()
+            if not partition_key:
+                continue
+            temporal_clusters_payload = partition_payload.get("temporal_request_clusters")
+            if not isinstance(temporal_clusters_payload, list):
+                continue
+            for cluster_payload in temporal_clusters_payload:
+                if not isinstance(cluster_payload, dict):
+                    continue
+                cluster_key = str(cluster_payload.get("cluster_key") or "").strip()
+                anchor_requested_time = _normalize_transport_ai_audit_time(cluster_payload.get("anchor_requested_time"))
+                earliest_requested_time = _normalize_transport_ai_audit_time(cluster_payload.get("earliest_requested_time"))
+                latest_requested_time = _normalize_transport_ai_audit_time(cluster_payload.get("latest_requested_time"))
+                request_ids = _normalize_transport_ai_audit_request_ids(cluster_payload.get("request_ids"))
+                if (
+                    not cluster_key
+                    or anchor_requested_time is None
+                    or earliest_requested_time is None
+                    or latest_requested_time is None
+                    or not request_ids
+                ):
+                    continue
+                extra_clusters.append(
+                    TransportAgentSuggestionAuditCluster(
+                        partition_key=partition_key,
+                        cluster_key=cluster_key,
+                        anchor_requested_time=anchor_requested_time,
+                        earliest_requested_time=earliest_requested_time,
+                        latest_requested_time=latest_requested_time,
+                        request_ids=request_ids,
+                        request_count=len(request_ids),
+                    )
+                )
+
+    if extra_clusters:
+        extra_clusters.sort(key=lambda cluster: (cluster.anchor_requested_time, cluster.partition_key, cluster.cluster_key))
+
+    planning_input_hash = _normalize_transport_ai_audit_hash(planning_input_payload.get("planning_input_hash"))
+    if planning_input_hash is None:
+        planning_input_hash = _normalize_transport_ai_audit_hash(run.planning_input_hash)
+
+    if planning_input_hash is None and extra_car_tolerance_minutes is None and not extra_clusters:
+        return None
+
+    return TransportAgentSuggestionAudit(
+        planning_input_hash=planning_input_hash,
+        extra_car_tolerance_minutes=extra_car_tolerance_minutes,
+        extra_clusters=extra_clusters,
+    )
+
+
 def _build_transport_ai_status_response_with_overrides(
     *,
     run: TransportAIRun,
     suggestion,
     ok: bool | None = None,
     message: str | None = None,
+    message_key: str | None = None,
+    message_params: dict[str, object] | None = None,
+    error_code: str | None = None,
     extra_issues: list[TransportAgentRunIssue] | None = None,
 ) -> TransportAgentRunStatusResponse:
     base_response = _build_transport_ai_run_status_response(run=run, suggestion=suggestion)
     combined_issues = [*base_response.issues, *(extra_issues or [])]
+    next_ok = base_response.ok if ok is None else ok
+    combined_issue_codes = [issue.code for issue in combined_issues if issue.code]
     return base_response.model_copy(
         update={
-            "ok": base_response.ok if ok is None else ok,
+            "ok": next_ok,
             "message": message or base_response.message,
+            "message_key": message_key if message_key is not None else base_response.message_key,
+            "message_params": dict(message_params or base_response.message_params),
+            "error_code": error_code if error_code is not None else base_response.error_code,
             "issues": combined_issues,
+            "failure_category": (
+                resolve_transport_ai_failure_category(
+                    error_code=(error_code if error_code is not None else base_response.error_code),
+                    issue_codes=combined_issue_codes,
+                )
+                if not next_ok
+                else None
+            ),
+            "review_state": resolve_transport_ai_review_state(
+                run_status=base_response.status,
+                has_suggestion=base_response.suggestion is not None,
+                suggestion_issue_codes=combined_issue_codes,
+            ),
             "can_save": base_response.can_save and not any(issue.blocking for issue in combined_issues),
             "can_apply": base_response.can_apply and not any(issue.blocking for issue in combined_issues),
         },
@@ -684,11 +1446,37 @@ def _load_transport_ai_suggestion_or_404(
 ) -> tuple[TransportAIRun, TransportAISuggestion]:
     suggestion = get_transport_ai_suggestion_by_key(db, suggestion_key=suggestion_key)
     if suggestion is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transport AI suggestion not found.")
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Transport AI suggestion not found.",
+            message_key="ai.loadLatestSuggestionFailed",
+            error_code="transport_ai_suggestion_not_found",
+            technical_detail="Transport AI suggestion not found.",
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_suggestion_not_found",
+                    message="Transport AI suggestion not found.",
+                    extra={"suggestion_key": suggestion_key},
+                )
+            ],
+        )
 
     run = db.get(TransportAIRun, suggestion.run_id)
     if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transport AI run not found.")
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Transport AI run not found.",
+            message_key="ai.routeCalculationFailed",
+            error_code="transport_ai_run_not_found",
+            technical_detail="Transport AI run not found.",
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_run_not_found",
+                    message="Transport AI run not found.",
+                    extra={"suggestion_key": suggestion_key},
+                )
+            ],
+        )
     return run, suggestion
 
 
@@ -746,15 +1534,144 @@ def _get_transport_ai_action_state_value(
     return None, False
 
 
+def _find_transport_ai_route_itinerary(
+    *,
+    plan: TransportAgentPlan,
+    vehicle_ref: str,
+):
+    return next((item for item in plan.route_itineraries if item.vehicle_ref == vehicle_ref), None)
+
+
+def _resolve_transport_ai_extra_eta(itinerary) -> str | None:
+    if itinerary is None:
+        return None
+    if itinerary.service_scope != "extra" or itinerary.route_kind != "home_to_work":
+        return None
+    return itinerary.projected_arrival_time or None
+
+
+def _resolve_transport_ai_extra_etd(itinerary) -> str | None:
+    if itinerary is None:
+        return None
+    if itinerary.service_scope != "extra" or itinerary.route_kind != "work_to_home":
+        return None
+    for stop in itinerary.stops:
+        if stop.scheduled_time:
+            return stop.scheduled_time
+    return None
+
+
+def _normalize_transport_ai_time_literal(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    hour_text, separator, minute_text = normalized.partition(":")
+    if separator != ":":
+        return None
+    if len(hour_text) != 2 or len(minute_text) != 2:
+        return None
+    if not hour_text.isdigit() or not minute_text.isdigit():
+        return None
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _resolve_transport_ai_extra_route_kind(
+    *,
+    run: TransportAIRun,
+    action,
+) -> tuple[str | None, TransportAgentRunIssue | None]:
+    after = action.after or {}
+    route_kind_value, route_kind_present = _get_transport_ai_action_state_value(after, "route_kind")
+    if not route_kind_present:
+        return run.route_kind, None
+
+    normalized_route_kind = str(route_kind_value or "").strip()
+    if not normalized_route_kind:
+        return run.route_kind, None
+    if normalized_route_kind != run.route_kind:
+        vehicle_ref = str(action.client_vehicle_key or action.action_key or "").strip() or "<unknown>"
+        return None, TransportAgentRunIssue(
+            code="transport_ai_extra_vehicle_route_kind_mismatch",
+            message=(
+                "The transport AI suggestion cannot create extra vehicle "
+                f"'{vehicle_ref}' with route kind '{normalized_route_kind}' during a "
+                f"'{run.route_kind}' run."
+            ),
+            blocking=True,
+            source="suggestion_validation",
+        )
+    return normalized_route_kind, None
+
+
+def _resolve_transport_ai_extra_departure_time(
+    *,
+    plan: TransportAgentPlan,
+    vehicle_ref: str,
+    route_kind: str,
+    fallback_time: str,
+    action,
+) -> tuple[str | None, TransportAgentRunIssue | None]:
+    itinerary = _find_transport_ai_route_itinerary(plan=plan, vehicle_ref=vehicle_ref)
+    itinerary_reference_time = None
+    if route_kind == "home_to_work":
+        itinerary_reference_time = _resolve_transport_ai_extra_eta(itinerary)
+    elif route_kind == "work_to_home":
+        itinerary_reference_time = _resolve_transport_ai_extra_etd(itinerary)
+
+    resolved_departure_time = itinerary_reference_time or _resolve_transport_ai_route_departure_time(
+        plan=plan,
+        vehicle_ref=vehicle_ref,
+        fallback_time=fallback_time,
+    )
+
+    after = action.after or {}
+    override_value, override_present = _get_transport_ai_action_state_value(after, "departure_time")
+    if not override_present:
+        return resolved_departure_time, None
+
+    normalized_override = _normalize_transport_ai_time_literal(override_value)
+    raw_override = str(override_value or "").strip()
+    if normalized_override is None:
+        if raw_override:
+            return raw_override, None
+        return resolved_departure_time, None
+    if itinerary_reference_time and normalized_override != itinerary_reference_time:
+        vehicle_ref_label = str(action.client_vehicle_key or action.action_key or vehicle_ref or "").strip() or vehicle_ref
+        reference_label = "ETA" if route_kind == "home_to_work" else "ETD"
+        return None, TransportAgentRunIssue(
+            code="transport_ai_extra_vehicle_departure_time_mismatch",
+            message=(
+                "The transport AI suggestion uses explicit departure_time "
+                f"'{normalized_override}' for extra vehicle '{vehicle_ref_label}', but the "
+                f"itinerary-derived {reference_label} is '{itinerary_reference_time}'."
+            ),
+            blocking=True,
+            source="suggestion_validation",
+        )
+    return normalized_override, None
+
+
 def _resolve_transport_ai_route_departure_time(
     *,
     plan: TransportAgentPlan,
     vehicle_ref: str,
     fallback_time: str,
 ) -> str:
-    matching_itinerary = next((item for item in plan.route_itineraries if item.vehicle_ref == vehicle_ref), None)
+    matching_itinerary = _find_transport_ai_route_itinerary(plan=plan, vehicle_ref=vehicle_ref)
     if matching_itinerary is None:
         return fallback_time
+
+    extra_eta = _resolve_transport_ai_extra_eta(matching_itinerary)
+    if extra_eta:
+        return extra_eta
+
+    extra_etd = _resolve_transport_ai_extra_etd(matching_itinerary)
+    if extra_etd:
+        return extra_etd
 
     for stop in matching_itinerary.stops:
         if stop.scheduled_time:
@@ -770,15 +1687,20 @@ def _generate_transport_ai_temporary_plate(
     run: TransportAIRun,
     sequence: int,
 ) -> str:
-    route_code = "H" if run.route_kind == "home_to_work" else "W"
-    date_fragment = run.service_date.strftime("%m%d")
-    run_fragment = f"{run.id % 100:02d}"
     candidate_sequence = max(sequence, 1)
     while True:
-        candidate = f"AI{route_code}{date_fragment}{run_fragment}{candidate_sequence:02d}"
+        candidate = f"Plate {candidate_sequence:03d}"
+        compact_candidate = candidate.replace(" ", "").upper()
+        uppercase_candidate = candidate.upper()
         existing_vehicle_id = db.execute(
             select(Vehicle.id)
-            .where(Vehicle.placa == candidate)
+            .where(
+                or_(
+                    Vehicle.placa == candidate,
+                    Vehicle.placa == uppercase_candidate,
+                    Vehicle.placa == compact_candidate,
+                )
+            )
             .limit(1)
         ).scalar_one_or_none()
         if existing_vehicle_id is None:
@@ -794,6 +1716,7 @@ def _build_transport_ai_vehicle_create_payload(
     vehicle_type: str,
     capacity: int,
     default_tolerance: int,
+    route_kind: str | None,
     departure_time: str,
 ) -> tuple[TransportVehicleCreate | None, TransportAgentRunIssue | None]:
     after = action.after or {}
@@ -808,8 +1731,8 @@ def _build_transport_ai_vehicle_create_payload(
     }
 
     if action.service_scope == "extra":
-        create_payload["route_kind"] = str(after.get("route_kind") or run.route_kind)
-        create_payload["departure_time"] = str(after.get("departure_time") or departure_time)
+        create_payload["route_kind"] = str(route_kind or run.route_kind)
+        create_payload["departure_time"] = departure_time
     else:
         recurring_flag_present = False
         for flag_name in _TRANSPORT_AI_CREATE_RECURRENCE_FLAG_NAMES:
@@ -1366,11 +2289,34 @@ def apply_transport_ai_vehicle_create_actions(
             run=run,
             sequence=create_sequence,
         )
-        departure_time = _resolve_transport_ai_route_departure_time(
-            plan=plan,
-            vehicle_ref=vehicle_ref,
-            fallback_time=run.earliest_boarding_time,
-        )
+        resolved_route_kind = None
+        if action.service_scope == "extra":
+            resolved_route_kind, route_kind_issue = _resolve_transport_ai_extra_route_kind(
+                run=run,
+                action=action,
+            )
+            if resolved_route_kind is None:
+                if route_kind_issue is not None:
+                    issues.append(route_kind_issue)
+                continue
+
+            departure_time, departure_time_issue = _resolve_transport_ai_extra_departure_time(
+                plan=plan,
+                vehicle_ref=vehicle_ref,
+                route_kind=resolved_route_kind,
+                fallback_time=run.earliest_boarding_time,
+                action=action,
+            )
+            if departure_time is None:
+                if departure_time_issue is not None:
+                    issues.append(departure_time_issue)
+                continue
+        else:
+            departure_time = _resolve_transport_ai_route_departure_time(
+                plan=plan,
+                vehicle_ref=vehicle_ref,
+                fallback_time=run.earliest_boarding_time,
+            )
         create_payload, payload_issue = _build_transport_ai_vehicle_create_payload(
             run=run,
             action=action,
@@ -1378,6 +2324,7 @@ def apply_transport_ai_vehicle_create_actions(
             vehicle_type=str(vehicle_type),
             capacity=capacity,
             default_tolerance=default_tolerance,
+            route_kind=resolved_route_kind,
             departure_time=departure_time,
         )
         if create_payload is None:
@@ -1500,6 +2447,106 @@ def apply_transport_ai_vehicle_update_actions(
     return vehicle_id_by_ref, issues, audit_entries
 
 
+def _sync_transport_ai_existing_extra_vehicle_departure_times(
+    db: Session,
+    *,
+    run: TransportAIRun,
+    plan: TransportAgentPlan,
+    vehicle_id_by_ref: dict[str, int],
+) -> list[TransportAgentRunIssue]:
+    issues: list[TransportAgentRunIssue] = []
+    processed_vehicle_refs: set[str] = set()
+
+    for action in plan.vehicle_actions:
+        if action.action_type not in {"keep", "update"} or action.service_scope != "extra":
+            continue
+
+        vehicle_ref = _build_transport_ai_vehicle_ref_from_action(action)
+        if vehicle_ref is None or vehicle_ref in processed_vehicle_refs:
+            continue
+        processed_vehicle_refs.add(vehicle_ref)
+
+        vehicle_id = vehicle_id_by_ref.get(vehicle_ref)
+        if vehicle_id is None:
+            continue
+
+        vehicle = db.get(Vehicle, vehicle_id)
+        if vehicle is None:
+            continue
+
+        route_kind, route_kind_issue = _resolve_transport_ai_extra_route_kind(
+            run=run,
+            action=action,
+        )
+        if route_kind is None:
+            if route_kind_issue is not None:
+                issues.append(route_kind_issue)
+            continue
+
+        schedule = find_transport_vehicle_schedule(
+            db,
+            vehicle=vehicle,
+            service_date=run.service_date,
+            route_kind=route_kind,
+            service_scope="extra",
+        )
+        if schedule is None:
+            issues.append(
+                TransportAgentRunIssue(
+                    code="transport_ai_extra_vehicle_schedule_missing",
+                    message=(
+                        f"The suggestion references extra vehicle '{vehicle_ref}' but its active "
+                        f"schedule for {run.service_date.isoformat()} is no longer available."
+                    ),
+                    blocking=True,
+                    source="suggestion_validation",
+                    vehicle_id=vehicle.id,
+                )
+            )
+            continue
+
+        departure_time, departure_time_issue = _resolve_transport_ai_extra_departure_time(
+            plan=plan,
+            vehicle_ref=vehicle_ref,
+            route_kind=route_kind,
+            fallback_time=run.earliest_boarding_time,
+            action=action,
+        )
+        if departure_time is None:
+            if departure_time_issue is not None:
+                issues.append(departure_time_issue)
+            continue
+        if schedule.departure_time == departure_time:
+            continue
+
+        try:
+            update_transport_vehicle_schedule(
+                db,
+                schedule_id=schedule.id,
+                payload=TransportVehicleScheduleUpdate(
+                    service_scope=schedule.service_scope,
+                    route_kind=schedule.route_kind,
+                    recurrence_kind=schedule.recurrence_kind,
+                    service_date=schedule.service_date,
+                    weekday=schedule.weekday,
+                    departure_time=departure_time,
+                    is_active=schedule.is_active,
+                ),
+            )
+        except ValueError as exc:
+            issues.append(
+                TransportAgentRunIssue(
+                    code="transport_ai_extra_vehicle_schedule_update_conflict",
+                    message=_truncate_transport_ai_router_message(str(exc)),
+                    blocking=True,
+                    source="suggestion_validation",
+                    vehicle_id=vehicle.id,
+                )
+            )
+
+    return issues
+
+
 def _materialize_transport_ai_vehicle_actions(
     db: Session,
     *,
@@ -1597,6 +2644,15 @@ def _materialize_transport_ai_vehicle_actions(
     )
     vehicle_id_by_ref.update(created_vehicle_id_by_ref)
     issues.extend(create_issues)
+
+    issues.extend(
+        _sync_transport_ai_existing_extra_vehicle_departure_times(
+            db,
+            run=run,
+            plan=plan,
+            vehicle_id_by_ref=vehicle_id_by_ref,
+        )
+    )
     return vehicle_id_by_ref, issues, created_vehicle_ids, create_audit_entries, update_audit_entries, remove_audit_entries
 
 
@@ -1639,6 +2695,17 @@ def _build_transport_ai_applied_route_stop_inputs(
     stop_inputs: list[TransportAIAppliedRouteStopInput] = []
     issues: list[TransportAgentRunIssue] = []
 
+    def normalize_applied_stop_type(*, route_kind: str, stop_type: str) -> str:
+        normalized_route_kind = str(route_kind or "").strip().lower()
+        normalized_stop_type = str(stop_type or "").strip().lower()
+        if normalized_route_kind != "work_to_home":
+            return normalized_stop_type
+        if normalized_stop_type == "pickup":
+            return "origin"
+        if normalized_stop_type == "destination":
+            return "dropoff"
+        return normalized_stop_type
+
     for itinerary in plan.route_itineraries:
         vehicle_id = vehicle_id_by_ref.get(itinerary.vehicle_ref)
         if vehicle_id is None:
@@ -1659,8 +2726,12 @@ def _build_transport_ai_applied_route_stop_inputs(
             stop_inputs.append(
                 TransportAIAppliedRouteStopInput(
                     vehicle_id=vehicle_id,
+                    route_kind=itinerary.route_kind,
                     stop_order=stop.stop_order + 1,
-                    stop_type=stop.stop_type,
+                    stop_type=normalize_applied_stop_type(
+                        route_kind=itinerary.route_kind,
+                        stop_type=stop.stop_type,
+                    ),
                     request_id=stop.request_id,
                     user_id=stop.user_id,
                     passenger_name=stop.passenger_name,
@@ -1685,17 +2756,53 @@ def _build_transport_ai_start_response(
     run_key: str | None = None,
     suggestion_key: str | None = None,
     status_value: str | None = None,
+    error_code: str | None = None,
     issues: list[TransportAIPreflightIssue] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    route_provider: str | None = None,
     can_cancel_restore: bool = False,
     suggestion_ready: bool = False,
 ) -> TransportAgentRunStartResponse:
+    normalized_issues = list(issues or [])
+    primary_issue_code = next((issue.code for issue in normalized_issues if issue.blocking and issue.code), None)
+    if primary_issue_code is None:
+        primary_issue_code = next((issue.code for issue in normalized_issues if issue.code), None)
+    effective_error_code = error_code or primary_issue_code
+    response_message, response_message_key, response_message_params = (
+        _build_transport_ai_router_failure_contract(
+            message=message,
+            error_code=effective_error_code,
+            issues=normalized_issues,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            route_provider=route_provider,
+        )
+        if not ok
+        else (_truncate_transport_ai_router_message(message), None, {})
+    )
     return TransportAgentRunStartResponse(
         ok=ok,
         run_key=run_key,
         suggestion_key=suggestion_key,
         status=status_value,
-        message=_truncate_transport_ai_router_message(message),
-        issues=list(issues or []),
+        message=response_message,
+        message_key=response_message_key,
+        message_params=response_message_params,
+        error_code=effective_error_code,
+        failure_category=(
+            resolve_transport_ai_failure_category(
+                error_code=effective_error_code,
+                issue_codes=[issue.code for issue in normalized_issues if issue.code],
+            )
+            if not ok
+            else None
+        ),
+        review_state=resolve_transport_ai_review_state(
+            run_status=status_value,
+            has_suggestion=False,
+        ),
+        issues=normalized_issues,
         can_cancel_restore=can_cancel_restore,
         suggestion_ready=suggestion_ready,
     )
@@ -1753,18 +2860,56 @@ def _restore_transport_ai_baseline_after_failure(
     timestamp,
     base_error_code: str,
     base_error_message: str,
+    issues: list[TransportAIPreflightIssue] | None = None,
+    planning_input: TransportAgentPlanningInput | None = None,
+    observability: TransportAIObservabilitySummary | None = None,
 ) -> tuple[list[TransportAIPreflightIssue], bool, str]:
+    effective_planning_input = planning_input or _load_transport_ai_run_planning_input_model(run)
+    if effective_planning_input is not None:
+        effective_planning_input = _ensure_transport_ai_planning_observability(
+            planning_input=effective_planning_input,
+            route_provider=run.route_provider,
+            llm_provider=run.llm_provider,
+            llm_model=run.llm_model,
+            llm_reasoning_effort=run.llm_reasoning_effort,
+        )
+        if observability is None:
+            observability = effective_planning_input.observability
+
+    resolved_base_error_message = _build_transport_ai_router_failure_message(
+        message=base_error_message,
+        error_code=base_error_code,
+        issues=list(issues or []),
+        llm_provider=run.llm_provider,
+        llm_model=run.llm_model,
+        route_provider=run.route_provider,
+        max_length=1000,
+    )
     _mark_transport_ai_run_failed(
         db=db,
         run=run,
         timestamp=timestamp,
         error_code=base_error_code,
-        error_message=base_error_message,
+        error_message=resolved_base_error_message,
     )
 
     if not str(run.baseline_assignments_json or "").strip():
-        return [], False, base_error_message
+        if effective_planning_input is not None:
+            save_transport_ai_planning_input(run, planning_input=effective_planning_input, saved_at=timestamp)
+        record_transport_ai_lifecycle_transition(
+            db,
+            stage="run_failed",
+            run=run,
+            message=resolved_base_error_message,
+            request_path="/api/transport/ai/route-calculations",
+            extra_details={
+                "error_code": base_error_code,
+                "observability": _build_transport_ai_observability_event_summary(observability),
+            },
+        )
+        return [], False, resolved_base_error_message
 
+    restore_started_at = perf_counter()
     try:
         restore_result = restore_transport_ai_baseline(
             db,
@@ -1773,6 +2918,35 @@ def _restore_transport_ai_baseline_after_failure(
             restored_at=timestamp,
         )
     except Exception as exc:
+        restore_duration_ms = _measure_transport_ai_router_elapsed_ms(restore_started_at)
+        if effective_planning_input is not None:
+            effective_planning_input = _set_transport_ai_planning_phase_duration(
+                effective_planning_input,
+                phase_field="restore_ms",
+                duration_ms=restore_duration_ms,
+            )
+            save_transport_ai_planning_input(run, planning_input=effective_planning_input, saved_at=timestamp)
+        final_message = _compose_transport_ai_router_failure_message(
+            headline=resolved_base_error_message,
+            restore_note="Baseline restore raised an unexpected error.",
+            max_length=1000,
+        )
+        run.error_message = _truncate_transport_ai_router_message(final_message, max_length=1000)
+        db.add(run)
+        db.flush()
+        record_transport_ai_lifecycle_transition(
+            db,
+            stage="run_failed",
+            run=run,
+            message=final_message,
+            request_path="/api/transport/ai/route-calculations",
+            extra_details={
+                "error_code": base_error_code,
+                "restore_status": "unexpected_error",
+                "restore_duration_ms": restore_duration_ms,
+                "observability": _build_transport_ai_observability_event_summary(observability),
+            },
+        )
         return (
             [
                 TransportAIPreflightIssue(
@@ -1783,10 +2957,27 @@ def _restore_transport_ai_baseline_after_failure(
                 )
             ],
             True,
-            f"{base_error_message} Baseline restore raised an unexpected error.",
+            final_message,
         )
 
+    restore_duration_ms = _measure_transport_ai_router_elapsed_ms(restore_started_at)
+    if effective_planning_input is not None:
+        effective_planning_input = _set_transport_ai_planning_phase_duration(
+            effective_planning_input,
+            phase_field="restore_ms",
+            duration_ms=restore_duration_ms,
+        )
+        save_transport_ai_planning_input(run, planning_input=effective_planning_input, saved_at=timestamp)
+
     if restore_result.ok:
+        final_message = _compose_transport_ai_router_failure_message(
+            headline=resolved_base_error_message,
+            restore_note="Baseline restored successfully.",
+            max_length=1000,
+        )
+        run.error_message = _truncate_transport_ai_router_message(final_message, max_length=1000)
+        db.add(run)
+        db.flush()
         emit_transport_reevaluation_event(
             event_type="transport_assignment_changed",
             reason="event",
@@ -1795,12 +2986,46 @@ def _restore_transport_ai_baseline_after_failure(
             service_date=run.service_date,
             route_kind=run.route_kind,
         )
-        return [], False, f"{base_error_message} Baseline restored."
+        record_transport_ai_lifecycle_transition(
+            db,
+            stage="run_failed",
+            run=run,
+            message=final_message,
+            request_path="/api/transport/ai/route-calculations",
+            extra_details={
+                "error_code": base_error_code,
+                "restore_status": "restored",
+                "restore_duration_ms": restore_duration_ms,
+                "observability": _build_transport_ai_observability_event_summary(observability),
+            },
+        )
+        return [], False, final_message
 
+    final_message = _compose_transport_ai_router_failure_message(
+        headline=resolved_base_error_message,
+        restore_note="Baseline restore remains available but requires manual review.",
+        max_length=1000,
+    )
+    run.error_message = _truncate_transport_ai_router_message(final_message, max_length=1000)
+    db.add(run)
+    db.flush()
+    record_transport_ai_lifecycle_transition(
+        db,
+        stage="run_failed",
+        run=run,
+        message=final_message,
+        request_path="/api/transport/ai/route-calculations",
+        extra_details={
+            "error_code": base_error_code,
+            "restore_status": "manual_review_required",
+            "restore_duration_ms": restore_duration_ms,
+            "observability": _build_transport_ai_observability_event_summary(observability),
+        },
+    )
     return (
         _coerce_restore_issues_to_preflight_issues(restore_result.issues),
         True,
-        f"{base_error_message} Baseline restore remains available but requires manual review.",
+        final_message,
     )
 
 
@@ -1817,22 +3042,51 @@ def get_transport_ai_settings(
     try:
         return get_transport_ai_llm_settings_payload(db, project_id=project_id)
     except TransportAILlmSettingsProjectNotFoundError as exc:
-        raise HTTPException(
+        response_detail = _sanitize_transport_ai_router_message(str(exc))
+        _raise_transport_ai_router_structured_http_error(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=_sanitize_transport_ai_router_message(str(exc)),
-        ) from exc
-    except TransportAILlmSettingsValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=_sanitize_transport_ai_router_message(str(exc)),
-        ) from exc
-    except TransportAILlmSettingsEncryptionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_sanitize_transport_ai_router_message(
-                "Transport AI settings encryption is unavailable."
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsProjectMissing",
             ),
-        ) from exc
+            error_code="transport_ai_settings_project_not_found",
+            technical_detail=response_detail,
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_settings_project_not_found",
+                    message=response_detail,
+                    extra={"project_id": project_id},
+                )
+            ],
+        )
+    except TransportAILlmSettingsValidationError as exc:
+        response_detail = _sanitize_transport_ai_router_message(str(exc))
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_409_CONFLICT,
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsLoadFailed",
+            ),
+            error_code="transport_ai_settings_validation_failed",
+            technical_detail=response_detail,
+        )
+    except TransportAILlmSettingsEncryptionError as exc:
+        response_detail = _sanitize_transport_ai_router_message(
+            "Transport AI settings encryption is unavailable."
+        )
+        technical_detail = _sanitize_transport_ai_router_message(str(exc))
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsEncryptionUnavailable",
+            ),
+            error_code="transport_ai_settings_encryption_unavailable",
+            technical_detail=technical_detail,
+        )
 
 
 @router.put("/settings", response_model=TransportAISettingsResponse)
@@ -1882,10 +3136,23 @@ def update_transport_ai_settings(
             response_detail=response_detail,
             timestamp=timestamp,
         )
-        raise HTTPException(
+        _raise_transport_ai_router_structured_http_error(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=response_detail,
-        ) from exc
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsProjectMissing",
+            ),
+            error_code="transport_ai_settings_project_not_found",
+            technical_detail=response_detail,
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_settings_project_not_found",
+                    message=response_detail,
+                    extra={"project_id": payload.project_id},
+                )
+            ],
+        )
     except TransportAILlmSettingsValidationError as exc:
         response_detail = _sanitize_transport_ai_router_message(
             str(exc),
@@ -1905,10 +3172,16 @@ def update_transport_ai_settings(
             response_detail=response_detail,
             timestamp=timestamp,
         )
-        raise HTTPException(
+        _raise_transport_ai_router_structured_http_error(
             status_code=status.HTTP_409_CONFLICT,
-            detail=response_detail,
-        ) from exc
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsSaveFailed",
+            ),
+            error_code="transport_ai_settings_validation_failed",
+            technical_detail=response_detail,
+        )
     except TransportAILlmSettingsEncryptionError as exc:
         response_detail = _sanitize_transport_ai_router_message(
             "Transport AI settings encryption is unavailable.",
@@ -1932,10 +3205,16 @@ def update_transport_ai_settings(
             response_detail=response_detail,
             timestamp=timestamp,
         )
-        raise HTTPException(
+        _raise_transport_ai_router_structured_http_error(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=response_detail,
-        ) from exc
+            message=response_detail,
+            message_key=_resolve_transport_ai_settings_message_key(
+                response_detail,
+                "ai.settingsEncryptionUnavailable",
+            ),
+            error_code="transport_ai_settings_encryption_unavailable",
+            technical_detail=failure_detail,
+        )
 
     response_payload = get_transport_ai_llm_settings_payload(db, project_id=payload.project_id)
     record_transport_ai_settings_update(
@@ -2025,7 +3304,20 @@ def get_transport_ai_route_calculation_status(
         .limit(1)
     ).scalar_one_or_none()
     if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transport AI run not found.")
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Transport AI run not found.",
+            message_key="ai.routeCalculationFailed",
+            error_code="transport_ai_run_not_found",
+            technical_detail="Transport AI run not found.",
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_run_not_found",
+                    message="Transport AI run not found.",
+                    extra={"run_key": run_key},
+                )
+            ],
+        )
 
     suggestion = get_latest_transport_ai_suggestion_for_run(db, run_id=run.id)
     return _build_transport_ai_run_status_response(run=run, suggestion=suggestion)
@@ -2046,11 +3338,37 @@ def get_transport_ai_latest_suggestion(
         route_kind=route_kind,
     )
     if suggestion is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transport AI suggestion not found.")
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Transport AI suggestion not found.",
+            message_key="ai.noSavedSuggestion",
+            error_code="transport_ai_suggestion_not_found",
+            technical_detail="Transport AI suggestion not found.",
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_suggestion_not_found",
+                    message="Transport AI suggestion not found.",
+                    extra={"service_date": service_date.isoformat(), "route_kind": route_kind},
+                )
+            ],
+        )
 
     run = db.get(TransportAIRun, suggestion.run_id)
     if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transport AI run not found.")
+        _raise_transport_ai_router_structured_http_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Transport AI run not found.",
+            message_key="ai.routeCalculationFailed",
+            error_code="transport_ai_run_not_found",
+            technical_detail="Transport AI run not found.",
+            issues=[
+                _build_transport_ai_router_issue(
+                    code="transport_ai_run_not_found",
+                    message="Transport AI run not found.",
+                    extra={"service_date": service_date.isoformat(), "route_kind": route_kind},
+                )
+            ],
+        )
     return _build_transport_ai_run_status_response(run=run, suggestion=suggestion)
 
 
@@ -2073,6 +3391,8 @@ def save_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion can no longer be saved.",
+                message_key="ai.changesSaveFailed",
+                error_code="transport_ai_suggestion_save_conflict",
             ),
         )
 
@@ -2085,6 +3405,8 @@ def save_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion cannot be saved because its payload is invalid.",
+                message_key="ai.changesSaveFailed",
+                error_code="transport_ai_suggestion_payload_invalid",
                 extra_issues=plan_issues,
             ),
         )
@@ -2136,6 +3458,8 @@ def cancel_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion was already applied and cannot be cancelled.",
+                message_key="ai.changesCancelFailed",
+                error_code="transport_ai_suggestion_cancel_already_applied",
             ),
         )
     if suggestion.status not in {"shown", "saved", "discarded"} or run.status not in {"proposed", "saved", "cancelled"}:
@@ -2146,6 +3470,8 @@ def cancel_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion can no longer be cancelled.",
+                message_key="ai.changesCancelFailed",
+                error_code="transport_ai_suggestion_cancel_conflict",
             ),
         )
 
@@ -2183,6 +3509,8 @@ def cancel_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message=restore_result.error_message or "Transport AI baseline restore requires manual review.",
+                message_key="ai.changesCancelFailed",
+                error_code="transport_ai_baseline_restore_failed",
                 extra_issues=restore_issues,
             ),
         )
@@ -2243,6 +3571,8 @@ def apply_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion can no longer be applied.",
+                message_key="ai.changesApplyFailed",
+                error_code="transport_ai_suggestion_apply_conflict",
             ),
         )
 
@@ -2255,6 +3585,8 @@ def apply_transport_ai_suggestion(
                 suggestion=suggestion,
                 ok=False,
                 message="The transport AI suggestion cannot be applied because its payload is invalid.",
+                message_key="ai.changesApplyFailed",
+                error_code="transport_ai_suggestion_payload_invalid",
                 extra_issues=plan_issues,
             ),
         )
@@ -2307,6 +3639,8 @@ def apply_transport_ai_suggestion(
                     suggestion=suggestion,
                     ok=False,
                     message="The transport AI suggestion could not be materialized for apply.",
+                    message_key="ai.changesApplyFailed",
+                    error_code="transport_ai_suggestion_materialization_failed",
                     extra_issues=pre_apply_issues,
                 ),
             )
@@ -2348,6 +3682,8 @@ def apply_transport_ai_suggestion(
                     suggestion=suggestion,
                     ok=False,
                     message="The transport AI suggestion could not be validated against the current operational snapshot.",
+                    message_key="ai.changesApplyFailed",
+                    error_code="transport_ai_suggestion_validation_failed",
                     extra_issues=proposal_issues,
                 ),
             )
@@ -2378,6 +3714,8 @@ def apply_transport_ai_suggestion(
                     suggestion=suggestion,
                     ok=False,
                     message="The transport AI suggestion could not be approved against the current operational snapshot.",
+                    message_key="ai.changesApplyFailed",
+                    error_code="transport_ai_suggestion_approval_failed",
                     extra_issues=proposal_issues,
                 ),
             )
@@ -2408,6 +3746,8 @@ def apply_transport_ai_suggestion(
                     suggestion=suggestion,
                     ok=False,
                     message="The transport AI suggestion could not be applied because the operational state changed.",
+                    message_key="ai.changesApplyFailed",
+                    error_code="transport_ai_suggestion_apply_state_changed",
                     extra_issues=proposal_issues,
                 ),
             )
@@ -2535,6 +3875,14 @@ def start_transport_ai_route_calculation(
         ensured_at=timestamp,
     )
     transport_settings = get_transport_settings_payload(db)
+    dashboard_scope_project_names = _resolve_transport_ai_dashboard_scope_project_names(
+        db,
+        dashboard_scope=payload.dashboard_scope,
+    )
+    dashboard_scope_audit_details = _build_transport_ai_dashboard_scope_audit_details(
+        dashboard_scope=payload.dashboard_scope,
+        project_names=dashboard_scope_project_names,
+    )
     run = TransportAIRun(
         run_key=f"transport-ai-run:{uuid4().hex}",
         service_date=payload.service_date,
@@ -2559,6 +3907,17 @@ def start_transport_ai_route_calculation(
                 "route_kind": payload.route_kind,
                 "earliest_boarding_time": payload.earliest_boarding_time,
                 "arrival_at_work_time": payload.arrival_at_work_time,
+                "request_route_kinds": (
+                    payload.request_route_kinds.model_dump(mode="json", exclude_none=True)
+                    if payload.request_route_kinds is not None
+                    else None
+                ),
+                "dashboard_scope": (
+                    payload.dashboard_scope.model_dump(mode="json")
+                    if payload.dashboard_scope is not None
+                    else None
+                ),
+                "dashboard_scope_project_names": dashboard_scope_project_names,
             }
         ),
         planning_input_hash="0" * 64,
@@ -2578,6 +3937,7 @@ def start_transport_ai_route_calculation(
         request_path="/api/transport/ai/route-calculations",
         extra_details={
             "actor_user_id": actor_admin_user.id,
+            **dashboard_scope_audit_details,
             "llm_provider": run.llm_provider,
             "llm_model": run.llm_model,
             "llm_reasoning_effort": run.llm_reasoning_effort,
@@ -2586,11 +3946,13 @@ def start_transport_ai_route_calculation(
         },
     )
 
+    baseline_started_at = perf_counter()
     baseline_capture = capture_transport_ai_baseline(
         db,
         service_date=payload.service_date,
         route_kind=payload.route_kind,
         actor_user_id=actor_admin_user.id,
+        dashboard_scope=payload.dashboard_scope,
         captured_at=timestamp,
     )
     save_transport_ai_baseline(
@@ -2599,6 +3961,7 @@ def start_transport_ai_route_calculation(
         baseline_capture=baseline_capture,
         saved_at=timestamp,
     )
+    baseline_duration_ms = _measure_transport_ai_router_elapsed_ms(baseline_started_at)
     record_transport_ai_lifecycle_transition(
         db,
         stage="baseline_saved",
@@ -2606,6 +3969,8 @@ def start_transport_ai_route_calculation(
         request_path="/api/transport/ai/route-calculations",
         extra_details={
             "baseline_hash": baseline_capture.baseline_hash,
+            "baseline_duration_ms": baseline_duration_ms,
+            **dashboard_scope_audit_details,
         },
     )
 
@@ -2627,6 +3992,24 @@ def start_transport_ai_route_calculation(
             error_code="transport_ai_reset_failed",
             error_message=error_message,
         )
+        record_transport_ai_lifecycle_transition(
+            db,
+            stage="run_failed",
+            run=run,
+            message=error_message,
+            request_path="/api/transport/ai/route-calculations",
+            extra_details={
+                "error_code": "transport_ai_reset_failed",
+                "observability": {
+                    "failure_layer": "local",
+                    "failed_phase": "reset",
+                    "phase_durations_ms": {
+                        "baseline_ms": baseline_duration_ms,
+                        "reset_ms": reset_result.duration_ms,
+                    },
+                },
+            },
+        )
         db.commit()
         notify_admin_data_changed("event")
         return _build_transport_ai_error_response(
@@ -2635,6 +4018,7 @@ def start_transport_ai_route_calculation(
                 ok=False,
                 run_key=run.run_key,
                 status_value=run.status,
+                error_code="transport_ai_reset_failed",
                 message=error_message,
                 issues=reset_issues,
                 can_cancel_restore=not (reset_result.restore_result and reset_result.restore_result.ok),
@@ -2648,6 +4032,8 @@ def start_transport_ai_route_calculation(
             route_kind=payload.route_kind,
             earliest_boarding_time=payload.earliest_boarding_time,
             arrival_at_work_time=payload.arrival_at_work_time,
+            request_route_kinds=payload.request_route_kinds,
+            dashboard_scope=payload.dashboard_scope,
             settings_obj=settings,
         )
         planning_issues = list(planning_input.preflight_issues)
@@ -2688,6 +4074,24 @@ def start_transport_ai_route_calculation(
                     run.llm_reasoning_effort = resolved_llm_runtime_settings.reasoning_effort
                     run.openai_model = resolved_llm_runtime_settings.model_name
 
+        planning_input = _ensure_transport_ai_planning_observability(
+            planning_input=planning_input,
+            route_provider=run.route_provider,
+            llm_provider=run.llm_provider,
+            llm_model=run.llm_model,
+            llm_reasoning_effort=run.llm_reasoning_effort,
+        )
+        planning_input = _set_transport_ai_planning_phase_duration(
+            planning_input,
+            phase_field="baseline_ms",
+            duration_ms=baseline_duration_ms,
+        )
+        if reset_result.duration_ms is not None:
+            planning_input = _set_transport_ai_planning_phase_duration(
+                planning_input,
+                phase_field="reset_ms",
+                duration_ms=reset_result.duration_ms,
+            )
         planning_input = planning_input.model_copy(update={"preflight_issues": planning_issues})
         save_transport_ai_planning_input(
             run,
@@ -2696,10 +4100,24 @@ def start_transport_ai_route_calculation(
         )
 
         if planning_input.total_requests <= 0 or any(issue.blocking for issue in planning_input.preflight_issues):
+            scope_phrase = _build_transport_ai_dashboard_scope_phrase(
+                dashboard_scope=payload.dashboard_scope,
+                project_names=planning_input.dashboard_scope_project_names,
+            )
             failure_message = (
-                "Transport AI route calculation has no eligible pending requests after reset."
+                f"Transport AI route calculation has no eligible pending requests{scope_phrase} after reset."
                 if planning_input.total_requests <= 0
-                else "Transport AI planning validation failed after resetting eligible requests."
+                else f"Transport AI planning validation failed{scope_phrase} after resetting eligible requests."
+            )
+            planning_input = _mark_transport_ai_planning_observability_failure(
+                planning_input,
+                failure_layer="local",
+                failed_phase="validation",
+            )
+            save_transport_ai_planning_input(
+                run,
+                planning_input=planning_input,
+                saved_at=timestamp,
             )
             restore_issues, can_cancel_restore, final_message = _restore_transport_ai_baseline_after_failure(
                 db=db,
@@ -2708,6 +4126,9 @@ def start_transport_ai_route_calculation(
                 timestamp=now_sgt(),
                 base_error_code="transport_ai_planning_input_invalid",
                 base_error_message=failure_message,
+                issues=planning_input.preflight_issues,
+                planning_input=planning_input,
+                observability=planning_input.observability,
             )
             db.commit()
             notify_admin_data_changed("event")
@@ -2717,6 +4138,7 @@ def start_transport_ai_route_calculation(
                     ok=False,
                     run_key=run.run_key,
                     status_value=run.status,
+                    error_code="transport_ai_planning_input_invalid",
                     message=final_message,
                     issues=[*planning_input.preflight_issues, *restore_issues],
                     can_cancel_restore=can_cancel_restore,
@@ -2736,6 +4158,9 @@ def start_transport_ai_route_calculation(
                 timestamp=now_sgt(),
                 base_error_code=agent_result.error_code or "transport_ai_route_calculation_failed",
                 base_error_message=agent_result.error_message or "Transport AI route calculation failed.",
+                issues=agent_result.issues,
+                planning_input=_load_transport_ai_run_planning_input_model(run),
+                observability=agent_result.observability,
             )
             db.commit()
             notify_admin_data_changed("event")
@@ -2745,8 +4170,12 @@ def start_transport_ai_route_calculation(
                     ok=False,
                     run_key=run.run_key,
                     status_value=run.status,
+                    error_code=agent_result.error_code or "transport_ai_route_calculation_failed",
                     message=final_message,
-                    issues=restore_issues,
+                    issues=[*agent_result.issues, *restore_issues],
+                    llm_provider=run.llm_provider,
+                    llm_model=run.llm_model,
+                    route_provider=run.route_provider,
                     can_cancel_restore=can_cancel_restore,
                 ),
             )
@@ -2774,6 +4203,9 @@ def start_transport_ai_route_calculation(
                 "llm_model": run.llm_model,
                 "llm_reasoning_effort": run.llm_reasoning_effort,
                 "openai_model": run.openai_model,
+                "observability": _build_transport_ai_observability_event_summary(
+                    agent_result.observability or _extract_transport_ai_run_observability(run)
+                ),
             },
         )
         emit_transport_reevaluation_event(
@@ -2804,6 +4236,8 @@ def start_transport_ai_route_calculation(
             timestamp=now_sgt(),
             base_error_code="transport_ai_route_calculation_unhandled_error",
             base_error_message=str(exc),
+            planning_input=_load_transport_ai_run_planning_input_model(run),
+            observability=_extract_transport_ai_run_observability(run),
         )
         db.commit()
         notify_admin_data_changed("event")
@@ -2813,6 +4247,7 @@ def start_transport_ai_route_calculation(
                 ok=False,
                 run_key=run.run_key,
                 status_value=run.status,
+                error_code="transport_ai_route_calculation_unhandled_error",
                 message=final_message,
                 issues=restore_issues,
                 can_cancel_restore=can_cancel_restore,

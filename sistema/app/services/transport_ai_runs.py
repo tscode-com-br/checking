@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -20,12 +21,17 @@ from ..models import (
     TransportVehicleScheduleException,
     Vehicle,
 )
-from ..schemas import TransportAgentPlan, TransportAgentPlanningInput
+from ..schemas import TransportAgentDashboardScope, TransportAgentPlan, TransportAgentPlanningInput
 from .location_settings import get_transport_settings_payload
 from .time_utils import now_sgt
 from .transport_assignment_operations import upsert_transport_assignment_with_persistence
 from .transport_ai_observability import record_transport_ai_lifecycle_transition
-from .transport_proposals import build_transport_operational_snapshot
+from .transport_proposals import (
+    build_transport_operational_snapshot,
+    build_transport_snapshot_request_scope_index,
+    resolve_transport_operational_dashboard_scope,
+    resolve_transport_operational_dashboard_scope_project_names,
+)
 from .transport_reevaluation_events import emit_transport_reevaluation_event
 
 
@@ -84,6 +90,7 @@ class TransportAIResetToPendingResult:
     restore_result: TransportAIBaselineRestoreResult | None = None
     event_emitted: bool = False
     error_message: str | None = None
+    duration_ms: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -96,6 +103,10 @@ class TransportAIResetToPendingResult:
 
 def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+
+def _measure_transport_ai_run_elapsed_ms(started_at: float) -> int:
+    return max(0, int(round((perf_counter() - started_at) * 1000)))
 
 
 def extract_transport_ai_run_llm_runtime_projects(run: TransportAIRun) -> list[dict[str, Any]]:
@@ -223,6 +234,7 @@ def _serialize_transport_assignment(
         "vehicle_id": assignment.vehicle_id,
         "status": assignment.status,
         "response_message": assignment.response_message,
+        "boarding_time": assignment.boarding_time,
         "acknowledged_by_user": assignment.acknowledged_by_user,
         "acknowledged_at": assignment.acknowledged_at.isoformat() if assignment.acknowledged_at is not None else None,
         "assigned_by_admin_id": assignment.assigned_by_admin_id,
@@ -271,11 +283,16 @@ def _serialize_transport_vehicle_schedule_exception(
     }
 
 
-def _snapshot_request_rows(snapshot) -> list[Any]:
+def _snapshot_request_rows(snapshot, *, request_rows_by_scope: dict[str, list[Any]] | None = None) -> list[Any]:
+    effective_request_rows_by_scope = request_rows_by_scope or {
+        "regular": list(snapshot.regular_requests),
+        "weekend": list(snapshot.weekend_requests),
+        "extra": list(snapshot.extra_requests),
+    }
     return [
-        *snapshot.regular_requests,
-        *snapshot.weekend_requests,
-        *snapshot.extra_requests,
+        *effective_request_rows_by_scope.get("regular", []),
+        *effective_request_rows_by_scope.get("weekend", []),
+        *effective_request_rows_by_scope.get("extra", []),
     ]
 
 
@@ -364,6 +381,7 @@ def capture_transport_ai_baseline(
     service_date: date,
     route_kind: str,
     actor_user_id: int,
+    dashboard_scope: TransportAgentDashboardScope | None = None,
     captured_at: datetime | None = None,
 ) -> TransportAIBaselineCapture:
     effective_captured_at = captured_at or now_sgt()
@@ -373,11 +391,31 @@ def capture_transport_ai_baseline(
         route_kind=route_kind,
         captured_at=effective_captured_at,
     )
-    snapshot_request_rows = _snapshot_request_rows(snapshot)
+    effective_dashboard_scope = resolve_transport_operational_dashboard_scope(
+        snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    dashboard_scope_project_names = resolve_transport_operational_dashboard_scope_project_names(
+        snapshot,
+        dashboard_scope=effective_dashboard_scope,
+    )
+    scoped_request_rows_by_scope = build_transport_snapshot_request_scope_index(
+        snapshot,
+        dashboard_scope=dashboard_scope,
+    )
+    snapshot_request_rows = _snapshot_request_rows(
+        snapshot,
+        request_rows_by_scope=scoped_request_rows_by_scope,
+    )
     request_kind_by_id = {
         request_row.id: request_row.request_kind
         for request_row in snapshot_request_rows
     }
+    dashboard_scope_payload = (
+        effective_dashboard_scope.model_dump(mode="json")
+        if effective_dashboard_scope is not None
+        else None
+    )
     eligible_requests = [
         {
             "request_id": request_row.id,
@@ -450,6 +488,8 @@ def capture_transport_ai_baseline(
         "service_date": service_date.isoformat(),
         "route_kind": route_kind,
         "actor_user_id": actor_user_id,
+        "dashboard_scope": dashboard_scope_payload,
+        "dashboard_scope_project_names": dashboard_scope_project_names,
         "settings": get_transport_settings_payload(db),
         "snapshot": snapshot.model_dump(mode="json"),
     }
@@ -459,6 +499,8 @@ def capture_transport_ai_baseline(
         "service_date": service_date.isoformat(),
         "route_kind": route_kind,
         "actor_user_id": actor_user_id,
+        "dashboard_scope": dashboard_scope_payload,
+        "dashboard_scope_project_names": dashboard_scope_project_names,
         "eligible_requests": eligible_requests,
         "assignments": [
             _serialize_transport_assignment(
@@ -474,6 +516,8 @@ def capture_transport_ai_baseline(
         "service_date": service_date.isoformat(),
         "route_kind": route_kind,
         "actor_user_id": actor_user_id,
+        "dashboard_scope": dashboard_scope_payload,
+        "dashboard_scope_project_names": dashboard_scope_project_names,
         "relevant_vehicle_ids": relevant_vehicle_ids,
         "vehicles": [_serialize_vehicle(vehicle) for vehicle in vehicles],
         "schedules": [_serialize_transport_vehicle_schedule(schedule) for schedule in schedules],
@@ -847,6 +891,7 @@ def restore_transport_ai_baseline(
                 vehicle_id=target_vehicle.id if target_vehicle is not None else None,
                 status=target_status,
                 response_message=assignment_payload.get("response_message"),
+                boarding_time=assignment_payload.get("boarding_time"),
                 acknowledged_by_user=bool(assignment_payload.get("acknowledged_by_user")),
                 acknowledged_at=target_acknowledged_at,
                 assigned_by_admin_id=assignment_payload.get("assigned_by_admin_id"),
@@ -877,6 +922,7 @@ def restore_transport_ai_baseline(
             target_assignment.vehicle_id = target_vehicle.id if target_vehicle is not None else None
             target_assignment.status = target_status
             target_assignment.response_message = assignment_payload.get("response_message")
+            target_assignment.boarding_time = assignment_payload.get("boarding_time")
             target_assignment.acknowledged_by_user = bool(assignment_payload.get("acknowledged_by_user"))
             target_assignment.acknowledged_at = target_acknowledged_at
             target_assignment.assigned_by_admin_id = assignment_payload.get("assigned_by_admin_id")
@@ -916,6 +962,7 @@ def reset_transport_ai_requests_to_pending(
     actor_user_id: int | None = None,
     reset_at: datetime | None = None,
 ) -> TransportAIResetToPendingResult:
+    reset_started_at = perf_counter()
     timestamp = reset_at or now_sgt()
     _, assignments_payload, _, issues = _load_baseline_restore_payloads(run)
     if assignments_payload is None or issues:
@@ -923,6 +970,7 @@ def reset_transport_ai_requests_to_pending(
             reset_request_ids=[],
             reset_assignment_ids=[],
             issues=issues,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
 
     baseline_service_date = _parse_date(assignments_payload.get("service_date"), fallback=run.service_date)
@@ -938,6 +986,7 @@ def reset_transport_ai_requests_to_pending(
             reset_request_ids=[],
             reset_assignment_ids=[],
             issues=issues,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
 
     target_route_kind = str(assignments_payload.get("route_kind") or run.route_kind)
@@ -954,6 +1003,7 @@ def reset_transport_ai_requests_to_pending(
             reset_request_ids=[],
             reset_assignment_ids=[],
             issues=issues,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
 
     reset_request_ids = sorted(
@@ -990,6 +1040,7 @@ def reset_transport_ai_requests_to_pending(
             reset_request_ids=reset_request_ids,
             reset_assignment_ids=[],
             issues=issues,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
 
     effective_actor_user_id = actor_user_id if actor_user_id is not None else run.actor_user_id
@@ -1021,6 +1072,7 @@ def reset_transport_ai_requests_to_pending(
             extra_details={
                 "reset_request_count": len(reset_request_ids),
                 "reset_assignment_count": len(reset_assignment_ids),
+                "reset_duration_ms": _measure_transport_ai_run_elapsed_ms(reset_started_at),
             },
         )
         emit_transport_reevaluation_event(
@@ -1037,6 +1089,7 @@ def reset_transport_ai_requests_to_pending(
             reset_assignment_ids=reset_assignment_ids,
             issues=[],
             event_emitted=True,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
     except Exception as exc:
         savepoint.rollback()
@@ -1062,6 +1115,7 @@ def reset_transport_ai_requests_to_pending(
             restore_result=restore_result,
             event_emitted=False,
             error_message=error_message,
+            duration_ms=_measure_transport_ai_run_elapsed_ms(reset_started_at),
         )
 
 

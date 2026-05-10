@@ -63,19 +63,83 @@
     return fallbackProject;
   }
 
-  function resolveFallbackProject(defaults) {
+  function normalizeProjectValues(projectValues, allowedProjects, fallbackProjects) {
+    const normalizedAllowedProjects = Array.isArray(allowedProjects)
+      ? allowedProjects.map((project) => String(project || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const allowedProjectSet = new Set(normalizedAllowedProjects);
+    const normalizedFallbackProjects = Array.isArray(fallbackProjects)
+      ? fallbackProjects.map((project) => String(project || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const rawValues = Array.isArray(projectValues)
+      ? projectValues
+      : [projectValues];
+    const normalizedProjects = [];
+    const seenProjects = new Set();
+
+    rawValues.forEach((projectValue) => {
+      const normalizedValue = String(projectValue || '').trim().toUpperCase();
+      if (!normalizedValue || seenProjects.has(normalizedValue)) {
+        return;
+      }
+      if (normalizedAllowedProjects.length && !allowedProjectSet.has(normalizedValue)) {
+        return;
+      }
+      seenProjects.add(normalizedValue);
+      normalizedProjects.push(normalizedValue);
+    });
+
+    if (normalizedProjects.length) {
+      return normalizedProjects;
+    }
+
+    return normalizedFallbackProjects.filter((project, index) => normalizedFallbackProjects.indexOf(project) === index);
+  }
+
+  function resolveFallbackProjects(defaults) {
     const safeDefaults = defaults || {};
     const allowedProjects = Array.isArray(safeDefaults.allowedProjects)
-      ? safeDefaults.allowedProjects.filter((project) => String(project || '').trim())
+      ? safeDefaults.allowedProjects
+        .map((project) => String(project || '').trim().toUpperCase())
+        .filter(Boolean)
       : [];
-    const defaultProject = String(safeDefaults.project || '').trim().toUpperCase();
-    if (defaultProject && allowedProjects.includes(defaultProject)) {
-      return defaultProject;
+    const defaultProjects = Array.isArray(safeDefaults.projects)
+      ? safeDefaults.projects
+      : [safeDefaults.project];
+    const normalizedDefaultProjects = defaultProjects
+      .map((project) => String(project || '').trim().toUpperCase())
+      .filter(Boolean)
+      .filter((project, index, values) => values.indexOf(project) === index);
+    const filteredDefaults = normalizedDefaultProjects.filter((project) => allowedProjects.includes(project));
+
+    if (filteredDefaults.length) {
+      return filteredDefaults;
     }
+
     if (allowedProjects.length) {
-      return String(allowedProjects[0] || '').trim().toUpperCase();
+      return allowedProjects;
     }
-    return defaultProject;
+
+    return normalizedDefaultProjects;
+  }
+
+  function resolveFallbackProject(defaults) {
+    return resolveFallbackProjects(defaults)[0] || '';
+  }
+
+  function resolveFallbackActiveProject(defaults, fallbackProjects) {
+    const normalizedFallbackProjects = Array.isArray(fallbackProjects)
+      ? fallbackProjects.map((project) => String(project || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const rawDefaultActiveProject = String(
+      (defaults && (defaults.activeProject || defaults.project)) || ''
+    ).trim().toUpperCase();
+
+    if (rawDefaultActiveProject && normalizedFallbackProjects.includes(rawDefaultActiveProject)) {
+      return rawDefaultActiveProject;
+    }
+
+    return normalizedFallbackProjects[0] || rawDefaultActiveProject;
   }
 
   function shouldAttemptSilentLocationLookup(permissionState, hasPersistedGrant) {
@@ -193,10 +257,6 @@
     return currentMap;
   }
 
-  function resolvePasswordActionLabel(hasPassword) {
-    return hasPassword ? 'Senha' : 'Registrar';
-  }
-
   function resolveAuthenticationPromptMessage(authState) {
     const state = authState && typeof authState === 'object' ? authState : {};
 
@@ -214,11 +274,13 @@
   function resolvePersistedUserSettings(settingsByChave, chave, defaults) {
     const normalizedChave = sanitizeSettingsChave(chave);
     const safeDefaults = defaults || {};
-    const fallbackProject = resolveFallbackProject(safeDefaults);
+    const fallbackProjects = resolveFallbackProjects(safeDefaults);
+    const fallbackActiveProject = resolveFallbackActiveProject(safeDefaults, fallbackProjects);
     const fallbackAutomaticActivitiesEnabled = Boolean(safeDefaults.automaticActivitiesEnabled);
     if (normalizedChave.length !== 4) {
       return {
-        project: fallbackProject,
+        projects: fallbackProjects,
+        activeProject: fallbackActiveProject,
         automaticActivitiesEnabled: fallbackAutomaticActivitiesEnabled,
       };
     }
@@ -229,9 +291,22 @@
     const allowedProjects = Array.isArray(safeDefaults.allowedProjects)
       ? safeDefaults.allowedProjects
       : [];
+    const resolvedProjects = normalizeProjectValues(
+      record && Array.isArray(record.projects) && record.projects.length
+        ? record.projects
+        : (record && record.project),
+      allowedProjects,
+      fallbackProjects
+    );
+    const resolvedActiveProject = normalizeProjectValue(
+      record && (record.activeProject || record.project),
+      resolvedProjects,
+      resolveFallbackActiveProject(safeDefaults, resolvedProjects)
+    );
 
     return {
-      project: normalizeProjectValue(record && record.project, allowedProjects, fallbackProject),
+      projects: resolvedProjects,
+      activeProject: resolvedActiveProject,
       automaticActivitiesEnabled:
         record && typeof record.automaticActivitiesEnabled === 'boolean'
           ? record.automaticActivitiesEnabled
@@ -250,12 +325,22 @@
     const allowedProjects = Array.isArray(safeDefaults.allowedProjects)
       ? safeDefaults.allowedProjects
       : [];
+    const fallbackProjects = resolveFallbackProjects(safeDefaults);
+    const resolvedProjects = normalizeProjectValues(
+      nextSettings && Array.isArray(nextSettings.projects) && nextSettings.projects.length
+        ? nextSettings.projects
+        : (nextSettings && nextSettings.project),
+      allowedProjects,
+      fallbackProjects
+    );
+    const resolvedActiveProject = normalizeProjectValue(
+      nextSettings && (nextSettings.activeProject || nextSettings.project),
+      resolvedProjects,
+      resolveFallbackActiveProject(safeDefaults, resolvedProjects)
+    );
     currentMap[normalizedChave] = {
-      project: normalizeProjectValue(
-        nextSettings && nextSettings.project,
-        allowedProjects,
-        resolveFallbackProject(safeDefaults)
-      ),
+      projects: resolvedProjects,
+      activeProject: resolvedActiveProject,
       automaticActivitiesEnabled: Boolean(
         nextSettings && nextSettings.automaticActivitiesEnabled
       ),
@@ -267,6 +352,7 @@
     sanitizeSettingsChave,
     splitNotificationMessage,
     normalizeProjectValue,
+    normalizeProjectValues,
     shouldAttemptSilentLocationLookup,
     isPasswordLengthValid,
     isPasswordVerificationInputValid,
@@ -275,7 +361,6 @@
     formatTransportVehicleType,
     resolvePersistedPassword,
     withPersistedPassword,
-    resolvePasswordActionLabel,
     resolveAuthenticationPromptMessage,
     resolvePersistedUserSettings,
     withPersistedUserSettings,

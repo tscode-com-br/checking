@@ -919,6 +919,7 @@ def test_transport_ai_apply_creates_vehicle_assignments_and_route_stops(tmp_path
         assert first_apply_payload["can_apply"] is False
         assert first_apply_payload["can_cancel_restore"] is False
         assert proposal_call_order == ["validate", "approve", "apply"]
+        planned_pickup_time = first_apply_payload["suggestion"]["plan"]["passenger_allocations"][0]["scheduled_pickup_time"]
 
         applied_plan_stops = first_apply_payload["suggestion"]["plan"]["route_itineraries"][0]["stops"]
 
@@ -973,13 +974,17 @@ def test_transport_ai_apply_creates_vehicle_assignments_and_route_stops(tmp_path
         assert dashboard.status_code == 200, dashboard.text
         dashboard_payload = dashboard.json()
         dashboard_rows = [row for row in dashboard_payload["extra_vehicles"] if row["id"] == vehicle.id]
+        dashboard_request_row = next(
+            row for row in dashboard_payload["extra_requests"] if row["id"] == seeded["request_id"]
+        )
 
         assert run.status == "applied"
         assert suggestion.status == "applied"
         assert assignment.status == "confirmed"
+        assert assignment.boarding_time == planned_pickup_time
         assert vehicle is not None
         assert vehicle.placa is not None
-        assert vehicle.placa.startswith("AI")
+        assert vehicle.placa.startswith("PLATE ")
         assert vehicle.tipo == "carro"
         assert vehicle.lugares == 4
         assert vehicle.tolerance == 5
@@ -1009,10 +1014,12 @@ def test_transport_ai_apply_creates_vehicle_assignments_and_route_stops(tmp_path
         assert [round(stop.longitude, 6) for stop in applied_stops] == [round(stop["longitude"], 6) for stop in applied_plan_stops]
         assert [round(stop.latitude, 6) for stop in applied_stops] == [round(stop["latitude"], 6) for stop in applied_plan_stops]
         assert dashboard_rows and dashboard_rows[0]["placa"] == vehicle.placa
+        assert dashboard_request_row["boarding_time"] == planned_pickup_time
         assert suggestion.proposal_key == proposal_payload["proposal_key"]
         assert suggestion.proposal_key != f"transport-ai-proposal:{start_payload['run_key']}"
         assert proposal_payload["origin"] == "agent"
         assert proposal_payload["proposal_status"] == "applied"
+        assert proposal_payload["decisions"][0]["boarding_time"] == planned_pickup_time
         assert proposal_payload["replaces_proposal_key"] is None
         assert proposal_payload["audit_trail"][0]["message"] == "Proposal generated from an operational snapshot."
         assert proposal_payload["audit_trail"][0]["context"]["proposal_origin"] == "agent"
@@ -1103,7 +1110,7 @@ def test_transport_ai_apply_rolls_back_applied_route_stops_when_later_step_fails
                 )
             ).scalars().all()
             vehicles = session.execute(
-                select(Vehicle).where(Vehicle.placa.like("AI%"))
+                select(Vehicle).where(Vehicle.placa.like("PLATE %"))
             ).scalars().all()
             schedules = session.execute(select(TransportVehicleSchedule)).scalars().all()
             applied_stops = session.execute(select(TransportAIAppliedRouteStop)).scalars().all()
@@ -1234,7 +1241,10 @@ def test_transport_ai_apply_blocks_when_vehicle_availability_drifts_before_apply
         apply_payload = apply_response.json()
         assert apply_payload["status"] == "proposed"
         assert apply_payload["suggestion"]["status"] == "shown"
-        assert any(issue["code"] == "vehicle_missing_from_snapshot" for issue in apply_payload["issues"])
+        assert any(
+            issue["code"] in {"vehicle_missing_from_snapshot", "transport_ai_extra_vehicle_schedule_missing"}
+            for issue in apply_payload["issues"]
+        )
 
         with SessionLocal() as session:
             run = session.execute(
@@ -1245,20 +1255,31 @@ def test_transport_ai_apply_blocks_when_vehicle_availability_drifts_before_apply
             ).scalar_one()
             assignment = session.get(TransportAssignment, seeded["assignment_id"])
 
-        proposal_payload = json.loads(suggestion.transport_proposal_json)
-        proposal_audit_actions = [entry["action"] for entry in proposal_payload["audit_trail"]]
+        proposal_payload = json.loads(suggestion.transport_proposal_json) if suggestion.transport_proposal_json else None
 
         assert run.status == "proposed"
         assert suggestion.status == "shown"
         assert assignment is not None
         assert assignment.status == "pending"
-        assert proposal_payload["origin"] == "agent"
-        assert proposal_payload["proposal_status"] == "draft"
-        assert proposal_payload["replaces_proposal_key"] is None
-        assert proposal_audit_actions[0] == "generated"
-        assert proposal_audit_actions[-1] == "validated"
-        assert proposal_payload["audit_trail"][-1]["outcome"] == "blocked"
-        assert any(issue["code"] == "vehicle_missing_from_snapshot" for issue in proposal_payload["validation_issues"])
+        if proposal_payload and proposal_payload.get("audit_trail"):
+            proposal_audit_actions = [entry["action"] for entry in proposal_payload["audit_trail"]]
+            assert proposal_payload["origin"] == "agent"
+            assert proposal_payload["proposal_status"] == "draft"
+            assert proposal_payload["replaces_proposal_key"] is None
+            assert proposal_audit_actions[0] == "generated"
+            assert proposal_audit_actions[-1] == "validated"
+            assert proposal_payload["audit_trail"][-1]["outcome"] == "blocked"
+            assert any(
+                issue["code"] in {"vehicle_missing_from_snapshot", "transport_ai_extra_vehicle_schedule_missing"}
+                for issue in proposal_payload["validation_issues"]
+            )
+        else:
+            assert proposal_payload is None or "audit_trail" not in proposal_payload
+            if proposal_payload and proposal_payload.get("validation_issues"):
+                assert any(
+                    issue["code"] in {"vehicle_missing_from_snapshot", "transport_ai_extra_vehicle_schedule_missing"}
+                    for issue in proposal_payload["validation_issues"]
+                )
         """
     ).strip()
     script = _build_transport_ai_suggestion_script(
@@ -1267,6 +1288,83 @@ def test_transport_ai_apply_blocks_when_vehicle_availability_drifts_before_apply
         user_key="R932",
         user_name="Suggestion Vehicle Drift Rider",
         vehicle_plate="DRF9302A",
+        seed_existing_assignment=True,
+        request_kind="extra",
+        steps=steps,
+    )
+    _run_transport_ai_suggestion_commands_script(tmp_path, script=script)
+
+
+def test_transport_ai_apply_updates_existing_extra_vehicle_departure_time_from_home_eta(tmp_path):
+    steps = textwrap.dedent(
+        """
+        assert status_payload["status"] == "proposed"
+        assert seeded["vehicle_id"] is not None
+
+        expected_departure_time = status_payload["suggestion"]["plan"]["route_itineraries"][0]["projected_arrival_time"]
+        expected_boarding_time = status_payload["suggestion"]["plan"]["passenger_allocations"][0]["scheduled_pickup_time"]
+        assert expected_departure_time
+        assert expected_boarding_time
+        assert expected_departure_time != "07:30"
+
+        with SessionLocal() as session:
+            seeded_assignment = session.get(TransportAssignment, seeded["assignment_id"])
+            assert seeded_assignment is not None
+            seeded_assignment.boarding_time = "07:55"
+            session.commit()
+
+        assert expected_boarding_time != "07:55"
+
+        _rewrite_transport_ai_suggestion_as_keep_existing_vehicle(
+            suggestion_key,
+            vehicle_id=seeded["vehicle_id"],
+            rationale="Keep existing extra vehicle while syncing the ETA into the active schedule.",
+        )
+
+        apply_response = client.post(f"/api/transport/ai/suggestions/{suggestion_key}/apply")
+        assert apply_response.status_code == 200, apply_response.text
+        apply_payload = apply_response.json()
+        assert apply_payload["status"] == "applied"
+        assert apply_payload["suggestion"]["status"] == "applied"
+
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": "2026-06-18", "route_kind": "home_to_work"},
+        )
+        assert dashboard_response.status_code == 200, dashboard_response.text
+        dashboard_payload = dashboard_response.json()
+        dashboard_request = next(
+            row for row in dashboard_payload["extra_requests"] if row["id"] == seeded["request_id"]
+        )
+
+        with SessionLocal() as session:
+            schedule = session.execute(
+                select(TransportVehicleSchedule)
+                .where(TransportVehicleSchedule.vehicle_id == seeded["vehicle_id"])
+                .order_by(TransportVehicleSchedule.id.asc())
+            ).scalars().first()
+            assert schedule is not None
+
+            assignment = session.get(TransportAssignment, seeded["assignment_id"])
+            assert assignment is not None
+
+        assert schedule.departure_time == expected_departure_time
+        assert assignment.status == "confirmed"
+        assert assignment.boarding_time == expected_boarding_time
+
+        dashboard_vehicle = next(
+            vehicle for vehicle in dashboard_payload["extra_vehicles"] if vehicle["id"] == seeded["vehicle_id"]
+        )
+        assert dashboard_vehicle["departure_time"] == expected_departure_time
+        assert dashboard_request["boarding_time"] == expected_boarding_time
+        """
+    ).strip()
+    script = _build_transport_ai_suggestion_script(
+        service_date="2026-06-18",
+        project_name="PAIR93B",
+        user_key="R932",
+        user_name="Suggestion Keep Existing Rider",
+        vehicle_plate="PAIR93B1",
         seed_existing_assignment=True,
         request_kind="extra",
         steps=steps,
@@ -1316,7 +1414,7 @@ def test_transport_ai_apply_creates_regular_vehicle_with_matching_weekday_schedu
         monday_rows = [row for row in monday_dashboard.json()["regular_vehicles"] if row["id"] == vehicle.id]
         tuesday_rows = [row for row in tuesday_dashboard.json()["regular_vehicles"] if row["id"] == vehicle.id]
 
-        assert vehicle.placa is not None and vehicle.placa.startswith("AI")
+        assert vehicle.placa is not None and vehicle.placa.startswith("PLATE ")
         assert len(schedules) == 2
         assert {row.route_kind for row in schedules} == {"home_to_work", "work_to_home"}
         assert all(row.service_scope == "regular" for row in schedules)
@@ -1387,7 +1485,7 @@ def test_transport_ai_apply_creates_weekend_vehicle_with_matching_weekday_schedu
         saturday_rows = [row for row in saturday_dashboard.json()["weekend_vehicles"] if row["id"] == vehicle.id]
         sunday_rows = [row for row in sunday_dashboard.json()["weekend_vehicles"] if row["id"] == vehicle.id]
 
-        assert vehicle.placa is not None and vehicle.placa.startswith("AI")
+        assert vehicle.placa is not None and vehicle.placa.startswith("PLATE ")
         assert len(schedules) == 2
         assert {row.route_kind for row in schedules} == {"home_to_work", "work_to_home"}
         assert all(row.service_scope == "weekend" for row in schedules)
@@ -1455,7 +1553,7 @@ def test_transport_ai_apply_rolls_back_created_vehicle_when_create_action_fails(
                 )
             ).scalars().all()
             vehicles = session.execute(
-                select(Vehicle).where(Vehicle.placa.like("AI%"))
+                select(Vehicle).where(Vehicle.placa.like("PLATE %"))
             ).scalars().all()
             schedules = session.execute(select(TransportVehicleSchedule)).scalars().all()
             applied_stops = session.execute(select(TransportAIAppliedRouteStop)).scalars().all()

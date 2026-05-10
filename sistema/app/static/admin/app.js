@@ -70,6 +70,10 @@ let isAuthenticated = false;
 let adminAccessScope = "full";
 let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"];
 let adminCanViewActivityTime = true;
+let currentAdminChave = "";
+let currentAdminProjectNames = [];
+let currentAdminProjectScopeResolved = false;
+let currentAdminProjectScopeLoadPromise = null;
 let registeredUsersTotal = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
@@ -177,6 +181,305 @@ function getLocationProjectOptions(selectedValues = []) {
   const catalogProjectNames = getProjectCatalogNames();
   const detachedProjectNames = selectedProjectNames.filter((projectName) => !catalogProjectNames.includes(projectName));
   return [...detachedProjectNames, ...catalogProjectNames];
+}
+
+function normalizeUserProjectMemberships(projectNames, activeProject = "") {
+  const normalizedProjectNames = normalizeProjectNames(projectNames);
+  const normalizedActiveProject = String(activeProject ?? "").trim();
+  if (normalizedActiveProject && !normalizedProjectNames.includes(normalizedActiveProject)) {
+    return [normalizedActiveProject, ...normalizedProjectNames];
+  }
+  return normalizedProjectNames.length ? normalizedProjectNames : (normalizedActiveProject ? [normalizedActiveProject] : []);
+}
+
+function formatProjectMembershipSummary(projectNames) {
+  const normalizedProjectNames = normalizeProjectNames(projectNames);
+  if (!normalizedProjectNames.length) {
+    return "Nenhum projeto selecionado";
+  }
+  return normalizedProjectNames.join(", ");
+}
+
+function getUserMembershipProjectNames(row) {
+  return normalizeUserProjectMemberships(row?.projetos, row?.projeto);
+}
+
+function formatUserMembershipProjects(row, emptyLabel = "-") {
+  const projectNames = getUserMembershipProjectNames(row);
+  return projectNames.length ? projectNames.join(", ") : emptyLabel;
+}
+
+function getProjectMembershipEditorKey(kind, rowId) {
+  return `${kind}-${rowId}`;
+}
+
+function getProjectMembershipEditorByKey(editorKey) {
+  return document.querySelector(`[data-project-membership-editor="${CSS.escape(String(editorKey))}"]`);
+}
+
+function getProjectMembershipEditor(kind, rowId) {
+  return getProjectMembershipEditorByKey(getProjectMembershipEditorKey(kind, rowId));
+}
+
+function parseProjectMembershipSelection(value) {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return normalizeProjectNames(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return [];
+  }
+}
+
+function getStoredProjectMembershipSelection(editor) {
+  if (!(editor instanceof HTMLElement)) {
+    return [];
+  }
+  return parseProjectMembershipSelection(editor.dataset.selectedProjects);
+}
+
+function setStoredProjectMembershipSelection(editor, projectNames) {
+  if (!(editor instanceof HTMLElement)) {
+    return [];
+  }
+
+  const normalizedProjectNames = normalizeProjectNames(projectNames);
+  editor.dataset.selectedProjects = JSON.stringify(normalizedProjectNames);
+
+  const summary = editor.querySelector(".membership-projects-summary");
+  if (summary instanceof HTMLElement) {
+    const summaryText = formatProjectMembershipSummary(normalizedProjectNames);
+    summary.textContent = summaryText;
+    summary.title = summaryText;
+  }
+  return normalizedProjectNames;
+}
+
+function getProjectMembershipDisabledTitle(kind) {
+  return kind === "pending"
+    ? "Clique em Editar antes de selecionar os projetos desta pendência."
+    : "Clique em Editar antes de selecionar os projetos deste usuário.";
+}
+
+function getProjectMembershipReadyTitle(kind) {
+  return kind === "pending"
+    ? "Selecione os projetos para este cadastro pendente."
+    : "Selecione os projetos vinculados a este usuário.";
+}
+
+function getCurrentAdminEditableProjectNames() {
+  if (currentAdminProjectScopeResolved) {
+    return normalizeProjectNames(currentAdminProjectNames);
+  }
+  return getProjectCatalogNames();
+}
+
+function getProjectMembershipOptionStates(editor) {
+  const selectedProjectNames = getStoredProjectMembershipSelection(editor);
+  const editableProjectNames = getCurrentAdminEditableProjectNames();
+  const editableProjectSet = new Set(editableProjectNames);
+  const optionNames = getLocationProjectOptions([...selectedProjectNames, ...editableProjectNames]);
+  const selectedProjectSet = new Set(selectedProjectNames);
+
+  return optionNames.map((projectName) => ({
+    projectName,
+    checked: selectedProjectSet.has(projectName),
+    locked: currentAdminProjectScopeResolved && !editableProjectSet.has(projectName),
+  }));
+}
+
+function getLiveProjectMembershipSelection(editor) {
+  if (!(editor instanceof HTMLElement) || !editor.classList.contains("is-open")) {
+    return null;
+  }
+
+  const editorKey = String(editor.dataset.projectMembershipEditor || "").trim();
+  if (!editorKey) {
+    return null;
+  }
+
+  return normalizeProjectNames(
+    Array.from(editor.querySelectorAll(`input[data-project-membership-option="${CSS.escape(editorKey)}"]`))
+      .filter((input) => input.checked)
+      .map((input) => input.value)
+  );
+}
+
+function closeProjectMembershipPanel(editor) {
+  if (!(editor instanceof HTMLElement)) {
+    return;
+  }
+
+  const panel = editor.querySelector(".membership-projects-panel");
+  if (panel instanceof HTMLElement) {
+    panel.hidden = true;
+    panel.replaceChildren();
+  }
+
+  editor.classList.remove("is-open");
+  const button = editor.querySelector("[data-project-membership-toggle]");
+  if (button instanceof HTMLButtonElement) {
+    button.setAttribute("aria-expanded", "false");
+  }
+}
+
+function focusProjectMembershipPanel(editor) {
+  if (!(editor instanceof HTMLElement)) {
+    return;
+  }
+
+  editor.querySelector("input[data-project-membership-option]:not(:disabled)")?.focus();
+}
+
+function syncProjectMembershipToggleState(editor, editing) {
+  if (!(editor instanceof HTMLElement)) {
+    return;
+  }
+
+  const button = editor.querySelector("[data-project-membership-toggle]");
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const kind = String(editor.dataset.projectMembershipKind || "user").trim();
+  const selectedProjectNames = getStoredProjectMembershipSelection(editor);
+  const editableProjectNames = getCurrentAdminEditableProjectNames();
+  const hasVisibleProjects = editableProjectNames.length > 0 || selectedProjectNames.length > 0;
+
+  if (!editing) {
+    button.disabled = true;
+    button.title = getProjectMembershipDisabledTitle(kind);
+    closeProjectMembershipPanel(editor);
+    return;
+  }
+
+  if (!hasVisibleProjects) {
+    button.disabled = true;
+    button.title = currentAdminProjectScopeResolved
+      ? "Nenhum projeto disponível no seu escopo."
+      : "Cadastre ao menos um projeto antes de continuar.";
+    closeProjectMembershipPanel(editor);
+    return;
+  }
+
+  button.disabled = false;
+  button.title = getProjectMembershipReadyTitle(kind);
+}
+
+function buildProjectMembershipPanelMarkup(editor) {
+  const editorKey = String(editor.dataset.projectMembershipEditor || "").trim();
+  const optionStates = getProjectMembershipOptionStates(editor);
+  const optionsMarkup = optionStates.map(({ projectName, checked, locked }) => `
+      <label class="membership-project-option${locked ? " is-locked" : ""}">
+        <input
+          type="checkbox"
+          data-project-membership-option="${escapeHtml(editorKey)}"
+          value="${escapeHtml(projectName)}"
+          ${checked ? "checked" : ""}
+          ${locked ? 'disabled title="Projeto fora do seu escopo."' : ""}
+        />
+        <span>${escapeHtml(projectName)}</span>
+        ${locked ? "<small>Fora do seu escopo</small>" : ""}
+      </label>
+    `).join("");
+
+  return `
+    <div class="membership-projects-options">
+      ${optionsMarkup || `<span class="location-empty-copy">${escapeHtml(currentAdminProjectScopeResolved ? "Nenhum projeto disponível no seu escopo." : "Nenhum projeto cadastrado.")}</span>`}
+    </div>
+    <div class="membership-projects-panel-footer">
+      <button type="button" class="secondary-button" data-project-membership-back="${escapeHtml(editorKey)}">Back</button>
+      <button type="button" data-project-membership-apply="${escapeHtml(editorKey)}" ${optionStates.length ? "" : "disabled"}>Save</button>
+    </div>
+  `;
+}
+
+async function ensureCurrentAdminProjectScopeLoaded() {
+  if (currentAdminProjectScopeResolved || !currentAdminChave) {
+    return;
+  }
+
+  if (!currentAdminProjectScopeLoadPromise) {
+    currentAdminProjectScopeLoadPromise = loadAdministrators().finally(() => {
+      currentAdminProjectScopeLoadPromise = null;
+    });
+  }
+
+  await currentAdminProjectScopeLoadPromise;
+}
+
+async function openProjectMembershipPanelByKey(editorKey) {
+  await ensureCurrentAdminProjectScopeLoaded();
+
+  const editor = getProjectMembershipEditorByKey(editorKey);
+  if (!(editor instanceof HTMLElement)) {
+    return;
+  }
+
+  syncProjectMembershipToggleState(editor, true);
+
+  const button = editor.querySelector(`[data-project-membership-toggle="${CSS.escape(String(editorKey))}"]`);
+  const panel = editor.querySelector(".membership-projects-panel");
+  if (!(button instanceof HTMLButtonElement) || !(panel instanceof HTMLElement) || button.disabled) {
+    return;
+  }
+
+  if (editor.classList.contains("is-open")) {
+    focusProjectMembershipPanel(editor);
+    return;
+  }
+
+  panel.innerHTML = buildProjectMembershipPanelMarkup(editor);
+  panel.hidden = false;
+  editor.classList.add("is-open");
+  button.setAttribute("aria-expanded", "true");
+  focusProjectMembershipPanel(editor);
+}
+
+function applyProjectMembershipPanelByKey(editorKey) {
+  const editor = getProjectMembershipEditorByKey(editorKey);
+  if (!(editor instanceof HTMLElement)) {
+    return [];
+  }
+
+  const selectedProjectNames = getLiveProjectMembershipSelection(editor) || [];
+  setStoredProjectMembershipSelection(editor, selectedProjectNames);
+  closeProjectMembershipPanel(editor);
+  return selectedProjectNames;
+}
+
+function getProjectMembershipSelectionForSubmit(kind, rowId) {
+  const editor = getProjectMembershipEditor(kind, rowId);
+  if (!(editor instanceof HTMLElement)) {
+    return [];
+  }
+
+  const selectedProjectNames = getLiveProjectMembershipSelection(editor) || getStoredProjectMembershipSelection(editor);
+  setStoredProjectMembershipSelection(editor, selectedProjectNames);
+  closeProjectMembershipPanel(editor);
+  return selectedProjectNames;
+}
+
+function makeProjectMembershipCell({ kind, rowId, selectedProjects }) {
+  const projectMembershipKey = getProjectMembershipEditorKey(kind, rowId);
+  const summary = formatProjectMembershipSummary(selectedProjects);
+  return `
+    <div
+      class="membership-projects-cell"
+      data-project-membership-editor="${escapeHtml(projectMembershipKey)}"
+      data-project-membership-kind="${escapeHtml(kind)}"
+    >
+      <button
+        type="button"
+        class="secondary-button membership-projects-button"
+        data-project-membership-toggle="${escapeHtml(projectMembershipKey)}"
+        aria-expanded="false"
+        disabled
+        title="${escapeHtml(getProjectMembershipDisabledTitle(kind))}"
+      >Select</button>
+      <span class="membership-projects-summary" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
+      <div class="membership-projects-panel" hidden></div>
+    </div>
+  `;
 }
 
 function syncSelectOptions(selectElement, optionValues, selectedValue) {
@@ -486,21 +789,21 @@ function startProjectEdit(projectId) {
 const PRESENCE_TABLE_CONFIGS = {
   checkin: {
     bodyId: "checkinBody",
-    filterColumns: ["time", "nome", "chave", "projeto", "assiduidade", "local"],
+    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "local"],
     defaultSortKey: "time",
     defaultSortDirection: "desc",
     renderOptions: { includeElapsedDays: true },
   },
   checkout: {
     bodyId: "checkoutBody",
-    filterColumns: ["time", "nome", "chave", "projeto", "assiduidade", "local"],
+    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "local"],
     defaultSortKey: "time",
     defaultSortDirection: "desc",
     renderOptions: {},
   },
   inactive: {
     bodyId: "inactiveBody",
-    filterColumns: ["nome", "chave", "projeto", "latest_time", "inactivity_days"],
+    filterColumns: ["nome", "chave", "projetos", "latest_time", "inactivity_days"],
     defaultSortKey: "inactivity_days",
     defaultSortDirection: "desc",
     renderOptions: {},
@@ -1536,9 +1839,47 @@ function markDashboardRefreshed() {
   updateOperationalChrome();
 }
 
+function capturePresencePageScroll() {
+  if (typeof window === "undefined" || !["checkin", "checkout"].includes(activeTab)) {
+    return null;
+  }
+
+  const scrollingElement = document.scrollingElement;
+  return {
+    x: window.scrollX,
+    y: window.scrollY,
+    elementTop: scrollingElement ? scrollingElement.scrollTop : null,
+    elementLeft: scrollingElement ? scrollingElement.scrollLeft : null,
+  };
+}
+
+function restorePresencePageScroll(snapshot) {
+  if (!snapshot || typeof window === "undefined") {
+    return;
+  }
+
+  const applySnapshot = () => {
+    window.scrollTo(snapshot.x, snapshot.y);
+    const scrollingElement = document.scrollingElement;
+    if (scrollingElement && snapshot.elementTop !== null && snapshot.elementLeft !== null) {
+      scrollingElement.scrollTop = snapshot.elementTop;
+      scrollingElement.scrollLeft = snapshot.elementLeft;
+    }
+  };
+
+  window.requestAnimationFrame(() => {
+    applySnapshot();
+    window.requestAnimationFrame(applySnapshot);
+  });
+}
+
 function showAuthShell(message = "", kind = "info") {
   isAuthenticated = false;
   resetAdminAccessState();
+  currentAdminChave = "";
+  currentAdminProjectNames = [];
+  currentAdminProjectScopeResolved = false;
+  currentAdminProjectScopeLoadPromise = null;
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
   closeChangePasswordModal();
@@ -1584,6 +1925,10 @@ function showAuthShell(message = "", kind = "info") {
 function showAdminShell(admin) {
   isAuthenticated = true;
   setAdminAccessState(admin);
+  currentAdminChave = String(admin?.chave ?? "").trim().toUpperCase();
+  currentAdminProjectNames = [];
+  currentAdminProjectScopeResolved = false;
+  currentAdminProjectScopeLoadPromise = null;
   authShell.classList.add("hidden");
   adminShell.classList.remove("hidden");
   sessionBar.classList.remove("hidden");
@@ -2674,7 +3019,7 @@ function buildPresenceMobileMetadata(row, options = {}) {
 
 function buildLimitedPresenceMobileCard(row, timeCell) {
   const localLabel = escapeHtml(formatLocal(row.local));
-  return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">${escapeHtml(row.nome)}</strong><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
+  return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">${escapeHtml(row.nome)}</span><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
 }
 
 function buildPresenceMobileCard(row, timeCell, options = {}) {
@@ -2684,7 +3029,7 @@ function buildPresenceMobileCard(row, timeCell, options = {}) {
 
   const localLabel = escapeHtml(formatLocal(row.local));
   buildPresenceMobileMetadata(row, options);
-  return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">${escapeHtml(row.nome)}</strong><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
+  return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">${escapeHtml(row.nome)}</span><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
 }
 
 function buildPresenceRow(row, options = {}) {
@@ -2692,6 +3037,7 @@ function buildPresenceRow(row, options = {}) {
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
   const timeCell = buildPresencePrimaryCell(row, { includeElapsedDays, responsiveVariant });
+  const projectsLabel = formatUserMembershipProjects(row);
   const staleCheckin = timeCell.elapsedDays > 0;
   if (highlightMissingCheckout && staleCheckin) {
     tr.classList.add("attention-user-row");
@@ -2703,7 +3049,7 @@ function buildPresenceRow(row, options = {}) {
     return tr;
   }
 
-  tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+  tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td title="${escapeHtml(projectsLabel)}">${escapeHtml(projectsLabel)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -2736,8 +3082,8 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
     if (key === "chave") {
       return row.chave || "";
     }
-    if (key === "projeto") {
-      return row.projeto || "";
+    if (key === "projetos") {
+      return formatUserMembershipProjects(row);
     }
     if (key === "latest_time") {
       return `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`;
@@ -2773,8 +3119,8 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
   if (key === "chave") {
     return row.chave || "";
   }
-  if (key === "projeto") {
-    return row.projeto || "";
+  if (key === "projetos") {
+    return formatUserMembershipProjects(row);
   }
   if (key === "assiduidade") {
     return row.assiduidade || "Normal";
@@ -3018,13 +3364,15 @@ function formatInactivityDays(days) {
 
 function buildInactiveMobileCard(row) {
   const latestActivityLabel = `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`;
-  return `<article class="admin-mobile-card inactive-mobile-card"><strong class="admin-mobile-card-title admin-mobile-card-title--alert">${escapeHtml(row.nome)}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto)}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Última Atividade</span><span class="admin-mobile-card-value">${escapeHtml(latestActivityLabel)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Inatividade</span><span class="admin-mobile-card-value">${escapeHtml(formatInactivityDays(row.inactivity_days))}</span></div></div><div class="admin-mobile-card-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></div></article>`;
+  const projectsLabel = formatUserMembershipProjects(row);
+  return `<article class="admin-mobile-card inactive-mobile-card"><strong class="admin-mobile-card-title admin-mobile-card-title--alert">${escapeHtml(row.nome)}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projetos</span><span class="admin-mobile-card-value">${escapeHtml(projectsLabel)}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Última Atividade</span><span class="admin-mobile-card-value">${escapeHtml(latestActivityLabel)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Inatividade</span><span class="admin-mobile-card-value">${escapeHtml(formatInactivityDays(row.inactivity_days))}</span></div></div><div class="admin-mobile-card-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></div></article>`;
 }
 
 function buildInactiveRow(row, options = {}) {
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
   tr.classList.add("inactive-user-row");
+  const projectsLabel = formatUserMembershipProjects(row);
 
   if (options.mobile) {
     tr.classList.add("inactive-mobile-row");
@@ -3035,7 +3383,7 @@ function buildInactiveRow(row, options = {}) {
   tr.innerHTML = `
     <td>${escapeHtml(row.nome)}</td>
     <td>${escapeHtml(row.chave)}</td>
-    <td>${escapeHtml(row.projeto)}</td>
+    <td title="${escapeHtml(projectsLabel)}">${escapeHtml(projectsLabel)}</td>
     <td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td>
     <td>${escapeHtml(`${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`)}</td>
     <td>${escapeHtml(formatInactivityDays(row.inactivity_days))}</td>
@@ -4026,16 +4374,13 @@ async function loadLocations() {
 }
 
 function makePendingRow(row) {
-  const defaultProjectValue = getProjectOptions("", {}).at(0) || "";
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${escapeHtml(row.rfid)}</td>
     <td><input class="inline" id="nome-${row.id}" disabled /></td>
     <td><input class="inline" id="chave-${row.id}" maxlength="4" disabled /></td>
     <td>
-      <select class="inline" id="projeto-${row.id}" disabled>
-        ${buildProjectOptionsHtml(defaultProjectValue)}
-      </select>
+      ${makeProjectMembershipCell({ kind: "pending", rowId: row.id, selectedProjects: [] })}
     </td>
     <td class="pending-actions">
       <button data-edit="${row.id}">Editar</button>
@@ -4043,10 +4388,13 @@ function makePendingRow(row) {
       <button data-save="${row.id}" data-rfid="${escapeHtml(row.rfid)}" disabled>Salvar</button>
     </td>
   `;
+  const projectEditor = tr.querySelector(`[data-project-membership-editor="${CSS.escape(getProjectMembershipEditorKey("pending", row.id))}"]`);
+  setStoredProjectMembershipSelection(projectEditor, []);
   return tr;
 }
 
 function makeRegisteredUserRow(user) {
+  const selectedProjects = normalizeUserProjectMemberships(user.projetos, user.projeto);
   const tr = document.createElement("tr");
   tr.className = "user-row";
   tr.dataset.userId = String(user.id);
@@ -4056,9 +4404,7 @@ function makeRegisteredUserRow(user) {
     <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" title="${escapeHtml(user.chave)}" disabled /></td>
     <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" title="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
     <td>
-      <select class="inline user-projeto" title="${escapeHtml(user.projeto ?? "")}" disabled>
-        ${buildProjectOptionsHtml(user.projeto, { includeDetachedValue: true })}
-      </select>
+      ${makeProjectMembershipCell({ kind: "user", rowId: user.id, selectedProjects })}
     </td>
     <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" title="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
     <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" title="${escapeHtml(user.zip ?? "")}" disabled /></td>
@@ -4071,7 +4417,8 @@ function makeRegisteredUserRow(user) {
       <button data-user-remove="${user.id}">Remover</button>
     </td>
   `;
-  tr.querySelector(".user-projeto").value = user.projeto;
+  const projectEditor = tr.querySelector(`[data-project-membership-editor="${CSS.escape(getProjectMembershipEditorKey("user", user.id))}"]`);
+  setStoredProjectMembershipSelection(projectEditor, selectedProjects);
   return tr;
 }
 
@@ -4091,17 +4438,26 @@ function makeProjectRow(project) {
   return tr;
 }
 
+function getAdministratorProjectNames(row) {
+  return normalizeUserProjectMemberships(row?.projects);
+}
+
+function getAdministratorProjectsSummary(row) {
+  const projectNames = getAdministratorProjectNames(row);
+  return projectNames.length ? projectNames.join(", ") : "Nenhum projeto real vinculado";
+}
+
 function makeAdministratorProjectOptions(row) {
-  const monitoredProjectNames = normalizeProjectNames(row?.monitored_projects);
-  const monitoredProjectSet = new Set(monitoredProjectNames);
-  return getLocationProjectOptions(monitoredProjectNames)
+  const administratorProjectNames = getAdministratorProjectNames(row);
+  const administratorProjectSet = new Set(administratorProjectNames);
+  return getLocationProjectOptions(administratorProjectNames)
     .map((projectName) => `
       <label class="admin-project-option">
         <input
           type="checkbox"
           data-admin-project-option="${row.id}"
           value="${escapeHtml(projectName)}"
-          ${monitoredProjectSet.has(projectName) ? "checked" : ""}
+          ${administratorProjectSet.has(projectName) ? "checked" : ""}
         />
         <span>${escapeHtml(projectName)}</span>
       </label>
@@ -4113,14 +4469,20 @@ function makeAdministratorProjectsCell(row) {
   if (row.row_type === "request") {
     return `
       <div class="admin-projects-cell admin-projects-cell-readonly">
-        <span class="admin-projects-readonly-copy">Defina os projetos apos aprovar o administrador.</span>
+        <span class="admin-projects-readonly-copy">O projeto solicitado semeia apenas o projeto inicial. Defina os vinculos reais apos aprovar o administrador.</span>
       </div>
     `;
   }
 
+  const projectsSummary = getAdministratorProjectsSummary(row);
   const projectOptionsMarkup = makeAdministratorProjectOptions(row);
   return `
-    <div class="admin-projects-cell">
+    <div class="admin-projects-cell" title="Edite os projetos reais vinculados a este administrador.">
+      <div class="admin-projects-summary">
+        <strong class="admin-projects-summary-label">Projetos reais</strong>
+        <span class="admin-projects-summary-value" title="${escapeHtml(projectsSummary)}">${escapeHtml(projectsSummary)}</span>
+      </div>
+      <span class="admin-projects-help-copy">Esses vinculos definem o escopo real do administrador.</span>
       <div class="admin-projects-panel">
         ${projectOptionsMarkup || '<span class="location-empty-copy">Nenhum projeto cadastrado.</span>'}
       </div>
@@ -4174,17 +4536,17 @@ function hasPendingEditInProgress() {
 function setPendingEditingState(id, editing) {
   const nome = document.getElementById(`nome-${id}`);
   const chave = document.getElementById(`chave-${id}`);
-  const projeto = document.getElementById(`projeto-${id}`);
+  const projectEditor = getProjectMembershipEditor("pending", id);
   const saveButton = document.querySelector(`button[data-save="${id}"]`);
   const editButton = document.querySelector(`button[data-edit="${id}"]`);
 
-  if (!nome || !chave || !projeto || !saveButton || !editButton) {
+  if (!nome || !chave || !projectEditor || !saveButton || !editButton) {
     return;
   }
 
   nome.disabled = !editing;
   chave.disabled = !editing;
-  projeto.disabled = !editing;
+  syncProjectMembershipToggleState(projectEditor, editing);
   saveButton.disabled = !editing;
   editButton.disabled = editing;
   if (editing) {
@@ -4204,7 +4566,7 @@ function setRegisteredUserEditingState(userId, editing) {
   const nome = row.querySelector(".user-nome");
   const chave = row.querySelector(".user-chave");
   const perfil = row.querySelector(".user-perfil");
-  const projeto = row.querySelector(".user-projeto");
+  const projectEditor = getProjectMembershipEditor("user", userId);
   const endRua = row.querySelector(".user-end-rua");
   const zip = row.querySelector(".user-zip");
   const cargo = row.querySelector(".user-cargo");
@@ -4217,7 +4579,7 @@ function setRegisteredUserEditingState(userId, editing) {
   nome.disabled = !editing;
   chave.disabled = !editing;
   perfil.disabled = !editing;
-  projeto.disabled = !editing;
+  syncProjectMembershipToggleState(projectEditor, editing);
   endRua.disabled = !editing;
   zip.disabled = !editing;
   cargo.disabled = !editing;
@@ -4266,7 +4628,7 @@ function readAdministratorProfileValue(id) {
   return Number.parseInt(normalized, 10);
 }
 
-function readAdministratorMonitoredProjects(id) {
+function readAdministratorProjects(id) {
   const inputs = Array.from(
     document.querySelectorAll(`input[data-admin-project-option="${CSS.escape(String(id))}"]`)
   ).filter((input) => input instanceof HTMLInputElement);
@@ -4275,18 +4637,18 @@ function readAdministratorMonitoredProjects(id) {
     throw new Error("Projetos do administrador nao encontrados.");
   }
 
-  const monitoredProjects = normalizeProjectNames(
+  const projects = normalizeProjectNames(
     inputs
       .filter((input) => input.checked)
       .map((input) => input.value)
   );
 
-  if (!monitoredProjects.length) {
+  if (!projects.length) {
     inputs[0].focus();
     throw new Error("Selecione ao menos um projeto para o administrador.");
   }
 
-  return monitoredProjects;
+  return projects;
 }
 
 async function loadCheckin() {
@@ -4331,6 +4693,9 @@ async function loadAdministrators() {
   const rows = await fetchJson("/api/admin/administrators");
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const adminRows = normalizedRows.filter((row) => row.row_type === "admin");
+  const currentAdminRow = adminRows.find((row) => String(row?.chave ?? "").trim().toUpperCase() === currentAdminChave);
+  currentAdminProjectNames = getAdministratorProjectNames(currentAdminRow);
+  currentAdminProjectScopeResolved = true;
   administratorsTotal = adminRows.length;
   const body = document.getElementById("administratorsBody");
   body.innerHTML = "";
@@ -4696,10 +5061,11 @@ function renderReportsResults(payload) {
   const person = payload?.person || {};
   const events = Array.isArray(payload?.events) ? payload.events : [];
   const eventsLabel = events.length === 1 ? "1 evento" : `${events.length} eventos`;
+  const personProjectsLabel = formatUserMembershipProjects(person);
   setTextContentIfPresent("reportsPersonTitle", `${person.nome || "-"} (${person.chave || "-"})`);
   setTextContentIfPresent(
     "reportsPersonMeta",
-    `Projeto atual: ${person.projeto || "-"} | RFID: ${person.rfid || "-"} | Fuso horário: ${formatTimeZoneLabel(person.timezone_label)} | ${eventsLabel}`,
+    `Projetos: ${personProjectsLabel} | Projeto ativo: ${person.projeto || "-"} | RFID: ${person.rfid || "-"} | Fuso horário: ${formatTimeZoneLabel(person.timezone_label)} | ${eventsLabel}`,
   );
 
   if (!events.length) {
@@ -4995,6 +5361,7 @@ async function refreshAllTables() {
 
 async function refreshAutomaticTables() {
   const jobs = [];
+  const scrollSnapshot = capturePresencePageScroll();
   if (isAdminTabAllowed("checkin")) {
     jobs.push(loadCheckin());
   }
@@ -5012,6 +5379,7 @@ async function refreshAutomaticTables() {
     jobs.push(loadLocations());
   }
   await Promise.all(jobs);
+  restorePresencePageScroll(scrollSnapshot);
   markDashboardRefreshed();
 }
 
@@ -5265,12 +5633,16 @@ function bindManualRefreshButton(button, loader) {
 async function savePending(id, rfid) {
   const nome = document.getElementById(`nome-${id}`).value.trim();
   const chave = document.getElementById(`chave-${id}`).value.trim().toUpperCase();
-  const projeto = document.getElementById(`projeto-${id}`).value;
+  const projetos = getProjectMembershipSelectionForSubmit("pending", id);
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  const payload = await postJson("/api/admin/users", { rfid, nome, chave, projeto });
+  if (!projetos.length) {
+    setStatus("Selecione ao menos um projeto para este cadastro pendente.", false);
+    return;
+  }
+  const payload = await postJson("/api/admin/users", { rfid, nome, chave, projetos });
   if (payload?.linked_existing_user) {
     setStatus("Cadastro salvo com sucesso e RFID vinculado ao usuário já existente pela chave.", true);
   } else {
@@ -5295,7 +5667,7 @@ async function saveRegisteredUser(userId) {
   const nome = row.querySelector(".user-nome").value.trim();
   const chave = row.querySelector(".user-chave").value.trim().toUpperCase();
   const perfilValue = row.querySelector(".user-perfil").value.trim();
-  const projeto = row.querySelector(".user-projeto").value;
+  const projetos = getProjectMembershipSelectionForSubmit("user", normalizedUserId);
   const endRua = row.querySelector(".user-end-rua").value.trim();
   const zip = row.querySelector(".user-zip").value.trim();
   const cargo = row.querySelector(".user-cargo").value.trim();
@@ -5308,13 +5680,17 @@ async function saveRegisteredUser(userId) {
     setStatus("Informe um perfil numérico entre 0 e 999.", false);
     return;
   }
+  if (!projetos.length) {
+    setStatus("Selecione ao menos um projeto para este usuário.", false);
+    return;
+  }
   await postJson("/api/admin/users", {
     user_id: Number(normalizedUserId),
     rfid: rfidValue || null,
     nome,
     chave,
     perfil: Number(perfilValue),
-    projeto,
+    projetos,
     end_rua: endRua || null,
     zip: zip || null,
     cargo: cargo || null,
@@ -5370,10 +5746,10 @@ async function revokeAdministrator(id) {
 
 async function saveAdministratorProfile(id) {
   const profile = readAdministratorProfileValue(id);
-  const monitoredProjects = readAdministratorMonitoredProjects(id);
+  const projects = readAdministratorProjects(id);
   const payload = await postJson(`/api/admin/administrators/${id}/profile`, {
     perfil: profile,
-    monitored_projects: monitoredProjects,
+    projects,
   });
   setStatus(payload.message, true);
   await loadAdministrators();
@@ -5890,16 +6266,32 @@ function bindActions() {
 
   document.getElementById("pendingBody").addEventListener("click", (event) => {
     const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.edit) {
-      setPendingEditingState(target.dataset.edit, true);
+    const button = target instanceof Element ? target.closest("button") : null;
+    if (!(button instanceof HTMLButtonElement)) {
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.remove) {
-      removePending(target.dataset.remove).catch((error) => setStatus(error.message, false));
+    if (button.dataset.projectMembershipToggle) {
+      openProjectMembershipPanelByKey(button.dataset.projectMembershipToggle).catch((error) => setStatus(error.message, false));
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.save) {
-      savePending(target.dataset.save, target.dataset.rfid).catch((error) => setStatus(error.message, false));
+    if (button.dataset.projectMembershipBack) {
+      closeProjectMembershipPanel(getProjectMembershipEditorByKey(button.dataset.projectMembershipBack));
+      return;
+    }
+    if (button.dataset.projectMembershipApply) {
+      applyProjectMembershipPanelByKey(button.dataset.projectMembershipApply);
+      return;
+    }
+    if (button.dataset.edit) {
+      setPendingEditingState(button.dataset.edit, true);
+      return;
+    }
+    if (button.dataset.remove) {
+      removePending(button.dataset.remove).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (button.dataset.save) {
+      savePending(button.dataset.save, button.dataset.rfid).catch((error) => setStatus(error.message, false));
     }
   });
 
@@ -5979,20 +6371,36 @@ function bindActions() {
 
   document.getElementById("usersBody").addEventListener("click", (event) => {
     const target = event.target;
-    if (target.tagName === "BUTTON" && target.dataset.userEdit) {
-      setRegisteredUserEditingState(target.dataset.userEdit, true);
+    const button = target instanceof Element ? target.closest("button") : null;
+    if (!(button instanceof HTMLButtonElement)) {
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.userSave) {
-      saveRegisteredUser(target.dataset.userSave).catch((error) => setStatus(error.message, false));
+    if (button.dataset.projectMembershipToggle) {
+      openProjectMembershipPanelByKey(button.dataset.projectMembershipToggle).catch((error) => setStatus(error.message, false));
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.userPasswordReset) {
-      resetRegisteredUserPassword(target.dataset.userPasswordReset).catch((error) => setStatus(error.message, false));
+    if (button.dataset.projectMembershipBack) {
+      closeProjectMembershipPanel(getProjectMembershipEditorByKey(button.dataset.projectMembershipBack));
       return;
     }
-    if (target.tagName === "BUTTON" && target.dataset.userRemove) {
-      removeRegisteredUser(target.dataset.userRemove).catch((error) => setStatus(error.message, false));
+    if (button.dataset.projectMembershipApply) {
+      applyProjectMembershipPanelByKey(button.dataset.projectMembershipApply);
+      return;
+    }
+    if (button.dataset.userEdit) {
+      setRegisteredUserEditingState(button.dataset.userEdit, true);
+      return;
+    }
+    if (button.dataset.userSave) {
+      saveRegisteredUser(button.dataset.userSave).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (button.dataset.userPasswordReset) {
+      resetRegisteredUserPassword(button.dataset.userPasswordReset).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (button.dataset.userRemove) {
+      removeRegisteredUser(button.dataset.userRemove).catch((error) => setStatus(error.message, false));
     }
   });
 

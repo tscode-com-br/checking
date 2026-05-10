@@ -5,6 +5,9 @@ from sistema.app.schemas import TransportVehicleCreate
 from sistema.app.services.transport_vehicle_base import (
     apply_transport_vehicle_base_data,
     build_transport_vehicle_base_data_from_payload,
+    build_transport_vehicle_base_row,
+    build_transport_vehicle_pending_fields,
+    is_transport_vehicle_ready_for_allocation,
     vehicle_base_data_matches,
 )
 
@@ -69,3 +72,23 @@ def test_transport_vehicle_base_matching_ignores_legacy_service_scope_mirror():
     apply_transport_vehicle_base_data(vehicle, base_data)
 
     assert vehicle.service_scope == "regular"
+
+
+def test_transport_vehicle_base_row_keeps_plate_and_color_pending_without_blocking_allocation():
+    vehicle = Vehicle(
+        id=321,
+        placa=None,
+        tipo="van",
+        color=None,
+        lugares=10,
+        tolerance=8,
+        service_scope="regular",
+    )
+
+    pending_fields = build_transport_vehicle_pending_fields(vehicle)
+    base_row = build_transport_vehicle_base_row(vehicle)
+
+    assert pending_fields == ["placa", "color"]
+    assert is_transport_vehicle_ready_for_allocation(vehicle) is True
+    assert base_row.pending_fields == ["placa", "color"]
+    assert base_row.is_ready_for_allocation is True

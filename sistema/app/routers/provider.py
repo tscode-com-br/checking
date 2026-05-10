@@ -14,6 +14,7 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.project_catalog import ensure_known_project
 from ..services.time_utils import resolve_project_timezone_name
 from ..services.user_profiles import merge_provider_date_and_time, normalize_person_name
+from ..services.user_projects import assign_user_active_project, ensure_user_active_project_is_member
 from ..services.user_sync import (
     apply_user_state,
     create_user_sync_event,
@@ -94,10 +95,14 @@ def submit_provider_checking(
         )
         db.add(user)
         db.flush()
+        ensure_user_active_project_is_member(db, user)
         created_user = True
-    elif user.projeto != payload.projeto:
-        user.projeto = payload.projeto
-        updated_project = True
+    else:
+        updated_project = user.projeto != payload.projeto
+        if updated_project:
+            assign_user_active_project(db, user, payload.projeto)
+        else:
+            ensure_user_active_project_is_member(db, user)
 
     existing_event = db.execute(
         select(UserSyncEvent).where(

@@ -266,9 +266,27 @@ def _format_transport_request_service_date_conflict_message(service_date: date |
     return f"Ja existe uma solicitacao de transporte ativa para {service_date.strftime('%d/%m/%Y')}."
 
 
+def _transport_request_can_share_service_date(
+    *,
+    existing_request_kind: str,
+    request_kind: str,
+) -> bool:
+    # Extra requests still do not persist route_kind on the request itself.
+    # Until that domain key exists, a second extra on the same service_date
+    # remains ambiguous and must stay blocked even if later assignments could
+    # target opposite routes.
+    request_kinds = {existing_request_kind, request_kind}
+    return (
+        "extra" in request_kinds
+        and len(request_kinds & {"regular", "weekend"}) == 1
+        and request_kinds <= {"regular", "weekend", "extra"}
+    )
+
+
 def _find_transport_request_service_date_conflict(
     active_requests: list[TransportRequest],
     *,
+    request_kind: str,
     reference_date: date,
     service_date: date | None,
 ) -> TransportRequest | None:
@@ -280,8 +298,14 @@ def _find_transport_request_service_date_conflict(
             existing,
             reference_date=reference_date,
         )
-        if existing_service_date == service_date:
-            return existing
+        if existing_service_date != service_date:
+            continue
+        if _transport_request_can_share_service_date(
+            existing_request_kind=existing.request_kind,
+            request_kind=request_kind,
+        ):
+            continue
+        return existing
     return None
 
 
@@ -444,6 +468,7 @@ def build_transport_dashboard(
     *,
     service_date: date,
     route_kind: str,
+    generated_at: datetime | None = None,
 ) -> TransportDashboardResponse:
     from .transport_dashboard_queries import build_transport_dashboard as build_transport_dashboard_query
 
@@ -451,6 +476,7 @@ def build_transport_dashboard(
         db,
         service_date=service_date,
         route_kind=route_kind,
+        generated_at=generated_at,
     )
 
 
@@ -612,6 +638,7 @@ def upsert_transport_request(
     )
     conflicting_request = _find_transport_request_service_date_conflict(
         active_requests,
+        request_kind=request_kind,
         reference_date=reference_date,
         service_date=requested_service_date,
     )
@@ -709,6 +736,7 @@ def _resolve_transport_assignment(
     assignment.vehicle_id = None
     assignment.status = status
     assignment.response_message = response_message
+    assignment.boarding_time = None
     assignment.acknowledged_by_user = False
     assignment.acknowledged_at = None
     assignment.updated_at = timestamp
@@ -1222,6 +1250,9 @@ def _reset_transport_request_assignments_to_pending(
     )
 
 
+TRANSPORT_UPSERT_BOARDING_TIME_UNSET = object()
+
+
 def upsert_transport_assignment_with_persistence(
     db: Session,
     *,
@@ -1231,10 +1262,18 @@ def upsert_transport_assignment_with_persistence(
     status: str,
     vehicle: Vehicle | None,
     response_message: str | None,
+    boarding_time: str | None | object = TRANSPORT_UPSERT_BOARDING_TIME_UNSET,
     admin_user_id: int | None,
     pending_reset_scope: str = "all_assignments",
 ) -> tuple[TransportAssignment, bool]:
-    from .transport_assignment_operations import upsert_transport_assignment_with_persistence as upsert_transport_assignment_with_persistence_impl
+    from .transport_assignment_operations import (
+        TRANSPORT_ASSIGNMENT_BOARDING_TIME_UNSET,
+        upsert_transport_assignment_with_persistence as upsert_transport_assignment_with_persistence_impl,
+    )
+
+    resolved_boarding_time = boarding_time
+    if boarding_time is TRANSPORT_UPSERT_BOARDING_TIME_UNSET:
+        resolved_boarding_time = TRANSPORT_ASSIGNMENT_BOARDING_TIME_UNSET
 
     return upsert_transport_assignment_with_persistence_impl(
         db,
@@ -1244,6 +1283,7 @@ def upsert_transport_assignment_with_persistence(
         status=status,
         vehicle=vehicle,
         response_message=response_message,
+        boarding_time=resolved_boarding_time,
         admin_user_id=admin_user_id,
         pending_reset_scope=pending_reset_scope,
     )

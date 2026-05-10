@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -449,6 +450,95 @@ def test_solve_transport_plan_tool_keeps_existing_vehicle_without_plate_and_colo
         assert result["plan"]["vehicle_actions"][0]["vehicle_id"] == vehicle.id
         assert result["plan"]["passenger_allocations"][0]["vehicle_ref"] == f"existing:{vehicle.id}"
         assert result["plan"]["route_itineraries"][0]["plate"] is None
+    finally:
+        engine.dispose()
+
+
+def test_transport_ai_temporary_plate_generator_uses_sequential_placeholder_namespace(tmp_path):
+    from sistema.app.routers.transport_ai import _generate_transport_ai_temporary_plate
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_tools_placeholder_generator.db")
+    try:
+        service_date = date(2026, 5, 6)
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            _create_extra_vehicle_candidate(session, placa="Plate 001", service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="Plate 002", service_date=service_date)
+            session.commit()
+
+            home_run = SimpleNamespace(id=11, service_date=service_date, route_kind="home_to_work")
+            work_run = SimpleNamespace(id=77, service_date=date(2026, 5, 10), route_kind="work_to_home")
+
+            assert _generate_transport_ai_temporary_plate(session, run=home_run, sequence=1) == "Plate 003"
+            assert _generate_transport_ai_temporary_plate(session, run=work_run, sequence=1) == "Plate 003"
+    finally:
+        engine.dispose()
+
+
+def test_apply_transport_ai_vehicle_create_actions_uses_placeholder_sequence_and_allows_missing_color(tmp_path):
+    from sistema.app.routers.transport_ai import apply_transport_ai_vehicle_create_actions
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_tools_placeholder_create.db")
+    try:
+        service_date = date(2026, 5, 6)
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            _create_extra_vehicle_candidate(session, placa="Plate 001", service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="Plate 002", service_date=service_date)
+            session.commit()
+
+            run = SimpleNamespace(
+                id=91,
+                service_date=service_date,
+                route_kind="home_to_work",
+                earliest_boarding_time="06:50",
+            )
+            action = SimpleNamespace(
+                action_key="action:create-placeholder-sequence",
+                action_type="create",
+                service_scope="extra",
+                vehicle_id=None,
+                client_vehicle_key="placeholder-sequence",
+                after={
+                    "vehicle_type": "carro",
+                    "capacity": 4,
+                    "route_kind": "home_to_work",
+                    "color": None,
+                },
+            )
+            itinerary = SimpleNamespace(
+                vehicle_ref="new:placeholder-sequence",
+                service_scope="extra",
+                route_kind="home_to_work",
+                projected_arrival_time="08:15",
+                stops=[
+                    SimpleNamespace(scheduled_time="07:55"),
+                    SimpleNamespace(scheduled_time="08:15"),
+                ],
+            )
+            plan = SimpleNamespace(vehicle_actions=[action], route_itineraries=[itinerary])
+
+            vehicle_id_by_ref, issues, created_vehicle_ids, audit_entries = apply_transport_ai_vehicle_create_actions(
+                session,
+                run=run,
+                plan=plan,
+                created_at=_fixture_timestamp(),
+            )
+            session.commit()
+
+            assert issues == []
+            assert vehicle_id_by_ref == {"new:placeholder-sequence": created_vehicle_ids[0]}
+            assert len(created_vehicle_ids) == 1
+
+            created_vehicle = session.get(Vehicle, created_vehicle_ids[0])
+            assert created_vehicle is not None
+            assert created_vehicle.color is None
+            assert created_vehicle.placa == "PLATE 003"
+
+            assert len(audit_entries) == 1
+            assert audit_entries[0]["vehicle_ref"] == "new:placeholder-sequence"
+            assert audit_entries[0]["create_payload"]["color"] is None
+            assert audit_entries[0]["create_payload"]["placa"] == "PLATE 003"
     finally:
         engine.dispose()
 

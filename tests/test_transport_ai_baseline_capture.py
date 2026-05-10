@@ -29,11 +29,13 @@ from sistema.app.services.transport_ai_runs import (
     restore_transport_ai_baseline,
     save_transport_ai_baseline,
 )
+from sistema.app.schemas import TransportAgentDashboardScope
 from sistema.app.services.transport_proposals import build_transport_operational_snapshot
 from sistema.app.services.transport_reevaluation_events import (
     clear_transport_reevaluation_events,
     list_recent_transport_reevaluation_events,
 )
+from sistema.app.services.user_projects import add_user_project_membership
 
 
 def _build_database_url(db_path: Path) -> str:
@@ -107,14 +109,22 @@ def _create_mobile_settings(session: Session) -> None:
     session.flush()
 
 
-def _create_project(session: Session) -> Project:
+def _create_project(
+    session: Session,
+    *,
+    name: str = "PBASE1",
+    country_code: str = "SG",
+    country_name: str = "Singapore",
+    address: str = "1 Marina Boulevard",
+    zip_code: str = "018989",
+) -> Project:
     project = Project(
-        name="PBASE1",
-        country_code="SG",
-        country_name="Singapore",
+        name=name,
+        country_code=country_code,
+        country_name=country_name,
         timezone_name="Asia/Singapore",
-        address="1 Marina Boulevard",
-        zip_code="018989",
+        address=address,
+        zip_code=zip_code,
     )
     session.add(project)
     session.flush()
@@ -249,6 +259,7 @@ def _create_assignment(
     status: str,
     assigned_by_admin_id: int,
     vehicle_id: int | None = None,
+    boarding_time: str | None = None,
 ) -> TransportAssignment:
     timestamp = datetime(2026, 4, 30, 13, 5, 0, tzinfo=ZoneInfo("Asia/Singapore"))
     assignment = TransportAssignment(
@@ -258,6 +269,7 @@ def _create_assignment(
         vehicle_id=vehicle_id,
         status=status,
         response_message=f"status:{status}",
+        boarding_time=boarding_time,
         acknowledged_by_user=False,
         acknowledged_at=None,
         assigned_by_admin_id=assigned_by_admin_id,
@@ -423,6 +435,208 @@ def test_capture_transport_ai_baseline_includes_eligible_requests_and_both_route
     assert baseline_capture.snapshot_payload["snapshot"]["service_date"] == service_date.isoformat()
     assert baseline_capture.baseline_hash == baseline_capture.snapshot_payload["baseline_hash"]
     assert len(baseline_capture.baseline_hash) == 64
+
+
+def test_capture_transport_ai_baseline_filters_eligible_requests_by_dashboard_scope(tmp_path):
+    session_factory, engine = _build_session_factory(tmp_path)
+    service_date = date(2026, 5, 6)
+    captured_at = datetime(2026, 5, 1, 9, 0, 0, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    with session_factory() as session:
+        admin_user = _create_admin_user(session)
+        _create_mobile_settings(session)
+        scoped_project = _create_project(session, name="PBASE1")
+        hidden_project = _create_project(
+            session,
+            name="PBASE2",
+            address="2 Raffles Place",
+            zip_code="048620",
+        )
+
+        scoped_user = _create_user(
+            session,
+            chave="U111",
+            nome="Scoped Passenger",
+            projeto=scoped_project.name,
+            address="10 Bayfront Avenue",
+            zip_code="018956",
+        )
+        hidden_user = _create_user(
+            session,
+            chave="U112",
+            nome="Hidden Passenger",
+            projeto=hidden_project.name,
+            address="25 Raffles Place",
+            zip_code="048621",
+        )
+        scoped_request = _create_transport_request(
+            session,
+            user_id=scoped_user.id,
+            service_date=service_date,
+            requested_time="07:05",
+        )
+        scoped_regular_request = _create_transport_request(
+            session,
+            user_id=scoped_user.id,
+            service_date=service_date,
+            requested_time="07:07",
+            request_kind="regular",
+        )
+        hidden_request = _create_transport_request(
+            session,
+            user_id=hidden_user.id,
+            service_date=service_date,
+            requested_time="07:10",
+        )
+        _create_assignment(
+            session,
+            request_id=scoped_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        _create_assignment(
+            session,
+            request_id=hidden_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        _create_assignment(
+            session,
+            request_id=scoped_regular_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        session.commit()
+
+        baseline_capture = capture_transport_ai_baseline(
+            session,
+            service_date=service_date,
+            route_kind="home_to_work",
+            actor_user_id=admin_user.id,
+            dashboard_scope=TransportAgentDashboardScope(
+                project_ids=[scoped_project.id],
+                request_kinds=["extra"],
+            ),
+            captured_at=captured_at,
+        )
+
+    engine.dispose()
+
+    eligible_request_ids = [row["request_id"] for row in baseline_capture.assignments_payload["eligible_requests"]]
+    assignment_request_ids = [row["request_id"] for row in baseline_capture.assignments_payload["assignments"]]
+
+    assert baseline_capture.assignments_payload["dashboard_scope"] == {
+        "project_ids": [scoped_project.id],
+        "request_kinds": ["extra"],
+    }
+    assert baseline_capture.snapshot_payload["dashboard_scope"] == {
+        "project_ids": [scoped_project.id],
+        "request_kinds": ["extra"],
+    }
+    assert eligible_request_ids == [scoped_request.id]
+    assert assignment_request_ids == [scoped_request.id]
+
+
+def test_capture_transport_ai_baseline_filters_eligible_requests_by_secondary_membership_scope(tmp_path):
+    session_factory, engine = _build_session_factory(tmp_path)
+    service_date = date(2026, 5, 6)
+    captured_at = datetime(2026, 5, 1, 9, 15, 0, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    with session_factory() as session:
+        admin_user = _create_admin_user(session)
+        _create_mobile_settings(session)
+        primary_project = _create_project(session, name="PBASE-MEMBER-PRIMARY")
+        secondary_project = _create_project(
+            session,
+            name="PBASE-MEMBER-SECONDARY",
+            address="2 Raffles Place",
+            zip_code="048620",
+        )
+        hidden_project = _create_project(
+            session,
+            name="PBASE-MEMBER-HIDDEN",
+            address="3 Robinson Road",
+            zip_code="068877",
+        )
+
+        scoped_user = _create_user(
+            session,
+            chave="U121",
+            nome="Secondary Scoped Passenger",
+            projeto=primary_project.name,
+            address="10 Bayfront Avenue",
+            zip_code="018956",
+        )
+        add_user_project_membership(session, scoped_user, secondary_project.name)
+        hidden_user = _create_user(
+            session,
+            chave="U122",
+            nome="Hidden Passenger",
+            projeto=hidden_project.name,
+            address="25 Raffles Place",
+            zip_code="048621",
+        )
+        scoped_request = _create_transport_request(
+            session,
+            user_id=scoped_user.id,
+            service_date=service_date,
+            requested_time="07:05",
+        )
+        hidden_request = _create_transport_request(
+            session,
+            user_id=hidden_user.id,
+            service_date=service_date,
+            requested_time="07:10",
+        )
+        _create_assignment(
+            session,
+            request_id=scoped_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        _create_assignment(
+            session,
+            request_id=hidden_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        session.commit()
+
+        baseline_capture = capture_transport_ai_baseline(
+            session,
+            service_date=service_date,
+            route_kind="home_to_work",
+            actor_user_id=admin_user.id,
+            dashboard_scope=TransportAgentDashboardScope(project_ids=[secondary_project.id]),
+            captured_at=captured_at,
+        )
+
+    engine.dispose()
+
+    eligible_request_ids = [row["request_id"] for row in baseline_capture.assignments_payload["eligible_requests"]]
+    assignment_request_ids = [row["request_id"] for row in baseline_capture.assignments_payload["assignments"]]
+
+    assert baseline_capture.assignments_payload["dashboard_scope"] == {
+        "project_ids": [secondary_project.id],
+        "request_kinds": ["regular", "weekend", "extra"],
+    }
+    assert eligible_request_ids == [scoped_request.id]
+    assert assignment_request_ids == [scoped_request.id]
 
 
 def test_capture_transport_ai_baseline_includes_relevant_vehicle_state_and_hash_changes_with_data(tmp_path):
@@ -621,6 +835,7 @@ def test_restore_transport_ai_baseline_restores_confirmed_and_rejected_assignmen
             status="confirmed",
             assigned_by_admin_id=admin_user.id,
             vehicle_id=original_vehicle.id,
+            boarding_time="07:05",
         )
         _create_assignment(
             session,
@@ -665,6 +880,7 @@ def test_restore_transport_ai_baseline_restores_confirmed_and_rejected_assignmen
         ).scalar_one()
         confirmed_assignment.status = "pending"
         confirmed_assignment.vehicle_id = None
+        confirmed_assignment.boarding_time = None
         rejected_assignment.status = "pending"
         rejected_assignment.response_message = "reset-to-pending"
         session.commit()
@@ -698,8 +914,10 @@ def test_restore_transport_ai_baseline_restores_confirmed_and_rejected_assignmen
     assert result.issues == []
     assert restored_confirmed.status == "confirmed"
     assert restored_confirmed.vehicle_id == original_vehicle.id
+    assert restored_confirmed.boarding_time == "07:05"
     assert restored_rejected.status == "rejected"
     assert restored_rejected.vehicle_id is None
+    assert restored_rejected.boarding_time is None
     assert any(entry.action == "updated" for entry in result.audit_entries)
 
 
@@ -995,6 +1213,215 @@ def test_reset_transport_ai_requests_to_pending_resets_extra_request_and_keeps_v
     assert result.event_emitted is True
     assert recent_events[0].event_type == "transport_assignment_changed"
     assert recent_events[0].source == "transport_admin"
+
+def test_reset_transport_ai_requests_to_pending_respects_dashboard_scope_inherited_from_baseline(tmp_path):
+    session_factory, engine = _build_session_factory(tmp_path)
+    service_date = date(2026, 5, 6)
+    captured_at = datetime(2026, 5, 1, 11, 15, 0, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    with session_factory() as session:
+        admin_user = _create_admin_user(session)
+        _create_mobile_settings(session)
+        scoped_project = _create_project(session, name="PBASE1")
+        hidden_project = _create_project(
+            session,
+            name="PBASE2",
+            address="2 Raffles Place",
+            zip_code="048620",
+        )
+        scoped_vehicle = _create_vehicle(session, placa="SBA8051A", tipo="carro")
+        hidden_vehicle = _create_vehicle(session, placa="SBA8052B", tipo="carro")
+        _create_vehicle_schedule(
+            session,
+            vehicle_id=scoped_vehicle.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            departure_time="07:00",
+        )
+        _create_vehicle_schedule(
+            session,
+            vehicle_id=hidden_vehicle.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            departure_time="07:00",
+        )
+        scoped_user = _create_user(
+            session,
+            chave="U805",
+            nome="Scoped Reset Passenger",
+            projeto=scoped_project.name,
+            address="10 Bayfront Avenue",
+            zip_code="018956",
+        )
+        hidden_user = _create_user(
+            session,
+            chave="U806",
+            nome="Hidden Reset Passenger",
+            projeto=hidden_project.name,
+            address="25 Raffles Place",
+            zip_code="048621",
+        )
+        scoped_request = _create_transport_request(
+            session,
+            user_id=scoped_user.id,
+            service_date=service_date,
+            requested_time="07:05",
+            request_kind="extra",
+        )
+        hidden_request = _create_transport_request(
+            session,
+            user_id=hidden_user.id,
+            service_date=service_date,
+            requested_time="07:10",
+            request_kind="extra",
+        )
+        scoped_assignment = _create_assignment(
+            session,
+            request_id=scoped_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=scoped_vehicle.id,
+        )
+        hidden_assignment = _create_assignment(
+            session,
+            request_id=hidden_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=hidden_vehicle.id,
+        )
+        run = _create_transport_ai_run(session, actor_user_id=admin_user.id)
+        session.commit()
+
+        baseline_capture = capture_transport_ai_baseline(
+            session,
+            service_date=service_date,
+            route_kind="home_to_work",
+            actor_user_id=admin_user.id,
+            dashboard_scope=TransportAgentDashboardScope(project_ids=[scoped_project.id]),
+            captured_at=captured_at,
+        )
+        save_transport_ai_baseline(session, run=run, baseline_capture=baseline_capture, saved_at=captured_at)
+        session.commit()
+
+        result = reset_transport_ai_requests_to_pending(
+            session,
+            run=run,
+            actor_user_id=admin_user.id,
+            reset_at=datetime(2026, 5, 1, 11, 16, 0, tzinfo=ZoneInfo("Asia/Singapore")),
+        )
+        session.commit()
+
+        persisted_scoped_assignment = session.get(TransportAssignment, scoped_assignment.id)
+        persisted_hidden_assignment = session.get(TransportAssignment, hidden_assignment.id)
+
+    engine.dispose()
+
+    assert result.ok
+    assert result.reset_request_ids == [scoped_request.id]
+    assert result.reset_assignment_ids == [scoped_assignment.id]
+    assert persisted_scoped_assignment is not None
+    assert persisted_scoped_assignment.status == "pending"
+    assert persisted_scoped_assignment.vehicle_id is None
+    assert persisted_hidden_assignment is not None
+    assert persisted_hidden_assignment.status == "confirmed"
+    assert persisted_hidden_assignment.vehicle_id == hidden_vehicle.id
+
+
+def test_reset_transport_ai_requests_to_pending_respects_request_kind_scope_inherited_from_baseline(tmp_path):
+    session_factory, engine = _build_session_factory(tmp_path)
+    service_date = date(2026, 5, 6)
+    captured_at = datetime(2026, 5, 1, 11, 25, 0, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    with session_factory() as session:
+        admin_user = _create_admin_user(session)
+        _create_mobile_settings(session)
+        project = _create_project(session, name="PBASE-REQUEST-KIND")
+        extra_user = _create_user(
+            session,
+            chave="U807",
+            nome="Scoped Extra Passenger",
+            projeto=project.name,
+            address="10 Bayfront Avenue",
+            zip_code="018956",
+        )
+        regular_user = _create_user(
+            session,
+            chave="U808",
+            nome="Scoped Regular Passenger",
+            projeto=project.name,
+            address="25 Raffles Place",
+            zip_code="048621",
+        )
+        extra_request = _create_transport_request(
+            session,
+            user_id=extra_user.id,
+            service_date=service_date,
+            requested_time="07:05",
+            request_kind="extra",
+        )
+        regular_request = _create_transport_request(
+            session,
+            user_id=regular_user.id,
+            service_date=service_date,
+            requested_time="07:10",
+            request_kind="regular",
+        )
+        extra_assignment = _create_assignment(
+            session,
+            request_id=extra_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        regular_assignment = _create_assignment(
+            session,
+            request_id=regular_request.id,
+            service_date=service_date,
+            route_kind="home_to_work",
+            status="confirmed",
+            assigned_by_admin_id=admin_user.id,
+            vehicle_id=None,
+        )
+        run = _create_transport_ai_run(session, actor_user_id=admin_user.id)
+        session.commit()
+
+        baseline_capture = capture_transport_ai_baseline(
+            session,
+            service_date=service_date,
+            route_kind="home_to_work",
+            actor_user_id=admin_user.id,
+            dashboard_scope=TransportAgentDashboardScope(request_kinds=["extra"]),
+            captured_at=captured_at,
+        )
+        save_transport_ai_baseline(session, run=run, baseline_capture=baseline_capture, saved_at=captured_at)
+        session.commit()
+
+        result = reset_transport_ai_requests_to_pending(
+            session,
+            run=run,
+            actor_user_id=admin_user.id,
+            reset_at=datetime(2026, 5, 1, 11, 26, 0, tzinfo=ZoneInfo("Asia/Singapore")),
+        )
+        session.commit()
+
+        persisted_extra_assignment = session.get(TransportAssignment, extra_assignment.id)
+        persisted_regular_assignment = session.get(TransportAssignment, regular_assignment.id)
+
+    engine.dispose()
+
+    assert result.ok
+    assert result.reset_request_ids == [extra_request.id]
+    assert result.reset_assignment_ids == [extra_assignment.id]
+    assert persisted_extra_assignment is not None
+    assert persisted_extra_assignment.status == "pending"
+    assert persisted_regular_assignment is not None
+    assert persisted_regular_assignment.status == "confirmed"
 
 
 def test_reset_transport_ai_requests_to_pending_keeps_future_regular_materialization_intact(tmp_path):

@@ -8,19 +8,33 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/site_icon.png?v=1" />
     <link rel="shortcut icon" type="image/png" href="/assets/img/site_icon.png?v=1" />
     <link rel="apple-touch-icon" href="/assets/img/site_icon.png?v=1" />
-    <link rel="stylesheet" href="styles.css?v=20260506b" />
+    <link rel="stylesheet" href="styles.css?v=20260509d" />
   </head>
   <body>
     <main id="tela00" class="tela00">
-      <section id="tela01" class="tela01" aria-label="Transport layout">
-        <section id="tela01menu" class="tela01menu" data-transport-topbar aria-label="Transport quick actions">
+      <section
+        id="tela01"
+        class="tela01"
+        data-i18n-aria-label="layout.transportLayout"
+        aria-label="Transport layout"
+      >
+        <section
+          id="tela01menu"
+          class="tela01menu"
+          data-transport-topbar
+          data-i18n-aria-label="layout.quickActions"
+          aria-label="Transport quick actions"
+        >
           <div class="transport-topbar-copy transport-topbar-brand">
-            <span class="transport-topbar-kicker">Checking Transport</span>
-            <strong class="transport-topbar-title">Allocation board</strong>
+            <span class="transport-topbar-kicker" data-i18n-text="topbar.brand">Checking Transport</span>
+            <strong class="transport-topbar-title" data-i18n-text="topbar.allocationBoard">Allocation board</strong>
             <a
               href="#transport-settings-modal"
               class="transport-settings-link"
               data-open-settings-modal
+              data-i18n-text="settings.dashboardLink"
+              data-i18n-aria-label="settings.openAria"
+              data-i18n-title="settings.openAria"
               aria-label="Open settings"
               aria-haspopup="dialog"
               aria-controls="transport-settings-modal"
@@ -35,18 +49,21 @@
                 type="button"
                 class="transport-ai-trigger"
                 data-ai-menu-trigger
+                data-i18n-aria-label="ai.openMenuAria"
+                data-i18n-title="ai.openMenuAria"
                 aria-label="Open AI menu"
                 aria-haspopup="menu"
                 aria-controls="transportAiMenu"
                 aria-expanded="false"
               >
-                <span class="transport-ai-trigger-label">IA</span>
+                <span class="transport-ai-trigger-label" data-i18n-text="ai.triggerLabel">IA</span>
               </button>
               <div
                 id="transportAiMenu"
                 class="transport-ai-menu"
                 data-ai-menu
                 role="menu"
+                data-i18n-aria-label="ai.menuAria"
                 aria-label="AI actions"
                 hidden
               >
@@ -54,19 +71,27 @@
                   type="button"
                   class="transport-ai-menu-item"
                   data-ai-menu-action="calculate-routes"
+                  data-i18n-text="ai.calculateRoutes"
                   role="menuitem"
                   aria-haspopup="dialog"
                   aria-controls="transport-ai-agent-modal"
                 >
                   Calculate Routes
                 </button>
-                <button type="button" class="transport-ai-menu-item" data-ai-menu-action="implement-modifications" role="menuitem">
+                <button
+                  type="button"
+                  class="transport-ai-menu-item"
+                  data-ai-menu-action="implement-modifications"
+                  data-i18n-text="ai.implementModifications"
+                  role="menuitem"
+                >
                   Implement Modifications
                 </button>
                 <button
                   type="button"
                   class="transport-ai-menu-item"
                   data-ai-menu-action="settings"
+                  data-i18n-text="ai.settingsMenuLabel"
                   role="menuitem"
                   aria-haspopup="dialog"
                   aria-controls="transport-ai-settings-modal"
@@ -76,7 +101,13 @@
               </div>
             </div>
             <label class="transport-route-inline-time" data-route-time-popover hidden>
-              <span class="transport-route-inline-time-label" data-route-time-label>Work to Home Time:</span>
+              <span
+                class="transport-route-inline-time-label"
+                data-route-time-label
+                data-i18n-text="settings.workToHomeTime"
+              >
+                Work to Home Time:
+              </span>
               <input
                 type="time"
                 step="60"
@@ -87,26 +118,42 @@
               />
             </label>
           </div>
-          <div class="transport-topbar-center" data-date-panel aria-label="Selected service date">
+          <div
+            class="transport-topbar-center"
+            data-date-panel
+            data-i18n-aria-label="layout.selectedServiceDate"
+            aria-label="Selected service date"
+          >
             <div class="transport-date-stack transport-topbar-date-stack">
               <div class="transport-date-row transport-topbar-date-row">
                 <button
                   type="button"
                   class="transport-nav-button"
                   data-date-shift="-1"
+                  data-i18n-aria-label="layout.previousServiceDate"
+                  data-i18n-title="layout.previousServiceDate"
                   aria-label="Previous service date"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M15 18 9 12l6-6" />
                   </svg>
                 </button>
-                <a href="#" class="transport-date-link" data-date-link aria-label="Return service date to today">
+                <a
+                  href="#"
+                  class="transport-date-link"
+                  data-date-link
+                  data-i18n-aria-label="layout.returnServiceDateToToday"
+                  data-i18n-title="layout.returnServiceDateToToday"
+                  aria-label="Return service date to today"
+                >
                   <span class="transport-date-label" data-date-label>--</span>
                 </a>
                 <button
                   type="button"
                   class="transport-nav-button"
                   data-date-shift="1"
+                  data-i18n-aria-label="layout.nextServiceDate"
+                  data-i18n-title="layout.nextServiceDate"
                   aria-label="Next service date"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -116,9 +163,13 @@
               </div>
             </div>
           </div>
-          <div class="transport-topbar-auth" aria-label="Transport access fields">
+          <div
+            class="transport-topbar-auth"
+            data-i18n-aria-label="layout.transportAccessFields"
+            aria-label="Transport access fields"
+          >
             <label class="transport-auth-field" for="transportAuthKey">
-              <span class="transport-auth-label">key</span>
+              <span class="transport-auth-label" data-i18n-text="auth.key">key</span>
               <div class="transport-auth-shell is-logged-out" data-transport-auth-shell="key">
                 <input
                   id="transportAuthKey"
@@ -129,11 +180,20 @@
                   spellcheck="false"
                   data-transport-auth-key
                 />
-                <button type="button" class="transport-auth-plus" data-request-user-link aria-label="Request user creation">+</button>
+                <button
+                  type="button"
+                  class="transport-auth-plus"
+                  data-request-user-link
+                  data-i18n-aria-label="layout.requestUserCreation"
+                  data-i18n-title="layout.requestUserCreation"
+                  aria-label="Request user creation"
+                >
+                  +
+                </button>
               </div>
             </label>
             <label class="transport-auth-field" for="transportAuthPassword">
-              <span class="transport-auth-label">pass</span>
+              <span class="transport-auth-label" data-i18n-text="auth.pass">pass</span>
               <div class="transport-auth-shell is-logged-out" data-transport-auth-shell="password">
                 <input
                   id="transportAuthPassword"
@@ -147,7 +207,7 @@
             </label>
           </div>
           <div class="transport-topbar-copy transport-topbar-support">
-            <span class="transport-topbar-kicker">System Support</span>
+            <span class="transport-topbar-kicker" data-i18n-text="topbar.systemSupport">System Support</span>
             <strong class="transport-topbar-title">Tamer Salmem (HR70)</strong>
           </div>
         </section>
@@ -157,16 +217,23 @@
           data-min-first="50"
           data-min-second="180"
           role="separator"
+          data-i18n-aria-label="layout.resizeMenuMain"
           aria-label="Resize menu and main area"
           aria-orientation="horizontal"
         ></div>
-        <section id="tela01principal" class="tela01main" aria-label="Transport main panels">
+        <section
+          id="tela01principal"
+          class="tela01main"
+          data-i18n-aria-label="layout.transportMainPanels"
+          aria-label="Transport main panels"
+        >
           <section id="tela01main_esq" class="transport-pane transport-pane-single">
             <div class="transport-pane-head transport-pane-head-stack">
               <button
                 type="button"
                 class="transport-project-list-toggle"
                 data-project-list-toggle
+                data-i18n-text="panes.projectList"
                 aria-controls="transportProjectListPanel"
                 aria-expanded="false"
               >
@@ -175,17 +242,22 @@
               <div id="transportProjectListPanel" class="transport-project-list-panel" data-project-list-panel hidden>
                 <div class="transport-project-list" data-project-list></div>
               </div>
-              <h1 class="transport-pane-title" data-user-list-title>User List</h1>
+              <h1 class="transport-pane-title" data-user-list-title data-i18n-text="panes.userList">User List</h1>
             </div>
 
             <div class="transport-request-sections">
-              <section class="transport-request-section" aria-label="Extra car requests">
+              <section
+                class="transport-request-section"
+                data-i18n-aria-label="layout.extraCarRequests"
+                aria-label="Extra car requests"
+              >
                 <div class="transport-section-head">
                   <h2 class="transport-section-title">
                     <a
                       href="#transportRequestScopeExtra"
                       class="transport-section-title-link"
                       data-toggle-request-section="extra"
+                      data-i18n-text="requests.titles.extra"
                       aria-controls="transportRequestScopeExtra"
                       aria-expanded="true"
                     >
@@ -196,13 +268,18 @@
                 <div id="transportRequestScopeExtra" class="transport-request-table" data-request-kind="extra"></div>
               </section>
 
-              <section class="transport-request-section" aria-label="Weekend car requests">
+              <section
+                class="transport-request-section"
+                data-i18n-aria-label="layout.weekendCarRequests"
+                aria-label="Weekend car requests"
+              >
                 <div class="transport-section-head">
                   <h2 class="transport-section-title">
                     <a
                       href="#transportRequestScopeWeekend"
                       class="transport-section-title-link"
                       data-toggle-request-section="weekend"
+                      data-i18n-text="requests.titles.weekend"
                       aria-controls="transportRequestScopeWeekend"
                       aria-expanded="true"
                     >
@@ -213,13 +290,18 @@
                 <div id="transportRequestScopeWeekend" class="transport-request-table" data-request-kind="weekend"></div>
               </section>
 
-              <section class="transport-request-section" aria-label="Regular car requests">
+              <section
+                class="transport-request-section"
+                data-i18n-aria-label="layout.regularCarRequests"
+                aria-label="Regular car requests"
+              >
                 <div class="transport-section-head">
                   <h2 class="transport-section-title">
                     <a
                       href="#transportRequestScopeRegular"
                       class="transport-section-title-link"
                       data-toggle-request-section="regular"
+                      data-i18n-text="requests.titles.regular"
                       aria-controls="transportRequestScopeRegular"
                       aria-expanded="true"
                     >
@@ -238,11 +320,17 @@
             data-min-first="180"
             data-min-second="180"
             role="separator"
+            data-i18n-aria-label="layout.resizeColumns"
             aria-label="Resize left and right columns"
             aria-orientation="vertical"
           ></div>
 
-          <section id="tela01main_dir" class="tela01main_dir" aria-label="Transport car panels">
+          <section
+            id="tela01main_dir"
+            class="tela01main_dir"
+            data-i18n-aria-label="layout.transportCarPanels"
+            aria-label="Transport car panels"
+          >
             <section id="tela01main_dir_up" class="transport-pane">
               <div class="transport-pane-head transport-pane-head-extra">
                 <div class="transport-pane-title-row">
@@ -251,27 +339,35 @@
                       href="#transportVehicleScopeExtra"
                       class="transport-pane-title-link"
                       data-toggle-vehicle-view="extra"
+                      data-i18n-text="vehicles.lists.extra"
                       aria-controls="transportVehicleScopeExtra"
                       aria-expanded="false"
                     >
                       Extra Transport List
                     </a>
                   </h2>
-                  <button type="button" class="transport-add-button" data-open-vehicle-modal="extra" aria-label="Add extra vehicle">+</button>
+                  <button
+                    type="button"
+                    class="transport-add-button"
+                    data-open-vehicle-modal="extra"
+                    data-i18n-aria-label="vehicles.addAria.extra"
+                    data-i18n-title="vehicles.addAria.extra"
+                    aria-label="Add extra vehicle"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
               <div id="transportVehicleScopeExtra" class="transport-vehicle-grid" data-vehicle-scope="extra"></div>
+              <button
+                type="button"
+                class="transport-panel-resize-handle"
+                data-panel-resize-handle="extra"
+                aria-controls="transportVehicleScopeExtra"
+                aria-hidden="true"
+                disabled
+              ></button>
             </section>
-
-            <div
-              class="transport-divider transport-divider-horizontal transport-divider-resizable"
-              data-resize="horizontal"
-              data-min-first="140"
-              data-min-second="140"
-              role="separator"
-              aria-label="Resize extra and weekend car areas"
-              aria-orientation="horizontal"
-            ></div>
 
             <section id="tela01main_dir_mid" class="transport-pane">
               <div class="transport-pane-head">
@@ -281,27 +377,35 @@
                       href="#transportVehicleScopeWeekend"
                       class="transport-pane-title-link"
                       data-toggle-vehicle-view="weekend"
+                      data-i18n-text="vehicles.lists.weekend"
                       aria-controls="transportVehicleScopeWeekend"
                       aria-expanded="false"
                     >
                       Weekend Transport List
                     </a>
                   </h2>
-                  <button type="button" class="transport-add-button" data-open-vehicle-modal="weekend" aria-label="Add weekend vehicle">+</button>
+                  <button
+                    type="button"
+                    class="transport-add-button"
+                    data-open-vehicle-modal="weekend"
+                    data-i18n-aria-label="vehicles.addAria.weekend"
+                    data-i18n-title="vehicles.addAria.weekend"
+                    aria-label="Add weekend vehicle"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
               <div id="transportVehicleScopeWeekend" class="transport-vehicle-grid" data-vehicle-scope="weekend"></div>
+              <button
+                type="button"
+                class="transport-panel-resize-handle"
+                data-panel-resize-handle="weekend"
+                aria-controls="transportVehicleScopeWeekend"
+                aria-hidden="true"
+                disabled
+              ></button>
             </section>
-
-            <div
-              class="transport-divider transport-divider-horizontal transport-divider-resizable"
-              data-resize="horizontal"
-              data-min-first="160"
-              data-min-second="120"
-              role="separator"
-              aria-label="Resize weekend and regular car areas"
-              aria-orientation="horizontal"
-            ></div>
 
             <section id="tela01main_dir_down" class="transport-pane">
               <div class="transport-pane-head">
@@ -311,22 +415,51 @@
                       href="#transportVehicleScopeRegular"
                       class="transport-pane-title-link"
                       data-toggle-vehicle-view="regular"
+                      data-i18n-text="vehicles.lists.regular"
                       aria-controls="transportVehicleScopeRegular"
                       aria-expanded="false"
                     >
                       Regular Transport List
                     </a>
                   </h2>
-                  <button type="button" class="transport-add-button" data-open-vehicle-modal="regular" aria-label="Add regular vehicle">+</button>
+                  <button
+                    type="button"
+                    class="transport-add-button"
+                    data-open-vehicle-modal="regular"
+                    data-i18n-aria-label="vehicles.addAria.regular"
+                    data-i18n-title="vehicles.addAria.regular"
+                    aria-label="Add regular vehicle"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
               <div id="transportVehicleScopeRegular" class="transport-vehicle-grid" data-vehicle-scope="regular"></div>
+              <button
+                type="button"
+                class="transport-panel-resize-handle"
+                data-panel-resize-handle="regular"
+                aria-controls="transportVehicleScopeRegular"
+                aria-hidden="true"
+                disabled
+              ></button>
             </section>
           </section>
         </section>
       </section>
-      <footer class="transport-footer-status" aria-label="Transport notifications">
-        <div class="transport-footer-status-copy" data-status-message data-tone="info">Transport dashboard ready.</div>
+      <footer
+        class="transport-footer-status"
+        data-i18n-aria-label="layout.transportNotifications"
+        aria-label="Transport notifications"
+      >
+        <div
+          class="transport-footer-status-copy"
+          data-status-message
+          data-tone="info"
+          data-i18n-text="status.ready"
+        >
+          Transport dashboard ready.
+        </div>
       </footer>
     </main>
 
@@ -337,7 +470,16 @@
             <span class="transport-modal-kicker" data-modal-scope-label>Regular</span>
             <h2 id="transport-vehicle-modal-title" class="transport-modal-title">Create Vehicle</h2>
           </div>
-          <button type="button" class="transport-modal-close" data-close-vehicle-modal aria-label="Close vehicle form">×</button>
+          <button
+            type="button"
+            class="transport-modal-close"
+            data-close-vehicle-modal
+            data-i18n-aria-label="modal.closeVehicleAria"
+            data-i18n-title="modal.closeVehicleAria"
+            aria-label="Close vehicle form"
+          >
+            ×
+          </button>
         </div>
 
         <form class="transport-modal-form transport-vehicle-modal-form" data-vehicle-form>
@@ -352,33 +494,33 @@
           <div class="transport-vehicle-modal-section">
             <div class="transport-vehicle-modal-grid transport-vehicle-modal-grid-primary">
               <label class="transport-field transport-vehicle-field">
-                <span>Type</span>
+                <span data-i18n-text="modal.fields.type">Type</span>
                 <select name="tipo">
-                  <option value=""></option>
-                  <option value="carro" selected>Car</option>
-                  <option value="minivan">Minivan</option>
-                  <option value="van">Van</option>
-                  <option value="onibus">Bus</option>
+                  <option value="" data-i18n-option="modal.options.blankType"></option>
+                  <option value="carro" selected data-i18n-option="modal.options.car">Car</option>
+                  <option value="minivan" data-i18n-option="modal.options.minivan">Minivan</option>
+                  <option value="van" data-i18n-option="modal.options.van">Van</option>
+                  <option value="onibus" data-i18n-option="modal.options.bus">Bus</option>
                 </select>
               </label>
 
               <label class="transport-field transport-vehicle-field">
-                <span>Plate</span>
+                <span data-i18n-text="modal.fields.plate">Plate</span>
                 <input type="text" name="placa" maxlength="15" autocomplete="off" />
               </label>
 
               <label class="transport-field transport-vehicle-field">
-                <span>Color</span>
+                <span data-i18n-text="modal.fields.color">Color</span>
                 <input type="text" name="color" maxlength="40" autocomplete="off" />
               </label>
 
               <label class="transport-field transport-vehicle-field">
-                <span>Places</span>
+                <span data-i18n-text="modal.fields.places">Places</span>
                 <input type="number" name="lugares" class="transport-number-input transport-number-input-spinnerless" min="1" max="99" value="3" />
               </label>
 
               <label class="transport-field transport-vehicle-field">
-                <span>Tolerance (minutes)</span>
+                <span data-i18n-text="modal.fields.tolerance">Tolerance (minutes)</span>
                 <input type="number" name="tolerance" class="transport-number-input transport-number-input-spinnerless" min="0" max="240" value="5" />
               </label>
             </div>
@@ -387,20 +529,20 @@
           <div class="transport-vehicle-modal-section transport-vehicle-modal-section-scope" data-extra-vehicle-section hidden>
             <div class="transport-vehicle-modal-grid transport-vehicle-modal-grid-extra">
               <label class="transport-field transport-vehicle-field" data-extra-service-date-field hidden>
-                <span>Departure Date</span>
+                <span data-i18n-text="modal.fields.departureDate">Departure Date</span>
                 <input type="date" name="service_date" />
               </label>
 
               <label class="transport-field transport-vehicle-field" data-extra-departure-field hidden>
-                <span>Departure Time</span>
+                <span data-extra-departure-label data-i18n-text="modal.fields.departureTime">Departure Time</span>
                 <input type="time" name="departure_time" />
               </label>
 
               <label class="transport-field transport-vehicle-field" data-extra-route-field hidden>
-                <span>Route</span>
+                <span data-i18n-text="modal.fields.route">Route</span>
                 <select name="route_kind">
-                  <option value="home_to_work">Home to Work</option>
-                  <option value="work_to_home">Work to Home</option>
+                  <option value="home_to_work" data-i18n-option="routes.home_to_work">Home to Work</option>
+                  <option value="work_to_home" data-i18n-option="routes.work_to_home">Work to Home</option>
                 </select>
               </label>
             </div>
@@ -410,12 +552,12 @@
             <div class="transport-vehicle-checkbox-grid transport-vehicle-checkbox-grid-weekend">
               <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
                 <input type="checkbox" name="every_saturday" />
-                <span>Every Saturday</span>
+                <span data-i18n-text="modal.fields.everySaturday">Every Saturday</span>
               </label>
 
               <label class="transport-checkbox-field" data-weekend-persistence-field hidden>
                 <input type="checkbox" name="every_sunday" />
-                <span>Every Sunday</span>
+                <span data-i18n-text="modal.fields.everySunday">Every Sunday</span>
               </label>
             </div>
           </div>
@@ -424,33 +566,40 @@
             <div class="transport-vehicle-checkbox-grid transport-vehicle-checkbox-grid-regular">
               <label class="transport-checkbox-field" data-regular-persistence-field hidden>
                 <input type="checkbox" name="every_monday" checked />
-                <span>Every Monday</span>
+                <span data-i18n-text="modal.fields.everyMonday">Every Monday</span>
               </label>
 
               <label class="transport-checkbox-field" data-regular-persistence-field hidden>
                 <input type="checkbox" name="every_tuesday" checked />
-                <span>Every Tuesday</span>
+                <span data-i18n-text="modal.fields.everyTuesday">Every Tuesday</span>
               </label>
 
               <label class="transport-checkbox-field" data-regular-persistence-field hidden>
                 <input type="checkbox" name="every_wednesday" checked />
-                <span>Every Wednesday</span>
+                <span data-i18n-text="modal.fields.everyWednesday">Every Wednesday</span>
               </label>
 
               <label class="transport-checkbox-field" data-regular-persistence-field hidden>
                 <input type="checkbox" name="every_thursday" checked />
-                <span>Every Thursday</span>
+                <span data-i18n-text="modal.fields.everyThursday">Every Thursday</span>
               </label>
 
               <label class="transport-checkbox-field" data-regular-persistence-field hidden>
                 <input type="checkbox" name="every_friday" checked />
-                <span>Every Friday</span>
+                <span data-i18n-text="modal.fields.everyFriday">Every Friday</span>
               </label>
             </div>
           </div>
 
           <div class="transport-modal-actions">
-            <button type="button" class="transport-secondary-button" data-close-vehicle-modal>Cancel</button>
+            <button
+              type="button"
+              class="transport-secondary-button"
+              data-close-vehicle-modal
+              data-i18n-text="modal.actions.cancel"
+            >
+              Cancel
+            </button>
             <button type="submit" class="transport-primary-button">Save Vehicle</button>
           </div>
         </form>
@@ -468,19 +617,28 @@
       >
         <div class="transport-modal-head">
           <div>
-            <h2 id="transport-ai-agent-modal-title" class="transport-modal-title transport-ai-agent-modal-title">Ajustes para o Agente de IA</h2>
+            <h2 id="transport-ai-agent-modal-title" class="transport-modal-title transport-ai-agent-modal-title" data-i18n-text="ai.agentSettingsTitle">AI Agent Settings</h2>
           </div>
-          <button type="button" class="transport-modal-close" data-close-ai-agent-modal aria-label="Fechar ajustes do agente de IA">×</button>
+          <button
+            type="button"
+            class="transport-modal-close"
+            data-close-ai-agent-modal
+            data-i18n-aria-label="ai.agentSettingsCloseAria"
+            data-i18n-title="ai.agentSettingsCloseAria"
+            aria-label="Close AI agent settings"
+          >
+            ×
+          </button>
         </div>
 
         <div class="transport-ai-agent-modal-body">
           <p id="transport-ai-agent-modal-note" class="transport-modal-note transport-ai-agent-modal-note" data-ai-agent-modal-note>
-            Quando os projetos forem carregados, a IA usará endereço, ZIP Code e país vindos de Admin &gt; Projetos.
+            When projects load, the AI will use address, ZIP Code, and country from Admin &gt; Projects.
           </p>
 
           <div class="transport-settings-section transport-ai-agent-settings-group">
             <label class="transport-settings-row" for="transportAiAgentEarliestBoarding">
-              <span class="transport-settings-label" data-ai-agent-early-boarding-label>Embarque Mais Cedo:</span>
+              <span class="transport-settings-label" data-ai-agent-early-boarding-label data-i18n-text="ai.agentSettingsEarliestBoarding">Earliest Boarding:</span>
               <input
                 id="transportAiAgentEarliestBoarding"
                 class="transport-settings-time-input"
@@ -492,7 +650,7 @@
             </label>
 
             <label class="transport-settings-row" for="transportAiAgentArrivalAtWork">
-              <span class="transport-settings-label" data-ai-agent-arrival-label>Horário de Chegada no Trabalho:</span>
+              <span class="transport-settings-label" data-ai-agent-arrival-label data-i18n-text="ai.agentSettingsArrivalAtWork">Arrival Time at Work:</span>
               <input
                 id="transportAiAgentArrivalAtWork"
                 class="transport-settings-time-input"
@@ -503,6 +661,44 @@
               />
             </label>
           </div>
+
+          <fieldset class="transport-ai-agent-request-kinds">
+            <legend class="transport-ai-agent-request-kinds-legend" data-ai-agent-request-kinds-legend data-i18n-text="ai.agentSettingsRequestKindsLegend">Lists to Calculate</legend>
+            <div class="transport-ai-agent-request-kinds-grid">
+              <label class="transport-checkbox-field transport-ai-agent-request-kind-option">
+                <input
+                  type="checkbox"
+                  name="transport_ai_agent_request_kinds"
+                  value="extra"
+                  data-ai-agent-request-kind="extra"
+                  checked
+                />
+                <span data-i18n-text="requests.labels.extra">EXTRA</span>
+              </label>
+
+              <label class="transport-checkbox-field transport-ai-agent-request-kind-option">
+                <input
+                  type="checkbox"
+                  name="transport_ai_agent_request_kinds"
+                  value="weekend"
+                  data-ai-agent-request-kind="weekend"
+                  checked
+                />
+                <span data-i18n-text="requests.labels.weekend">WEEKEND</span>
+              </label>
+
+              <label class="transport-checkbox-field transport-ai-agent-request-kind-option">
+                <input
+                  type="checkbox"
+                  name="transport_ai_agent_request_kinds"
+                  value="regular"
+                  data-ai-agent-request-kind="regular"
+                  checked
+                />
+                <span data-i18n-text="requests.labels.regular">REGULAR</span>
+              </label>
+            </div>
+          </fieldset>
 
           <div
             id="transport-ai-agent-modal-feedback"
@@ -515,8 +711,8 @@
           ></div>
 
           <div class="transport-modal-actions transport-ai-agent-actions">
-            <button type="button" class="transport-secondary-button" data-ai-agent-cancel data-close-ai-agent-modal>Cancelar</button>
-            <button type="button" class="transport-primary-button" data-ai-agent-submit>Solicitar Rotas</button>
+            <button type="button" class="transport-secondary-button" data-ai-agent-cancel data-close-ai-agent-modal data-i18n-text="ai.agentSettingsCancel">Cancel</button>
+            <button type="button" class="transport-primary-button" data-ai-agent-submit data-i18n-text="ai.agentSettingsSubmit">Request Routes</button>
           </div>
         </div>
       </div>
@@ -533,15 +729,36 @@
       >
         <div class="transport-modal-head">
           <div>
-            <h2 id="transport-ai-settings-modal-title" class="transport-modal-title transport-ai-settings-modal-title">AI Settings</h2>
+            <h2
+              id="transport-ai-settings-modal-title"
+              class="transport-modal-title transport-ai-settings-modal-title"
+              data-i18n-text="ai.settingsTitle"
+            >
+              AI Settings
+            </h2>
           </div>
-          <button type="button" class="transport-modal-close" data-close-ai-settings-modal aria-label="Close AI settings">×</button>
+          <button
+            type="button"
+            class="transport-modal-close"
+            data-close-ai-settings-modal
+            data-i18n-aria-label="ai.settingsCloseAria"
+            data-i18n-title="ai.settingsCloseAria"
+            aria-label="Close AI settings"
+          >
+            ×
+          </button>
         </div>
 
         <div class="transport-ai-settings-modal-body">
           <div class="transport-settings-section transport-ai-settings-group">
             <label class="transport-settings-row" for="transportAiSettingsProject">
-              <span class="transport-settings-label" data-ai-settings-project-label>Project:</span>
+              <span
+                class="transport-settings-label"
+                data-ai-settings-project-label
+                data-i18n-text="ai.settingsProject"
+              >
+                Project:
+              </span>
               <select
                 id="transportAiSettingsProject"
                 class="transport-settings-select"
@@ -550,7 +767,13 @@
             </label>
 
             <label class="transport-settings-row" for="transportAiSettingsProvider">
-              <span class="transport-settings-label" data-ai-settings-provider-label>Provider:</span>
+              <span
+                class="transport-settings-label"
+                data-ai-settings-provider-label
+                data-i18n-text="ai.settingsProvider"
+              >
+                Provider:
+              </span>
               <select
                 id="transportAiSettingsProvider"
                 class="transport-settings-select"
@@ -566,13 +789,21 @@
             </p>
 
             <label class="transport-settings-row" for="transportAiSettingsApiKey">
-              <span class="transport-settings-label" data-ai-settings-api-key-label>API Key:</span>
+              <span
+                class="transport-settings-label"
+                data-ai-settings-api-key-label
+                data-i18n-text="ai.settingsApiKey"
+              >
+                API Key:
+              </span>
               <input
                 id="transportAiSettingsApiKey"
                 class="transport-settings-text-input"
                 type="password"
                 autocomplete="off"
                 data-ai-settings-api-key
+                data-i18n-aria-label="ai.settingsApiKey"
+                data-i18n-placeholder="ai.settingsApiKeyPlaceholder"
                 placeholder="Paste API key"
               />
             </label>
@@ -591,8 +822,23 @@
           ></div>
 
           <div class="transport-modal-actions transport-ai-settings-actions">
-            <button type="button" class="transport-secondary-button" data-ai-settings-cancel data-close-ai-settings-modal>Cancel</button>
-            <button type="button" class="transport-primary-button" data-ai-settings-save>Save</button>
+            <button
+              type="button"
+              class="transport-secondary-button"
+              data-ai-settings-cancel
+              data-close-ai-settings-modal
+              data-i18n-text="ai.settingsCancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="transport-primary-button"
+              data-ai-settings-save
+              data-i18n-text="ai.settingsSave"
+            >
+              Save
+            </button>
           </div>
         </div>
       </div>
@@ -609,64 +855,118 @@
       >
         <div class="transport-modal-head">
           <div>
-            <h2 id="transport-ai-changes-modal-title" class="transport-modal-title transport-ai-changes-modal-title" data-ai-changes-title>Alterações</h2>
+            <h2 id="transport-ai-changes-modal-title" class="transport-modal-title transport-ai-changes-modal-title" data-ai-changes-title data-i18n-text="ai.changesTitle">Changes</h2>
           </div>
-          <button type="button" class="transport-modal-close" data-close-ai-changes-modal aria-label="Fechar alterações">×</button>
+          <button
+            type="button"
+            class="transport-modal-close"
+            data-close-ai-changes-modal
+            data-i18n-aria-label="ai.changesCloseAria"
+            data-i18n-title="ai.changesCloseAria"
+            aria-label="Close changes"
+          >
+            ×
+          </button>
         </div>
 
         <div class="transport-ai-changes-modal-body">
           <section class="transport-ai-changes-hero" aria-labelledby="transport-ai-changes-modal-summary-heading">
             <div class="transport-ai-changes-summary-shell" data-ai-changes-summary>
               <div class="transport-ai-changes-section-head">
-                <p class="transport-modal-kicker transport-ai-changes-kicker">AI Review</p>
-                <h3 id="transport-ai-changes-modal-summary-heading" class="transport-ai-changes-section-title">Summary</h3>
+                <p class="transport-modal-kicker transport-ai-changes-kicker" data-i18n-text="ai.review.kicker">AI Review</p>
+                <h3 id="transport-ai-changes-modal-summary-heading" class="transport-ai-changes-section-title" data-i18n-text="ai.review.summaryHeading">Summary</h3>
               </div>
               <p id="transport-ai-changes-modal-summary" class="transport-modal-feedback transport-ai-changes-status" data-ai-changes-status hidden></p>
               <div class="transport-ai-changes-summary-grid" data-ai-changes-summary-grid>
                 <article class="transport-ai-changes-summary-card">
-                  <span class="transport-ai-changes-summary-label">Cost</span>
+                  <span class="transport-ai-changes-summary-label" data-i18n-text="ai.review.summary.cost">Cost</span>
                   <strong class="transport-ai-changes-summary-value">--</strong>
                 </article>
                 <article class="transport-ai-changes-summary-card">
-                  <span class="transport-ai-changes-summary-label">Vehicles</span>
+                  <span class="transport-ai-changes-summary-label" data-i18n-text="ai.review.summary.vehicles">Vehicles</span>
                   <strong class="transport-ai-changes-summary-value">--</strong>
                 </article>
                 <article class="transport-ai-changes-summary-card">
-                  <span class="transport-ai-changes-summary-label">Passengers</span>
+                  <span class="transport-ai-changes-summary-label" data-i18n-text="ai.review.summary.passengers">Passengers</span>
                   <strong class="transport-ai-changes-summary-value">--</strong>
                 </article>
               </div>
             </div>
 
-            <aside class="transport-ai-changes-side-note" aria-label="Review surface note">
-              <h3 class="transport-ai-changes-section-title">Review Surface</h3>
-              <p class="transport-ai-changes-side-copy">
-                This modal is prepared to show the executive summary, vehicle changes, passenger allocations, routes, and audit details once a suggestion is loaded.
-              </p>
+            <aside
+              class="transport-ai-changes-side-note"
+              data-i18n-aria-label="ai.review.surfaceNoteAria"
+              aria-label="Review surface note"
+            >
+              <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.contract.heading">Review Contract</h3>
+              <div class="transport-ai-review-contract" data-ai-review-contract>
+                <section class="transport-ai-review-contract-section" data-ai-review-vehicle-tables>
+                  <h4 class="transport-ai-review-contract-title" data-i18n-text="ai.review.contract.vehicleTables.title">Vehicle Tables</h4>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.contract.vehicleTables.body">
+                    The primary review surface is one table per vehicle, ordered by the home-to-work pickup sequence.
+                  </p>
+                </section>
+                <section class="transport-ai-review-contract-section" data-ai-review-management>
+                  <h4 class="transport-ai-review-contract-title" data-i18n-text="ai.review.contract.managementTable.title">Management Table</h4>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.contract.managementTable.body">
+                    The final surface ends with a management table fed by cost_summary, change_summary, and real plan counts.
+                  </p>
+                </section>
+                <section class="transport-ai-review-contract-section" data-ai-review-exceptions>
+                  <h4 class="transport-ai-review-contract-title" data-i18n-text="ai.review.contract.exceptions.title">Exceptions / Not Routed</h4>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.contract.exceptions.body">
+                    Unallocated requests and blocking issues stay visible in a compact exception section outside the vehicle tables.
+                  </p>
+                </section>
+                <section class="transport-ai-review-contract-section" data-ai-review-row-contract>
+                  <h4 class="transport-ai-review-contract-title" data-i18n-text="ai.review.contract.canonicalRow.title">Canonical Row Contract</h4>
+                  <ul class="transport-ai-review-contract-field-list">
+                    <li data-ai-review-row-field="request_id" data-i18n-text="ai.review.contract.canonicalRow.requestId">Internal request_id</li>
+                    <li data-ai-review-row-field="user_name" data-i18n-text="ai.review.contract.canonicalRow.userName">User Name</li>
+                    <li data-ai-review-row-field="user_address" data-i18n-text="ai.review.contract.canonicalRow.userAddress">User Address</li>
+                    <li data-ai-review-row-field="home_to_work_boarding" data-i18n-text="ai.review.contract.canonicalRow.homeToWork">Home to Work - Boarding</li>
+                    <li data-ai-review-row-field="work_to_home_dropoff" data-i18n-text="ai.review.contract.canonicalRow.workToHome">Work to Home - Dropoff</li>
+                    <li data-ai-review-row-field="pickup_order" data-i18n-text="ai.review.contract.canonicalRow.pickupOrder">Internal pickup_order</li>
+                  </ul>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.contract.canonicalRow.note">
+                    Ordering uses pickup_order from home_to_work with scheduled_pickup_time as deterministic fallback. The address column must come from route_itineraries.stops joined by request_id, not from preformatted UI text. Work to Home - Dropoff remains contractual now and may stay placeholder-backed until Modification 11 completes the round-trip data.
+                  </p>
+                </section>
+              </div>
             </aside>
           </section>
 
-          <div class="transport-ai-changes-tabs" data-ai-changes-tabs role="tablist" aria-label="AI suggestion sections">
+          <div
+            class="transport-ai-changes-tabs"
+            data-ai-changes-tabs
+            role="tablist"
+            data-i18n-aria-label="ai.review.tabsAria"
+            aria-label="AI suggestion sections"
+          >
             <button
               type="button"
               class="transport-ai-changes-tab is-active"
-              id="transport-ai-changes-tab-summary"
-              data-ai-changes-tab="summary"
+              id="transport-ai-changes-tab-review"
+              data-ai-changes-tab="review"
+              data-ai-changes-tab-role="primary"
               role="tab"
               aria-selected="true"
-              aria-controls="transport-ai-changes-panel-summary"
+              aria-controls="transport-ai-changes-panel-review"
+              data-i18n-text="ai.review.tabs.review"
             >
-              Summary
+              Review
             </button>
             <button
               type="button"
               class="transport-ai-changes-tab"
               id="transport-ai-changes-tab-vehicles"
               data-ai-changes-tab="vehicles"
+              data-ai-changes-tab-role="supporting-detail"
               role="tab"
               aria-selected="false"
               aria-controls="transport-ai-changes-panel-vehicles"
               tabindex="-1"
+              data-i18n-text="ai.review.tabs.vehicles"
             >
               Vehicles
             </button>
@@ -675,10 +975,12 @@
               class="transport-ai-changes-tab"
               id="transport-ai-changes-tab-passengers"
               data-ai-changes-tab="passengers"
+              data-ai-changes-tab-role="supporting-detail"
               role="tab"
               aria-selected="false"
               aria-controls="transport-ai-changes-panel-passengers"
               tabindex="-1"
+              data-i18n-text="ai.review.tabs.passengers"
             >
               Passengers
             </button>
@@ -687,10 +989,12 @@
               class="transport-ai-changes-tab"
               id="transport-ai-changes-tab-routes"
               data-ai-changes-tab="routes"
+              data-ai-changes-tab-role="supporting-detail"
               role="tab"
               aria-selected="false"
               aria-controls="transport-ai-changes-panel-routes"
               tabindex="-1"
+              data-i18n-text="ai.review.tabs.routes"
             >
               Routes
             </button>
@@ -699,10 +1003,12 @@
               class="transport-ai-changes-tab"
               id="transport-ai-changes-tab-audit"
               data-ai-changes-tab="audit"
+              data-ai-changes-tab-role="audit"
               role="tab"
               aria-selected="false"
               aria-controls="transport-ai-changes-panel-audit"
               tabindex="-1"
+              data-i18n-text="ai.review.tabs.audit"
             >
               Audit
             </button>
@@ -710,19 +1016,38 @@
 
           <div class="transport-ai-changes-panels" data-ai-changes-content>
             <section
-              id="transport-ai-changes-panel-summary"
+              id="transport-ai-changes-panel-review"
               class="transport-ai-changes-panel transport-ai-changes-panel-summary is-active"
-              data-ai-changes-panel="summary"
+              data-ai-changes-panel="review"
+              data-ai-changes-panel-role="primary"
               role="tabpanel"
-              aria-labelledby="transport-ai-changes-tab-summary"
+              aria-labelledby="transport-ai-changes-tab-review"
             >
               <div class="transport-ai-changes-panel-head">
-                <h3 class="transport-ai-changes-section-title">Executive Summary</h3>
+                <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.panels.reviewPlan">Review Plan</h3>
               </div>
-              <div class="transport-ai-changes-panel-body transport-ai-changes-summary-panel" data-ai-changes-summary-panel>
-                <p class="transport-ai-changes-empty-state">
-                  Summary cards and high-level results will render here when the AI suggestion is loaded.
-                </p>
+              <div
+                class="transport-ai-changes-panel-body transport-ai-changes-summary-panel transport-ai-review-workspace"
+                data-ai-changes-summary-panel
+                data-ai-review-workspace
+              >
+                <div class="transport-ai-review-vehicle-table-list" data-ai-review-vehicle-table-list>
+                  <p class="transport-ai-changes-empty-state" data-i18n-text="ai.review.panels.reviewEmptyState">
+                    Consolidated per-vehicle tables render here as the main review surface. Supporting vehicle, passenger, and route panels remain secondary.
+                  </p>
+                </div>
+                <section class="transport-ai-review-management-placeholder" data-ai-review-exceptions-placeholder>
+                  <h4 class="transport-ai-review-section-title" data-i18n-text="ai.review.exceptions.title">Exceptions / Not Routed</h4>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.panels.exceptionsPlaceholder">
+                    Requests without a vehicle assignment and validation issues render here as a compact section, outside the vehicle tables.
+                  </p>
+                </section>
+                <section class="transport-ai-review-management-placeholder" data-ai-review-management-placeholder>
+                  <h4 class="transport-ai-review-section-title" data-i18n-text="ai.review.managementTitle">Management Table</h4>
+                  <p class="transport-ai-changes-side-copy" data-i18n-text="ai.review.panels.managementPlaceholder">
+                    Management metrics stay at the end of Review and will be rendered here as the next step of the review flow.
+                  </p>
+                </section>
               </div>
             </section>
 
@@ -730,15 +1055,16 @@
               id="transport-ai-changes-panel-vehicles"
               class="transport-ai-changes-panel"
               data-ai-changes-panel="vehicles"
+              data-ai-changes-panel-role="supporting-detail"
               role="tabpanel"
               aria-labelledby="transport-ai-changes-tab-vehicles"
             >
               <div class="transport-ai-changes-panel-head">
-                <h3 class="transport-ai-changes-section-title">Vehicle Changes</h3>
+                <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.panels.vehicleDetails">Supporting Vehicle Details</h3>
               </div>
               <div class="transport-ai-changes-panel-body" data-ai-changes-vehicles>
-                <p class="transport-ai-changes-empty-state">
-                  Vehicle actions will appear in this panel once the review data is rendered.
+                <p class="transport-ai-changes-empty-state" data-i18n-text="ai.review.panels.vehiclesEmptyState">
+                  Vehicle actions stay available here as supporting detail while the primary review surface converges to one table per vehicle.
                 </p>
               </div>
             </section>
@@ -747,15 +1073,16 @@
               id="transport-ai-changes-panel-passengers"
               class="transport-ai-changes-panel"
               data-ai-changes-panel="passengers"
+              data-ai-changes-panel-role="supporting-detail"
               role="tabpanel"
               aria-labelledby="transport-ai-changes-tab-passengers"
             >
               <div class="transport-ai-changes-panel-head">
-                <h3 class="transport-ai-changes-section-title">Passenger Allocations</h3>
+                <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.panels.passengerDetails">Supporting Passenger Details</h3>
               </div>
               <div class="transport-ai-changes-panel-body" data-ai-changes-passengers>
-                <p class="transport-ai-changes-empty-state">
-                  Passenger assignment changes and not-routed states will render here.
+                <p class="transport-ai-changes-empty-state" data-i18n-text="ai.review.panels.passengersEmptyState">
+                  Passenger-level allocation details remain available here as supporting detail, not as the primary review surface.
                 </p>
               </div>
             </section>
@@ -764,15 +1091,16 @@
               id="transport-ai-changes-panel-routes"
               class="transport-ai-changes-panel"
               data-ai-changes-panel="routes"
+              data-ai-changes-panel-role="supporting-detail"
               role="tabpanel"
               aria-labelledby="transport-ai-changes-tab-routes"
             >
               <div class="transport-ai-changes-panel-head">
-                <h3 class="transport-ai-changes-section-title">Routes</h3>
+                <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.panels.routeDetails">Supporting Route Details</h3>
               </div>
               <div class="transport-ai-changes-panel-body" data-ai-changes-routes>
-                <p class="transport-ai-changes-empty-state">
-                  Ordered route stops and destination summaries will render in this area.
+                <p class="transport-ai-changes-empty-state" data-i18n-text="ai.review.panels.routesEmptyState">
+                  Ordered route stops remain available for traceability, but the final review surface is the per-vehicle table rather than an independent route panel.
                 </p>
               </div>
             </section>
@@ -781,14 +1109,15 @@
               id="transport-ai-changes-panel-audit"
               class="transport-ai-changes-panel"
               data-ai-changes-panel="audit"
+              data-ai-changes-panel-role="audit"
               role="tabpanel"
               aria-labelledby="transport-ai-changes-tab-audit"
             >
               <div class="transport-ai-changes-panel-head">
-                <h3 class="transport-ai-changes-section-title">Audit</h3>
+                <h3 class="transport-ai-changes-section-title" data-i18n-text="ai.review.panels.audit">Audit</h3>
               </div>
               <div class="transport-ai-changes-panel-body" data-ai-changes-audit>
-                <p class="transport-ai-changes-empty-state">
+                <p class="transport-ai-changes-empty-state" data-i18n-text="ai.review.panels.auditEmptyState">
                   Prompt version, provider details, hashes, and other audit fields will render here.
                 </p>
               </div>
@@ -796,9 +1125,30 @@
           </div>
 
           <div class="transport-modal-actions transport-ai-changes-actions">
-            <button type="button" class="transport-secondary-button" data-ai-changes-cancel>Cancel</button>
-            <button type="button" class="transport-secondary-button" data-ai-changes-save>Save</button>
-            <button type="button" class="transport-primary-button" data-ai-changes-apply>Apply</button>
+            <button
+              type="button"
+              class="transport-secondary-button"
+              data-ai-changes-cancel
+              data-i18n-text="ai.changesCancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="transport-secondary-button"
+              data-ai-changes-save
+              data-i18n-text="ai.changesSave"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              class="transport-primary-button"
+              data-ai-changes-apply
+              data-i18n-text="ai.changesApply"
+            >
+              Apply
+            </button>
           </div>
         </div>
       </div>
@@ -814,22 +1164,74 @@
       >
         <div class="transport-modal-head">
           <div>
-            <h2 id="transport-settings-modal-title" class="transport-modal-title transport-settings-modal-title">SETTINGS</h2>
+            <h2
+              id="transport-settings-modal-title"
+              class="transport-modal-title transport-settings-modal-title"
+              data-i18n-text="settings.title"
+            >
+              SETTINGS
+            </h2>
           </div>
-          <button type="button" class="transport-modal-close" data-close-settings-modal aria-label="Close settings">×</button>
+          <button
+            type="button"
+            class="transport-modal-close"
+            data-close-settings-modal
+            data-i18n-aria-label="settings.closeAria"
+            data-i18n-title="settings.closeAria"
+            aria-label="Close settings"
+          >
+            ×
+          </button>
         </div>
 
         <div class="transport-settings-modal-body">
           <section class="transport-settings-section transport-settings-section-preferences">
-            <h3 class="transport-settings-section-title" data-settings-preferences-title>Preferences</h3>
-            <div class="transport-settings-section-body">
-              <label class="transport-settings-row" for="transportSettingsLanguage">
-                <span class="transport-settings-label" data-settings-language-label>Languages:</span>
+            <h3
+              class="transport-settings-section-title"
+              data-settings-preferences-title
+              data-i18n-text="settings.preferences"
+            >
+              Preferences
+            </h3>
+            <div class="transport-settings-section-body transport-settings-preferences-grid">
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsLanguage">
+                <span
+                  class="transport-settings-label"
+                  data-settings-language-label
+                  data-i18n-text="settings.languages"
+                >
+                  Languages:
+                </span>
                 <select id="transportSettingsLanguage" class="transport-settings-select" data-settings-language-select></select>
               </label>
 
-              <label class="transport-settings-row" for="transportSettingsWorkToHomeTime">
-                <span class="transport-settings-label" data-settings-time-label>Work to Home Time:</span>
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsArriveAtWorkTime">
+                <span
+                  class="transport-settings-label"
+                  data-settings-arrive-at-work-label
+                  data-i18n-text="settings.arriveAtWorkTime"
+                >
+                  Arrive at Work:
+                </span>
+                <input
+                  id="transportSettingsArriveAtWorkTime"
+                  class="transport-settings-time-input"
+                  type="time"
+                  step="60"
+                  value="07:45"
+                  data-settings-arrive-at-work-time
+                  data-i18n-aria-label="settings.arriveAtWorkTime"
+                />
+              </label>
+
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsWorkToHomeTime">
+                <span
+                  class="transport-settings-label"
+                  data-settings-time-label
+                  data-i18n-text="settings.workToHomeTime"
+                >
+                  Work to Home Time:
+                </span>
                 <input
                   id="transportSettingsWorkToHomeTime"
                   class="transport-settings-time-input"
@@ -837,11 +1239,38 @@
                   step="60"
                   value="16:45"
                   data-settings-work-to-home-time
+                  data-i18n-aria-label="settings.workToHomeTime"
                 />
               </label>
 
-              <label class="transport-settings-row" for="transportSettingsLastUpdateTime">
-                <span class="transport-settings-label" data-settings-last-update-label>Last Update Time:</span>
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsExtraCarTolerance">
+                <span
+                  class="transport-settings-label"
+                  data-settings-extra-car-tolerance-label
+                  data-i18n-text="settings.extraCarTolerance"
+                >
+                  Extra Car Tolerance:
+                </span>
+                <input
+                  id="transportSettingsExtraCarTolerance"
+                  class="transport-settings-number-input"
+                  type="number"
+                  min="0"
+                  max="240"
+                  value="30"
+                  data-settings-extra-car-tolerance
+                  data-i18n-aria-label="settings.extraCarTolerance"
+                />
+              </label>
+
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsLastUpdateTime">
+                <span
+                  class="transport-settings-label"
+                  data-settings-last-update-label
+                  data-i18n-text="settings.lastUpdateTime"
+                >
+                  Last Update Time:
+                </span>
                 <input
                   id="transportSettingsLastUpdateTime"
                   class="transport-settings-time-input"
@@ -849,11 +1278,18 @@
                   step="60"
                   value="16:00"
                   data-settings-last-update-time
+                  data-i18n-aria-label="settings.lastUpdateTime"
                 />
               </label>
 
-              <label class="transport-settings-row" for="transportSettingsDefaultTolerance">
-                <span class="transport-settings-label" data-settings-default-tolerance-label>Standard Tolerance:</span>
+              <label class="transport-settings-row transport-settings-row--compact" for="transportSettingsDefaultTolerance">
+                <span
+                  class="transport-settings-label"
+                  data-settings-default-tolerance-label
+                  data-i18n-text="settings.standardTolerance"
+                >
+                  Standard Tolerance:
+                </span>
                 <input
                   id="transportSettingsDefaultTolerance"
                   class="transport-settings-number-input"
@@ -862,21 +1298,40 @@
                   max="240"
                   value="5"
                   data-settings-default-tolerance
+                  data-i18n-aria-label="settings.standardTolerance"
                 />
               </label>
             </div>
           </section>
 
           <section class="transport-settings-section transport-settings-section-defaults">
-            <h3 class="transport-settings-section-title" data-settings-vehicle-defaults-title>Vehicle Form Defaults</h3>
+            <h3
+              class="transport-settings-section-title"
+              data-settings-vehicle-defaults-title
+              data-i18n-text="settings.vehicleDefaults"
+            >
+              Vehicle Form Defaults
+            </h3>
             <div class="transport-settings-section-body">
               <div class="transport-settings-subsection transport-settings-price-variables-group">
                 <div class="transport-settings-row transport-settings-wide-row transport-settings-price-variables-row">
-                  <span class="transport-settings-label" data-settings-price-variables-label>Price Variables:</span>
+                  <span
+                    class="transport-settings-label"
+                    data-settings-price-variables-label
+                    data-i18n-text="settings.priceVariables"
+                  >
+                    Price Variables:
+                  </span>
                   <div class="transport-settings-price-variables-controls">
                     <div class="transport-settings-inline-controls">
                       <label class="transport-settings-subfield" for="transportSettingsPriceCurrency">
-                        <span class="transport-settings-subfield-label" data-settings-price-currency-label>Currency</span>
+                        <span
+                          class="transport-settings-subfield-label"
+                          data-settings-price-currency-label
+                          data-i18n-text="settings.currency"
+                        >
+                          Currency
+                        </span>
                         <select
                           id="transportSettingsPriceCurrency"
                           class="transport-settings-select"
@@ -885,16 +1340,22 @@
                       </label>
 
                       <label class="transport-settings-subfield" for="transportSettingsPriceRateUnit">
-                        <span class="transport-settings-subfield-label" data-settings-price-rate-unit-label>Billing Unit</span>
+                        <span
+                          class="transport-settings-subfield-label"
+                          data-settings-price-rate-unit-label
+                          data-i18n-text="settings.billingUnit"
+                        >
+                          Billing Unit
+                        </span>
                         <select
                           id="transportSettingsPriceRateUnit"
                           class="transport-settings-select"
                           data-settings-price-rate-unit
                         >
-                          <option value="hour">Per hour</option>
-                          <option value="day" selected>Per day</option>
-                          <option value="week">Per week</option>
-                          <option value="month">Per month</option>
+                          <option value="hour" data-i18n-option="settings.perHour">Per hour</option>
+                          <option value="day" selected data-i18n-option="settings.perDay">Per day</option>
+                          <option value="week" data-i18n-option="settings.perWeek">Per week</option>
+                          <option value="month" data-i18n-option="settings.perMonth">Per month</option>
                         </select>
                       </label>
                     </div>
@@ -903,6 +1364,7 @@
                       type="button"
                       class="transport-secondary-button transport-settings-inline-button"
                       data-settings-add-currency-button
+                      data-i18n-text="settings.addCurrency"
                     >
                       Add currency
                     </button>
@@ -912,7 +1374,13 @@
                 <div class="transport-settings-add-currency" data-settings-add-currency-panel hidden>
                   <div class="transport-settings-add-currency-fields">
                     <label class="transport-settings-subfield" for="transportSettingsNewCurrencyCode">
-                      <span class="transport-settings-subfield-label" data-settings-new-currency-code-label>Currency code</span>
+                      <span
+                        class="transport-settings-subfield-label"
+                        data-settings-new-currency-code-label
+                        data-i18n-text="settings.currencyCode"
+                      >
+                        Currency code
+                      </span>
                       <input
                         id="transportSettingsNewCurrencyCode"
                         class="transport-settings-text-input"
@@ -920,11 +1388,18 @@
                         maxlength="12"
                         autocomplete="off"
                         data-settings-new-currency-code
+                        data-i18n-aria-label="settings.currencyCode"
                       />
                     </label>
 
                     <label class="transport-settings-subfield" for="transportSettingsNewCurrencyLabel">
-                      <span class="transport-settings-subfield-label" data-settings-new-currency-label-label>Currency label</span>
+                      <span
+                        class="transport-settings-subfield-label"
+                        data-settings-new-currency-label-label
+                        data-i18n-text="settings.currencyLabel"
+                      >
+                        Currency label
+                      </span>
                       <input
                         id="transportSettingsNewCurrencyLabel"
                         class="transport-settings-text-input"
@@ -932,6 +1407,7 @@
                         maxlength="80"
                         autocomplete="off"
                         data-settings-new-currency-label
+                        data-i18n-aria-label="settings.currencyLabel"
                       />
                     </label>
                   </div>
@@ -941,6 +1417,7 @@
                       type="button"
                       class="transport-secondary-button"
                       data-settings-cancel-currency-button
+                      data-i18n-text="modal.actions.cancel"
                     >
                       Cancel
                     </button>
@@ -948,6 +1425,7 @@
                       type="button"
                       class="transport-primary-button"
                       data-settings-save-currency-button
+                      data-i18n-text="settings.saveCurrency"
                     >
                       Save currency
                     </button>
@@ -1074,13 +1552,21 @@
           </section>
 
           <div class="transport-modal-actions transport-settings-actions">
-            <button type="button" class="transport-secondary-button" data-close-settings-modal data-settings-close-button>Close</button>
+            <button
+              type="button"
+              class="transport-secondary-button"
+              data-close-settings-modal
+              data-settings-close-button
+              data-i18n-text="settings.close"
+            >
+              Close
+            </button>
           </div>
         </div>
       </div>
     </div>
 
-    <script src="i18n.js?v=20260506b"></script>
-    <script src="app.js?v=20260506b"></script>
+    <script src="i18n.js?v=20260509e"></script>
+    <script src="app.js?v=20260509e"></script>
   </body>
 </html>

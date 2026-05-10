@@ -156,6 +156,10 @@ class MatrixResult(BaseModel):
     durations_seconds: list[list[float | None]]
     distances_meters: list[list[float | None]] | None = None
     depart_at: datetime | None = None
+    matrix_request_count: int = Field(default=0, ge=0)
+    matrix_chunk_count: int = Field(default=0, ge=0)
+    source_chunk_size: int | None = Field(default=None, ge=1)
+    destination_chunk_size: int | None = Field(default=None, ge=1)
 
     @field_validator("provider", "profile")
     @classmethod
@@ -441,6 +445,12 @@ class FakeTransportRouteProvider(TransportRouteProvider):
     def get_matrix(self, request: MatrixRequest) -> MatrixResult:
         durations: list[list[float]] = []
         distances: list[list[float]] | None = [] if "distance" in request.annotations else None
+        request_plan = describe_transport_route_matrix_request_plan(
+            provider_name=self.provider,
+            profile=request.profile,
+            source_count=len(request.sources),
+            destination_count=len(request.destinations),
+        )
 
         for source in request.sources:
             duration_row: list[float] = []
@@ -465,6 +475,10 @@ class FakeTransportRouteProvider(TransportRouteProvider):
             durations_seconds=durations,
             distances_meters=distances,
             depart_at=request.depart_at,
+            matrix_request_count=int(request_plan["matrix_request_count"] or 0),
+            matrix_chunk_count=int(request_plan["matrix_chunk_count"] or 0),
+            source_chunk_size=int(request_plan["source_chunk_size"] or len(request.sources)),
+            destination_chunk_size=int(request_plan["destination_chunk_size"] or len(request.destinations)),
         )
 
     def get_directions(self, request: DirectionsRequest) -> DirectionsResult:
@@ -590,6 +604,30 @@ def _format_coordinate_path(coordinates: list[TransportRouteCoordinate]) -> str:
     return ";".join(f"{coordinate.longitude},{coordinate.latitude}" for coordinate in coordinates)
 
 
+def _build_matrix_coordinate_payload(
+    sources: list[TransportRouteCoordinate],
+    destinations: list[TransportRouteCoordinate],
+) -> tuple[list[TransportRouteCoordinate], list[int], list[int]]:
+    coordinates = list(sources)
+    source_indexes = list(range(len(sources)))
+    index_by_pair: dict[tuple[float, float], int] = {}
+
+    for index, coordinate in enumerate(coordinates):
+        index_by_pair.setdefault(coordinate.as_pair(), index)
+
+    destination_indexes: list[int] = []
+    for coordinate in destinations:
+        pair = coordinate.as_pair()
+        index = index_by_pair.get(pair)
+        if index is None:
+            index = len(coordinates)
+            coordinates.append(coordinate)
+            index_by_pair[pair] = index
+        destination_indexes.append(index)
+
+    return coordinates, source_indexes, destination_indexes
+
+
 def _iter_index_chunks(total_count: int, chunk_size: int):
     for start in range(0, total_count, chunk_size):
         yield list(range(start, min(start + chunk_size, total_count)))
@@ -632,6 +670,45 @@ def _select_mapbox_matrix_chunk_sizes(
     if best_chunk_sizes is None:
         raise ValueError("unable to determine matrix chunk sizes")
     return best_chunk_sizes
+
+
+def describe_transport_route_matrix_request_plan(
+    *,
+    provider_name: str,
+    profile: str,
+    source_count: int,
+    destination_count: int,
+) -> dict[str, int | None]:
+    normalized_provider_name = _normalize_required_text(provider_name, field_name="provider_name").lower()
+    if source_count <= 0 or destination_count <= 0:
+        return {
+            "matrix_request_count": 0,
+            "matrix_chunk_count": 0,
+            "source_chunk_size": None,
+            "destination_chunk_size": None,
+        }
+
+    if normalized_provider_name != "mapbox":
+        return {
+            "matrix_request_count": 1,
+            "matrix_chunk_count": 1,
+            "source_chunk_size": source_count,
+            "destination_chunk_size": destination_count,
+        }
+
+    coordinate_limit = _get_mapbox_matrix_coordinate_limit(profile)
+    source_chunk_size, destination_chunk_size = _select_mapbox_matrix_chunk_sizes(
+        source_count=source_count,
+        destination_count=destination_count,
+        coordinate_limit=coordinate_limit,
+    )
+    matrix_request_count = ceil(source_count / source_chunk_size) * ceil(destination_count / destination_chunk_size)
+    return {
+        "matrix_request_count": matrix_request_count,
+        "matrix_chunk_count": matrix_request_count,
+        "source_chunk_size": source_chunk_size,
+        "destination_chunk_size": destination_chunk_size,
+    }
 
 
 class MapboxTransportRouteProvider(TransportRouteProvider):
@@ -716,12 +793,14 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
         if "distance" in request.annotations:
             distances_matrix = [[None for _ in range(column_count)] for _ in range(row_count)]
 
-        coordinate_limit = _get_mapbox_matrix_coordinate_limit(request.profile)
-        source_chunk_size, destination_chunk_size = _select_mapbox_matrix_chunk_sizes(
+        request_plan = describe_transport_route_matrix_request_plan(
+            provider_name=self.provider,
+            profile=request.profile,
             source_count=row_count,
             destination_count=column_count,
-            coordinate_limit=coordinate_limit,
         )
+        source_chunk_size = int(request_plan["source_chunk_size"] or row_count)
+        destination_chunk_size = int(request_plan["destination_chunk_size"] or column_count)
 
         for source_indexes in _iter_index_chunks(row_count, source_chunk_size):
             for destination_indexes in _iter_index_chunks(column_count, destination_chunk_size):
@@ -761,6 +840,10 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
             durations_seconds=durations_matrix,
             distances_meters=distances_matrix,
             depart_at=request.depart_at,
+            matrix_request_count=int(request_plan["matrix_request_count"] or 0),
+            matrix_chunk_count=int(request_plan["matrix_chunk_count"] or 0),
+            source_chunk_size=source_chunk_size,
+            destination_chunk_size=destination_chunk_size,
         )
 
     def get_directions(self, request: DirectionsRequest) -> DirectionsResult:
@@ -874,7 +957,10 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
     ) -> tuple[list[list[float]], list[list[float]] | None]:
         sources = [request.sources[index] for index in source_indexes]
         destinations = [request.destinations[index] for index in destination_indexes]
-        coordinates = [*sources, *destinations]
+        coordinates, request_source_indexes, request_destination_indexes = _build_matrix_coordinate_payload(
+            sources,
+            destinations,
+        )
         payload = self._request_json(
             operation="matrix",
             path=(
@@ -883,10 +969,8 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
             ),
             params={
                 "annotations": ",".join(request.annotations),
-                "sources": ",".join(str(index) for index in range(len(sources))),
-                "destinations": ",".join(
-                    str(len(sources) + index) for index in range(len(destinations))
-                ),
+                "sources": ";".join(str(index) for index in request_source_indexes),
+                "destinations": ";".join(str(index) for index in request_destination_indexes),
                 **(
                     {"depart_at": request.depart_at.isoformat()}
                     if request.depart_at is not None
@@ -943,6 +1027,7 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
         request_params["access_token"] = token
 
         attempt_count = max(1, int(self._settings.mapbox_max_retries) + 1)
+        last_retryable_status_code: int | None = None
         for attempt in range(1, attempt_count + 1):
             try:
                 response = self._client.get(
@@ -978,6 +1063,7 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
                     status_code=response.status_code,
                 )
             if response.status_code == 429 or response.status_code >= 500:
+                last_retryable_status_code = response.status_code
                 if attempt < attempt_count:
                     continue
             if response.status_code >= 400:
@@ -1010,6 +1096,7 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
             f"Mapbox {operation} request failed after retry exhaustion.",
             provider=self.provider,
             operation=operation,
+            status_code=last_retryable_status_code,
         )
 
     def _get_access_token(

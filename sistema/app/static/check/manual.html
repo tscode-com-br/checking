@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manual do Checking Web</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body class="manual-page">
+  <div class="manual-shell">
+    <header class="manual-hero">
+      <p class="manual-eyebrow" data-i18n="manual.eyebrow">Checking Web • Guia de uso</p>
+      <div class="manual-hero-grid">
+        <div class="manual-hero-copy">
+          <h1 id="manualHeading" data-i18n="manual.heading">Manual do Checking Web</h1>
+          <p class="manual-hero-lead" data-i18n="manual.introPrimary">Este manual resume os fluxos principais de autenticação, registro, localização, transporte e suporte do Checking Web.</p>
+          <p class="manual-hero-supporting" data-i18n="manual.introSecondary">Use esta página como referência rápida para entender o que o aplicativo faz automaticamente e quais ações continuam sob controle do usuário.</p>
+        </div>
+        <aside class="manual-language-card" aria-live="polite">
+          <span class="manual-language-label" data-i18n="manual.currentLanguageLabel">Idioma desta página</span>
+          <strong id="manualLanguageBadge">Português</strong>
+          <p class="manual-language-note" data-i18n="manual.availabilityNote">Nesta fase, o manual completo está disponível em português e inglês.</p>
+        </aside>
+      </div>
+      <div class="manual-highlight-grid">
+        <article class="manual-highlight-card">
+          <h2 data-i18n="manual.highlights.accessTitle">Acesso guiado</h2>
+          <p data-i18n="manual.highlights.accessBody">O app decide automaticamente quando pedir cadastro de usuário, criação de senha ou autenticação normal.</p>
+        </article>
+        <article class="manual-highlight-card">
+          <h2 data-i18n="manual.highlights.locationTitle">Localização acompanhada</h2>
+          <p data-i18n="manual.highlights.locationBody">As permissões, a precisão do GPS e o fallback manual influenciam diretamente o registro de presença.</p>
+        </article>
+        <article class="manual-highlight-card">
+          <h2 data-i18n="manual.highlights.supportTitle">Ajuda rápida</h2>
+          <p data-i18n="manual.highlights.supportBody">Ajustes centraliza idioma, senha, localização, suporte por WhatsApp e o acesso a esta documentação.</p>
+        </article>
+      </div>
+    </header>
+
+    <div class="manual-layout">
+      <aside class="manual-toc-card">
+        <h2 data-i18n="manual.tocTitle">Mapa do manual</h2>
+        <nav aria-label="Manual navigation" data-i18n-aria-label="manual.tocAriaLabel">
+          <a href="#manual-overview" data-i18n="manual.toc.overview">Visão geral</a>
+          <a href="#manual-auth-flow" data-i18n="manual.toc.authFlow">Fluxo de autenticação</a>
+          <a href="#manual-user-registration" data-i18n="manual.toc.userRegistration">Cadastro automático de usuário</a>
+          <a href="#manual-password-registration" data-i18n="manual.toc.passwordRegistration">Cadastro automático de senha</a>
+          <a href="#manual-login" data-i18n="manual.toc.login">Login</a>
+          <a href="#manual-attendance" data-i18n="manual.toc.attendance">Check-in e check-out</a>
+          <a href="#manual-project-selection" data-i18n="manual.toc.projectSelection">Seleção de projetos</a>
+          <a href="#manual-location" data-i18n="manual.toc.location">Permissão de localização</a>
+          <a href="#manual-automatic-activities" data-i18n="manual.toc.automaticActivities">Atividades automáticas</a>
+          <a href="#manual-transport" data-i18n="manual.toc.transport">Transporte</a>
+          <a href="#manual-password-change" data-i18n="manual.toc.passwordChange">Troca de senha</a>
+          <a href="#manual-settings" data-i18n="manual.toc.settings">Ajustes</a>
+          <a href="#manual-support" data-i18n="manual.toc.support">Suporte</a>
+          <a href="#manual-faq" data-i18n="manual.toc.faq">Problemas comuns e FAQ</a>
+        </nav>
+      </aside>
+
+      <main class="manual-content">
+        <section id="manual-overview" class="manual-section" aria-labelledby="manual-overview-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">01</span>
+            <div>
+              <h2 id="manual-overview-title" data-i18n="manual.sections.overview.title">Visão geral</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.overview.lead">O Checking Web reúne autenticação, registro de presença, contexto de localização e acesso a transporte numa única superfície otimizada para celular.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.overview.item1">A tela principal mostra a chave, a senha, o histórico recente, o formulário de registro e o atalho para Transporte.</li>
+            <li data-i18n="manual.sections.overview.item2">Os fluxos de ajuda aparecem automaticamente quando a chave ainda não existe ou quando o usuário precisa criar a primeira senha.</li>
+            <li data-i18n="manual.sections.overview.item3">O menu Ajustes reúne ações secundárias para reduzir ruído visual na área principal.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/auth-shell.png" alt="Tela principal do Checking Web com campos de chave e senha." data-i18n-alt="manual.figures.authShellAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.overview.figureCaption">Tela principal do Checking Web com a área de autenticação e o formulário de registro de presença.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-auth-flow" class="manual-section" aria-labelledby="manual-auth-flow-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">02</span>
+            <div>
+              <h2 id="manual-auth-flow-title" data-i18n="manual.sections.authFlow.title">Fluxo de autenticação</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.authFlow.lead">A aplicação consulta o status da chave assim que ela atinge quatro caracteres válidos e decide qual assistência exibir.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.authFlow.item1">Se a chave não existir, o fluxo muda para cadastro de usuário sem esperar um clique adicional.</li>
+            <li data-i18n="manual.sections.authFlow.item2">Se a chave existir, mas ainda não tiver senha, o fluxo abre diretamente o cadastro de senha.</li>
+            <li data-i18n="manual.sections.authFlow.item3">Se a chave e a senha já existirem, a interface continua no caminho de login normal.</li>
+          </ul>
+          <aside class="manual-callout" data-i18n="manual.sections.authFlow.note">Fechar um modal manualmente não cria um loop infinito: o sistema só tenta abrir de novo quando a chave ou o estado relevante realmente mudam.</aside>
+        </section>
+
+        <section id="manual-user-registration" class="manual-section" aria-labelledby="manual-user-registration-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">03</span>
+            <div>
+              <h2 id="manual-user-registration-title" data-i18n="manual.sections.userRegistration.title">Cadastro automático de usuário</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.userRegistration.lead">Quando a chave não existe no banco, o app abre o formulário de autoatendimento para o novo usuário concluir o cadastro.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.userRegistration.item1">O formulário solicita chave, nome completo, projetos, e-mail opcional, senha e confirmação de senha.</li>
+            <li data-i18n="manual.sections.userRegistration.item2">Os projetos são carregados da API e o usuário pode marcar um ou mais itens válidos.</li>
+            <li data-i18n="manual.sections.userRegistration.item3">Depois do envio bem-sucedido, a sessão web é autenticada e o app continua liberado para uso.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/user-registration.png" alt="Formulário de cadastro de novo usuário do Checking Web." data-i18n-alt="manual.figures.userRegistrationAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.userRegistration.figureCaption">Modal de cadastro de novo usuário aberto automaticamente para uma chave inexistente.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-password-registration" class="manual-section" aria-labelledby="manual-password-registration-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">04</span>
+            <div>
+              <h2 id="manual-password-registration-title" data-i18n="manual.sections.passwordRegistration.title">Cadastro automático de senha</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.passwordRegistration.lead">Se a chave já existir, mas não houver senha cadastrada, o Checking Web entra no modo de criação de senha.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.passwordRegistration.item1">O modal reaproveita o mesmo componente de senha, mas esconde o campo de senha antiga.</li>
+            <li data-i18n="manual.sections.passwordRegistration.item2">O usuário informa a nova senha, confirma o valor e conclui o primeiro acesso.</li>
+            <li data-i18n="manual.sections.passwordRegistration.item3">Após salvar, o backend autentica a sessão web e a tela principal passa a aceitar as demais operações.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/password-registration.png" alt="Modal de cadastro inicial de senha para um usuário existente sem senha." data-i18n-alt="manual.figures.passwordRegistrationAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.passwordRegistration.figureCaption">Modal de criação da primeira senha para um usuário já conhecido pelo sistema.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-login" class="manual-section" aria-labelledby="manual-login-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">05</span>
+            <div>
+              <h2 id="manual-login-title" data-i18n="manual.sections.login.title">Login</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.login.lead">Usuários já cadastrados digitam a chave, informam a senha e deixam o app validar a autenticação antes de registrar presença ou abrir Transporte.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.login.item1">A senha pode ser verificada de forma automática pelo fluxo já existente do shell principal.</li>
+            <li data-i18n="manual.sections.login.item2">Se o usuário alterar a senha digitada depois de autenticar, o app volta a se proteger até que a nova senha seja validada novamente.</li>
+            <li data-i18n="manual.sections.login.item3">As mensagens de status da interface ajudam a distinguir "aguardando senha", "verificando" e "autenticado".</li>
+          </ul>
+        </section>
+
+        <section id="manual-attendance" class="manual-section" aria-labelledby="manual-attendance-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">06</span>
+            <div>
+              <h2 id="manual-attendance-title" data-i18n="manual.sections.attendance.title">Check-in e check-out</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.attendance.lead">Com a autenticação válida, o usuário escolhe o tipo de registro, revisa o contexto e envia a operação na própria tela principal.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.attendance.item1">O formulário diferencia check-in e check-out e pode bloquear envio manual quando as atividades automáticas estiverem dominando o fluxo.</li>
+            <li data-i18n="manual.sections.attendance.item2">O histórico visível na parte superior ajuda a confirmar o último evento registrado antes de enviar um novo evento.</li>
+            <li data-i18n="manual.sections.attendance.item3">Mensagens de sucesso ou falha aparecem na área de status após cada tentativa.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/check-success.png" alt="Estado de sucesso após um check-in ou check-out realizado no Checking Web." data-i18n-alt="manual.figures.checkSuccessAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.attendance.figureCaption">Exemplo de estado bem-sucedido após um registro de presença.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-project-selection" class="manual-section" aria-labelledby="manual-project-selection-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">07</span>
+            <div>
+              <h2 id="manual-project-selection-title" data-i18n="manual.sections.projectSelection.title">Seleção de projetos</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.projectSelection.lead">O app usa projetos tanto no cadastro inicial quanto na rotina diária, para limitar o contexto do usuário e das localizações disponíveis.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.projectSelection.item1">No cadastro, o usuário marca um ou mais projetos válidos antes de concluir a criação da conta.</li>
+            <li data-i18n="manual.sections.projectSelection.item2">Depois de autenticado, o painel principal mostra os projetos atuais e permite atualização quando essa capacidade estiver disponível.</li>
+            <li data-i18n="manual.sections.projectSelection.item3">O projeto ativo influencia listas de localizações, histórico contextual e outras áreas dependentes do escopo do usuário.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/project-selection.png" alt="Área de seleção de projetos no Checking Web." data-i18n-alt="manual.figures.projectSelectionAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.projectSelection.figureCaption">Exemplo do bloco de projetos no contexto autenticado, com resumo dos escopos ativos.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-location" class="manual-section" aria-labelledby="manual-location-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">08</span>
+            <div>
+              <h2 id="manual-location-title" data-i18n="manual.sections.location.title">Permissão de localização e comportamento do GPS</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.location.lead">A posição do aparelho é usada para determinar contexto operacional, acionar fluxos automáticos e orientar o usuário quando a precisão não é suficiente.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.location.item1">A aplicação depende de HTTPS, suporte do navegador e permissão ativa para consultar localização precisa.</li>
+            <li data-i18n="manual.sections.location.item2">Quando a permissão está negada ou indisponível, o app mostra mensagens claras e pode limitar o fluxo ao fallback manual permitido.</li>
+            <li data-i18n="manual.sections.location.item3">Quando a localização é obtida com sucesso, a interface atualiza precisão, local reconhecido e ações automáticas relacionadas.</li>
+          </ul>
+          <div class="manual-figure-grid">
+            <figure class="manual-shot-card">
+              <img src="manual-assets/location-denied.png" alt="Estado do Checking Web com permissão de localização negada ou indisponível." data-i18n-alt="manual.figures.locationDeniedAlt" loading="lazy" width="1280" height="720">
+              <figcaption data-i18n="manual.sections.location.figureCaptionDenied">Exemplo de tela quando a permissão de localização ainda não está disponível.</figcaption>
+            </figure>
+            <figure class="manual-shot-card">
+              <img src="manual-assets/location-granted.png" alt="Estado do Checking Web com localização precisa disponível e compartilhada." data-i18n-alt="manual.figures.locationGrantedAlt" loading="lazy" width="1280" height="720">
+              <figcaption data-i18n="manual.sections.location.figureCaptionGranted">Exemplo de tela depois que a localização precisa foi concedida com sucesso.</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="manual-automatic-activities" class="manual-section" aria-labelledby="manual-automatic-activities-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">09</span>
+            <div>
+              <h2 id="manual-automatic-activities-title" data-i18n="manual.sections.automaticActivities.title">Atividades automáticas</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.automaticActivities.lead">O app também consegue disparar check-in, check-out e atualizações relacionadas quando o contexto de localização muda da forma esperada.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.automaticActivities.item1">Esse mecanismo depende de autenticação válida, leituras de localização e regras internas que evitam transições indevidas.</li>
+            <li data-i18n="manual.sections.automaticActivities.item2">Quando as atividades automáticas estão controlando o fluxo, alguns campos manuais ficam ocultos ou bloqueados para proteger a consistência do registro.</li>
+            <li data-i18n="manual.sections.automaticActivities.item3">Se a precisão cair abaixo do necessário, o app pode reabrir opções de fallback manual em vez de assumir uma decisão arriscada.</li>
+          </ul>
+        </section>
+
+        <section id="manual-transport" class="manual-section" aria-labelledby="manual-transport-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">10</span>
+            <div>
+              <h2 id="manual-transport-title" data-i18n="manual.sections.transport.title">Acesso ao Transporte</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.transport.lead">Depois da autenticação, o usuário pode abrir o módulo de Transporte para solicitar viagens, consultar status e revisar detalhes da solicitação mais recente.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.transport.item1">O acesso continua protegido pela mesma chave e senha validadas no shell principal.</li>
+            <li data-i18n="manual.sections.transport.item2">O módulo inclui cadastro de endereço, solicitação por tipo de transporte e um resumo do status atual.</li>
+            <li data-i18n="manual.sections.transport.item3">Quando houver alocação de veículo, a tela mostra os principais detalhes operacionais para o usuário.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/transport-screen.png" alt="Tela do módulo de Transporte dentro do ecossistema Checking Web." data-i18n-alt="manual.figures.transportScreenAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.transport.figureCaption">Exemplo da superfície de Transporte acessada a partir do shell do Checking Web.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-password-change" class="manual-section" aria-labelledby="manual-password-change-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">11</span>
+            <div>
+              <h2 id="manual-password-change-title" data-i18n="manual.sections.passwordChange.title">Resetar ou trocar senha</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.passwordChange.lead">A alteração de senha saiu da linha principal de autenticação e agora fica concentrada em Ajustes.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.passwordChange.item1">Abra Ajustes, toque em Resetar Senha e use o modal existente de troca de senha.</li>
+            <li data-i18n="manual.sections.passwordChange.item2">O fluxo pede senha antiga, nova senha e confirmação, preservando as validações já existentes.</li>
+            <li data-i18n="manual.sections.passwordChange.item3">O botão só fica habilitado quando o usuário já está autenticado e possui uma senha cadastrada.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/password-change.png" alt="Modal de alteração de senha aberto a partir de Ajustes." data-i18n-alt="manual.figures.passwordChangeAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.passwordChange.figureCaption">Fluxo de troca de senha iniciado a partir de Ajustes &gt; Resetar Senha.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-settings" class="manual-section" aria-labelledby="manual-settings-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">12</span>
+            <div>
+              <h2 id="manual-settings-title" data-i18n="manual.sections.settings.title">Ajustes</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.settings.lead">O ícone de engrenagem abre um ponto central para preferências e ações secundárias, sem poluir a linha de autenticação.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.settings.item1">Idioma altera os textos visíveis do aplicativo principal e preserva a preferência no navegador.</li>
+            <li data-i18n="manual.sections.settings.item2">Permitir localização reaproveita o pipeline existente para solicitar novamente o acesso preciso quando isso ainda for necessário.</li>
+            <li data-i18n="manual.sections.settings.item3">Suporte e Sobre usam esse mesmo ponto de entrada para abrir o WhatsApp e esta documentação.</li>
+          </ul>
+          <figure class="manual-shot-card">
+            <img src="manual-assets/settings-modal.png" alt="Widget Ajustes do Checking Web aberto com idioma, senha, localização, suporte e sobre." data-i18n-alt="manual.figures.settingsModalAlt" loading="lazy" width="1280" height="720">
+            <figcaption data-i18n="manual.sections.settings.figureCaption">Widget Ajustes com as novas ações secundárias centralizadas.</figcaption>
+          </figure>
+        </section>
+
+        <section id="manual-support" class="manual-section" aria-labelledby="manual-support-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">13</span>
+            <div>
+              <h2 id="manual-support-title" data-i18n="manual.sections.support.title">Suporte</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.support.lead">Quando o usuário precisa de ajuda humana, Ajustes &gt; Suporte monta uma conversa no WhatsApp com a chave já incluída na primeira mensagem.</p>
+            </div>
+          </div>
+          <ul class="manual-bullet-list">
+            <li data-i18n="manual.sections.support.item1">O link usa o número oficial configurado no frontend do Checking Web.</li>
+            <li data-i18n="manual.sections.support.item2">A mensagem inicial é preparada automaticamente para reduzir atrito e acelerar o atendimento.</li>
+            <li data-i18n="manual.sections.support.item3">Se nenhuma chave válida estiver disponível, o botão de suporte permanece desabilitado por segurança.</li>
+          </ul>
+        </section>
+
+        <section id="manual-faq" class="manual-section" aria-labelledby="manual-faq-title">
+          <div class="manual-section-heading">
+            <span class="manual-section-index">14</span>
+            <div>
+              <h2 id="manual-faq-title" data-i18n="manual.sections.faq.title">Problemas comuns e FAQ</h2>
+              <p class="manual-section-lead" data-i18n="manual.sections.faq.lead">Use estas respostas rápidas quando a interface parecer travada ou quando o fluxo não estiver avançando como esperado.</p>
+            </div>
+          </div>
+          <div class="manual-faq-list">
+            <article class="manual-faq-item">
+              <h3 data-i18n="manual.sections.faq.q1">Por que o app abriu um cadastro sozinho?</h3>
+              <p data-i18n="manual.sections.faq.a1">Isso acontece quando a chave não existe ou quando a conta ainda não possui senha. O novo fluxo evita cliques extras e leva o usuário direto para a ação correta.</p>
+            </article>
+            <article class="manual-faq-item">
+              <h3 data-i18n="manual.sections.faq.q2">Por que o botão Permitir localização está desabilitado?</h3>
+              <p data-i18n="manual.sections.faq.a2">Porque a aplicação já entende que a permissão precisa está ativa, ou porque uma atualização de localização já está em andamento.</p>
+            </article>
+            <article class="manual-faq-item">
+              <h3 data-i18n="manual.sections.faq.q3">O que fazer se o Transporte não abrir?</h3>
+              <p data-i18n="manual.sections.faq.a3">Confirme primeiro se a chave e a senha foram autenticadas. Se o problema persistir, abra Suporte para enviar sua chave ao atendimento.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="i18n-dictionaries.js"></script>
+  <script src="i18n.js"></script>
+  <script src="manual.js"></script>
+</body>
+</html>

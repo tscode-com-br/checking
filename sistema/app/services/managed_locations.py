@@ -102,3 +102,23 @@ def location_supports_project(location: ManagedLocation, project_name: str | Non
 
 def filter_locations_for_project(locations: Iterable[ManagedLocation], project_name: str | None) -> list[ManagedLocation]:
     return [location for location in locations if location_supports_project(location, project_name)]
+
+
+def location_supports_projects(location: ManagedLocation, project_names: Iterable[str]) -> bool:
+    location_projects = extract_location_projects(location)
+    if not location_projects:
+        return True
+
+    normalized_project_names = {
+        normalize_project_name(str(project_name), field_name="O projeto do usuário")
+        for project_name in project_names
+        if str(project_name or "").strip()
+    }
+    if not normalized_project_names:
+        return False
+
+    return bool(normalized_project_names.intersection(location_projects))
+
+
+def filter_locations_for_projects(locations: Iterable[ManagedLocation], project_names: Iterable[str]) -> list[ManagedLocation]:
+    return [location for location in locations if location_supports_projects(location, project_names)]

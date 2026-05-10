@@ -20,7 +20,7 @@ const checkHtml = fs.readFileSync(
 
 test('transport routine request builder uses the shortened Solicitar label', () => {
   assert.match(checkHtml, /id="transportRequestBuilderSubmitButton"[\s\S]*>Solicitar</);
-  assert.match(checkApp, /transportRequestInProgress \? 'Solicitando\.{3}' : 'Solicitar'/);
+  assert.match(checkApp, /if \(control === transportRequestBuilderSubmitButton\) \{[\s\S]*transportRequestInProgress[\s\S]*transport\.requestBuilder\.submitButton/);
 });
 
 test('transport shell shows the new compact option labels with an instruction line above them', () => {
@@ -28,9 +28,7 @@ test('transport shell shows the new compact option labels with an instruction li
   assert.match(checkHtml, /id="transportRegularButton"[\s\S]*aria-label="Dias Úteis"[\s\S]*Dias\s*<br\s*\/?\s*>\s*Úteis/);
   assert.match(checkHtml, /id="transportWeekendButton"[\s\S]*aria-label="Fim de Semana"[\s\S]*Fim de\s*<br\s*\/?\s*>\s*Semana/);
   assert.match(checkHtml, /id="transportExtraButton"[\s\S]*aria-label="Data Específica"[\s\S]*Data\s*<br\s*\/?\s*>\s*Específica/);
-  assert.match(checkApp, /regular:\s*'Dias Úteis'/);
-  assert.match(checkApp, /weekend:\s*'Fim de Semana'/);
-  assert.match(checkApp, /extra:\s*'Data Específica'/);
+  assert.match(checkApp, /function syncTranslatedRuntimeLabels\(\) \{[\s\S]*transport\.kinds\.regular[\s\S]*transport\.kinds\.weekend[\s\S]*transport\.kinds\.extra/);
 });
 
 test('main transport entry button advertises Em Teste in the primary shell', () => {
@@ -53,13 +51,13 @@ test('transport weekday selector is compact enough for mobile viewport height co
   );
 });
 
-test('password register action shows Aguarde, uses a pending style, and locks other buttons', () => {
-  assert.match(checkApp, /if \(passwordRegisterInProgress\) \{[\s\S]*return 'Aguarde';[\s\S]*\}/);
-  assert.match(checkApp, /control\.classList\.toggle\('is-pending', passwordRegisterInProgress\);/);
-  assert.match(checkApp, /control\.classList\.toggle\('is-attention', isPasswordActionAssistanceModeActive\(\)\);/);
+test('password registration keeps the Aguarde state while Settings owns the password-change entry point', () => {
+  assert.match(checkApp, /if \(control === settingsButton\) \{[\s\S]*passwordLoginInProgress[\s\S]*\}/);
+  assert.match(checkApp, /if \(control === settingsResetPasswordButton\) \{[\s\S]*control\.disabled = !canOpenPasswordChangeFromSettings\(\);[\s\S]*\}/);
+  assert.match(checkApp, /settingsResetPasswordButton\.addEventListener\('click', \(\) => \{[\s\S]*closeSettingsDialog\(\{ restoreFocus: false \}\);[\s\S]*openPasswordDialog\(\);[\s\S]*\}\);/);
+  assert.match(checkApp, /function maybeAutoOpenAuthenticationAssistanceDialog\(\) \{[\s\S]*lastAutoOpenedAuthenticationAssistanceStateKey = stateKey;[\s\S]*openPasswordDialog\(\);/);
   assert.match(checkApp, /const transportButtonLocked = dialogOpen \|\| lockActive \|\| submitInProgress \|\| authBusy \|\| passwordLoginInProgress;/);
-  assert.match(checkCss, /\.auth-action-button\.is-pending \{[\s\S]*background:\s*#e2e8f0;[\s\S]*color:\s*#475569;/);
-  assert.match(checkCss, /\.auth-action-button\.is-attention \{[\s\S]*#f97316[\s\S]*color:\s*#111827;/);
+  assert.match(checkCss, /\.settings-trigger-button \{[\s\S]*min-height:\s*var\(--control-height\);/);
   assert.match(checkCss, /\.auth-field\.auth-field-pending input \{[\s\S]*border-color:\s*#f97316;/);
 });
 

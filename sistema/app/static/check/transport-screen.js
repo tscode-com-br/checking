@@ -73,10 +73,22 @@
       transportRequestKindLabels,
       transportRequestStatusLabels,
       transportRequestWeekdayLabels,
+      transportRequestWeekdayFullLabels,
       transportRequestBuilderConfigs,
-      dateFormatter,
+      getDateFormatter,
+      formatTransportVehicleTypeLabel,
+      localizeKnownApiMessage,
+      t,
       userTransportLocalStateStorageKey,
     } = config;
+
+    const translateTransport = typeof t === 'function' ? t : function (keyPath) {
+      return keyPath;
+    };
+
+    function getRuntimeDateFormatter() {
+      return typeof getDateFormatter === 'function' ? getDateFormatter() : null;
+    }
 
     let transportAutoRefreshTimeoutId = null;
     let transportRealtimeEventSource = null;
@@ -532,6 +544,14 @@
         return normalizedValue;
       }
 
+      const formatter = getRuntimeDateFormatter();
+      if (formatter && typeof formatter.format === 'function') {
+        const parsedDate = new Date(`${matchedDate[1]}-${matchedDate[2]}-${matchedDate[3]}T00:00:00`);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          return formatter.format(parsedDate);
+        }
+      }
+
       return `${matchedDate[3]}/${matchedDate[2]}/${matchedDate[1]}`;
     }
 
@@ -552,10 +572,10 @@
 
       const serviceDateLabel = formatTransportRequestConflictServiceDate(targetServiceDate);
       if (!serviceDateLabel) {
-        return 'Ja existe uma solicitacao de transporte ativa para essa data.';
+        return translateTransport('requestBuilder.conflictGeneric');
       }
 
-      return `Ja existe uma solicitacao de transporte ativa para ${serviceDateLabel}.`;
+      return translateTransport('requestBuilder.conflictByDate', { serviceDateLabel });
     }
 
     function getTransportAddressValidationMessage() {
@@ -566,7 +586,7 @@
         return '';
       }
 
-      return 'Cadastre um endereco completo antes de solicitar o transporte.';
+      return translateTransport('requestBuilder.addressRequired');
     }
 
     function canSubmitTransportRequest(requestKind, options) {
@@ -575,7 +595,7 @@
       if (!builderConfig) {
         return {
           allowed: false,
-          message: 'Solicitacao de transporte indisponivel.',
+          message: translateTransport('requestBuilder.requestUnavailable'),
           payload: null,
           shouldOpenAddressEditor: false,
         };
@@ -616,7 +636,7 @@
         if (selectedWeekdays.length === 0) {
           return {
             allowed: false,
-            message: 'Selecione ao menos um dia para solicitar o transporte.',
+            message: translateTransport('requestBuilder.dayRequired'),
             payload: null,
             shouldOpenAddressEditor: false,
           };
@@ -629,7 +649,7 @@
         if (!requestedDate) {
           return {
             allowed: false,
-            message: 'Informe a data do transporte extra.',
+            message: translateTransport('requestBuilder.dateRequiredExtra'),
             payload: null,
             shouldOpenAddressEditor: false,
           };
@@ -637,7 +657,7 @@
         if (!requestedTime) {
           return {
             allowed: false,
-            message: 'Informe o horario do transporte extra.',
+            message: translateTransport('requestBuilder.timeRequiredExtra'),
             payload: null,
             shouldOpenAddressEditor: false,
           };
@@ -883,7 +903,7 @@
       persistTransportRequestLocalState(getActiveChave());
       applyPersistedTransportRequestLocalOverrides();
       syncSelectedTransportRequestState(buildTransportSelectionFallbackPayload());
-      setTransportInlineStatus('Solicitação marcada como realizada.', 'success');
+      setTransportInlineStatus(translateTransport('messages.requestMarkedRealized'), 'success');
       renderTransportScreen();
       syncFormControlStates();
     }
@@ -1191,7 +1211,10 @@
       }
 
       const parsedDate = new Date(`${serviceDateValue}T00:00:00`);
-      return Number.isNaN(parsedDate.getTime()) ? serviceDateValue : dateFormatter.format(parsedDate);
+      const formatter = getRuntimeDateFormatter();
+      return Number.isNaN(parsedDate.getTime()) || !formatter || typeof formatter.format !== 'function'
+        ? serviceDateValue
+        : formatter.format(parsedDate);
     }
 
     function formatTransportRequestCardTime(value) {
@@ -1235,10 +1258,10 @@
 
     function formatTransportRequestSummaryStatusLabel(requestItem) {
       if (!requestItem) {
-        return 'Sem solicitação';
+        return translateTransport('statusLabels.available');
       }
 
-      return transportRequestStatusLabels[requestItem.status] || 'Pendente';
+      return transportRequestStatusLabels[requestItem.status] || translateTransport('statusLabels.pending');
     }
 
     function formatTransportRequestSummaryVehicleLabel(requestItem) {
@@ -1246,36 +1269,35 @@
         return '';
       }
 
-      const formatter = clientState && typeof clientState.formatTransportVehicleType === 'function'
-        ? clientState.formatTransportVehicleType
-        : null;
-      const formattedVehicleType = formatter ? formatter(requestItem.vehicleType) : String(requestItem.vehicleType || '').trim();
+      const formattedVehicleType = typeof formatTransportVehicleTypeLabel === 'function'
+        ? formatTransportVehicleTypeLabel(requestItem.vehicleType)
+        : String(requestItem.vehicleType || '').trim();
       const vehicleBits = [formattedVehicleType, String(requestItem.vehiclePlate || '').trim()].filter(Boolean);
       return vehicleBits.join(' • ');
     }
 
     function formatTransportRequestSummaryPrimaryText(requestItem) {
       if (!requestItem) {
-        return 'Nenhuma solicitação registrada.';
+        return translateTransport('summary.noRequestRecorded');
       }
 
-      return formatTransportRequestCardDateTime(requestItem) || 'Programação indisponível.';
+      return formatTransportRequestCardDateTime(requestItem) || translateTransport('summary.scheduleUnavailable');
     }
 
     function formatTransportRequestSummarySecondaryText(requestItem) {
       if (!requestItem) {
-        return 'Quando houver uma solicitação, ela aparecerá aqui.';
+        return translateTransport('summary.whenRequestExists');
       }
 
       if (requestItem.status === 'pending') {
-        return 'Aguardando alocação de transporte.';
+        return translateTransport('summary.waitingAllocation');
       }
 
       if (requestItem.status === 'confirmed' || requestItem.status === 'realized') {
-        return formatTransportRequestSummaryVehicleLabel(requestItem) || 'Veículo alocado.';
+        return formatTransportRequestSummaryVehicleLabel(requestItem) || translateTransport('summary.vehicleAllocated');
       }
 
-      return String(requestItem.responseMessage || '').trim() || 'Solicitação encerrada.';
+      return localizeKnownApiMessage(String(requestItem.responseMessage || '').trim()) || translateTransport('summary.requestClosed');
     }
 
     function formatTransportRequestSummaryTertiaryText(requestItem) {
@@ -1287,10 +1309,15 @@
       const deadlineTime = formatTransportRequestCardTime(requestItem.confirmationDeadlineTime);
 
       if (departureTime && deadlineTime && departureTime !== deadlineTime) {
-        return `Partida ${departureTime} • Limite ${deadlineTime}`;
+        return translateTransport('summary.departureAndLimit', {
+          departureTime,
+          deadlineTime,
+        });
       }
       if (deadlineTime && deadlineTime !== departureTime) {
-        return `Limite ${deadlineTime}`;
+        return translateTransport('summary.limitOnly', {
+          deadlineTime,
+        });
       }
       return '';
     }
@@ -1315,7 +1342,7 @@
 
       cardHeader.className = 'transport-request-summary-header';
       cardTitle.className = 'transport-request-summary-title';
-      cardTitle.textContent = transportRequestKindLabels[requestKind] || 'Transporte';
+      cardTitle.textContent = transportRequestKindLabels[requestKind] || translateTransport('detail.genericTitle');
 
       cardStatus.className = `transport-request-summary-status is-${summaryStatus}`;
       cardStatus.textContent = formatTransportRequestSummaryStatusLabel(requestItem);
@@ -1357,7 +1384,7 @@
             realizedButton.dataset.transportRequestRealized = 'true';
             realizedButton.dataset.requestId = String(requestItem.requestId);
             realizedButton.disabled = getTransportBusy();
-            realizedButton.textContent = 'Realizado';
+            realizedButton.textContent = translateTransport('actions.markRealized');
             cardActions.appendChild(realizedButton);
           }
 
@@ -1368,7 +1395,9 @@
             cancelButton.dataset.transportRequestCancel = 'true';
             cancelButton.dataset.requestId = String(requestItem.requestId);
             cancelButton.disabled = getTransportBusy();
-            cancelButton.textContent = getTransportCancelInProgress() ? 'Cancelando...' : 'Cancelar';
+            cancelButton.textContent = getTransportCancelInProgress()
+              ? translateTransport('actions.cancelling')
+              : translateTransport('actions.cancel');
             cardActions.appendChild(cancelButton);
           }
 
@@ -1401,11 +1430,10 @@
     }
 
     function formatTransportRequestDetailVehicleType(value) {
-      const formatter = clientState && typeof clientState.formatTransportVehicleType === 'function'
-        ? clientState.formatTransportVehicleType
-        : null;
-      const formattedValue = formatter ? formatter(value) : String(value || '').trim();
-      return formattedValue || '--';
+      const formattedValue = typeof formatTransportVehicleTypeLabel === 'function'
+        ? formatTransportVehicleTypeLabel(value)
+        : String(value || '').trim();
+      return formattedValue || translateTransport('detail.unavailableValue');
     }
 
     function createTransportRequestDetailField(label, value) {
@@ -1418,7 +1446,7 @@
       valueElement.className = 'transport-request-detail-field-value';
 
       labelElement.textContent = label;
-      valueElement.textContent = value || '--';
+      valueElement.textContent = value || translateTransport('detail.unavailableValue');
 
       fieldElement.appendChild(labelElement);
       fieldElement.appendChild(valueElement);
@@ -1437,8 +1465,8 @@
       if (requestItem.status === 'pending') {
         const followupMessage = document.createElement('p');
         followupMessage.className = 'transport-request-detail-message';
-        statusMessage.textContent = 'Aguardando alocação de transporte.';
-        followupMessage.textContent = 'Quando você for alocado em um veículo, as informações aparecerão aqui.';
+        statusMessage.textContent = translateTransport('detail.waitingAllocation');
+        followupMessage.textContent = translateTransport('detail.whenAllocated');
         copyStack.appendChild(followupMessage);
         fragment.appendChild(copyStack);
         return fragment;
@@ -1446,31 +1474,31 @@
 
       if (requestItem.status === 'confirmed' || requestItem.status === 'realized') {
         const detailsGroup = document.createElement('div');
-        const departureDate = formatTransportRequestServiceDate(requestItem.serviceDate) || '--';
-        const departureTime = formatTransportRequestCardTime(requestItem.boardingTime || requestItem.requestedTime) || '--';
+        const departureDate = formatTransportRequestServiceDate(requestItem.serviceDate) || translateTransport('detail.unavailableValue');
+        const departureTime = formatTransportRequestCardTime(requestItem.boardingTime || requestItem.requestedTime) || translateTransport('detail.unavailableValue');
 
         detailsGroup.className = 'transport-request-detail-fields';
         statusMessage.textContent = requestItem.status === 'realized'
-          ? 'Transporte realizado.'
-          : 'Transporte confirmado.';
+          ? translateTransport('detail.realized')
+          : translateTransport('detail.confirmed');
 
-        detailsGroup.appendChild(createTransportRequestDetailField('Tipo de Veículo', formatTransportRequestDetailVehicleType(requestItem.vehicleType)));
-        detailsGroup.appendChild(createTransportRequestDetailField('Placa do Veículo', requestItem.vehiclePlate || '--'));
+        detailsGroup.appendChild(createTransportRequestDetailField(translateTransport('detail.vehicleTypeLabel'), formatTransportRequestDetailVehicleType(requestItem.vehicleType)));
+        detailsGroup.appendChild(createTransportRequestDetailField(translateTransport('detail.vehiclePlateLabel'), requestItem.vehiclePlate || translateTransport('detail.unavailableValue')));
         if (String(requestItem.vehicleColor || '').trim()) {
-          detailsGroup.appendChild(createTransportRequestDetailField('Cor do Veículo', requestItem.vehicleColor));
+          detailsGroup.appendChild(createTransportRequestDetailField(translateTransport('detail.vehicleColorLabel'), requestItem.vehicleColor));
         }
-        detailsGroup.appendChild(createTransportRequestDetailField('Data de Partida', departureDate));
-        detailsGroup.appendChild(createTransportRequestDetailField('Hora de Partida', departureTime));
+        detailsGroup.appendChild(createTransportRequestDetailField(translateTransport('detail.departureDateLabel'), departureDate));
+        detailsGroup.appendChild(createTransportRequestDetailField(translateTransport('detail.departureTimeLabel'), departureTime));
         copyStack.appendChild(detailsGroup);
         fragment.appendChild(copyStack);
         return fragment;
       }
 
-      statusMessage.textContent = 'Esta solicitação não está mais ativa.';
+      statusMessage.textContent = translateTransport('detail.inactive');
       if (String(requestItem.responseMessage || '').trim()) {
         const responseMessage = document.createElement('p');
         responseMessage.className = 'transport-request-detail-message';
-        responseMessage.textContent = requestItem.responseMessage;
+        responseMessage.textContent = localizeKnownApiMessage(requestItem.responseMessage);
         copyStack.appendChild(responseMessage);
       }
       fragment.appendChild(copyStack);
@@ -1495,13 +1523,13 @@
       if (!shouldShow) {
         transportRequestDetailContent.replaceChildren();
         if (transportRequestDetailTitle) {
-          transportRequestDetailTitle.textContent = 'Detalhes da Solicitação';
+          transportRequestDetailTitle.textContent = translateTransport('detail.title');
         }
         return;
       }
 
       if (transportRequestDetailTitle) {
-        transportRequestDetailTitle.textContent = transportRequestKindLabels[detailRequest.requestKind] || 'Detalhes da Solicitação';
+        transportRequestDetailTitle.textContent = transportRequestKindLabels[detailRequest.requestKind] || translateTransport('detail.title');
       }
       transportRequestDetailContent.replaceChildren(buildTransportRequestDetailContent(detailRequest));
     }
@@ -1530,10 +1558,10 @@
 
       cardHeader.className = 'transport-request-card-header';
       cardTitle.className = 'transport-request-card-title';
-      cardTitle.textContent = transportRequestKindLabels[requestItem.requestKind] || 'Transporte';
+      cardTitle.textContent = transportRequestKindLabels[requestItem.requestKind] || translateTransport('detail.genericTitle');
 
       cardStatus.className = `transport-request-card-status is-${requestItem.status}`;
-      cardStatus.textContent = transportRequestStatusLabels[requestItem.status] || 'Pendente';
+      cardStatus.textContent = transportRequestStatusLabels[requestItem.status] || translateTransport('statusLabels.pending');
 
       cardHeader.appendChild(cardTitle);
       cardHeader.appendChild(cardStatus);
@@ -1552,7 +1580,7 @@
         realizedButton.dataset.transportRequestRealized = 'true';
         realizedButton.dataset.requestId = String(requestItem.requestId);
         realizedButton.disabled = transportBusy;
-        realizedButton.textContent = 'Realizado';
+        realizedButton.textContent = translateTransport('actions.markRealized');
         cardActions.appendChild(realizedButton);
       }
 
@@ -1563,7 +1591,9 @@
         cancelButton.dataset.transportRequestCancel = 'true';
         cancelButton.dataset.requestId = String(requestItem.requestId);
         cancelButton.disabled = transportBusy;
-        cancelButton.textContent = getTransportCancelInProgress() ? 'Cancelando...' : 'Cancelar';
+        cancelButton.textContent = getTransportCancelInProgress()
+          ? translateTransport('actions.cancelling')
+          : translateTransport('actions.cancel');
         cardActions.appendChild(cancelButton);
       }
 
@@ -1736,7 +1766,7 @@
       }
 
       if (!isApplicationUnlocked()) {
-        setStatus('Digite sua chave e valide a senha para acessar Transporte.', 'error');
+        setStatus(translateTransport('messages.accessRequiresAuthentication'), 'error');
         return;
       }
 
@@ -1811,7 +1841,10 @@
           closeTransportScreen();
           return null;
         }
-        setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível consultar o transporte.', 'error');
+        setTransportInlineStatus(
+          error instanceof Error ? localizeKnownApiMessage(error.message) : translateTransport('messages.loadFailed'),
+          'error'
+        );
         return null;
       } finally {
         setTransportStateLoading(false);
@@ -1824,7 +1857,7 @@
       event.preventDefault();
       const normalizedChave = getActiveChave();
       if (normalizedChave.length !== 4) {
-        setTransportInlineStatus('Informe uma chave válida antes de atualizar o endereço.', 'error');
+        setTransportInlineStatus(translateTransport('messages.invalidKeyBeforeAddress'), 'error');
         return;
       }
 
@@ -1839,13 +1872,19 @@
         });
         applyTransportStatePayload(payload.state || {});
         closeTransportAddressEditor();
-        setTransportInlineStatus(payload.message || 'Endereço atualizado com sucesso.', 'success');
+        setTransportInlineStatus(
+          localizeKnownApiMessage(payload.message) || translateTransport('messages.addressUpdated'),
+          'success'
+        );
       } catch (error) {
         if (error && error.isAuthExpired) {
           closeTransportScreen();
           return;
         }
-        setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível atualizar o endereço.', 'error');
+        setTransportInlineStatus(
+          error instanceof Error ? localizeKnownApiMessage(error.message) : translateTransport('messages.addressUpdateFailed'),
+          'error'
+        );
       } finally {
         setTransportAddressSaveInProgress(false);
         syncFormControlStates();
@@ -1855,9 +1894,9 @@
     async function requestTransport(requestKind, requestPayload) {
       const normalizedChave = getActiveChave();
       const safeRequestPayload = requestPayload || {};
-      const requestLabel = transportRequestKindLabels[requestKind] || 'Transporte';
+      const requestLabel = transportRequestKindLabels[requestKind] || translateTransport('detail.genericTitle');
       if (normalizedChave.length !== 4) {
-        setTransportInlineStatus('Informe uma chave válida antes de solicitar o transporte.', 'error');
+        setTransportInlineStatus(translateTransport('messages.invalidKeyBeforeRequest'), 'error');
         return;
       }
 
@@ -1882,7 +1921,12 @@
           closeTransportScreen();
           return;
         }
-        setTransportInlineStatus(error instanceof Error ? error.message : `Não foi possível solicitar ${requestLabel}.`, 'error');
+        setTransportInlineStatus(
+          error instanceof Error
+            ? localizeKnownApiMessage(error.message)
+            : translateTransport('messages.requestFailed', { requestLabel }),
+          'error'
+        );
       } finally {
         setTransportRequestInProgress(false);
         syncFormControlStates();
@@ -1922,13 +1966,19 @@
         });
         applyTransportStatePayload(payload.state || {});
         transportUiState.requestBuilderKind = null;
-        setTransportInlineStatus(payload.message || 'Solicitação de transporte cancelada.', 'success');
+        setTransportInlineStatus(
+          localizeKnownApiMessage(payload.message) || translateTransport('messages.cancelSuccess'),
+          'success'
+        );
       } catch (error) {
         if (error && error.isAuthExpired) {
           closeTransportScreen();
           return;
         }
-        setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível cancelar a solicitação.', 'error');
+        setTransportInlineStatus(
+          error instanceof Error ? localizeKnownApiMessage(error.message) : translateTransport('messages.cancelFailed'),
+          'error'
+        );
       } finally {
         setTransportCancelInProgress(false);
         syncFormControlStates();

@@ -72,6 +72,7 @@ from sistema.app.models import (
     TransportVehicleSchedule,
     TransportVehicleScheduleException,
     User,
+    UserProjectMembership,
     UserSyncEvent,
     Vehicle,
     Workplace,
@@ -107,6 +108,11 @@ from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
 from sistema.app.services.project_catalog import build_project_fields_for_country, seed_default_projects
 from sistema.app.services.time_utils import build_timezone_label, now_sgt
+from sistema.app.services.user_projects import (
+    add_user_project_membership,
+    ensure_user_active_project_is_member,
+    list_user_project_names,
+)
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 from sistema.app.routers import web_check as web_check_router
 
@@ -131,6 +137,15 @@ def ensure_admin_session(client: TestClient) -> None:
         login_response = login_admin(client)
         assert login_response.status_code == 200, login_response.text
 
+    with SessionLocal() as db:
+        admin = get_user_by_chave(db, ADMIN_LOGIN_CHAVE)
+        grant_user_project_memberships(
+            db,
+            admin,
+            db.execute(select(Project.name).order_by(Project.name)).scalars().all(),
+        )
+        db.commit()
+
     transport_session_response = client.get("/api/transport/auth/session")
     assert transport_session_response.status_code == 200
     if transport_session_response.json().get("authenticated"):
@@ -142,6 +157,22 @@ def ensure_admin_session(client: TestClient) -> None:
     )
     assert transport_login_response.status_code == 200, transport_login_response.text
     assert transport_login_response.json()["authenticated"] is True
+
+
+def extract_transport_structured_detail(response) -> dict:
+    payload = response.json()
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        return detail
+    normalized_detail = str(detail or "").strip()
+    return {
+        "message": normalized_detail,
+        "message_key": None,
+        "message_params": {},
+        "error_code": None,
+        "issues": [],
+        "technical_detail": normalized_detail,
+    }
 
 
 def ensure_web_user_exists(*, chave: str, projeto: str = "P80", nome: str = "Oriundo da Web") -> None:
@@ -196,6 +227,10 @@ def ensure_project_exists(project_name: str) -> None:
             return
 
         db.add(Project(name=normalized_name, **build_project_fields_for_country()))
+        bootstrap_admin = find_user_by_chave(db, settings.bootstrap_admin_key)
+        if bootstrap_admin is not None:
+            ensure_user_active_project_is_member(db, bootstrap_admin)
+            add_user_project_membership(db, bootstrap_admin, normalized_name)
         db.commit()
 
 
@@ -229,7 +264,7 @@ def register_web_password(
 
     return client.post(
         "/api/web/auth/register-password",
-        json={"chave": chave, "senha": senha, "projeto": projeto},
+        json={"chave": chave, "senha": senha},
     )
 
 
@@ -328,40 +363,40 @@ def test_admin_project_scope_all_mode_and_explicit_mode_project_matching():
 def test_admin_profile_update_request_accepts_backward_compatible_profile_only_payload():
     payload = AdminProfileUpdateRequest.model_validate({"perfil": 7})
     assert payload.perfil == 7
-    assert payload.monitored_projects is None
+    assert payload.projects is None
 
 
-def test_admin_profile_update_request_normalizes_and_deduplicates_monitored_projects():
+def test_admin_profile_update_request_normalizes_and_deduplicates_projects():
     payload = AdminProfileUpdateRequest.model_validate(
-        {"perfil": 2, "monitored_projects": [" p83 ", "P80", "p83"]}
+        {"perfil": 2, "projects": [" p83 ", "P80", "p83"]}
     )
     assert payload.perfil == 2
-    assert payload.monitored_projects == ["P80", "P83"]
+    assert payload.projects == ["P80", "P83"]
 
 
-def test_admin_profile_update_request_rejects_empty_or_non_list_monitored_projects():
+def test_admin_profile_update_request_rejects_empty_or_non_list_projects():
     with pytest.raises(ValidationError, match="Selecione ao menos um projeto para o administrador"):
-        AdminProfileUpdateRequest.model_validate({"perfil": 1, "monitored_projects": []})
+        AdminProfileUpdateRequest.model_validate({"perfil": 1, "projects": []})
 
-    with pytest.raises(ValidationError, match="Os projetos monitorados devem ser enviados como lista"):
-        AdminProfileUpdateRequest.model_validate({"perfil": 1, "monitored_projects": "P80"})
+    with pytest.raises(ValidationError, match="Os projetos do administrador devem ser enviados como lista"):
+        AdminProfileUpdateRequest.model_validate({"perfil": 1, "projects": "P80"})
 
 
 def test_admin_profile_update_request_can_validate_against_catalog_context():
     payload = AdminProfileUpdateRequest.model_validate(
-        {"perfil": 3, "monitored_projects": ["P80", "P83"]},
+        {"perfil": 3, "projects": ["P80", "P83"]},
         context={"allowed_project_names": ["P83", "P80", "P90"]},
     )
-    assert payload.monitored_projects == ["P80", "P83"]
+    assert payload.projects == ["P80", "P83"]
 
-    with pytest.raises(ValidationError, match="Um ou mais projetos monitorados nao existem no catalogo atual"):
+    with pytest.raises(ValidationError, match="Um ou mais projetos do administrador nao existem no catalogo atual"):
         AdminProfileUpdateRequest.model_validate(
-            {"perfil": 3, "monitored_projects": ["P80", "P99"]},
+            {"perfil": 3, "projects": ["P80", "P99"]},
             context={"allowed_project_names": ["P83", "P80", "P90"]},
         )
 
 
-def test_admin_management_row_keeps_router_compatibility_and_exposes_empty_projects_by_default():
+def test_admin_management_row_exposes_empty_projects_by_default():
     row = AdminManagementRow(
         id=1,
         row_type="admin",
@@ -375,17 +410,17 @@ def test_admin_management_row_keeps_router_compatibility_and_exposes_empty_proje
         can_reject=False,
         can_set_password=False,
     )
-    assert row.monitored_projects == []
+    assert row.projects == []
 
 
-def test_admin_management_row_normalizes_monitored_projects_when_provided():
+def test_admin_management_row_normalizes_projects_when_provided():
     row = AdminManagementRow(
         id=2,
         row_type="admin",
         chave="HR71",
         nome="Admin Secundario",
         perfil=100,
-        monitored_projects=[" p83 ", "P80", "p83"],
+        projects=[" p83 ", "P80", "p83"],
         status="active",
         status_label="Administrador",
         can_revoke=True,
@@ -393,7 +428,7 @@ def test_admin_management_row_normalizes_monitored_projects_when_provided():
         can_reject=False,
         can_set_password=False,
     )
-    assert row.monitored_projects == ["P80", "P83"]
+    assert row.projects == ["P80", "P83"]
 
 
 def test_profile_can_view_activity_time_requires_exact_profile_nine():
@@ -412,44 +447,7 @@ def test_user_can_view_activity_time_requires_exact_profile_nine():
     assert user_can_view_activity_time(None) is False
 
 
-def test_admin_update_profile_route_accepts_valid_monitored_projects_payload_shape():
-    with SessionLocal() as db:
-        target_admin = User(
-            rfid=None,
-            chave="HA71",
-            senha=hash_password("abc123"),
-            perfil=100,
-            nome="Admin Contrato",
-            projeto="P80",
-            workplace=None,
-            placa=None,
-            end_rua=None,
-            zip=None,
-            cargo=None,
-            email=None,
-            local=None,
-            checkin=None,
-            time=None,
-            last_active_at=now_sgt(),
-            inactivity_days=0,
-        )
-        db.add(target_admin)
-        db.commit()
-        db.refresh(target_admin)
-        admin_id = target_admin.id
-
-    with TestClient(app) as client:
-        ensure_admin_session(client)
-        response = client.post(
-            f"/api/admin/administrators/{admin_id}/profile",
-            json={"perfil": 101, "monitored_projects": ["P83", " p80 ", "P83"]},
-        )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["ok"] is True
-
-
-def test_admin_update_profile_route_rejects_unknown_monitored_projects_from_catalog():
+def test_admin_update_profile_route_rejects_unknown_projects_from_catalog():
     with SessionLocal() as db:
         target_admin = User(
             rfid=None,
@@ -479,15 +477,15 @@ def test_admin_update_profile_route_rejects_unknown_monitored_projects_from_cata
         ensure_admin_session(client)
         response = client.post(
             f"/api/admin/administrators/{admin_id}/profile",
-            json={"perfil": 101, "monitored_projects": ["P80", "PX99"]},
+            json={"perfil": 101, "projects": ["P80", "PX99"]},
         )
 
     assert response.status_code == 422, response.text
     payload = response.json()
-    assert payload["detail"][0]["msg"] == "Value error, Um ou mais projetos monitorados nao existem no catalogo atual"
+    assert payload["detail"][0]["msg"] == "Value error, Um ou mais projetos do administrador nao existem no catalogo atual"
 
 
-def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_rows_only():
+def test_administrators_endpoint_returns_real_membership_projects_for_admin_rows_only():
     with SessionLocal() as db:
         unrestricted_admin = User(
             rfid=None,
@@ -507,7 +505,7 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
             time=None,
             last_active_at=now_sgt(),
             inactivity_days=0,
-            admin_monitored_projects_json=None,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P83"]),
         )
         restricted_admin = User(
             rfid=None,
@@ -515,7 +513,7 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
             senha=hash_password("abc123"),
             perfil=1,
             nome="Admin Restrito",
-            projeto="P80",
+            projeto="P83",
             workplace=None,
             placa=None,
             end_rua=None,
@@ -527,7 +525,7 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
             time=None,
             last_active_at=now_sgt(),
             inactivity_days=0,
-            admin_monitored_projects_json=dump_admin_monitored_projects(["P83"]),
+            admin_monitored_projects_json=None,
         )
         pending_request = AdminAccessRequest(
             chave="HA83",
@@ -537,6 +535,9 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
             requested_at=now_sgt(),
         )
         db.add_all([unrestricted_admin, restricted_admin, pending_request])
+        db.flush()
+        grant_user_project_memberships(db, unrestricted_admin, ["P80", "P82"])
+        grant_user_project_memberships(db, restricted_admin, ["P83"])
         db.commit()
 
     with TestClient(app) as client:
@@ -546,14 +547,50 @@ def test_administrators_endpoint_returns_resolved_monitored_projects_for_admin_r
     assert response.status_code == 200, response.text
     rows_by_key = {row["chave"]: row for row in response.json() if row["chave"] in {"HA81", "HA82", "HA83"}}
     assert rows_by_key["HA81"]["row_type"] == "admin"
-    assert rows_by_key["HA81"]["monitored_projects"] == ["P80", "P82", "P83"]
+    assert rows_by_key["HA81"]["projects"] == ["P80", "P82"]
     assert rows_by_key["HA82"]["row_type"] == "admin"
-    assert rows_by_key["HA82"]["monitored_projects"] == ["P83"]
+    assert rows_by_key["HA82"]["projects"] == ["P83"]
     assert rows_by_key["HA83"]["row_type"] == "request"
-    assert rows_by_key["HA83"]["monitored_projects"] == []
+    assert rows_by_key["HA83"]["projects"] == []
 
 
-def test_admin_update_profile_route_persists_restricted_monitored_projects_and_audit_details():
+def test_administrators_endpoint_does_not_fallback_to_legacy_active_project_without_real_memberships():
+    with SessionLocal() as db:
+        legacy_only_admin = User(
+            rfid=None,
+            chave="HA84",
+            senha=hash_password("abc123"),
+            perfil=1,
+            nome="Admin Sem Membership Materializada",
+            projeto="P83",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P80", "P83"]),
+        )
+        db.add(legacy_only_admin)
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/administrators")
+
+    assert response.status_code == 200, response.text
+    row = next(
+        item for item in response.json() if item["row_type"] == "admin" and item["chave"] == "HA84"
+    )
+    assert row["projects"] == []
+
+
+def test_admin_update_profile_route_persists_real_memberships_and_audit_details():
     with SessionLocal() as db:
         target_admin = User(
             rfid=None,
@@ -573,9 +610,11 @@ def test_admin_update_profile_route_persists_restricted_monitored_projects_and_a
             time=None,
             last_active_at=now_sgt(),
             inactivity_days=0,
-            admin_monitored_projects_json=None,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P82"]),
         )
         db.add(target_admin)
+        db.flush()
+        grant_user_project_memberships(db, target_admin, ["P80"])
         db.commit()
         db.refresh(target_admin)
         admin_id = target_admin.id
@@ -584,7 +623,7 @@ def test_admin_update_profile_route_persists_restricted_monitored_projects_and_a
         ensure_admin_session(client)
         response = client.post(
             f"/api/admin/administrators/{admin_id}/profile",
-            json={"perfil": 2, "monitored_projects": ["P83", " p80 "]},
+            json={"perfil": 2, "projects": ["P83", " p80 "]},
         )
 
     assert response.status_code == 200, response.text
@@ -595,6 +634,7 @@ def test_admin_update_profile_route_persists_restricted_monitored_projects_and_a
 
     with SessionLocal() as db:
         refreshed_admin = db.get(User, admin_id)
+        refreshed_projects = list_user_project_names(db, refreshed_admin)
         audit_event = db.execute(
             select(CheckEvent)
             .where(CheckEvent.request_path == f"/api/admin/administrators/{admin_id}/profile")
@@ -603,15 +643,18 @@ def test_admin_update_profile_route_persists_restricted_monitored_projects_and_a
 
     assert refreshed_admin is not None
     assert refreshed_admin.perfil == 12
-    assert refreshed_admin.admin_monitored_projects_json == dump_admin_monitored_projects(["P80", "P83"])
+    assert refreshed_projects == ["P80", "P83"]
+    assert refreshed_admin.admin_monitored_projects_json is None
     assert audit_event.message == "Administrator configuration updated"
     assert "old_profile=1" in audit_event.details
     assert "new_profile=12" in audit_event.details
-    assert "old_monitored_projects=ALL" in audit_event.details
-    assert 'new_monitored_projects=["P80","P83"]' in audit_event.details
+    assert 'old_projects=["P80"]' in audit_event.details
+    assert 'new_projects=["P80","P83"]' in audit_event.details
+    assert "old_active_project=P80" in audit_event.details
+    assert "new_active_project=P80" in audit_event.details
 
 
-def test_admin_update_profile_route_persists_null_for_all_projects_and_keeps_legacy_scope_when_omitted():
+def test_admin_update_profile_route_preserves_existing_memberships_when_projects_are_omitted():
     with SessionLocal() as db:
         legacy_admin = User(
             rfid=None,
@@ -634,26 +677,24 @@ def test_admin_update_profile_route_persists_null_for_all_projects_and_keeps_leg
             admin_monitored_projects_json=dump_admin_monitored_projects(["P80"]),
         )
         db.add(legacy_admin)
+        db.flush()
+        grant_user_project_memberships(db, legacy_admin, ["P80", "P82"])
         db.commit()
         db.refresh(legacy_admin)
         admin_id = legacy_admin.id
 
     with TestClient(app) as client:
         ensure_admin_session(client)
-        all_projects_response = client.post(
-            f"/api/admin/administrators/{admin_id}/profile",
-            json={"perfil": 1, "monitored_projects": ["P80", "P82", "P83"]},
-        )
-        legacy_payload_response = client.post(
+        profile_only_response = client.post(
             f"/api/admin/administrators/{admin_id}/profile",
             json={"perfil": 2},
         )
 
-    assert all_projects_response.status_code == 200, all_projects_response.text
-    assert legacy_payload_response.status_code == 200, legacy_payload_response.text
+    assert profile_only_response.status_code == 200, profile_only_response.text
 
     with SessionLocal() as db:
         refreshed_admin = db.get(User, admin_id)
+        refreshed_projects = list_user_project_names(db, refreshed_admin)
         latest_audit_event = db.execute(
             select(CheckEvent)
             .where(CheckEvent.request_path == f"/api/admin/administrators/{admin_id}/profile")
@@ -663,13 +704,33 @@ def test_admin_update_profile_route_persists_null_for_all_projects_and_keeps_leg
     assert refreshed_admin is not None
     assert latest_audit_event is not None
     assert refreshed_admin.perfil == 12
+    assert refreshed_projects == ["P80", "P82"]
     assert refreshed_admin.admin_monitored_projects_json is None
-    assert "old_monitored_projects=ALL" in latest_audit_event.details
-    assert "new_monitored_projects=ALL" in latest_audit_event.details
+    assert 'old_projects=["P80","P82"]' in latest_audit_event.details
+    assert 'new_projects=["P80","P82"]' in latest_audit_event.details
 
 
-def test_admin_approval_initializes_all_scope_for_new_admin_even_if_payload_includes_projects():
+def test_admin_approval_seeds_initial_membership_and_subsequent_profile_edit_updates_real_memberships():
     with SessionLocal() as db:
+        requested_user = User(
+            rfid=None,
+            chave="HA91",
+            senha=hash_password("abc123"),
+            perfil=0,
+            nome="Admin Novo Fase 6",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
         pending_request = AdminAccessRequest(
             chave="HA91",
             nome_completo="Admin Novo Fase 6",
@@ -677,36 +738,45 @@ def test_admin_approval_initializes_all_scope_for_new_admin_even_if_payload_incl
             requested_profile=1,
             requested_at=now_sgt(),
         )
-        db.add(pending_request)
+        db.add_all([requested_user, pending_request])
         db.commit()
+        db.refresh(requested_user)
         db.refresh(pending_request)
         request_id = pending_request.id
+        user_id = requested_user.id
 
     with TestClient(app) as client:
         ensure_admin_session(client)
-        response = client.post(
+        approval_response = client.post(
             f"/api/admin/administrators/requests/{request_id}/approve",
-            json={"perfil": 1, "monitored_projects": ["P80"]},
+            json={"perfil": 1, "projects": ["P83"]},
+        )
+        update_response = client.post(
+            f"/api/admin/administrators/{user_id}/profile",
+            json={"perfil": 1, "projects": ["P80", "P83"]},
         )
         rows_response = client.get("/api/admin/administrators")
 
-    assert response.status_code == 200, response.text
+    assert approval_response.status_code == 200, approval_response.text
+    assert update_response.status_code == 200, update_response.text
     assert rows_response.status_code == 200, rows_response.text
 
     with SessionLocal() as db:
-        approved_admin = db.execute(select(User).where(User.chave == "HA91")).scalar_one_or_none()
+        approved_admin = db.get(User, user_id)
         pending_request = db.get(AdminAccessRequest, request_id)
+        approved_projects = list_user_project_names(db, approved_admin)
 
     assert approved_admin is not None
     assert approved_admin.admin_monitored_projects_json is None
     assert pending_request is None
+    assert approved_projects == ["P80", "P83"]
     approved_row = next(
         row for row in rows_response.json() if row["row_type"] == "admin" and row["chave"] == "HA91"
     )
-    assert approved_row["monitored_projects"] == ["P80", "P82", "P83"]
+    assert approved_row["projects"] == ["P80", "P83"]
 
 
-def test_admin_approval_resets_existing_scope_to_all_and_preserves_transport_password_rule():
+def test_admin_approval_preserves_existing_seed_project_and_transport_password_rule():
     original_password = "keep123"
     requested_password = "new123"
 
@@ -749,17 +819,19 @@ def test_admin_approval_resets_existing_scope_to_all_and_preserves_transport_pas
         ensure_admin_session(client)
         response = client.post(
             f"/api/admin/administrators/requests/{request_id}/approve",
-            json={"perfil": 2, "monitored_projects": ["P80"]},
+            json={"perfil": 2, "projects": ["P83"]},
         )
 
     assert response.status_code == 200, response.text
 
     with SessionLocal() as db:
         approved_admin = db.get(User, user_id)
+        approved_projects = list_user_project_names(db, approved_admin)
 
     assert approved_admin is not None
     assert approved_admin.perfil == 12
     assert approved_admin.admin_monitored_projects_json is None
+    assert approved_projects == ["P80"]
     assert approved_admin.senha is not None
     assert verify_password(original_password, approved_admin.senha) is False
     assert verify_password(requested_password, approved_admin.senha) is True
@@ -940,6 +1012,8 @@ def test_restricted_admin_scope_filters_presence_tables_by_monitored_projects():
         ]
         db.add(restricted_admin)
         db.add_all(rows)
+        db.flush()
+        grant_user_project_memberships(db, restricted_admin, ["P80"])
         db.commit()
 
     with TestClient(app) as client:
@@ -1061,6 +1135,8 @@ def test_unrestricted_admin_scope_keeps_all_presence_rows_visible():
         ]
         db.add(unrestricted_admin)
         db.add_all(rows)
+        db.flush()
+        grant_user_project_memberships(db, unrestricted_admin, ["P80", "P83"])
         db.commit()
 
     with TestClient(app) as client:
@@ -1267,6 +1343,33 @@ def get_user_by_chave(db, chave: str) -> User:
     return user
 
 
+def get_materialized_user_project_names(db, user_id: int) -> list[str]:
+    return db.execute(
+        select(Project.name)
+        .join(UserProjectMembership, UserProjectMembership.project_id == Project.id)
+        .where(UserProjectMembership.user_id == user_id)
+        .order_by(Project.name, Project.id, UserProjectMembership.id)
+    ).scalars().all()
+
+
+def grant_user_project_memberships(db, user: User, project_names: list[str]) -> None:
+    normalized_project_names = sorted(
+        {str(name).strip().upper() for name in project_names if str(name).strip()}
+    )
+    existing_project_names = set(
+        db.execute(select(Project.name).where(Project.name.in_(normalized_project_names))).scalars().all()
+    )
+    for project_name in normalized_project_names:
+        if project_name in existing_project_names:
+            continue
+        db.add(Project(name=project_name, **build_project_fields_for_country()))
+    db.flush()
+
+    ensure_user_active_project_is_member(db, user)
+    for project_name in normalized_project_names:
+        add_user_project_membership(db, user, project_name)
+
+
 def add_transport_schedule(
     db,
     *,
@@ -1460,6 +1563,7 @@ def clone_transport_settings_payload(db) -> dict[str, object]:
 def configure_transport_planning_settings(
     db,
     *,
+    arrive_at_work_time: str,
     work_to_home_time: str,
     last_update_time: str,
     default_car_seats: int,
@@ -1491,6 +1595,10 @@ def configure_transport_planning_settings(
             )
             created_currency_code = normalized_currency_code
 
+    location_settings_module.upsert_transport_arrive_at_work_time(
+        db,
+        arrive_at_work_time=arrive_at_work_time,
+    )
     location_settings_module.upsert_transport_work_to_home_time(
         db,
         work_to_home_time=work_to_home_time,
@@ -1544,6 +1652,10 @@ def restore_transport_planning_settings(db, settings_payload: dict[str, object] 
                 display_label=currency_row.get("display_label") if currency_row else None,
             )
 
+    location_settings_module.upsert_transport_arrive_at_work_time(
+        db,
+        arrive_at_work_time=str(payload.get("arrive_at_work_time") or "07:45"),
+    )
     location_settings_module.upsert_transport_work_to_home_time(
         db,
         work_to_home_time=str(payload.get("work_to_home_time") or "16:45"),
@@ -1604,6 +1716,7 @@ def create_transport_planning_fixture_bundle(
 
     settings_context = configure_transport_planning_settings(
         db,
+        arrive_at_work_time="07:35",
         work_to_home_time="17:25",
         last_update_time="16:35",
         default_car_seats=4,
@@ -2136,6 +2249,8 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         assert user_row["zip"] == "0012345678"
         assert user_row["cargo"] == "Cargo Inicial"
         assert user_row["email"] == "user@example.com"
+        assert user_row["projetos"] == ["P82"]
+        assert user_row["projeto_ativo"] == "P82"
 
         updated = client.post(
             "/api/admin/users",
@@ -2169,6 +2284,8 @@ def test_admin_users_support_extended_profile_fields_and_key_updates_history():
         assert updated_row["zip"] == "0000001234"
         assert updated_row["cargo"] == "Cargo Final"
         assert updated_row["email"] == "final@example.com"
+        assert updated_row["projetos"] == ["P83"]
+        assert updated_row["projeto_ativo"] == "P83"
 
     with SessionLocal() as db:
         sync_rows = db.execute(
@@ -2314,6 +2431,7 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
     linked_user_key = make_test_key("U")
     scoped_admin_key = make_test_key("S")
     location_name = f"Projeto {source_project_name} Base"
+    dashboard_service_date = date(2026, 5, 11)
 
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -2331,20 +2449,30 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
         project_payload = created.json()
 
         with SessionLocal() as db:
+            admin = get_user_by_chave(db, ADMIN_LOGIN_CHAVE)
+            grant_user_project_memberships(
+                db,
+                admin,
+                db.execute(select(Project.name).order_by(Project.name)).scalars().all(),
+            )
+            db.commit()
+
+        with SessionLocal() as db:
+            linked_user = User(
+                rfid=None,
+                nome="Usuario Projeto Renomeado",
+                chave=linked_user_key,
+                projeto=source_project_name,
+                perfil=0,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
             db.add_all(
                 [
-                    User(
-                        rfid=None,
-                        nome="Usuario Projeto Renomeado",
-                        chave=linked_user_key,
-                        projeto=source_project_name,
-                        perfil=0,
-                        local=None,
-                        checkin=None,
-                        time=None,
-                        last_active_at=now_sgt(),
-                        inactivity_days=0,
-                    ),
+                    linked_user,
                     User(
                         rfid=None,
                         nome="Admin Escopo Projeto Renomeado",
@@ -2365,6 +2493,23 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
                         updated_at=now_sgt(),
                     ),
                 ]
+            )
+            db.flush()
+            ensure_user_active_project_is_member(db, linked_user)
+            add_user_project_membership(db, linked_user, "P80")
+            db.add(
+                TransportRequest(
+                    user_id=linked_user.id,
+                    request_kind="extra",
+                    recurrence_kind="single_date",
+                    requested_time="18:15",
+                    single_date=dashboard_service_date,
+                    created_via="bot",
+                    status="active",
+                    created_at=now_sgt(),
+                    updated_at=now_sgt(),
+                    cancelled_at=None,
+                )
             )
             db.commit()
 
@@ -2413,6 +2558,19 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
         assert source_project_name not in updated_location["projects"]
         assert set(updated_location["projects"]) == {"P80", target_project_name}
 
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": dashboard_service_date.isoformat(), "route_kind": "home_to_work"},
+        )
+        assert dashboard_response.status_code == 200, dashboard_response.text
+        dashboard_payload = dashboard_response.json()
+        matching_rows = [
+            row for row in dashboard_payload["extra_requests"] if row["chave"] == linked_user_key
+        ]
+        assert len(matching_rows) == 1
+        assert matching_rows[0]["projeto"] == target_project_name
+        assert matching_rows[0]["projects"] == ["P80", target_project_name]
+
     with SessionLocal() as db:
         renamed_project = db.get(Project, project_payload["id"])
         legacy_project = db.execute(select(Project).where(Project.name == source_project_name)).scalar_one_or_none()
@@ -2431,7 +2589,8 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
     assert renamed_project.zip_code == "500099"
     assert legacy_project is None
     assert renamed_user.projeto == target_project_name
-    assert extract_admin_monitored_projects(scoped_admin) == ["P80", target_project_name]
+    assert list_user_project_names(db, renamed_user) == ["P80", target_project_name]
+    assert scoped_admin.admin_monitored_projects_json is None
     assert minimum_checkout_distance.minimum_checkout_distance_meters == 4321
     assert legacy_distance is None
 
@@ -2489,6 +2648,122 @@ def test_admin_project_delete_reassigns_admin_only_users_to_fallback_project():
     assert removed_project is None
     assert admin_user.projeto in {"P80", "P82", "P83"}
     assert admin_user.projeto != "P91"
+
+
+def test_admin_plural_user_contract_returns_memberships_and_active_project():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "USRPLURAL1",
+                "nome": "Usuario Multi Projeto",
+                "chave": "UP11",
+                "projetos": ["P83", "P82"],
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200, users.text
+        user_row = next(row for row in users.json() if row["chave"] == "UP11")
+        assert user_row["projetos"] == ["P82", "P83"]
+        assert user_row["projeto"] == "P82"
+        assert user_row["projeto_ativo"] == "P82"
+
+        updated = client.post(
+            "/api/admin/users",
+            json={
+                "user_id": user_row["id"],
+                "rfid": "USRPLURAL1",
+                "nome": "Usuario Multi Projeto Atualizado",
+                "chave": "UP11",
+                "projetos": ["P80", "P83"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+
+        users_after = client.get("/api/admin/users")
+        assert users_after.status_code == 200, users_after.text
+        updated_row = next(row for row in users_after.json() if row["id"] == user_row["id"])
+        assert updated_row["projetos"] == ["P80", "P83"]
+        assert updated_row["projeto"] == "P80"
+        assert updated_row["projeto_ativo"] == "P80"
+
+    with SessionLocal() as db:
+        stored_user = get_user_by_chave(db, "UP11")
+        assert list_user_project_names(db, stored_user) == ["P80", "P83"]
+        assert stored_user.projeto == "P80"
+
+
+def test_admin_project_delete_preserves_users_with_remaining_memberships():
+    project_name = f"Q{uuid.uuid4().hex[:3].upper()}"
+    dashboard_service_date = date(2026, 5, 12)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post("/api/admin/projects", json={"name": project_name})
+        assert created.status_code == 200, created.text
+        project_payload = created.json()
+
+        with SessionLocal() as db:
+            linked_user = User(
+                rfid=None,
+                nome="Usuario Multi Vinculo",
+                chave="PM01",
+                projeto=project_name,
+                perfil=0,
+                local=None,
+                checkin=None,
+                time=None,
+                last_active_at=now_sgt(),
+                inactivity_days=0,
+            )
+            db.add(linked_user)
+            db.flush()
+            ensure_user_active_project_is_member(db, linked_user)
+            add_user_project_membership(db, linked_user, "P82")
+            db.add(
+                TransportRequest(
+                    user_id=linked_user.id,
+                    request_kind="extra",
+                    recurrence_kind="single_date",
+                    requested_time="19:00",
+                    single_date=dashboard_service_date,
+                    created_via="bot",
+                    status="active",
+                    created_at=now_sgt(),
+                    updated_at=now_sgt(),
+                    cancelled_at=None,
+                )
+            )
+            db.commit()
+
+        removed = client.delete(f"/api/admin/projects/{project_payload['id']}")
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["ok"] is True
+
+        dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": dashboard_service_date.isoformat(), "route_kind": "home_to_work"},
+        )
+        assert dashboard_response.status_code == 200, dashboard_response.text
+        dashboard_payload = dashboard_response.json()
+        matching_rows = [
+            row for row in dashboard_payload["extra_requests"] if row["chave"] == "PM01"
+        ]
+        assert len(matching_rows) == 1
+        assert matching_rows[0]["projeto"] == "P82"
+        assert matching_rows[0]["projects"] == ["P82"]
+        assert all(project_row["name"] != project_name for project_row in dashboard_payload["projects"])
+
+    with SessionLocal() as db:
+        linked_user = get_user_by_chave(db, "PM01")
+        removed_project = db.execute(select(Project).where(Project.id == project_payload["id"])).scalar_one_or_none()
+
+        assert removed_project is None
+        assert linked_user.projeto == "P82"
+        assert list_user_project_names(db, linked_user) == ["P82"]
 
 
 def test_admin_project_delete_rewrites_explicit_admin_scopes_and_resets_empty_scope_to_all_mode():
@@ -2586,28 +2861,17 @@ def test_admin_project_delete_rewrites_explicit_admin_scopes_and_resets_empty_sc
             .order_by(CheckEvent.id.desc())
         ).scalars().first()
 
-    expected_legacy_projects = ["P80", "P82", "P83"]
-    resolved_all_projects = rows_by_key[unrestricted_key]["monitored_projects"]
+    resolved_all_projects = rows_by_key[unrestricted_key]["projects"]
 
-    assert restricted_admin.admin_monitored_projects_json == dump_admin_monitored_projects(["P80"])
-    assert extract_admin_monitored_projects(restricted_admin) == ["P80"]
+    assert restricted_admin.admin_monitored_projects_json is None
     assert emptied_admin.admin_monitored_projects_json is None
-    assert extract_admin_monitored_projects(emptied_admin) is None
     assert unrestricted_admin.admin_monitored_projects_json is None
+    assert legacy_full_admin.admin_monitored_projects_json is None
 
-    if resolved_all_projects == expected_legacy_projects:
-        assert legacy_full_admin.admin_monitored_projects_json is None
-        assert extract_admin_monitored_projects(legacy_full_admin) is None
-    else:
-        assert legacy_full_admin.admin_monitored_projects_json == dump_admin_monitored_projects(expected_legacy_projects)
-        assert extract_admin_monitored_projects(legacy_full_admin) == expected_legacy_projects
-
-    assert rows_by_key[restricted_key]["monitored_projects"] == ["P80"]
-    assert rows_by_key[emptied_key]["monitored_projects"] == resolved_all_projects
-    assert rows_by_key[unrestricted_key]["monitored_projects"] == resolved_all_projects
-    assert rows_by_key[legacy_full_key]["monitored_projects"] == (
-        resolved_all_projects if resolved_all_projects == expected_legacy_projects else expected_legacy_projects
-    )
+    assert rows_by_key[restricted_key]["projects"] == ["P80"]
+    assert rows_by_key[emptied_key]["projects"] == resolved_all_projects
+    assert rows_by_key[unrestricted_key]["projects"] == resolved_all_projects
+    assert rows_by_key[legacy_full_key]["projects"] == ["P80"]
 
     assert removal_event is not None
     assert f"updated_admin_scopes=3" in removal_event.details
@@ -2645,14 +2909,20 @@ def test_administrators_endpoint_keeps_all_mode_dynamic_when_new_project_is_crea
         assert administrators_response.status_code == 200, administrators_response.text
         row = next(row for row in administrators_response.json() if row["chave"] == admin_key)
 
-    assert project_name in row["monitored_projects"]
-    assert set({"P80", "P82", "P83", project_name}).issubset(set(row["monitored_projects"]))
-    assert row["monitored_projects"] == sorted(row["monitored_projects"])
+    assert project_name in row["projects"]
+    assert set({"P80", "P82", "P83", project_name}).issubset(set(row["projects"]))
+    assert row["projects"] == sorted(row["projects"])
 
 
-def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_persists():
+def test_web_projects_endpoint_lists_catalog_and_authenticated_user_projects_update_persists():
     ensure_project_exists("P95")
+    ensure_project_exists("P96")
     ensure_web_user_exists(chave="WP95", projeto="P80", nome="Usuario Projeto Web")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP95")
+        grant_user_project_memberships(db, user, ["P80", "P95"])
+        db.commit()
 
     with TestClient(app) as client:
         listed = client.get("/api/web/projects")
@@ -2675,10 +2945,18 @@ def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_pe
         )
         assert register_response.status_code == 200, register_response.text
 
-        updated = client.put("/api/web/project", json={"chave": "WP95", "projeto": "P95"})
+        user_projects = client.get("/api/web/user-projects")
+        assert user_projects.status_code == 200, user_projects.text
+        assert user_projects.json() == {
+            "projects": ["P80", "P95"],
+            "active_project": "P80",
+        }
+
+        updated = client.put("/api/web/user-projects", json={"projects": ["P96", "P95"]})
         assert updated.status_code == 200, updated.text
         assert updated.json()["ok"] is True
-        assert updated.json()["project"] == "P95"
+        assert updated.json()["projects"] == ["P95", "P96"]
+        assert updated.json()["active_project"] == "P95"
 
         history_state = client.get("/api/web/check/state", params={"chave": "WP95"})
         assert history_state.status_code == 200, history_state.text
@@ -2688,6 +2966,88 @@ def test_web_projects_endpoint_lists_catalog_and_authenticated_project_update_pe
         user = get_user_by_chave(db, "WP95")
 
     assert user.projeto == "P95"
+
+
+def test_web_legacy_project_update_route_switches_only_the_active_project_within_memberships():
+    ensure_project_exists("P96")
+    ensure_web_user_exists(chave="WP96", projeto="P80", nome="Usuario Projeto Legado Web")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP96")
+        grant_user_project_memberships(db, user, ["P80", "P96"])
+        db.commit()
+
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave="WP96",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+        updated = client.put("/api/web/project", json={"project": "P96"})
+        assert updated.status_code == 200, updated.text
+        assert updated.json() == {
+            "ok": True,
+            "message": "Projeto ativo atualizado com sucesso.",
+            "project": "P96",
+            "projects": ["P80", "P96"],
+            "active_project": "P96",
+        }
+
+        user_projects = client.get("/api/web/user-projects")
+        assert user_projects.status_code == 200, user_projects.text
+        assert user_projects.json() == {
+            "projects": ["P80", "P96"],
+            "active_project": "P96",
+        }
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP96")
+        assert user.projeto == "P96"
+        assert get_materialized_user_project_names(db, user.id) == ["P80", "P96"]
+
+
+def test_web_check_submit_rejects_projects_outside_authenticated_user_memberships():
+    ensure_project_exists("P96A")
+    ensure_web_user_exists(chave="WC96", projeto="P80", nome="Usuario Escopo Check Web")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WC96")
+        grant_user_project_memberships(db, user, ["P80", "P83"])
+        db.commit()
+
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave="WC96",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+        submit = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WC96",
+                "projeto": "P96A",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"web-membership-guard-{uuid.uuid4().hex}",
+            },
+        )
+
+    assert submit.status_code == 409
+    assert submit.json()["detail"] == "O projeto informado nao pertence aos projetos cadastrados do usuario."
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WC96")
+        assert user.projeto == "P80"
+        assert get_materialized_user_project_names(db, user.id) == ["P80", "P83"]
 
 
 def test_provider_endpoint_requires_valid_shared_key():
@@ -3504,6 +3864,7 @@ def test_admin_reports_events_returns_history_by_chave_in_desc_order():
     assert payload["person"]["chave"] == "RP41"
     assert payload["person"]["nome"] == "Usuario Relatorio Chave"
     assert payload["person"]["projeto"] == "P80"
+    assert payload["person"]["projetos"] == ["P80"]
     assert len(payload["events"]) == 3
     assert [row["action"] for row in payload["events"]] == ["checkout", "checkin", "checkin"]
     assert payload["events"][0]["source"] == "provider"
@@ -3607,6 +3968,8 @@ def test_admin_reports_events_hide_sensitive_time_for_profile_one():
             admin.perfil = 1
             admin.last_active_at = now_sgt()
             admin.inactivity_days = 0
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80", "P98"])
 
         user = User(
             rfid="RPT1002",
@@ -3781,6 +4144,8 @@ def test_admin_reports_events_export_hides_time_column_for_profile_one():
             admin.perfil = 1
             admin.last_active_at = now_sgt()
             admin.inactivity_days = 0
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])
 
         user = User(
             rfid="RPT1004",
@@ -4033,6 +4398,7 @@ def test_admin_reports_events_export_all_hides_time_column_for_profile_one():
             admin.inactivity_days = 0
 
         db.flush()
+        grant_user_project_memberships(db, admin, ["P80", project_name_a, project_name_b])
 
         user_a = User(
             rfid="RPT3001",
@@ -4345,6 +4711,8 @@ def test_admin_events_hide_sensitive_time_for_profile_one():
             admin.perfil = 1
             admin.last_active_at = now_sgt()
             admin.inactivity_days = 0
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80", "P911"])
 
         user = User(
             rfid="EVT1001",
@@ -6259,6 +6627,7 @@ def test_presence_moves_users_between_checkin_checkout_and_inactive_after_24_hou
         inactive_payload = inactive_rows.json()
         assert all(isinstance(row["id"], int) and row["id"] > 0 for row in inactive_payload)
         assert [row["nome"] for row in inactive_payload] == ["Ana Inativa", "Bruno Inativo"]
+        assert [row["projetos"] for row in inactive_payload] == [["P83"], ["P80"]]
         assert [row["inactivity_days"] for row in inactive_payload] == [1, 1]
         assert [row["latest_action"] for row in inactive_payload] == ["checkin", "checkout"]
         assert inactive_payload[0]["latest_time"].startswith("2024-04-07T11:00:00")
@@ -6267,9 +6636,12 @@ def test_presence_moves_users_between_checkin_checkout_and_inactive_after_24_hou
         checkin_rows = client.get("/api/admin/checkin")
         assert checkin_rows.status_code == 200
         checkin_payload = checkin_rows.json()
+        checkin_rows_by_rfid = {row["rfid"]: row for row in checkin_payload}
         assert any(row["rfid"] == "INA001" and row["id"] > 0 for row in checkin_payload)
         assert all(row["rfid"] != "INA002" for row in checkin_payload)
         assert any(row["rfid"] == "INA005" and row["id"] > 0 for row in checkin_payload)
+        assert checkin_rows_by_rfid["INA001"]["projetos"] == ["P80"]
+        assert checkin_rows_by_rfid["INA005"]["projetos"] == ["P83"]
 
         missing_checkout_rows = client.get("/api/admin/missing-checkout")
         assert missing_checkout_rows.status_code == 200
@@ -6278,8 +6650,10 @@ def test_presence_moves_users_between_checkin_checkout_and_inactive_after_24_hou
         checkout_rows = client.get("/api/admin/checkout")
         assert checkout_rows.status_code == 200
         checkout_payload = checkout_rows.json()
+        checkout_rows_by_rfid = {row["rfid"]: row for row in checkout_payload}
         assert all(row["rfid"] != "INA003" for row in checkout_payload)
         assert any(row["rfid"] == "INA004" and row["id"] > 0 for row in checkout_payload)
+        assert checkout_rows_by_rfid["INA004"]["projetos"] == ["P82"]
 
 
 def test_checkin_remains_visible_until_24_hours_even_across_singapore_midnight(monkeypatch):
@@ -7401,6 +7775,9 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     friday = date(2026, 4, 17)
     saturday = date(2026, 4, 18)
     timestamp = now_sgt()
+    regular_key = make_test_key("T")
+    weekend_key = make_test_key("T")
+    extra_key = make_test_key("T")
 
     with SessionLocal() as db:
         regular_vehicle = Vehicle(placa="REG9001", tipo="van", color="Silver", lugares=12, tolerance=8, service_scope="regular")
@@ -7457,7 +7834,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
         regular_user = User(
             rfid=None,
             nome="Regular Rider",
-            chave="TD01",
+            chave=regular_key,
             projeto="P80",
             workplace="Transport Hub Alpha",
             end_rua="10 Regular Street",
@@ -7471,7 +7848,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
         weekend_user = User(
             rfid=None,
             nome="Weekend Rider",
-            chave="TD02",
+            chave=weekend_key,
             projeto="P82",
             workplace="Transport Hub Alpha",
             end_rua="20 Weekend Street",
@@ -7485,7 +7862,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
         extra_user = User(
             rfid=None,
             nome="Extra Rider",
-            chave="TD03",
+            chave=extra_key,
             projeto="P83",
             workplace="Transport Hub Alpha",
             end_rua="30 Extra Street",
@@ -7545,6 +7922,7 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
                 vehicle_id=regular_vehicle.id,
                 status="confirmed",
                 response_message=None,
+                boarding_time="07:05",
                 assigned_by_admin_id=None,
                 created_at=timestamp,
                 updated_at=timestamp,
@@ -7570,41 +7948,579 @@ def test_transport_dashboard_groups_requests_by_selected_date_and_assignment_sta
     saturday_payload = saturday_response.json()
     friday_work_to_home_payload = friday_work_to_home_response.json()
 
-    assert [row["chave"] for row in friday_payload["regular_requests"]] == ["TD01"]
-    assert friday_payload["regular_requests"][0]["assignment_status"] == "confirmed"
-    assert friday_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
-    assert [row["chave"] for row in friday_payload["extra_requests"]] == ["TD03"]
-    assert friday_payload["extra_requests"][0]["assignment_status"] == "pending"
-    assert [row["chave"] for row in friday_payload["weekend_requests"]] == ["TD02"]
-    assert friday_payload["weekend_requests"][0]["assignment_status"] == "pending"
-    assert friday_payload["weekend_requests"][0]["service_date"] == saturday.isoformat()
-    assert [row["placa"] for row in friday_payload["regular_vehicles"]] == ["REG9001"]
-    assert [row["placa"] for row in friday_payload["extra_vehicles"]] == ["EXT9001"]
-    assert [row["route_kind"] for row in friday_payload["extra_vehicles"]] == ["home_to_work"]
-    assert [row["placa"] for row in friday_payload["regular_vehicle_registry"]] == ["REG9001"]
-    assert friday_payload["regular_vehicle_registry"][0]["assigned_count"] == 1
-    assert [row["placa"] for row in friday_payload["weekend_vehicle_registry"]] == ["WKD9001"]
-    assert friday_payload["weekend_vehicle_registry"][0]["assigned_count"] == 0
-    assert [row["placa"] for row in friday_payload["extra_vehicle_registry"]] == ["EXT9001"]
-    assert friday_payload["extra_vehicle_registry"][0]["service_date"] == friday.isoformat()
-    assert friday_payload["extra_vehicle_registry"][0]["route_kind"] == "home_to_work"
+    friday_regular_row = next(row for row in friday_payload["regular_requests"] if row["chave"] == regular_key)
+    friday_extra_row = next(row for row in friday_payload["extra_requests"] if row["chave"] == extra_key)
+    friday_weekend_row = next(row for row in friday_payload["weekend_requests"] if row["chave"] == weekend_key)
+
+    assert friday_regular_row["assignment_status"] == "confirmed"
+    assert friday_regular_row["assigned_vehicle"]["placa"] == "REG9001"
+    assert friday_regular_row["boarding_time"] == "07:05"
+    assert friday_extra_row["assignment_status"] == "pending"
+    assert friday_extra_row["boarding_time"] is None
+    assert friday_weekend_row["assignment_status"] == "pending"
+    assert friday_weekend_row["boarding_time"] is None
+    assert friday_weekend_row["service_date"] == saturday.isoformat()
+    assert any(row["placa"] == "REG9001" for row in friday_payload["regular_vehicles"])
+    assert any(row["placa"] == "EXT9001" and row["route_kind"] == "home_to_work" for row in friday_payload["extra_vehicles"])
+
+    friday_regular_registry_row = next(row for row in friday_payload["regular_vehicle_registry"] if row["placa"] == "REG9001")
+    friday_weekend_registry_row = next(row for row in friday_payload["weekend_vehicle_registry"] if row["placa"] == "WKD9001")
+    friday_extra_registry_row = next(row for row in friday_payload["extra_vehicle_registry"] if row["placa"] == "EXT9001")
+
+    assert friday_regular_registry_row["assigned_count"] == 1
+    assert friday_weekend_registry_row["assigned_count"] == 0
+    assert friday_extra_registry_row["service_date"] == friday.isoformat()
+    assert friday_extra_registry_row["route_kind"] == "home_to_work"
     assert friday_payload["selected_route"] == "home_to_work"
+    assert datetime.fromisoformat(friday_payload["dashboard_generated_at"]).tzinfo is not None
+    assert friday_payload["arrive_at_work_time"] == "07:45"
 
-    assert [row["chave"] for row in saturday_payload["regular_requests"]] == ["TD01"]
-    assert saturday_payload["regular_requests"][0]["assignment_status"] == "pending"
-    assert saturday_payload["regular_requests"][0]["assigned_vehicle"] is None
-    assert [row["chave"] for row in saturday_payload["weekend_requests"]] == ["TD02"]
-    assert [row["chave"] for row in saturday_payload["extra_requests"]] == ["TD03"]
-    assert saturday_payload["extra_requests"][0]["assignment_status"] == "pending"
-    assert saturday_payload["extra_requests"][0]["service_date"] == friday.isoformat()
-    assert [row["placa"] for row in saturday_payload["weekend_vehicles"]] == ["WKD9001"]
+    saturday_regular_row = next(row for row in saturday_payload["regular_requests"] if row["chave"] == regular_key)
+    saturday_weekend_row = next(row for row in saturday_payload["weekend_requests"] if row["chave"] == weekend_key)
+    saturday_extra_row = next(row for row in saturday_payload["extra_requests"] if row["chave"] == extra_key)
 
-    assert [row["placa"] for row in friday_work_to_home_payload["regular_vehicles"]] == ["REG9001"]
-    assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["EXT9001"]
-    assert [row["route_kind"] for row in friday_work_to_home_payload["extra_vehicles"]] == ["home_to_work"]
-    assert [row["placa"] for row in friday_work_to_home_payload["extra_vehicle_registry"]] == ["EXT9001"]
-    assert friday_work_to_home_payload["regular_requests"][0]["assignment_status"] == "confirmed"
-    assert friday_work_to_home_payload["regular_requests"][0]["assigned_vehicle"]["placa"] == "REG9001"
+    assert saturday_regular_row["assignment_status"] == "pending"
+    assert saturday_regular_row["assigned_vehicle"] is None
+    assert saturday_regular_row["boarding_time"] is None
+    assert saturday_weekend_row["chave"] == weekend_key
+    assert saturday_weekend_row["boarding_time"] is None
+    assert saturday_extra_row["assignment_status"] == "pending"
+    assert saturday_extra_row["boarding_time"] is None
+    assert saturday_extra_row["service_date"] == friday.isoformat()
+    assert any(row["placa"] == "WKD9001" for row in saturday_payload["weekend_vehicles"])
+    assert datetime.fromisoformat(saturday_payload["dashboard_generated_at"]).tzinfo is not None
+    assert saturday_payload["arrive_at_work_time"] == "07:45"
+
+    friday_work_to_home_regular_row = next(
+        row for row in friday_work_to_home_payload["regular_requests"] if row["chave"] == regular_key
+    )
+
+    assert any(row["placa"] == "REG9001" for row in friday_work_to_home_payload["regular_vehicles"])
+    assert any(
+        row["placa"] == "EXT9001" and row["route_kind"] == "home_to_work"
+        for row in friday_work_to_home_payload["extra_vehicles"]
+    )
+    assert any(row["placa"] == "EXT9001" for row in friday_work_to_home_payload["extra_vehicle_registry"])
+    assert friday_work_to_home_regular_row["assignment_status"] == "confirmed"
+    assert friday_work_to_home_regular_row["assigned_vehicle"]["placa"] == "REG9001"
+    assert friday_work_to_home_regular_row["boarding_time"] is None
+    assert datetime.fromisoformat(friday_work_to_home_payload["dashboard_generated_at"]).tzinfo is not None
+    assert friday_work_to_home_payload["arrive_at_work_time"] == "07:45"
+
+
+def _create_transport_boarding_time_update_context(
+    *,
+    service_date: date,
+    route_kind: str = "home_to_work",
+    assignment_status: str = "confirmed",
+) -> dict[str, int | date | str]:
+    timestamp = now_sgt()
+    request_key = make_test_key("BT")
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace=f"Boarding Time Hub {request_key}",
+            address="90 Boarding Street",
+            zip="900090",
+            country="Singapore",
+        )
+        db.add(workplace)
+        db.flush()
+
+        vehicle = Vehicle(
+            placa=f"BT{request_key[-4:]}",
+            tipo="van",
+            color="blue",
+            lugares=4,
+            tolerance=10,
+            service_scope="regular",
+        )
+        db.add(vehicle)
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=vehicle,
+            service_scope="regular",
+            route_kind=route_kind,
+            recurrence_kind="weekday",
+        )
+
+        user = User(
+            rfid=None,
+            nome=f"Boarding Time Rider {request_key}",
+            chave=request_key,
+            projeto="P90",
+            workplace=workplace.workplace,
+            placa="BT9000",
+            end_rua="90 Boarding Street",
+            zip="900090",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+
+        request_row = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:30",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(request_row)
+        db.flush()
+
+        db.add(
+            TransportAssignment(
+                request_id=request_row.id,
+                service_date=service_date,
+                route_kind=route_kind,
+                vehicle_id=vehicle.id if assignment_status == "confirmed" else None,
+                status=assignment_status,
+                response_message=None,
+                boarding_time=None,
+                assigned_by_admin_id=None,
+                created_at=timestamp,
+                updated_at=timestamp,
+                notified_at=None,
+            )
+        )
+        db.commit()
+
+        return {
+            "request_id": request_row.id,
+            "service_date": service_date,
+            "request_key": request_key,
+        }
+
+
+def test_transport_assignment_boarding_time_update_roundtrips_dashboard_and_supports_clear():
+    friday = date(2026, 4, 24)
+    context = _create_transport_boarding_time_update_context(service_date=friday)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        save_response = client.put(
+            "/api/transport/assignments/boarding-time",
+            json={
+                "request_id": context["request_id"],
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "boarding_time": "07:05",
+            },
+        )
+        saved_dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+        clear_response = client.put(
+            "/api/transport/assignments/boarding-time",
+            json={
+                "request_id": context["request_id"],
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "boarding_time": None,
+            },
+        )
+        cleared_dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": friday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert save_response.status_code == 200, save_response.text
+    assert save_response.json()["ok"] is True
+    assert save_response.json()["message"] == "Transport boarding time saved successfully."
+    assert save_response.json()["message_key"] == "status.boardingTimeSaved"
+    assert save_response.json()["error_code"] is None
+
+    assert saved_dashboard_response.status_code == 200, saved_dashboard_response.text
+    saved_payload = saved_dashboard_response.json()
+    saved_row = next(row for row in saved_payload["regular_requests"] if row["id"] == context["request_id"])
+    assert saved_row["assignment_status"] == "confirmed"
+    assert saved_row["boarding_time"] == "07:05"
+
+    assert clear_response.status_code == 200, clear_response.text
+    assert clear_response.json()["ok"] is True
+    assert clear_response.json()["message"] == "Transport boarding time saved successfully."
+    assert clear_response.json()["message_key"] == "status.boardingTimeSaved"
+    assert clear_response.json()["error_code"] is None
+
+    assert cleared_dashboard_response.status_code == 200, cleared_dashboard_response.text
+    cleared_payload = cleared_dashboard_response.json()
+    cleared_row = next(row for row in cleared_payload["regular_requests"] if row["id"] == context["request_id"])
+    assert cleared_row["assignment_status"] == "confirmed"
+    assert cleared_row["boarding_time"] is None
+
+
+def test_transport_assignment_boarding_time_update_rejects_invalid_time_format():
+    friday = date(2026, 4, 24)
+    context = _create_transport_boarding_time_update_context(service_date=friday)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.put(
+            "/api/transport/assignments/boarding-time",
+            json={
+                "request_id": context["request_id"],
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "boarding_time": "7:5",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "O horario deve estar no formato hh:mm" in response.text
+
+
+def test_transport_assignment_boarding_time_update_rejects_non_confirmed_and_non_eta_assignments():
+    friday = date(2026, 4, 24)
+    pending_context = _create_transport_boarding_time_update_context(
+        service_date=friday,
+        route_kind="home_to_work",
+        assignment_status="pending",
+    )
+    work_to_home_context = _create_transport_boarding_time_update_context(
+        service_date=friday,
+        route_kind="work_to_home",
+        assignment_status="confirmed",
+    )
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        pending_response = client.put(
+            "/api/transport/assignments/boarding-time",
+            json={
+                "request_id": pending_context["request_id"],
+                "service_date": friday.isoformat(),
+                "route_kind": "home_to_work",
+                "boarding_time": "07:05",
+            },
+        )
+        work_to_home_response = client.put(
+            "/api/transport/assignments/boarding-time",
+            json={
+                "request_id": work_to_home_context["request_id"],
+                "service_date": friday.isoformat(),
+                "route_kind": "work_to_home",
+                "boarding_time": "18:05",
+            },
+        )
+
+    assert pending_response.status_code == 409
+    pending_detail = extract_transport_structured_detail(pending_response)
+    assert pending_detail["message_key"] == "warnings.boardingTimeRequiresConfirmedAssignment"
+    assert pending_detail["error_code"] == "transport_boarding_time_confirmed_required"
+    assert pending_detail["technical_detail"] == "A confirmed transport assignment is required to update boarding_time."
+    assert work_to_home_response.status_code == 409
+    work_to_home_detail = extract_transport_structured_detail(work_to_home_response)
+    assert work_to_home_detail["message_key"] == "warnings.boardingTimeEtaOnly"
+    assert work_to_home_detail["error_code"] == "transport_boarding_time_eta_only"
+    assert work_to_home_detail["technical_detail"] == (
+        "Manual boarding_time is only available for confirmed home_to_work assignments."
+    )
+
+
+def test_transport_dashboard_exposes_membership_projects_without_duplicating_request_rows():
+    monday = date(2026, 4, 20)
+    timestamp = now_sgt()
+    user_key = make_test_key("M")
+
+    with SessionLocal() as db:
+        user = User(
+            rfid=None,
+            nome="Multi Project Dashboard Rider",
+            chave=user_key,
+            projeto="P80",
+            workplace=None,
+            end_rua="80 Membership Street",
+            zip="800080",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        grant_user_project_memberships(db, user, ["P80", "P83"])
+
+        transport_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:40",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add(transport_request)
+        db.commit()
+        request_id = transport_request.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/transport/dashboard", params={"service_date": monday.isoformat()})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    matching_rows = [
+        row for row in payload["regular_requests"] if row["id"] == request_id
+    ]
+
+    assert len(matching_rows) == 1
+    assert matching_rows[0]["projeto"] == "P80"
+    assert matching_rows[0]["projects"] == ["P80", "P83"]
+
+
+def test_transport_dashboard_reflects_extra_override_for_multi_project_user_and_preserves_opposite_route_after_reload():
+    monday = date(2026, 4, 20)
+    timestamp = now_sgt()
+    unique_suffix = make_test_key("T")
+    workplace_name = f"Override Dashboard Hub {unique_suffix}"
+    regular_plate = f"REG{unique_suffix}"
+    extra_plate = f"EXT{unique_suffix}"
+    user_key = make_test_key("T")
+
+    with SessionLocal() as db:
+        workplace = Workplace(
+            workplace=workplace_name,
+            address="70 Dashboard Street",
+            zip="700070",
+            country="Singapore",
+        )
+        regular_vehicle = Vehicle(
+            placa=regular_plate,
+            tipo="van",
+            color="Silver",
+            lugares=12,
+            tolerance=8,
+            service_scope="regular",
+        )
+        extra_vehicle = Vehicle(
+            placa=extra_plate,
+            tipo="carro",
+            color="Red",
+            lugares=4,
+            tolerance=6,
+            service_scope="extra",
+        )
+        db.add_all([workplace, regular_vehicle, extra_vehicle])
+        db.flush()
+
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="home_to_work",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=regular_vehicle,
+            service_scope="regular",
+            route_kind="work_to_home",
+            recurrence_kind="weekday",
+        )
+        add_transport_schedule(
+            db,
+            vehicle=extra_vehicle,
+            service_scope="extra",
+            route_kind="home_to_work",
+            recurrence_kind="single_date",
+            service_date=monday,
+        )
+
+        user = User(
+            rfid=None,
+            nome="Override Dashboard Rider",
+            chave=user_key,
+            projeto="P80",
+            workplace=workplace.workplace,
+            end_rua="50 Override Road",
+            zip="500050",
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=timestamp,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        grant_user_project_memberships(db, user, ["P80", "P83"])
+
+        regular_request = TransportRequest(
+            user_id=user.id,
+            request_kind="regular",
+            recurrence_kind="weekday",
+            requested_time="07:25",
+            single_date=None,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        extra_request = TransportRequest(
+            user_id=user.id,
+            request_kind="extra",
+            recurrence_kind="single_date",
+            requested_time="07:55",
+            single_date=monday,
+            created_via="bot",
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+            cancelled_at=None,
+        )
+        db.add_all([regular_request, extra_request])
+        db.commit()
+
+        regular_request_id = regular_request.id
+        extra_request_id = extra_request.id
+        regular_vehicle_id = regular_vehicle.id
+        extra_vehicle_id = extra_vehicle.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        regular_confirm_response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": regular_request_id,
+                "service_date": monday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": regular_vehicle_id,
+            },
+        )
+        assert regular_confirm_response.status_code == 200, regular_confirm_response.text
+
+        extra_confirm_response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": extra_request_id,
+                "service_date": monday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": extra_vehicle_id,
+            },
+        )
+        assert extra_confirm_response.status_code == 200, extra_confirm_response.text
+
+        blocked_reconfirm_response = client.post(
+            "/api/transport/assignments",
+            json={
+                "request_id": regular_request_id,
+                "service_date": monday.isoformat(),
+                "route_kind": "home_to_work",
+                "status": "confirmed",
+                "vehicle_id": regular_vehicle_id,
+            },
+        )
+
+        home_dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "home_to_work"},
+        )
+        work_dashboard_response = client.get(
+            "/api/transport/dashboard",
+            params={"service_date": monday.isoformat(), "route_kind": "work_to_home"},
+        )
+
+    assert blocked_reconfirm_response.status_code == 409
+    blocked_reconfirm_detail = extract_transport_structured_detail(blocked_reconfirm_response)
+    assert blocked_reconfirm_detail["message_key"] == "status.couldNotUpdateAllocation"
+    assert blocked_reconfirm_detail["error_code"] == "transport_assignment_save_failed"
+    assert blocked_reconfirm_detail["technical_detail"] == (
+        "The user already has a confirmed extra transport override for this date and route: home_to_work."
+    )
+
+    assert home_dashboard_response.status_code == 200, home_dashboard_response.text
+    assert work_dashboard_response.status_code == 200, work_dashboard_response.text
+
+    home_dashboard_payload = home_dashboard_response.json()
+    work_dashboard_payload = work_dashboard_response.json()
+
+    home_regular_request_rows = [
+        row for row in home_dashboard_payload["regular_requests"] if row["id"] == regular_request_id
+    ]
+    home_extra_request_rows = [
+        row for row in home_dashboard_payload["extra_requests"] if row["id"] == extra_request_id
+    ]
+    work_regular_request_rows = [
+        row for row in work_dashboard_payload["regular_requests"] if row["id"] == regular_request_id
+    ]
+    assert len(home_regular_request_rows) == 1
+    assert len(home_extra_request_rows) == 1
+    assert len(work_regular_request_rows) == 1
+
+    home_regular_request_row = home_regular_request_rows[0]
+    home_extra_request_row = home_extra_request_rows[0]
+    work_regular_request_row = work_regular_request_rows[0]
+    extra_vehicle_registry_row = next(
+        row for row in home_dashboard_payload["extra_vehicle_registry"] if row["vehicle_id"] == extra_vehicle_id
+    )
+
+    assert home_regular_request_row["projeto"] == "P80"
+    assert home_regular_request_row["projects"] == ["P80", "P83"]
+    assert home_regular_request_row["assignment_status"] == "pending"
+    assert home_regular_request_row["assigned_vehicle"] is None
+    assert all(
+        row["assigned_vehicle"] is None or row["assigned_vehicle"]["placa"] != regular_plate
+        for row in home_dashboard_payload["regular_requests"]
+    )
+    assert home_extra_request_row["projects"] == ["P80", "P83"]
+    assert home_extra_request_row["assignment_status"] == "confirmed"
+    assert home_extra_request_row["assigned_vehicle"]["placa"] == extra_plate
+    assert extra_vehicle_registry_row["assigned_count"] == 1
+
+    assert work_regular_request_row["projects"] == ["P80", "P83"]
+    assert work_regular_request_row["assignment_status"] == "confirmed"
+    assert work_regular_request_row["assigned_vehicle"]["placa"] == regular_plate
+
+    with SessionLocal() as db:
+        home_assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == regular_request_id,
+                TransportAssignment.service_date == monday,
+                TransportAssignment.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+        work_assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == regular_request_id,
+                TransportAssignment.service_date == monday,
+                TransportAssignment.route_kind == "work_to_home",
+            )
+        ).scalar_one()
+        extra_assignment = db.execute(
+            select(TransportAssignment).where(
+                TransportAssignment.request_id == extra_request_id,
+                TransportAssignment.service_date == monday,
+                TransportAssignment.route_kind == "home_to_work",
+            )
+        ).scalar_one()
+
+    assert home_assignment.status == "pending"
+    assert home_assignment.vehicle_id is None
+    assert work_assignment.status == "confirmed"
+    assert work_assignment.vehicle_id == regular_vehicle_id
+    assert extra_assignment.status == "confirmed"
+    assert extra_assignment.vehicle_id == extra_vehicle_id
 
 
 def test_transport_planning_fixture_bundle_supports_snapshot_and_settings_contracts():
@@ -7675,6 +8591,9 @@ def test_transport_planning_fixture_bundle_supports_snapshot_and_settings_contra
         )
 
         settings_current = fixture_bundle["settings_context"]["current"]
+        assert snapshot_payload["dashboard_generated_at"] == snapshot_payload["captured_at"]
+        assert snapshot_payload["arrive_at_work_time"] == settings_current["arrive_at_work_time"]
+        assert settings_payload["arrive_at_work_time"] == settings_current["arrive_at_work_time"]
         assert settings_payload["default_car_seats"] == settings_current["default_car_seats"]
         assert settings_payload["default_minivan_seats"] == settings_current["default_minivan_seats"]
         assert settings_payload["default_van_seats"] == settings_current["default_van_seats"]
@@ -8263,11 +9182,12 @@ def test_transport_proposal_apply_contract_persists_assignments_after_approval()
     friday = date(2026, 4, 17)
     created_at = datetime(2026, 4, 16, 21, 5, tzinfo=ZoneInfo(settings.tz_name))
     captured_at = datetime(2026, 4, 16, 21, 0, tzinfo=ZoneInfo(settings.tz_name))
+    contract_key = make_test_key("C")
 
     with SessionLocal() as db:
         location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="18:10")
         workplace = Workplace(
-            workplace="Contract Apply Hub",
+            workplace=f"Contract Apply Hub {contract_key}",
             address="63 Contract Lane",
             zip="941631",
             country="Singapore",
@@ -8275,7 +9195,14 @@ def test_transport_proposal_apply_contract_persists_assignments_after_approval()
         db.add(workplace)
         db.flush()
 
-        vehicle = Vehicle(placa="CNT6301", tipo="van", color="White", lugares=10, tolerance=8, service_scope="regular")
+        vehicle = Vehicle(
+            placa=f"CNT{contract_key}",
+            tipo="van",
+            color="White",
+            lugares=10,
+            tolerance=8,
+            service_scope="regular",
+        )
         db.add(vehicle)
         db.flush()
 
@@ -8297,7 +9224,7 @@ def test_transport_proposal_apply_contract_persists_assignments_after_approval()
         user = User(
             rfid=None,
             nome="Contract Applier",
-            chave="CA63",
+            chave=contract_key,
             projeto="P63",
             workplace=workplace.workplace,
             placa=vehicle.placa,
@@ -8347,6 +9274,7 @@ def test_transport_proposal_apply_contract_persists_assignments_after_approval()
                         "route_kind": "home_to_work",
                         "suggested_status": "confirmed",
                         "vehicle_id": vehicle_id,
+                        "boarding_time": "07:05",
                         "response_message": "Assigned through proposal application.",
                         "rationale": "Use the contract apply flow after review.",
                     }
@@ -8403,6 +9331,10 @@ def test_transport_proposal_apply_contract_persists_assignments_after_approval()
     assert {assignment.route_kind for assignment in persisted_assignments} == {"home_to_work", "work_to_home"}
     assert all(assignment.status == "confirmed" for assignment in persisted_assignments)
     assert all(assignment.vehicle_id == vehicle_id for assignment in persisted_assignments)
+    home_assignment = next(assignment for assignment in persisted_assignments if assignment.route_kind == "home_to_work")
+    work_assignment = next(assignment for assignment in persisted_assignments if assignment.route_kind == "work_to_home")
+    assert home_assignment.boarding_time == "07:05"
+    assert work_assignment.boarding_time is None
 
 
 def test_transport_proposal_apply_contract_blocks_draft_proposal():
@@ -9192,7 +10124,10 @@ def test_transport_vehicle_registration_conflict_messages_are_in_english():
 
     assert first_response.status_code == 200
     assert duplicate_response.status_code == 409
-    assert duplicate_response.json()["detail"] == (
+    duplicate_detail = extract_transport_structured_detail(duplicate_response)
+    assert duplicate_detail["message_key"] == "status.couldNotSaveVehicle"
+    assert duplicate_detail["error_code"] == "transport_vehicle_create_failed"
+    assert duplicate_detail["technical_detail"] == (
         "A vehicle with this plate already exists in another list: "
         "Extra list (Work to Home on 2026-04-17)."
     )
@@ -9450,7 +10385,10 @@ def test_transport_assignment_rejects_vehicle_that_is_not_ready_for_allocation()
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "The selected vehicle is not ready for allocation."
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "warnings.vehiclePendingAllocation"
+    assert detail["error_code"] == "transport_vehicle_not_ready_for_allocation"
+    assert detail["technical_detail"] == "The selected vehicle is not ready for allocation."
 
     with SessionLocal() as db:
         assignment = db.execute(
@@ -9707,16 +10645,19 @@ def test_transport_vehicle_update_blocks_ready_vehicle_from_becoming_incomplete_
         response = client.put(
             f"/api/transport/vehicles/{vehicle_id}",
             json={
-                "placa": None,
+                "placa": "RDY4101",
                 "tipo": "van",
                 "color": "White",
-                "lugares": 2,
+                "lugares": None,
                 "tolerance": 8,
             },
         )
 
     assert response.status_code == 409
-    assert "Cannot make the vehicle incomplete because future confirmed assignments exist" in response.json()["detail"]
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "status.couldNotUpdateVehicle"
+    assert detail["error_code"] == "transport_vehicle_update_failed"
+    assert "Cannot make the vehicle incomplete because future confirmed assignments exist" in detail["technical_detail"]
 
     with SessionLocal() as db:
         persisted_vehicle = db.get(Vehicle, vehicle_id)
@@ -9963,7 +10904,10 @@ def test_transport_vehicle_update_rejects_duplicate_plate_from_another_vehicle()
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "A vehicle with this plate already exists."
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "status.couldNotUpdateVehicle"
+    assert detail["error_code"] == "transport_vehicle_update_failed"
+    assert detail["technical_detail"] == "A vehicle with this plate already exists."
 
 
 def test_transport_vehicle_update_blocks_seat_reduction_when_future_confirmed_assignments_exceed_new_capacity():
@@ -10070,7 +11014,10 @@ def test_transport_vehicle_update_blocks_seat_reduction_when_future_confirmed_as
         )
 
     assert response.status_code == 409
-    assert "confirmed assignments would exceed the new capacity" in response.json()["detail"]
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "status.couldNotUpdateVehicle"
+    assert detail["error_code"] == "transport_vehicle_update_failed"
+    assert "confirmed assignments would exceed the new capacity" in detail["technical_detail"]
 
     with SessionLocal() as db:
         persisted_vehicle = db.get(Vehicle, vehicle_id)
@@ -10197,7 +11144,10 @@ def test_transport_vehicle_schedule_update_rejects_conflict_with_existing_active
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Another active schedule already exists for the selected list and recurrence pattern."
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "status.couldNotUpdateVehicle"
+    assert detail["error_code"] == "transport_vehicle_schedule_update_failed"
+    assert detail["technical_detail"] == "Another active schedule already exists for the selected list and recurrence pattern."
 
 
 def test_transport_vehicle_schedule_update_blocks_when_confirmed_assignments_would_become_unavailable():
@@ -10299,7 +11249,10 @@ def test_transport_vehicle_schedule_update_blocks_when_confirmed_assignments_wou
         )
 
     assert response.status_code == 409
-    assert "confirmed assignments would become unavailable" in response.json()["detail"]
+    detail = extract_transport_structured_detail(response)
+    assert detail["message_key"] == "status.couldNotUpdateVehicle"
+    assert detail["error_code"] == "transport_vehicle_schedule_update_failed"
+    assert "confirmed assignments would become unavailable" in detail["technical_detail"]
 
     with SessionLocal() as db:
         persisted_schedule = db.get(TransportVehicleSchedule, home_schedule_id)
@@ -11738,7 +12691,7 @@ def test_web_user_self_registration_creates_common_user_and_authenticates_web_se
             json={
                 "chave": "WU11",
                 "nome": "maria jose da silva",
-                "projeto": "P83",
+                "projetos": ["P83"],
                 "email": "maria.jose@petrobras.com.br",
                 "senha": "cad123",
                 "confirmar_senha": "cad123",
@@ -11751,6 +12704,8 @@ def test_web_user_self_registration_creates_common_user_and_authenticates_web_se
         assert payload["authenticated"] is True
         assert payload["has_password"] is True
         assert payload["message"] == "Cadastro concluido com sucesso."
+        assert payload["projects"] == ["P83"]
+        assert payload["active_project"] == "P83"
 
         status = client.get("/api/web/auth/status", params={"chave": "WU11"})
         assert status.status_code == 200
@@ -11798,6 +12753,44 @@ def test_web_user_self_registration_creates_common_user_and_authenticates_web_se
         assert transport_login.status_code == 200
         assert transport_login.json()["authenticated"] is False
         assert transport_login.json()["message"] == "This user does not have transport access."
+        assert transport_login.json()["message_key"] == "auth.noAccess"
+        assert transport_login.json()["error_code"] == "transport_auth_access_denied"
+
+
+def test_web_user_self_registration_accepts_plural_memberships_and_seeds_active_project():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/auth/register-user",
+            json={
+                "chave": "WU13",
+                "nome": "ana multi projeto",
+                "projetos": ["P83", "P80"],
+                "email": "ana.multi@petrobras.com.br",
+                "senha": "cad456",
+                "confirmar_senha": "cad456",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["ok"] is True
+        assert response.json()["authenticated"] is True
+        assert response.json()["has_password"] is True
+        assert response.json()["projects"] == ["P80", "P83"]
+        assert response.json()["active_project"] == "P80"
+
+        user_projects = client.get("/api/web/user-projects")
+        assert user_projects.status_code == 200, user_projects.text
+        assert user_projects.json() == {
+            "projects": ["P80", "P83"],
+            "active_project": "P80",
+        }
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WU13")
+        assert user is not None
+        assert user.projeto == "P80"
+        assert list_user_project_names(db, user) == ["P80", "P83"]
+
 
 
 def test_web_user_self_registration_accepts_optional_email_blank():
@@ -11807,7 +12800,7 @@ def test_web_user_self_registration_accepts_optional_email_blank():
             json={
                 "chave": "WU12",
                 "nome": "joao sem email",
-                "projeto": "P82",
+                "projetos": ["P82"],
                 "senha": "cad321",
                 "confirmar_senha": "cad321",
             },
@@ -12243,7 +13236,7 @@ def test_transport_proposal_approval_emits_operational_review_trigger():
     assert latest_event["route_kind"] == "home_to_work"
 
 
-def test_web_transport_vehicle_request_rejects_second_request_for_the_same_service_date(monkeypatch):
+def test_web_transport_vehicle_request_allows_weekend_and_extra_requests_for_the_same_service_date(monkeypatch):
     fixed_now = datetime(2026, 4, 18, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
@@ -12279,8 +13272,8 @@ def test_web_transport_vehicle_request_rejects_second_request_for_the_same_servi
                 "requested_time": "18:10",
             },
         )
-        assert extra_created.status_code == 409
-        assert extra_created.json()["detail"] == "Ja existe uma solicitacao de transporte ativa para 18/04/2026."
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
 
     with SessionLocal() as db:
         user = get_user_by_chave(db, "WT14")
@@ -12293,7 +13286,7 @@ def test_web_transport_vehicle_request_rejects_second_request_for_the_same_servi
             .order_by(TransportRequest.id)
         ).scalars().all()
 
-    assert request_kinds == ["weekend"]
+    assert request_kinds == ["weekend", "extra"]
 
     with TestClient(app) as admin_client:
         ensure_admin_session(admin_client)
@@ -12303,11 +13296,17 @@ def test_web_transport_vehicle_request_rejects_second_request_for_the_same_servi
         )
 
     assert dashboard.status_code == 200
-    assert any(row["chave"] == "WT14" for row in dashboard.json()["weekend_requests"])
-    assert all(row["chave"] != "WT14" for row in dashboard.json()["extra_requests"])
+    weekend_row = next(row for row in dashboard.json()["weekend_requests"] if row["chave"] == "WT14")
+    extra_row = next(row for row in dashboard.json()["extra_requests"] if row["chave"] == "WT14")
+
+    assert weekend_row["service_date"] == fixed_now.date().isoformat()
+    assert weekend_row["assignment_status"] == "pending"
+    assert extra_row["service_date"] == fixed_now.date().isoformat()
+    assert extra_row["requested_time"] == "18:10"
+    assert extra_row["assignment_status"] == "pending"
 
 
-def test_web_transport_vehicle_request_rejects_extra_request_for_the_same_regular_service_date(monkeypatch):
+def test_web_transport_vehicle_request_allows_extra_request_for_the_same_regular_service_date(monkeypatch):
     fixed_now = datetime(2026, 4, 20, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     next_tuesday = fixed_now.date() + timedelta(days=1)
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
@@ -12344,8 +13343,167 @@ def test_web_transport_vehicle_request_rejects_extra_request_for_the_same_regula
                 "requested_time": "18:10",
             },
         )
-        assert extra_created.status_code == 409
-        assert extra_created.json()["detail"] == "Ja existe uma solicitacao de transporte ativa para 21/04/2026."
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT16")
+        request_kinds = db.execute(
+            select(TransportRequest.request_kind)
+            .where(
+                TransportRequest.user_id == user.id,
+                TransportRequest.status == "active",
+            )
+            .order_by(TransportRequest.id)
+        ).scalars().all()
+
+    assert request_kinds == ["regular", "extra"]
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": next_tuesday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    regular_row = next(row for row in dashboard.json()["regular_requests"] if row["chave"] == "WT16")
+    extra_row = next(row for row in dashboard.json()["extra_requests"] if row["chave"] == "WT16")
+
+    assert regular_row["service_date"] == next_tuesday.isoformat()
+    assert regular_row["assignment_status"] == "pending"
+    assert extra_row["service_date"] == next_tuesday.isoformat()
+    assert extra_row["requested_time"] == "18:10"
+    assert extra_row["assignment_status"] == "pending"
+
+
+def test_web_transport_vehicle_request_allows_regular_request_for_the_same_extra_service_date(monkeypatch):
+    fixed_now = datetime(2026, 4, 20, 10, 5, tzinfo=ZoneInfo(settings.tz_name))
+    next_tuesday = fixed_now.date() + timedelta(days=1)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT17", projeto="P80", nome="Extra First Transport Rider")
+    ensure_web_transport_address(chave="WT17")
+    set_user_checkin_state(chave="WT17", event_time=fixed_now, local="Monday Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT17",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        extra_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT17",
+                "request_kind": "extra",
+                "requested_date": next_tuesday.isoformat(),
+                "requested_time": "18:10",
+            },
+        )
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
+
+        regular_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT17", "request_kind": "regular", "selected_weekdays": [1]},
+        )
+        assert regular_created.status_code == 200
+        assert regular_created.json()["state"]["status"] == "pending"
+        assert regular_created.json()["state"]["requests"][0]["service_date"] == next_tuesday.isoformat()
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT17")
+        request_kinds = db.execute(
+            select(TransportRequest.request_kind)
+            .where(
+                TransportRequest.user_id == user.id,
+                TransportRequest.status == "active",
+            )
+            .order_by(TransportRequest.id)
+        ).scalars().all()
+
+    assert request_kinds == ["extra", "regular"]
+
+    with TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        dashboard = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": next_tuesday.isoformat(), "route_kind": "home_to_work"},
+        )
+
+    assert dashboard.status_code == 200
+    regular_row = next(row for row in dashboard.json()["regular_requests"] if row["chave"] == "WT17")
+    extra_row = next(row for row in dashboard.json()["extra_requests"] if row["chave"] == "WT17")
+
+    assert regular_row["service_date"] == next_tuesday.isoformat()
+    assert regular_row["assignment_status"] == "pending"
+    assert extra_row["service_date"] == next_tuesday.isoformat()
+    assert extra_row["requested_time"] == "18:10"
+    assert extra_row["assignment_status"] == "pending"
+
+
+def test_web_transport_vehicle_request_rejects_second_extra_request_for_the_same_service_date(monkeypatch):
+    fixed_now = datetime(2026, 4, 22, 8, 45, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT18", projeto="P83", nome="Duplicate Extra Rider")
+    ensure_web_transport_address(chave="WT18")
+    set_user_checkin_state(chave="WT18", event_time=fixed_now, local="Morning Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT18",
+            senha="abc123",
+            projeto="P83",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        extra_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT18",
+                "request_kind": "extra",
+                "requested_date": fixed_now.date().isoformat(),
+                "requested_time": "18:10",
+            },
+        )
+        assert extra_created.status_code == 200
+        assert extra_created.json()["state"]["status"] == "pending"
+
+        duplicate_extra = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT18",
+                "request_kind": "extra",
+                "requested_date": fixed_now.date().isoformat(),
+                "requested_time": "18:30",
+            },
+        )
+
+    assert duplicate_extra.status_code == 409
+    assert duplicate_extra.json()["detail"] == "Ja existe uma solicitacao de transporte ativa para 22/04/2026."
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT18")
+        active_requests = db.execute(
+            select(TransportRequest.request_kind, TransportRequest.requested_time)
+            .where(
+                TransportRequest.user_id == user.id,
+                TransportRequest.status == "active",
+            )
+            .order_by(TransportRequest.id)
+        ).all()
+
+    assert active_requests == [("extra", "18:10")]
 
 
 def test_web_transport_weekend_and_extra_requests_remain_visible_before_their_target_date(monkeypatch):
@@ -12820,10 +13978,10 @@ def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkey
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
-    ensure_web_user_exists(chave="WT18", projeto="P80", nome="Regular Weekend Rider")
+    ensure_web_user_exists(chave="WT48", projeto="P80", nome="Regular Weekend Rider")
 
     with SessionLocal() as db:
-        user = get_user_by_chave(db, "WT18")
+        user = get_user_by_chave(db, "WT48")
         user.end_rua = "40 Weekend Avenue"
         user.zip = "654321"
         db.commit()
@@ -12831,7 +13989,7 @@ def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkey
     with TestClient(app) as client:
         registered = register_web_password(
             client,
-            chave="WT18",
+            chave="WT48",
             senha="abc123",
             projeto="P80",
             ensure_user_exists=False,
@@ -12840,7 +13998,7 @@ def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkey
 
         created = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT18", "request_kind": "regular"},
+            json={"chave": "WT48", "request_kind": "regular"},
         )
         assert created.status_code == 200
         assert created.json()["state"]["status"] == "pending"
@@ -12854,7 +14012,7 @@ def test_web_transport_regular_request_stays_visible_on_weekend_dashboard(monkey
         )
 
     assert dashboard.status_code == 200
-    regular_rows = [row for row in dashboard.json()["regular_requests"] if row["chave"] == "WT18"]
+    regular_rows = [row for row in dashboard.json()["regular_requests"] if row["chave"] == "WT48"]
     assert len(regular_rows) == 1
     assert regular_rows[0]["nome"] == "Regular Weekend Rider"
 
@@ -12889,13 +14047,13 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         db.commit()
         vehicle_id = vehicle.id
 
-    ensure_web_user_exists(chave="WT17", projeto="P82", nome="Aware Transport Rider")
-    set_user_checkin_state(chave="WT17", event_time=fixed_now, local="Main Gate")
+    ensure_web_user_exists(chave="WT47", projeto="P82", nome="Aware Transport Rider")
+    set_user_checkin_state(chave="WT47", event_time=fixed_now, local="Main Gate")
 
     with TestClient(app) as client:
         registered = register_web_password(
             client,
-            chave="WT17",
+            chave="WT47",
             senha="abc123",
             projeto="P82",
             ensure_user_exists=False,
@@ -12905,7 +14063,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         updated_address = client.post(
             "/api/web/transport/address",
             json={
-                "chave": "WT17",
+                "chave": "WT47",
                 "end_rua": "Block 3, Harbour Street 55",
                 "zip": "654321",
             },
@@ -12916,7 +14074,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
         requested = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT17", "request_kind": "regular"},
+            json={"chave": "WT47", "request_kind": "regular"},
         )
         assert requested.status_code == 200
         request_id = requested.json()["state"]["request_id"]
@@ -12935,7 +14093,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
             )
             assert assigned.status_code == 200
 
-        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT17"})
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT47"})
         assert confirmed_state.status_code == 200
         assert confirmed_state.json()["status"] == "confirmed"
         assert confirmed_state.json()["awareness_confirmed"] is False
@@ -12945,13 +14103,13 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
         acknowledged = client.post(
             "/api/web/transport/acknowledge",
-            json={"chave": "WT17", "request_id": request_id},
+            json={"chave": "WT47", "request_id": request_id},
         )
         assert acknowledged.status_code == 200
         assert acknowledged.json()["state"]["awareness_confirmed"] is True
 
     with SessionLocal() as db:
-        user = get_user_by_chave(db, "WT17")
+        user = get_user_by_chave(db, "WT47")
         assert user.end_rua == "Block 3, Harbour Street 55"
         assert user.zip == "654321"
 
@@ -12968,8 +14126,8 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
     assert home_dashboard.status_code == 200
     assert paired_dashboard.status_code == 200
-    home_row = next(row for row in home_dashboard.json()["regular_requests"] if row["chave"] == "WT17")
-    paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT17")
+    home_row = next(row for row in home_dashboard.json()["regular_requests"] if row["chave"] == "WT47")
+    paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT47")
     assert home_row["awareness_status"] == "aware"
     assert paired_row["awareness_status"] == "aware"
 
@@ -13851,6 +15009,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         ensure_admin_session(admin_client)
         current_settings = admin_client.get("/api/transport/settings")
         assert current_settings.status_code == 200
+        assert current_settings.json()["arrive_at_work_time"] == "07:45"
         assert current_settings.json()["work_to_home_time"] == "16:45"
         assert current_settings.json()["last_update_time"] == "16:00"
         assert current_settings.json()["default_car_seats"] == 3
@@ -13858,6 +15017,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert current_settings.json()["default_van_seats"] == 10
         assert current_settings.json()["default_bus_seats"] == 40
         assert current_settings.json()["default_tolerance_minutes"] == 5
+        assert current_settings.json()["extra_car_tolerance_minutes"] == 30
         assert current_settings.json()["price_currency_code"] is None
         assert current_settings.json()["price_rate_unit"] == "day"
         assert current_settings.json()["default_car_price"] is None
@@ -13882,6 +15042,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         updated_settings = admin_client.put(
             "/api/transport/settings",
             json={
+                "arrive_at_work_time": "07:25",
                 "work_to_home_time": "18:10",
                 "last_update_time": "16:20",
                 "default_car_seats": 4,
@@ -13889,6 +15050,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 "default_van_seats": 11,
                 "default_bus_seats": 44,
                 "default_tolerance_minutes": 9,
+                "extra_car_tolerance_minutes": 45,
                 "price_currency_code": "SGD",
                 "price_rate_unit": "week",
                 "default_car_price": 120.5,
@@ -13897,7 +15059,13 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 "default_bus_price": 510.25,
             },
         )
+        dashboard_after_update = admin_client.get(
+            "/api/transport/dashboard",
+            params={"service_date": fixed_now.date().isoformat()},
+        )
         assert updated_settings.status_code == 200
+        assert dashboard_after_update.status_code == 200, dashboard_after_update.text
+        assert updated_settings.json()["arrive_at_work_time"] == "07:25"
         assert updated_settings.json()["work_to_home_time"] == "18:10"
         assert updated_settings.json()["last_update_time"] == "16:20"
         assert updated_settings.json()["default_car_seats"] == 4
@@ -13905,6 +15073,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         assert updated_settings.json()["default_van_seats"] == 11
         assert updated_settings.json()["default_bus_seats"] == 44
         assert updated_settings.json()["default_tolerance_minutes"] == 9
+        assert updated_settings.json()["extra_car_tolerance_minutes"] == 45
         assert updated_settings.json()["price_currency_code"] == "SGD"
         assert updated_settings.json()["price_rate_unit"] == "week"
         assert updated_settings.json()["default_car_price"] == 120.5
@@ -13917,6 +15086,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
                 "display_label": "Singapore Dollar",
             }
         ]
+        assert dashboard_after_update.json()["arrive_at_work_time"] == "07:25"
 
     with TestClient(app) as client:
         registered = register_web_password(
@@ -14012,6 +15182,7 @@ def test_transport_settings_endpoint_keeps_ai_secret_on_dedicated_contract(monke
         assert "reasoning_effort" not in current_settings_payload
 
         mixed_payload = {
+            "arrive_at_work_time": current_settings_payload["arrive_at_work_time"],
             "work_to_home_time": current_settings_payload["work_to_home_time"],
             "last_update_time": current_settings_payload["last_update_time"],
             "default_car_seats": current_settings_payload["default_car_seats"],
@@ -14019,6 +15190,7 @@ def test_transport_settings_endpoint_keeps_ai_secret_on_dedicated_contract(monke
             "default_van_seats": current_settings_payload["default_van_seats"],
             "default_bus_seats": current_settings_payload["default_bus_seats"],
             "default_tolerance_minutes": current_settings_payload["default_tolerance_minutes"],
+            "extra_car_tolerance_minutes": current_settings_payload["extra_car_tolerance_minutes"],
             "price_currency_code": current_settings_payload["price_currency_code"],
             "price_rate_unit": current_settings_payload["price_rate_unit"],
             "default_car_price": current_settings_payload["default_car_price"],
@@ -14068,7 +15240,10 @@ def test_transport_settings_currency_endpoint_rejects_duplicate_currency_code():
 
     assert first_response.status_code == 200, first_response.text
     assert duplicate_response.status_code == 409
-    assert duplicate_response.json()["detail"] == "Currency code already exists."
+    duplicate_detail = extract_transport_structured_detail(duplicate_response)
+    assert duplicate_detail["message_key"] == "warnings.currencyAlreadyExists"
+    assert duplicate_detail["error_code"] == "transport_currency_code_duplicate"
+    assert duplicate_detail["technical_detail"] == "Currency code already exists."
 
     with SessionLocal() as db:
         matching_rows = db.execute(
@@ -14477,6 +15652,143 @@ def test_transport_date_settings_update_work_to_home_departure_for_selected_date
     assert saturday_payload["work_to_home_departure_time"] == "16:45"
     assert saturday_weekend_row["departure_time"] == "16:45"
     assert saturday_extra_row["departure_time"] is None
+
+
+def test_transport_dashboard_keeps_arrive_at_work_time_global_when_date_override_changes_100_seed_users(monkeypatch):
+    fixed_now = datetime(2026, 6, 12, 17, 5, tzinfo=ZoneInfo(settings.tz_name))
+    service_date = fixed_now.date()
+    seed_keys = [f"{index:04d}" for index in range(1, 101)]
+    cleanup_bundle = {
+        "request_ids": [],
+        "schedule_ids": [],
+        "user_ids": [],
+        "vehicle_ids": [],
+        "settings_context": {},
+    }
+
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+
+    ensure_project_exists("P80")
+
+    with SessionLocal() as db:
+        cleanup_bundle["settings_context"] = {"previous": clone_transport_settings_payload(db)}
+        location_settings_module.upsert_transport_arrive_at_work_time(db, arrive_at_work_time="07:45")
+        location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
+
+        regular_vehicle, schedules = create_transport_planning_vehicle_with_schedules(
+            db,
+            plate="REG0100",
+            service_scope="regular",
+            service_date=service_date,
+            vehicle_type="van",
+            seats=12,
+            tolerance=6,
+        )
+        cleanup_bundle["vehicle_ids"].append(regular_vehicle.id)
+        cleanup_bundle["schedule_ids"].extend(schedule.id for schedule in schedules)
+
+        for index, chave in enumerate(seed_keys, start=1):
+            requested_hour = 6 + ((index - 1) % 10)
+            requested_minute = ((index - 1) % 6) * 10
+            user_row, request_row = create_transport_planning_user_with_request(
+                db,
+                chave=chave,
+                nome=f"Transport Seed User {chave}",
+                projeto="P80",
+                request_kind="regular",
+                requested_time=f"{requested_hour:02d}:{requested_minute:02d}",
+                home_address=f"{index} Seed Route Avenue",
+                home_zip=f"{100000 + index:06d}",
+                service_date=service_date,
+                timestamp=fixed_now,
+            )
+            cleanup_bundle["user_ids"].append(user_row.id)
+            cleanup_bundle["request_ids"].append(request_row.id)
+
+        db.commit()
+
+    try:
+        with TestClient(app) as admin_client:
+            ensure_admin_session(admin_client)
+
+            current_settings = admin_client.get("/api/transport/settings")
+            dashboard_before = admin_client.get(
+                "/api/transport/dashboard",
+                params={"service_date": service_date.isoformat(), "route_kind": "work_to_home"},
+            )
+            override_response = admin_client.put(
+                "/api/transport/date-settings",
+                json={
+                    "service_date": service_date.isoformat(),
+                    "work_to_home_time": "18:10",
+                },
+            )
+            dashboard_after = admin_client.get(
+                "/api/transport/dashboard",
+                params={"service_date": service_date.isoformat(), "route_kind": "work_to_home"},
+            )
+            settings_after = admin_client.get("/api/transport/settings")
+
+        assert current_settings.status_code == 200, current_settings.text
+        assert dashboard_before.status_code == 200, dashboard_before.text
+        assert override_response.status_code == 200, override_response.text
+        assert dashboard_after.status_code == 200, dashboard_after.text
+        assert settings_after.status_code == 200, settings_after.text
+
+        current_settings_payload = current_settings.json()
+        dashboard_before_payload = dashboard_before.json()
+        dashboard_after_payload = dashboard_after.json()
+        settings_after_payload = settings_after.json()
+
+        seeded_requests_before = [
+            row for row in dashboard_before_payload["regular_requests"] if row["chave"] in set(seed_keys)
+        ]
+        seeded_requests_after = [
+            row for row in dashboard_after_payload["regular_requests"] if row["chave"] in set(seed_keys)
+        ]
+        regular_vehicle_before = next(
+            row for row in dashboard_before_payload["regular_vehicles"] if row["placa"] == "REG0100"
+        )
+        regular_vehicle_after = next(
+            row for row in dashboard_after_payload["regular_vehicles"] if row["placa"] == "REG0100"
+        )
+        regular_registry_after = next(
+            row for row in dashboard_after_payload["regular_vehicle_registry"] if row["placa"] == "REG0100"
+        )
+
+        assert current_settings_payload["arrive_at_work_time"] == "07:45"
+        assert current_settings_payload["work_to_home_time"] == "16:45"
+        assert settings_after_payload["arrive_at_work_time"] == "07:45"
+        assert settings_after_payload["work_to_home_time"] == "16:45"
+
+        assert override_response.json() == {
+            "service_date": service_date.isoformat(),
+            "work_to_home_time": "18:10",
+        }
+
+        assert len(seeded_requests_before) == 100
+        assert len(seeded_requests_after) == 100
+        assert sorted(row["chave"] for row in seeded_requests_before) == seed_keys
+        assert sorted(row["chave"] for row in seeded_requests_after) == seed_keys
+        assert {row["assignment_status"] for row in seeded_requests_before} == {"pending"}
+        assert {row["assignment_status"] for row in seeded_requests_after} == {"pending"}
+        assert all(row["assigned_vehicle"] is None for row in seeded_requests_before)
+        assert all(row["assigned_vehicle"] is None for row in seeded_requests_after)
+
+        assert dashboard_before_payload["arrive_at_work_time"] == "07:45"
+        assert dashboard_before_payload["work_to_home_departure_time"] == "16:45"
+        assert datetime.fromisoformat(dashboard_before_payload["dashboard_generated_at"]).tzinfo is not None
+        assert regular_vehicle_before["departure_time"] == "16:45"
+
+        assert dashboard_after_payload["arrive_at_work_time"] == "07:45"
+        assert dashboard_after_payload["work_to_home_departure_time"] == "18:10"
+        assert datetime.fromisoformat(dashboard_after_payload["dashboard_generated_at"]).tzinfo is not None
+        assert regular_vehicle_after["departure_time"] == "18:10"
+        assert regular_registry_after["assigned_count"] == 0
+    finally:
+        with SessionLocal() as db:
+            cleanup_transport_planning_fixture_bundle(db, cleanup_bundle)
 
 
 def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
@@ -15248,13 +16560,18 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
         assert payload["accuracy_threshold_meters"] == 25
 
 
-def test_web_location_endpoints_filter_locations_by_authenticated_user_project():
+def test_web_location_endpoints_use_union_of_authenticated_user_projects():
     with TestClient(app) as client:
-        ensure_admin_session(client)
         ensure_project_exists("P90")
         ensure_project_exists("P91")
+        ensure_admin_session(client)
         auth_response = register_web_password(client, chave="WL84", senha="loc123", projeto="P90")
         assert auth_response.status_code == 200
+
+        with SessionLocal() as db:
+            user = get_user_by_chave(db, "WL84")
+            grant_user_project_memberships(db, user, ["P90", "P91"])
+            db.commit()
 
         create_p80_location = client.post(
             "/api/admin/locations",
@@ -15281,7 +16598,7 @@ def test_web_location_endpoints_filter_locations_by_authenticated_user_project()
         locations_response = client.get("/api/web/check/locations")
         assert locations_response.status_code == 200
         assert "Projeto P80" in locations_response.json()["items"]
-        assert "Projeto P82" not in locations_response.json()["items"]
+        assert "Projeto P82" in locations_response.json()["items"]
 
         p80_match = client.post(
             "/api/web/check/location",
@@ -15304,8 +16621,8 @@ def test_web_location_endpoints_filter_locations_by_authenticated_user_project()
             },
         )
         assert p82_match.status_code == 200
-        assert p82_match.json()["matched"] is False
-        assert p82_match.json()["resolved_local"] is None
+        assert p82_match.json()["matched"] is True
+        assert p82_match.json()["resolved_local"] == "Projeto P82"
 
 
 def test_web_location_match_blocks_low_accuracy_before_matching():
@@ -15572,6 +16889,23 @@ def test_web_location_match_uses_polygon_matching_when_location_has_valid_polygo
         )
         assert update_settings.status_code == 200
 
+        inside_match_response = client.post(
+            "/api/web/check/location",
+            json={
+                "latitude": 1.255950,
+                "longitude": 103.611200,
+                "accuracy_meters": 8,
+            },
+        )
+
+        assert inside_match_response.status_code == 200
+        inside_payload = inside_match_response.json()
+        assert inside_payload["matched"] is True
+        assert inside_payload["resolved_local"] == "Area Poligonal P80"
+        assert inside_payload["label"] == "Area Poligonal P80"
+        assert inside_payload["status"] == "matched"
+        assert inside_payload["accuracy_threshold_meters"] == 25
+
         match_response = client.post(
             "/api/web/check/location",
             json={
@@ -15797,6 +17131,47 @@ def test_web_check_updates_user_local_when_location_is_provided():
         with SessionLocal() as db:
             user = get_user_by_chave(db, "WB14")
             assert user.local == "Web Match P80"
+
+
+def test_web_check_rejects_unregistered_location_placeholder_for_web_submit():
+    client_event_id = f"web-check-local-unregistered-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        auth_response = register_web_password(client, chave="WB17", senha="local3", projeto="P80")
+        assert auth_response.status_code == 200
+
+        response = client.post(
+            "/api/web/check",
+            json={
+                "chave": "WB17",
+                "projeto": "P80",
+                "action": "checkin",
+                "local": "Localização não Cadastrada",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "O estado 'Localização não Cadastrada' nao e um local operacional valido para submit pela Web."
+        )
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WB17")
+        assert user.local is None
+        queued = db.execute(
+            select(FormsSubmission).where(FormsSubmission.chave == "WB17")
+        ).scalars().all()
+        assert queued == []
+        sync_events = db.execute(
+            select(UserSyncEvent).where(
+                UserSyncEvent.chave == "WB17",
+                UserSyncEvent.source == "web_forms",
+            )
+        ).scalars().all()
+        assert sync_events == []
 
 
 def test_web_check_accepts_synthetic_accuracy_fallback_local():
@@ -16505,6 +17880,8 @@ def test_admin_checkin_and_checkout_hide_raw_activity_time_for_profile_zero(monk
                 user.time = event_time
                 user.last_active_at = event_time
                 user.inactivity_days = 0
+            db.flush()
+            grant_user_project_memberships(db, admin, ["P80"])
         db.commit()
 
     with TestClient(app) as client:
@@ -16529,6 +17906,623 @@ def test_admin_checkin_and_checkout_hide_raw_activity_time_for_profile_zero(monk
     assert checkout_row["activity_date_label"] == checkout_time.astimezone(timezone).strftime("%d/%m/%Y")
     assert checkout_row["activity_time_label"] is None
     assert checkout_row["activity_day_key"] == checkout_time.astimezone(timezone).strftime("%Y-%m-%d")
+
+
+def test_mobile_sync_keeps_existing_memberships_across_sequential_legacy_project_switches():
+    ensure_web_user_exists(chave="MP80", projeto="P83", nome="Usuario Mobile Multi Projeto")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MP80")
+        ensure_user_active_project_is_member(db, user)
+        add_user_project_membership(db, user, "P80")
+        db.commit()
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "MP80",
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+
+    assert first_response.status_code == 200, first_response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MP80")
+        assert user.projeto == "P80"
+        assert get_materialized_user_project_names(db, user.id) == ["P80", "P83"]
+
+    with TestClient(app) as client:
+        second_response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "MP80",
+                "projeto": "P83",
+                "action": "checkout",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+
+    assert second_response.status_code == 200, second_response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MP80")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P83"
+    assert materialized_names == ["P80", "P83"]
+
+
+def test_mobile_sync_creates_materialized_membership_for_new_placeholder_user():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "MM82",
+                "projeto": "P82",
+                "action": "checkin",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-{uuid.uuid4().hex}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MM82")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P82"
+    assert materialized_names == ["P82"]
+
+
+def test_provider_submit_creates_materialized_membership_for_new_user():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV82",
+                "nome": "Usuario Provider Membership",
+                "projeto": "P82",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "18/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV82")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P82"
+    assert materialized_names == ["P82"]
+
+
+def test_provider_submit_keeps_existing_memberships_when_legacy_event_changes_active_project():
+    ensure_web_user_exists(chave="PV83", projeto="P80", nome="Usuario Provider Multi Projeto")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV83")
+        ensure_user_active_project_is_member(db, user)
+        add_user_project_membership(db, user, "P83")
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": "PV83",
+                "nome": "Usuario Provider Multi Projeto",
+                "projeto": "P83",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "18/04/2026",
+                "hora": "08:00:00",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["updated_project"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "PV83")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P83"
+    assert materialized_names == ["P80", "P83"]
+
+
+def test_mobile_forms_submit_keeps_plural_memberships_while_queueing_single_operational_project():
+    ensure_web_user_exists(chave="MF83", projeto="P83", nome="Usuario Forms Multi Projeto")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MF83")
+        ensure_user_active_project_is_member(db, user)
+        add_user_project_membership(db, user, "P80")
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": "MF83",
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": now_sgt().isoformat(),
+                "client_event_id": f"android-forms-{uuid.uuid4().hex}",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["queued_forms"] is True
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "MF83")
+        queued = db.execute(
+            select(FormsSubmission)
+            .where(FormsSubmission.chave == "MF83")
+            .order_by(FormsSubmission.id.desc())
+        ).scalars().first()
+        sync_event = db.execute(
+            select(UserSyncEvent)
+            .where(UserSyncEvent.chave == "MF83")
+            .order_by(UserSyncEvent.id.desc())
+        ).scalars().first()
+
+        assert user.projeto == "P80"
+        assert get_materialized_user_project_names(db, user.id) == ["P80", "P83"]
+        assert queued is not None and queued.projeto == "P80"
+        assert sync_event is not None and sync_event.projeto == "P80"
+
+
+def test_web_self_registration_creates_materialized_membership_for_new_user():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/web/auth/register-user",
+            json={
+                "chave": "WM82",
+                "nome": "usuario web membership",
+                "projetos": ["P82"],
+                "email": "wm82@example.com",
+                "senha": "cad123",
+                "confirmar_senha": "cad123",
+            },
+        )
+
+    assert response.status_code == 201, response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WM82")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P82"
+    assert materialized_names == ["P82"]
+
+
+def test_admin_user_create_materializes_membership_row():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "ADM8201",
+                "nome": "Usuario Admin Membership",
+                "chave": "AM82",
+                "projeto": "P82",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "AM82")
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P82"
+    assert materialized_names == ["P82"]
+
+
+def test_admin_legacy_single_project_update_replaces_memberships_with_explicit_single_selection():
+    user_key = make_test_key("A")
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "ADM8301",
+                "nome": "Usuario Admin Multi Projeto",
+                "chave": user_key,
+                "projeto": "P82",
+            },
+        )
+        assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, user_key)
+        user_id = user.id
+        ensure_user_active_project_is_member(db, user)
+        add_user_project_membership(db, user, "P83")
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        updated = client.post(
+            "/api/admin/users",
+            json={
+                "user_id": user_id,
+                "rfid": "ADM8301",
+                "nome": "Usuario Admin Multi Projeto",
+                "chave": user_key,
+                "projeto": "P83",
+            },
+        )
+
+    assert updated.status_code == 200, updated.text
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, user_key)
+        active_project = user.projeto
+        materialized_names = get_materialized_user_project_names(db, user.id)
+
+    assert active_project == "P83"
+    assert materialized_names == ["P83"]
+
+
+def test_scoped_admin_user_update_preserves_memberships_outside_visible_scope():
+    with SessionLocal() as db:
+        scoped_admin = User(
+            rfid=None,
+            nome="Admin Escopo P80",
+            chave="SM80",
+            projeto="P80",
+            senha=hash_password("scope123"),
+            perfil=1,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        target_user = User(
+            rfid="SCP8001",
+            nome="Usuario Multi Escopo",
+            chave="SU80",
+            projeto="P83",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([scoped_admin, target_user])
+        db.flush()
+        grant_user_project_memberships(db, scoped_admin, ["P80"])
+        grant_user_project_memberships(db, target_user, ["P80", "P83"])
+        db.commit()
+        target_user_id = target_user.id
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="SM80", senha="scope123")
+        assert login_response.status_code == 200, login_response.text
+
+        updated = client.post(
+            "/api/admin/users",
+            json={
+                "user_id": target_user_id,
+                "rfid": "SCP8001",
+                "nome": "Usuario Multi Escopo Atualizado",
+                "chave": "SU80",
+                "projeto": "P80",
+                "projetos": ["P80"],
+            },
+        )
+
+    assert updated.status_code == 200, updated.text
+
+    with SessionLocal() as db:
+        target_user = get_user_by_chave(db, "SU80")
+        materialized_names = get_materialized_user_project_names(db, target_user.id)
+
+    assert target_user.nome == "Usuario Multi Escopo Atualizado"
+    assert target_user.projeto == "P80"
+    assert materialized_names == ["P80", "P83"]
+
+
+def test_admin_runtime_scope_requires_materialized_memberships_and_ignores_legacy_scope_fields():
+    recent_time = now_sgt() - timedelta(hours=1)
+
+    with SessionLocal() as db:
+        admin = User(
+            rfid=None,
+            nome="Admin Sem Membership Materializada",
+            chave="AM00",
+            projeto="P80",
+            senha=hash_password("scope123"),
+            perfil=1,
+            admin_monitored_projects_json=dump_admin_monitored_projects(["P83"]),
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        legacy_project_user = User(
+            rfid=None,
+            nome="Usuario Projeto Legado P80",
+            chave="AM80",
+            projeto="P80",
+            local="Porta 80",
+            checkin=True,
+            time=recent_time,
+            last_active_at=recent_time,
+            inactivity_days=0,
+        )
+        legacy_scope_user = User(
+            rfid=None,
+            nome="Usuario Escopo Legado P83",
+            chave="AM83",
+            projeto="P83",
+            local="Porta 83",
+            checkin=True,
+            time=recent_time,
+            last_active_at=recent_time,
+            inactivity_days=0,
+        )
+        db.add_all([admin, legacy_project_user, legacy_scope_user])
+        db.flush()
+        grant_user_project_memberships(db, legacy_project_user, ["P80"])
+        grant_user_project_memberships(db, legacy_scope_user, ["P83"])
+        db.commit()
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="AM00", senha="scope123")
+        assert login_response.status_code == 200, login_response.text
+
+        users_response = client.get("/api/admin/users")
+        checkin_response = client.get("/api/admin/checkin")
+        blocked_create = client.post(
+            "/api/admin/users",
+            json={
+                "rfid": "AMNEW",
+                "nome": "Bloqueado Sem Membership",
+                "chave": "AMN0",
+                "projeto": "P80",
+            },
+        )
+
+    assert users_response.status_code == 200, users_response.text
+    assert users_response.json() == []
+
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert checkin_response.json() == []
+
+    assert blocked_create.status_code == 403, blocked_create.text
+    assert blocked_create.json()["detail"] == "Administrador sem projetos vinculados nao pode alterar usuarios."
+
+    with SessionLocal() as db:
+        admin = get_user_by_chave(db, "AM00")
+        assert get_materialized_user_project_names(db, admin.id) == []
+
+
+def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_and_database_events():
+    event_time = datetime(2026, 4, 25, 7, 30, 0, tzinfo=ZoneInfo(settings.tz_name))
+
+    with SessionLocal() as db:
+        admin = User(
+            rfid=None,
+            nome="Perfil Nove Escopo Limitado",
+            chave="P9S1",
+            projeto="P80",
+            senha=hash_password("adm123"),
+            perfil=9,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        visible_user = User(
+            rfid="P9RF80",
+            nome="Usuario Escopo P80",
+            chave="P980",
+            projeto="P80",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        hidden_user = User(
+            rfid="P9RF83",
+            nome="Usuario Escopo P83",
+            chave="P983",
+            projeto="P83",
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            cargo=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([admin, visible_user, hidden_user])
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])
+        grant_user_project_memberships(db, visible_user, ["P80"])
+        grant_user_project_memberships(db, hidden_user, ["P83"])
+        db.add_all(
+            [
+                UserSyncEvent(
+                    user_id=visible_user.id,
+                    chave=visible_user.chave,
+                    rfid=visible_user.rfid,
+                    source="web",
+                    action="checkin",
+                    projeto="P80",
+                    local="main",
+                    ontime=True,
+                    event_time=event_time,
+                    created_at=now_sgt(),
+                    source_request_id=f"profile-nine-visible-{uuid.uuid4().hex}",
+                    device_id=None,
+                ),
+                UserSyncEvent(
+                    user_id=hidden_user.id,
+                    chave=hidden_user.chave,
+                    rfid=hidden_user.rfid,
+                    source="provider",
+                    action="checkout",
+                    projeto="P83",
+                    local="Forms",
+                    ontime=False,
+                    event_time=event_time,
+                    created_at=now_sgt(),
+                    source_request_id=f"profile-nine-hidden-{uuid.uuid4().hex}",
+                    device_id="provider",
+                ),
+            ]
+        )
+        visible_event = CheckEvent(
+            idempotency_key=f"profile-nine-db-visible-{uuid.uuid4().hex}",
+            source="device",
+            rfid=visible_user.rfid,
+            action="checkin",
+            status="success",
+            message="Entrada P80",
+            details="scope=P80",
+            project="P80",
+            device_id="ESP32-P80",
+            local="Portaria 80",
+            request_path="/api/scan",
+            http_status=200,
+            ontime=True,
+            event_time=event_time,
+            submitted_at=event_time,
+            retry_count=0,
+        )
+        hidden_event = CheckEvent(
+            idempotency_key=f"profile-nine-db-hidden-{uuid.uuid4().hex}",
+            source="device",
+            rfid=hidden_user.rfid,
+            action="checkout",
+            status="success",
+            message="Saida P83",
+            details="scope=P83",
+            project="P83",
+            device_id="ESP32-P83",
+            local="Portaria 83",
+            request_path="/api/scan",
+            http_status=200,
+            ontime=False,
+            event_time=event_time,
+            submitted_at=event_time,
+            retry_count=0,
+        )
+        db.add_all([visible_event, hidden_event])
+        db.commit()
+        visible_event_id = visible_event.id
+        hidden_event_id = hidden_event.id
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="P9S1", senha="adm123")
+        assert login_response.status_code == 200, login_response.text
+
+        users_response = client.get("/api/admin/users")
+        events_response = client.get("/api/admin/events")
+        database_events_response = client.get("/api/admin/database-events")
+        visible_report_response = client.get("/api/admin/reports/events", params={"chave": "P980"})
+        hidden_report_response = client.get("/api/admin/reports/events", params={"chave": "P983"})
+        export_all_response = client.get("/api/admin/reports/events/export-all")
+
+    assert users_response.status_code == 200, users_response.text
+    visible_user_keys = {row["chave"] for row in users_response.json()}
+    assert "P980" in visible_user_keys
+    assert "P983" not in visible_user_keys
+
+    assert events_response.status_code == 200, events_response.text
+    visible_event_ids = {row["id"] for row in events_response.json()}
+    assert visible_event_id in visible_event_ids
+    assert hidden_event_id not in visible_event_ids
+
+    assert database_events_response.status_code == 200, database_events_response.text
+    database_payload = database_events_response.json()
+    database_event_ids = {row["id"] for row in database_payload["items"]}
+    assert visible_event_id in database_event_ids
+    assert hidden_event_id not in database_event_ids
+    assert database_payload["filter_options"]["project"] == ["P80"]
+
+    assert visible_report_response.status_code == 200, visible_report_response.text
+    assert visible_report_response.json()["person"]["chave"] == "P980"
+
+    assert hidden_report_response.status_code == 404, hidden_report_response.text
+
+    assert export_all_response.status_code == 200, export_all_response.text
+    workbook = load_workbook(io.BytesIO(export_all_response.content))
+    worksheet = workbook.active
+    exported_names = {
+        row[0]
+        for row in worksheet.iter_rows(min_row=2, max_col=1, values_only=True)
+        if row[0]
+    }
+    workbook.close()
+
+    assert "Usuario Escopo P80" in exported_names
+    assert "Usuario Escopo P83" not in exported_names
 
 
 def test_admin_perfil_one_session_keeps_full_scope_without_activity_time_visibility():
@@ -17248,11 +19242,14 @@ def test_transport_inline_auth_respects_user_profile():
         assert denied.status_code == 200
         assert denied.json()["authenticated"] is False
         assert "transport access" in denied.json()["message"].lower()
+        assert denied.json()["message_key"] == "auth.noAccess"
+        assert denied.json()["error_code"] == "transport_auth_access_denied"
 
         granted = client.post("/api/transport/auth/verify", json={"chave": "TRP2", "senha": "tp1234"})
         assert granted.status_code == 200
         assert granted.json()["authenticated"] is True
         assert granted.json()["user"]["perfil"] == 2
+        assert granted.json()["message_key"] == "status.accessGranted"
 
         dashboard = client.get("/api/transport/dashboard")
         assert dashboard.status_code == 200

@@ -20,73 +20,100 @@ test('splitNotificationMessage moves long messages to a second line', () => {
   assert.equal(result.secondary, 'automação será verificada ao abrir ou retornar ao site.');
 });
 
-test('resolvePersistedUserSettings returns settings for the active key', () => {
+test('resolvePersistedUserSettings returns plural settings for the active key', () => {
   const settings = clientState.resolvePersistedUserSettings(
     {
-      HR70: { project: 'P83', automaticActivitiesEnabled: true },
+      HR70: { projects: ['P83', 'P82'], activeProject: 'P83', automaticActivitiesEnabled: true },
     },
     'hr70',
     {
-      project: 'P80',
+      projects: ['P80'],
+      activeProject: 'P80',
       automaticActivitiesEnabled: false,
       allowedProjects: ['P80', 'P82', 'P83'],
     }
   );
 
   assert.deepEqual(settings, {
-    project: 'P83',
+    projects: ['P83', 'P82'],
+    activeProject: 'P83',
     automaticActivitiesEnabled: true,
   });
 });
 
-test('resolvePersistedUserSettings falls back to the first allowed project when needed', () => {
+test('resolvePersistedUserSettings migrates legacy project and falls back to allowed memberships when needed', () => {
   const settings = clientState.resolvePersistedUserSettings(
     {
       HR71: { project: 'LEGACY', automaticActivitiesEnabled: false },
     },
     'hr71',
     {
-      project: '',
+      projects: ['P95', 'P97'],
+      activeProject: '',
       automaticActivitiesEnabled: false,
       allowedProjects: ['P95', 'P97'],
     }
   );
 
   assert.deepEqual(settings, {
-    project: 'P95',
+    projects: ['P95', 'P97'],
+    activeProject: 'P95',
     automaticActivitiesEnabled: false,
   });
 });
 
-test('withPersistedUserSettings stores settings by sanitized chave', () => {
+test('resolvePersistedUserSettings preserves legacy project when it is still allowed', () => {
+  const settings = clientState.resolvePersistedUserSettings(
+    {
+      HR72: { project: 'p82', automaticActivitiesEnabled: true },
+    },
+    'hr72',
+    {
+      projects: ['P80', 'P82', 'P83'],
+      activeProject: 'P80',
+      automaticActivitiesEnabled: false,
+      allowedProjects: ['P80', 'P82', 'P83'],
+    }
+  );
+
+  assert.deepEqual(settings, {
+    projects: ['P82'],
+    activeProject: 'P82',
+    automaticActivitiesEnabled: true,
+  });
+});
+
+test('withPersistedUserSettings stores plural settings by sanitized chave', () => {
   const settingsMap = clientState.withPersistedUserSettings(
     {},
     'hr70',
-    { project: 'p82', automaticActivitiesEnabled: true },
+    { projects: ['p82', 'P83'], activeProject: 'p83', automaticActivitiesEnabled: true },
     {
-      project: 'P80',
+      projects: ['P80'],
+      activeProject: 'P80',
       allowedProjects: ['P80', 'P82', 'P83'],
     }
   );
 
   assert.deepEqual(settingsMap, {
-    HR70: { project: 'P82', automaticActivitiesEnabled: true },
+    HR70: { projects: ['P82', 'P83'], activeProject: 'P83', automaticActivitiesEnabled: true },
   });
 });
 
-test('withPersistedUserSettings does not hardcode legacy project fallbacks', () => {
+test('withPersistedUserSettings migrates legacy project values without hardcoded fallbacks', () => {
   const settingsMap = clientState.withPersistedUserSettings(
     {},
-    'hr72',
+    'hr73',
     { project: 'unknown', automaticActivitiesEnabled: false },
     {
-      project: '',
+      projects: ['P95', 'P97'],
+      activeProject: '',
       allowedProjects: ['P95', 'P97'],
     }
   );
 
   assert.deepEqual(settingsMap, {
-    HR72: { project: 'P95', automaticActivitiesEnabled: false },
+    HR73: { projects: ['P95', 'P97'], activeProject: 'P95', automaticActivitiesEnabled: false },
   });
 });
 
@@ -97,11 +124,6 @@ test('shouldAttemptSilentLocationLookup only blocks explicit denial', () => {
   assert.equal(clientState.shouldAttemptSilentLocationLookup('prompt', false), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup(null, false), true);
   assert.equal(clientState.shouldAttemptSilentLocationLookup('denied', true), false);
-});
-
-test('resolvePasswordActionLabel switches between register and change', () => {
-  assert.equal(clientState.resolvePasswordActionLabel(false), 'Registrar');
-  assert.equal(clientState.resolvePasswordActionLabel(true), 'Senha');
 });
 
 test('resolveAuthenticationPromptMessage reflects password state', () => {

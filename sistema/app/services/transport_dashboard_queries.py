@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import TransportAssignment, TransportRequest, TransportVehicleSchedule, User, Vehicle, Workplace
 from ..schemas import ProjectRow, TransportDashboardResponse, TransportRequestRow, WorkplaceRow
-from .location_settings import get_transport_work_to_home_time_for_date
+from .location_settings import get_transport_arrive_at_work_time, get_transport_work_to_home_time_for_date
 from .project_catalog import list_projects
-from .time_utils import build_timezone_label
+from .time_utils import build_timezone_label, now_sgt
+from .user_projects import list_user_project_names_map
 
 
 def _build_project_row(row) -> ProjectRow:
@@ -53,6 +54,7 @@ def build_transport_dashboard(
     *,
     service_date: date,
     route_kind: str,
+    generated_at: datetime | None = None,
 ) -> TransportDashboardResponse:
     from .transport import (
         _build_recurring_assignment_template_index,
@@ -68,6 +70,8 @@ def build_transport_dashboard(
 
     projects = [_build_project_row(row) for row in list_projects(db)]
     workplaces = list_workplaces(db)
+    dashboard_generated_at = generated_at or now_sgt()
+    arrive_at_work_time = get_transport_arrive_at_work_time(db)
     work_to_home_departure_time = get_transport_work_to_home_time_for_date(db, service_date=service_date)
     vehicles_by_scope, vehicle_rows_by_id, vehicle_rows_by_assignment_key = _build_vehicle_rows_for_dashboard(
         db,
@@ -86,6 +90,7 @@ def build_transport_dashboard(
         .join(User, User.id == TransportRequest.user_id)
         .where(TransportRequest.status == "active")
     ).all()
+    project_names_by_user_id = list_user_project_names_map(db, [user for _, user in requests])
 
     request_kind_by_id = {
         transport_request.id: transport_request.request_kind
@@ -147,17 +152,24 @@ def build_transport_dashboard(
         row_service_date = resolve_transport_request_dashboard_service_date(transport_request, service_date)
         if row_service_date is None:
             continue
+        request_projects = (
+            project_names_by_user_id.get(user.id, [user.projeto] if user.projeto else [])
+            if user.id is not None
+            else ([user.projeto] if user.projeto else [])
+        )
 
         assigned_vehicle = None
         assignment_status = "pending"
         response_message = None
         awareness_status = "pending"
+        boarding_time = None
         assignment = explicit_assignments_by_key.get((transport_request.id, row_service_date, route_kind))
         if assignment is None and transport_request.request_kind == "extra":
             assignment = explicit_assignments_by_request_date.get((transport_request.id, row_service_date))
         if assignment is not None:
             assignment_status = assignment.status
             response_message = assignment.response_message
+            boarding_time = assignment.boarding_time
             awareness_status = "aware" if assignment.acknowledged_by_user else "pending"
             if assignment.vehicle_id is not None:
                 explicit_vehicle = vehicles_by_id.get(assignment.vehicle_id)
@@ -189,11 +201,13 @@ def build_transport_dashboard(
                 id=transport_request.id,
                 request_kind=transport_request.request_kind,
                 requested_time=transport_request.requested_time,
+                boarding_time=boarding_time,
                 service_date=row_service_date,
                 user_id=user.id,
                 chave=user.chave,
                 nome=user.nome,
                 projeto=user.projeto,
+                projects=request_projects,
                 workplace=user.workplace,
                 end_rua=user.end_rua,
                 zip=user.zip,
@@ -220,6 +234,8 @@ def build_transport_dashboard(
     return TransportDashboardResponse(
         selected_date=service_date,
         selected_route=route_kind,
+        dashboard_generated_at=dashboard_generated_at,
+        arrive_at_work_time=arrive_at_work_time,
         work_to_home_departure_time=work_to_home_departure_time,
         projects=projects,
         regular_requests=request_rows["regular"],

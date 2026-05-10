@@ -23,6 +23,65 @@ test('resolveLastRecordedAction honors timestamps and current action fallback', 
   );
 });
 
+test('automatic check-in location resolves only from an operational resolved_local', () => {
+  assert.equal(
+    automation.resolveAutomaticCheckInLocation({
+      resolved_local: 'Escritório Principal',
+      label: 'Localização não Cadastrada',
+    }),
+    'Escritório Principal'
+  );
+  assert.equal(
+    automation.resolveAutomaticCheckInLocation({
+      matched: false,
+      status: 'not_in_known_location',
+      label: 'Localização não Cadastrada',
+    }),
+    null
+  );
+  assert.equal(
+    automation.resolveAutomaticCheckInLocation({
+      matched: false,
+      status: 'accuracy_too_low',
+      label: 'Precisão insuficiente',
+    }),
+    null
+  );
+  assert.equal(automation.resolveAutomaticCheckInLocation(null), null);
+});
+
+test('automatic check-in location guard rejects placeholder-only values', () => {
+  assert.equal(
+    automation.isOperationalAutomaticCheckInLocation(
+      { resolved_local: 'Escritório Principal' },
+      'Escritório Principal'
+    ),
+    true
+  );
+  assert.equal(
+    automation.isOperationalAutomaticCheckInLocation(
+      {
+        matched: false,
+        status: 'not_in_known_location',
+        label: 'Localização não Cadastrada',
+      },
+      automation.AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION
+    ),
+    false
+  );
+  assert.equal(
+    automation.isOperationalAutomaticCheckInLocation(
+      {
+        matched: false,
+        status: 'accuracy_too_low',
+        label: 'Precisão insuficiente',
+      },
+      'Precisão insuficiente'
+    ),
+    false
+  );
+});
+
 test('mixed zone helper recognizes normalized mixed zone names', () => {
   assert.equal(automation.isMixedZoneLocationName('Zona Mista'), true);
   assert.equal(automation.isMixedZoneLocationName('  zona   mista '), true);
@@ -252,7 +311,7 @@ test('mixed zone exit exceptions keep automatic checkout immediate after a mixed
   );
 });
 
-test('mixed zone exit exceptions keep automatic check-in immediate after a mixed-zone checkout', () => {
+test('mixed zone exit exceptions keep automatic check-in immediate after a mixed-zone checkout only for known locations', () => {
   const remoteState = {
     current_action: 'checkout',
     current_local: 'Zona Mista',
@@ -278,7 +337,7 @@ test('mixed zone exit exceptions keep automatic check-in immediate after a mixed
       },
       remoteState
     ),
-    true
+    false
   );
 });
 
@@ -327,7 +386,7 @@ test('automatic check-in after checkout requires a location change when current 
   );
 });
 
-test('automatic nearby-workplace check-in runs after checkout when leaving checkout zone without a matched location', () => {
+test('automatic nearby-workplace check-in does not run after checkout when leaving checkout zone without a matched location', () => {
   assert.equal(
     automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
       {
@@ -343,7 +402,26 @@ test('automatic nearby-workplace check-in runs after checkout when leaving check
         last_checkout_at: '2026-04-16T09:00:00',
       }
     ),
-    true
+    false
+  );
+});
+
+test('automatic nearby-workplace check-in does not run when GPS accuracy is too low after checkout', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+      {
+        matched: false,
+        label: 'Precisão insuficiente',
+        status: 'accuracy_too_low',
+      },
+      {
+        current_action: 'checkout',
+        current_local: 'Zona Mista',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      }
+    ),
+    false
   );
 });
 
