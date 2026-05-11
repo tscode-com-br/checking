@@ -22,6 +22,9 @@ jobs:
           script: |
             set -euo pipefail
 
+            # Remove any stale backup files left by previous failed runs
+            find /etc/nginx/sites-enabled/ -name '*.bak.*' -delete 2>/dev/null || true
+
             # Auto-detect the nginx server config file that serves tscode.com.br
             server_config="$(nginx -T 2>/dev/null | awk '
               /^# configuration file/ { f = $NF; gsub(/:$/, "", f) }

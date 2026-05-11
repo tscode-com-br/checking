@@ -188,7 +188,7 @@ case "$mode" in
 
     trap 'restore_apply_backups' ERR
 
-    backup_file="${backup_file:-${server_config}.bak.$(date +%Y%m%d%H%M%S)}"
+    backup_file="${backup_file:-/tmp/nginx-$(basename "$server_config").bak.$(date +%Y%m%d%H%M%S)}"
     cp "$server_config" "$backup_file"
 
     if [ -n "$http_config_target" ]; then
