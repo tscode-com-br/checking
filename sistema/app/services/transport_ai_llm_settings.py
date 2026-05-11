@@ -540,9 +540,21 @@ def save_transport_ai_here_api_key(
     timestamp = now_sgt()
     global_row = get_legacy_transport_ai_llm_settings(db)
     if global_row is None:
-        raise TransportAILlmSettingsValidationError(
-            "Transport AI LLM settings must be configured before saving the HERE API key."
+        defaults = build_transport_ai_provider_defaults(TRANSPORT_AI_LLM_DEFAULT_PROVIDER)
+        global_row = TransportAILlmSettings(
+            id=1,
+            provider=defaults.provider,
+            model_name=defaults.model_name,
+            reasoning_effort=defaults.reasoning_effort,
+            api_key_ciphertext=None,
+            api_key_last4=None,
+            here_api_key_ciphertext=None,
+            here_api_key_last4=None,
+            updated_by_admin_id=actor_admin_user_id,
+            created_at=timestamp,
+            updated_at=timestamp,
         )
+        db.add(global_row)
 
     global_row.here_api_key_ciphertext = encrypt_transport_ai_api_key(
         normalized_api_key,
