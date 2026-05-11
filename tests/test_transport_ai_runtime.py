@@ -324,8 +324,8 @@ def test_validate_transport_ai_runtime_configuration_allows_deterministic_mode_w
         engine.dispose()
 
 
-def test_validate_transport_ai_runtime_configuration_reports_missing_mapbox_token(tmp_path):
-    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_mapbox_missing.db")
+def test_validate_transport_ai_runtime_configuration_reports_missing_here_api_key(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_here_missing.db")
     try:
         with session_factory() as db:
             _configure_transport_pricing(db)

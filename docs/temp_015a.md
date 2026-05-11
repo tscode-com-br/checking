@@ -431,7 +431,7 @@ At minimum, document all identifiers related to:
 - DEVICE_SHARED_KEY
 - MOBILE_APP_SHARED_KEY
 - PROVIDER_SHARED_KEY
-- MAPBOX_ACCESS_TOKEN
+- HERE_API_KEY
 - TRANSPORT_AI_ENABLED
 - TRANSPORT_AI_AGENT_MODE
 - TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY
@@ -591,7 +591,7 @@ Critical implementation requirements:
 3. Add post-deploy validation for local port 18083 and the public /checking/transport URL.
 4. Add authenticated smoke validation for the dashboard.
 5. Add Transport AI smoke validation that verifies settings retrieval, route calculation flow or equivalent safe diagnostic flow, status polling, and visible error handling.
-6. Ensure the workflow surfaces failures such as missing persisted LLM settings, missing Mapbox token, missing approval evidence, or encryption-key mismatches.
+6. Ensure the workflow surfaces failures such as missing persisted LLM settings, missing HERE API key, missing approval evidence, or encryption-key mismatches.
 7. Document the mandatory deployment order when both API and dashboard contracts change: API first, dashboard second, removal of old contracts only in a later wave.
 
 Validation requirements:

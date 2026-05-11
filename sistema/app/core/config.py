@@ -54,12 +54,6 @@ class Settings(BaseSettings):
     openai_temperature: float | None = 0
     openai_timeout_seconds: int = 120
     openai_max_retries: int = 2
-    mapbox_access_token: str | None = None
-    mapbox_matrix_profile: str = "mapbox/driving-traffic"
-    mapbox_directions_profile: str = "mapbox/driving-traffic"
-    mapbox_timeout_seconds: int = 20
-    mapbox_max_retries: int = 2
-    mapbox_geocoding_permanent: bool = False
     here_api_key: str | None = None
     here_matrix_profile: str = "here/car-fast"
     here_directions_profile: str = "here/car-fast"

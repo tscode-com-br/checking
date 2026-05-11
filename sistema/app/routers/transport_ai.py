@@ -3933,7 +3933,7 @@ def start_transport_ai_route_calculation(
         llm_model=None,
         llm_reasoning_effort=None,
         openai_model=settings.openai_model,
-        route_provider=str(settings.transport_ai_route_provider or "mapbox").strip() or "mapbox",
+        route_provider=str(settings.transport_ai_route_provider or "here").strip() or "here",
         price_currency_code=transport_settings.get("price_currency_code"),
         price_rate_unit=str(transport_settings["price_rate_unit"]),
         baseline_snapshot_json=None,

@@ -36,7 +36,6 @@ def _build_transport_ai_route_calculation_env(tmp_path: Path) -> dict[str, str]:
             "TRANSPORT_AI_MAX_CONCURRENT_RUNS": "1",
             "TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY": Fernet.generate_key().decode("utf-8"),
             "OPENAI_API_KEY": "sk-test-openai-token",
-            "MAPBOX_ACCESS_TOKEN": "test-mapbox-token",
         }
     )
     return env
@@ -600,7 +599,6 @@ def test_route_calculations_success_saves_baseline_resets_pending_and_creates_su
         assert payload["run_key"] in combined_audit_text
         assert payload["suggestion_key"] in combined_audit_text
         assert "sk-test-openai-token" not in combined_audit_text
-        assert "test-mapbox-token" not in combined_audit_text
 
         recent_ai_reasons = {
             event.reason
@@ -713,7 +711,6 @@ def test_route_calculations_agent_mode_uses_persisted_llm_snapshot(tmp_path):
         assert '"llm_provider":"deepseek"' in combined_audit_text
         assert '"llm_model":"deepseek-v4-pro"' in combined_audit_text
         assert "deepseek-runtime-secret-4321" not in combined_audit_text
-        assert "test-mapbox-token" not in combined_audit_text
         """
     ).strip()
     script = _build_route_calculation_script(

@@ -14585,7 +14585,7 @@ def test_transport_operational_plan_export_includes_ai_suggestion_tabs_for_agent
             llm_model="gpt-5-2025-08-07",
             llm_reasoning_effort="high",
             openai_model="gpt-5-2025-08-07",
-            route_provider="mapbox",
+            route_provider="here",
             price_currency_code="SGD",
             price_rate_unit="trip",
             baseline_snapshot_json=None,

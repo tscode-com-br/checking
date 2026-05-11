@@ -55,7 +55,6 @@ from sistema.app.services.transport_route_provider import (
     GeocodeResult,
     MatrixRequest,
     MatrixResult,
-    MapboxTransportRouteProvider,
     TransportRouteCoordinate,
     TransportRouteProvider,
     TransportRouteProviderNoResultError,
@@ -2265,109 +2264,6 @@ def test_build_transport_ai_route_matrices_returns_small_square_matrix_with_norm
         engine.dispose()
 
 
-def test_build_transport_ai_route_matrices_handles_mapbox_chunking_for_large_partition(tmp_path):
-    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_route_matrices_chunking.db")
-    try:
-        request_paths: list[str] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            request_paths.append(request.url.path)
-            coordinate_pairs = []
-            for raw_pair in request.url.path.rsplit("/", 1)[-1].split(";"):
-                longitude_str, latitude_str = raw_pair.split(",")
-                coordinate_pairs.append((float(longitude_str), float(latitude_str)))
-
-            assert len(coordinate_pairs) <= 10
-            source_indexes = [
-                int(value)
-                for value in str(request.url.params["sources"]).replace(";", ",").split(",")
-                if value
-            ]
-            destination_indexes = [
-                int(value)
-                for value in str(request.url.params["destinations"]).replace(";", ",").split(",")
-                if value
-            ]
-            durations = []
-            distances = []
-            for source_index in source_indexes:
-                source_longitude = coordinate_pairs[source_index][0]
-                duration_row = []
-                distance_row = []
-                for destination_index in destination_indexes:
-                    destination_longitude = coordinate_pairs[destination_index][0]
-                    duration_row.append((source_longitude * 1000.0) + destination_longitude)
-                    distance_row.append((source_longitude * 100.0) + destination_longitude)
-                durations.append(duration_row)
-                distances.append(distance_row)
-            return httpx.Response(200, json={"code": "Ok", "durations": durations, "distances": distances})
-
-        passenger_points = [
-            _build_resolved_route_point(
-                source_id=100 + index,
-                request_id=200 + index,
-                label=f"Passenger {index}",
-                address=f"Passenger Address {index}",
-                zip_code=f"1000{index}",
-                longitude=float(index),
-                latitude=1.0,
-                provider="mapbox",
-            )
-            for index in range(1, 6)
-        ]
-        destination_point = _build_resolved_route_point(
-            point_type="project_destination",
-            source_id=400,
-            label="PPLAN1",
-            address="Destination Address",
-            zip_code="018989",
-            longitude=6.0,
-            latitude=2.0,
-            provider="mapbox",
-        )
-        resolved_route_points = _build_resolved_route_points_result(
-            passenger_points=passenger_points,
-            destination_point=destination_point,
-            provider="mapbox",
-        )
-
-        with session_factory() as session:
-            with httpx.Client(
-                transport=httpx.MockTransport(handler),
-                base_url="https://api.mapbox.com",
-            ) as client:
-                provider = MapboxTransportRouteProvider(
-                    settings_obj=Settings(
-                        mapbox_access_token="mapbox-test-token",
-                        mapbox_timeout_seconds=3,
-                        mapbox_max_retries=0,
-                    ),
-                    client=client,
-                )
-
-                result = build_transport_ai_route_matrices(
-                    session,
-                    resolved_route_points=resolved_route_points,
-                    provider=provider,
-                    profile="mapbox/driving-traffic",
-                )
-
-        assert len(request_paths) > 1
-        assert result.issues == []
-        assert result.total_matrix_provider_calls == len(request_paths)
-        assert result.total_matrix_chunks == len(request_paths)
-        assert len(result.partitions[0].points) == 6
-        assert result.partitions[0].matrix_request_count == len(request_paths)
-        assert result.partitions[0].matrix_chunk_count == len(request_paths)
-        assert result.partitions[0].source_chunk_size == 4
-        assert result.partitions[0].destination_chunk_size == 6
-        assert len(result.partitions[0].durations_seconds) == 6
-        assert result.partitions[0].durations_seconds[0][5] == 1006
-        assert result.partitions[0].durations_seconds[5][5] == 6006
-    finally:
-        engine.dispose()
-
-
 def test_build_transport_ai_route_matrices_returns_issue_for_unroutable_pair(tmp_path):
     engine, session_factory = _build_session_factory(tmp_path / "transport_ai_route_matrices_issue.db")
     try:
@@ -3723,7 +3619,7 @@ def test_build_transport_agent_plan_from_solver_result_builds_directional_extra_
             route_matrices_result = TransportAgentRouteMatricesResult(
                 planning_input_hash=planning_input.planning_input_hash,
                 provider="solver-test",
-                profile="mapbox/driving-traffic",
+                profile="here/car-fast",
                 partitions=[route_matrix_partition],
                 issues=[],
                 total_matrices=1,
@@ -3865,7 +3761,7 @@ def test_build_transport_agent_plan_from_solver_result_consolidates_actions_cost
             route_matrices_result = TransportAgentRouteMatricesResult(
                 planning_input_hash=planning_input.planning_input_hash,
                 provider="solver-test",
-                profile="mapbox/driving-traffic",
+                profile="here/car-fast",
                 partitions=route_matrix_partitions,
                 issues=[],
                 total_matrices=len(route_matrix_partitions),
@@ -4123,7 +4019,7 @@ def test_build_transport_agent_plan_from_solver_result_tracks_unallocated_reques
             route_matrices_result = TransportAgentRouteMatricesResult(
                 planning_input_hash=planning_input.planning_input_hash,
                 provider="solver-test",
-                profile="mapbox/driving-traffic",
+                profile="here/car-fast",
                 partitions=[route_matrix_partition],
                 issues=[],
                 total_matrices=1,
@@ -4213,7 +4109,7 @@ def test_build_transport_agent_plan_from_solver_result_derives_routine_return_le
             route_matrices_result = TransportAgentRouteMatricesResult(
                 planning_input_hash=planning_input.planning_input_hash,
                 provider="solver-test",
-                profile="mapbox/driving-traffic",
+                profile="here/car-fast",
                 partitions=[route_matrix_partition],
                 issues=[],
                 total_matrices=1,

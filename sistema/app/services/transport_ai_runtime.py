@@ -51,8 +51,6 @@ _TRANSPORT_AI_FAILURE_CATEGORY_BY_CODE: dict[str, TransportAIFailureCategory] = 
     "transport_ai_max_concurrent_runs_invalid": "configuration",
     "here_api_key_missing": "configuration",
     "here_geocode_no_result": "geocoding",
-    "mapbox_access_token_missing": "configuration",
-    "mapbox_geocode_no_result": "geocoding",
     "transport_ai_deterministic_plan_invalid": "deterministic_validation",
     "transport_ai_agent_plan_invalid_after_response": "deterministic_validation",
     "route_kind_invalid": "configuration",
@@ -119,8 +117,6 @@ def _resolve_transport_ai_failure_category_from_code(
         return None
     if normalized_code in _TRANSPORT_AI_FAILURE_CATEGORY_BY_CODE:
         return _TRANSPORT_AI_FAILURE_CATEGORY_BY_CODE[normalized_code]
-    if normalized_code == "mapbox_geocode_no_result":
-        return "geocoding"
     if normalized_code.startswith("transport_ai_plan_"):
         return "deterministic_validation"
     if normalized_code.startswith("transport_ai_duplicate_"):
@@ -131,8 +127,6 @@ def _resolve_transport_ai_failure_category_from_code(
         return "deterministic_validation"
     if "route_point" in normalized_code:
         return "geocoding"
-    if normalized_code.startswith("mapbox_"):
-        return "route_provider"
     if "geocode" in normalized_code or normalized_code.endswith("country_mismatch"):
         return "geocoding"
     if "route_matrix" in normalized_code or "pair_no_route" in normalized_code or "segment_missing" in normalized_code:
@@ -187,8 +181,6 @@ def _format_transport_ai_provider_label(provider: str | None) -> str:
         return "OpenAI"
     if normalized_provider == "deepseek":
         return "DeepSeek"
-    if normalized_provider == "mapbox":
-        return "Mapbox"
     return normalized_provider or "the configured provider"
 
 
@@ -330,80 +322,6 @@ def _build_transport_ai_here_message_descriptor(error_code: str) -> TransportAIM
     return None
 
 
-def _build_transport_ai_mapbox_message_descriptor(error_code: str) -> TransportAIMessageDescriptor | None:
-    normalized_code = str(error_code or "").strip().lower()
-    if normalized_code == "mapbox_access_token_missing":
-        return TransportAIMessageDescriptor(
-            message_key="transport_ai.error.mapbox_access_token_missing",
-            message_params={"provider": "Mapbox"},
-            message="Transport AI cannot calculate routes because the Mapbox access token is not configured.",
-        )
-
-    prefix = "mapbox_"
-    if not normalized_code.startswith(prefix):
-        return None
-
-    remainder = normalized_code[len(prefix):]
-    operation, separator, suffix = remainder.partition("_")
-    operation_label = _TRANSPORT_AI_ROUTE_OPERATION_LABELS.get(operation)
-    if not separator or operation_label is None:
-        return None
-
-    params = {
-        "provider": "Mapbox",
-        "operation": operation,
-        "operation_label": operation_label,
-    }
-
-    if suffix == "auth_failed":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_auth_failed",
-            message_params=params,
-            message=f"Transport AI could not use Mapbox for {operation_label} because the configured token was rejected.",
-        )
-    if suffix == "timeout":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_timeout",
-            message_params=params,
-            message=f"Transport AI timed out while waiting for Mapbox {operation_label}.",
-        )
-    if suffix == "request_4xx":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_request_4xx",
-            message_params=params,
-            message=f"Transport AI could not finish Mapbox {operation_label} because Mapbox rejected the request.",
-        )
-    if suffix == "request_5xx":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_request_5xx",
-            message_params=params,
-            message=f"Transport AI could not finish Mapbox {operation_label} because Mapbox returned a server error.",
-        )
-    if suffix == "invalid_response":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_invalid_response",
-            message_params=params,
-            message=f"Transport AI received an invalid Mapbox response during {operation_label}.",
-        )
-    if suffix == "no_result":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_no_result",
-            message_params=params,
-            message="Transport AI could not geocode at least one required address with Mapbox.",
-        )
-    if suffix == "no_route":
-        return TransportAIMessageDescriptor(
-            message_key=f"transport_ai.error.mapbox_{operation}_no_route",
-            message_params=params,
-            message=(
-                "Transport AI could not calculate routes because Mapbox reported at least one unreachable route matrix cell."
-                if operation == "matrix"
-                else f"Transport AI could not calculate routes because Mapbox did not return a valid result for {operation_label}."
-            ),
-        )
-    return None
-
-
 def _build_transport_ai_geocode_message_descriptor(
     *,
     error_code: str,
@@ -479,10 +397,6 @@ def resolve_transport_ai_message_descriptor(
     here_descriptor = _build_transport_ai_here_message_descriptor(normalized_code)
     if here_descriptor is not None:
         return here_descriptor
-
-    mapbox_descriptor = _build_transport_ai_mapbox_message_descriptor(normalized_code)
-    if mapbox_descriptor is not None:
-        return mapbox_descriptor
 
     llm_descriptor = _build_transport_ai_llm_message_descriptor(
         error_code=normalized_code,
@@ -922,14 +836,6 @@ def validate_transport_ai_runtime_configuration(
                 code="here_api_key_missing",
                 message="The HERE API key is not configured.",
                 setting_name="here_api_key",
-            )
-        )
-    elif configured_provider == "mapbox" and not str(settings_obj.mapbox_access_token or "").strip():
-        issues.append(
-            _build_transport_ai_preflight_issue(
-                code="mapbox_access_token_missing",
-                message="The Mapbox access token is not configured.",
-                setting_name="mapbox_access_token",
             )
         )
 

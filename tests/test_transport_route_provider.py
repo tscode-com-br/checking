@@ -1,7 +1,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import httpx
 import pytest
 
 from sistema.app.core.config import Settings
@@ -13,7 +12,6 @@ from sistema.app.services.transport_route_provider import (
     FakeTransportRouteProvider,
     GeocodeRequest,
     GeocodeResult,
-    MapboxTransportRouteProvider,
     MatrixRequest,
     MatrixResult,
     TransportRouteCoordinate,
@@ -37,7 +35,7 @@ def test_transport_route_provider_contract_with_fake_provider():
     )
     geocode_result = provider.geocode(geocode_request)
     matrix_request = MatrixRequest(
-        profile="mapbox/driving-traffic",
+        profile="here/car-fast",
         sources=[geocode_result.coordinate],
         destinations=[TransportRouteCoordinate(longitude=103.8519, latitude=1.2903, label="Project")],
         depart_at=departure_time,
@@ -45,7 +43,7 @@ def test_transport_route_provider_contract_with_fake_provider():
     matrix_result = provider.get_matrix(matrix_request)
     directions_result = provider.get_directions(
         DirectionsRequest(
-            profile="mapbox/driving-traffic",
+            profile="here/car-fast",
             coordinates=[*matrix_request.sources, *matrix_request.destinations],
             depart_at=departure_time,
         )
@@ -68,14 +66,14 @@ def test_transport_route_provider_dtos_serialize_and_validate_nested_payloads():
     origin = TransportRouteCoordinate(longitude=103.8607, latitude=1.2834, label="Passenger A")
     destination = TransportRouteCoordinate(longitude=103.8519, latitude=1.2903, label="Project")
     matrix_request = MatrixRequest(
-        profile="mapbox/driving-traffic",
+        profile="here/car-fast",
         sources=[origin],
         destinations=[destination],
         depart_at=departure_time,
     )
     directions_result = DirectionsResult(
         provider="fake",
-        profile="mapbox/driving-traffic",
+        profile="here/car-fast",
         coordinates=[origin, destination],
         distance_meters=1200.0,
         duration_seconds=300.0,
@@ -144,14 +142,14 @@ def test_fake_transport_route_provider_matrix_and_directions_match_expected_valu
 
     matrix_result = provider.get_matrix(
         MatrixRequest(
-            profile="mapbox/driving-traffic",
+            profile="here/car-fast",
             sources=[origin, destination],
             destinations=[origin, destination],
         )
     )
     directions_result = provider.get_directions(
         DirectionsRequest(
-            profile="mapbox/driving-traffic",
+            profile="here/car-fast",
             coordinates=[origin, destination],
         )
     )
@@ -179,7 +177,7 @@ def test_build_transport_route_provider_can_enable_asymmetric_fake_provider_by_c
 
     matrix_result = provider.get_matrix(
         MatrixRequest(
-            profile="mapbox/driving-traffic",
+            profile="here/car-fast",
             sources=[origin, destination],
             destinations=[origin, destination],
         )
@@ -204,377 +202,3 @@ def test_fake_transport_route_provider_exposes_catalog_entries_for_fixture_addre
     assert result.provider_place_id == "fake-place-1-marina-boulevard"
     assert result.longitude == pytest.approx(103.8545)
     assert result.latitude == pytest.approx(1.2825)
-
-
-def test_mapbox_transport_route_provider_geocode_with_mock_transport():
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert "/geocoding/v5/mapbox.places/" in request.url.path
-        assert request.url.params.get("access_token") == "mapbox-test-token"
-        assert request.url.params.get("country") == "sg"
-        assert request.url.params.get("language") == "en"
-        return httpx.Response(
-            200,
-            json={
-                "type": "FeatureCollection",
-                "query": ["10 bayfront avenue"],
-                "features": [
-                    {
-                        "id": "place.123",
-                        "place_name": "10 Bayfront Avenue, Singapore 018956",
-                        "text": "10 Bayfront Avenue",
-                        "center": [103.8607, 1.2834],
-                        "relevance": 0.96,
-                    }
-                ],
-            },
-        )
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(
-                mapbox_access_token="mapbox-test-token",
-                mapbox_timeout_seconds=3,
-                mapbox_max_retries=0,
-            ),
-            client=client,
-        )
-
-        result = provider.geocode(
-            GeocodeRequest(
-                address="10 Bayfront Avenue",
-                zip_code="018956",
-                country_name="Singapore",
-                country_code="sg",
-                language="en",
-            )
-        )
-
-    assert result.provider == "mapbox"
-    assert result.query == "10 bayfront avenue, 018956, singapore"
-    assert result.formatted_address == "10 Bayfront Avenue, Singapore 018956"
-    assert result.provider_place_id == "place.123"
-    assert result.longitude == pytest.approx(103.8607)
-    assert result.latitude == pytest.approx(1.2834)
-
-
-def test_mapbox_transport_route_provider_matrix_with_mock_transport_and_chunking():
-    request_paths: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_paths.append(request.url.path)
-        coordinate_pairs = []
-        for raw_pair in request.url.path.rsplit("/", 1)[-1].split(";"):
-            longitude_str, latitude_str = raw_pair.split(",")
-            coordinate_pairs.append((float(longitude_str), float(latitude_str)))
-        assert len(coordinate_pairs) <= 10
-        source_indexes = [int(value) for value in str(request.url.params["sources"]).split(";")]
-        destination_indexes = [int(value) for value in str(request.url.params["destinations"]).split(";")]
-        durations = []
-        distances = []
-        for source_index in source_indexes:
-            source_longitude = coordinate_pairs[source_index][0]
-            duration_row = []
-            distance_row = []
-            for destination_index in destination_indexes:
-                destination_longitude = coordinate_pairs[destination_index][0]
-                duration_row.append((source_longitude * 1000.0) + destination_longitude)
-                distance_row.append((source_longitude * 100.0) + destination_longitude)
-            durations.append(duration_row)
-            distances.append(distance_row)
-        return httpx.Response(200, json={"code": "Ok", "durations": durations, "distances": distances})
-
-    sources = [
-        TransportRouteCoordinate(longitude=float(index), latitude=1.0, label=f"Source {index}")
-        for index in range(1, 7)
-    ]
-    destinations = [
-        TransportRouteCoordinate(longitude=float(100 + index), latitude=2.0, label=f"Destination {index}")
-        for index in range(1, 7)
-    ]
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(
-                mapbox_access_token="mapbox-test-token",
-                mapbox_timeout_seconds=3,
-                mapbox_max_retries=0,
-            ),
-            client=client,
-        )
-
-        result = provider.get_matrix(
-            MatrixRequest(
-                profile="mapbox/driving-traffic",
-                sources=sources,
-                destinations=destinations,
-            )
-        )
-
-    assert len(request_paths) > 1
-    assert result.provider == "mapbox"
-    assert result.profile == "mapbox/driving-traffic"
-    assert result.durations_seconds[0][0] == pytest.approx(1101.0)
-    assert result.durations_seconds[5][5] == pytest.approx(6106.0)
-    assert result.distances_meters is not None
-    assert result.distances_meters[0][0] == pytest.approx(201.0)
-    assert result.distances_meters[5][5] == pytest.approx(706.0)
-    assert result.matrix_request_count == len(request_paths)
-    assert result.matrix_chunk_count == len(request_paths)
-    assert result.source_chunk_size == 4
-    assert result.destination_chunk_size == 6
-
-
-def test_mapbox_transport_route_provider_matrix_deduplicates_overlapping_source_destination_coordinates():
-    request_coordinate_counts: list[int] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        coordinate_pairs = []
-        for raw_pair in request.url.path.rsplit("/", 1)[-1].split(";"):
-            longitude_str, latitude_str = raw_pair.split(",")
-            coordinate_pairs.append((float(longitude_str), float(latitude_str)))
-        request_coordinate_counts.append(len(coordinate_pairs))
-        assert len(coordinate_pairs) <= 10
-
-        source_indexes = [int(value) for value in str(request.url.params["sources"]).split(";")]
-        destination_indexes = [int(value) for value in str(request.url.params["destinations"]).split(";")]
-        durations = []
-        distances = []
-        for source_index in source_indexes:
-            source_longitude = coordinate_pairs[source_index][0]
-            duration_row = []
-            distance_row = []
-            for destination_index in destination_indexes:
-                destination_longitude = coordinate_pairs[destination_index][0]
-                duration_row.append((source_longitude * 1000.0) + destination_longitude)
-                distance_row.append((source_longitude * 100.0) + destination_longitude)
-            durations.append(duration_row)
-            distances.append(distance_row)
-        return httpx.Response(200, json={"code": "Ok", "durations": durations, "distances": distances})
-
-    coordinates = [
-        TransportRouteCoordinate(longitude=float(index), latitude=1.0, label=f"Point {index}")
-        for index in range(1, 7)
-    ]
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(
-                mapbox_access_token="mapbox-test-token",
-                mapbox_timeout_seconds=3,
-                mapbox_max_retries=0,
-            ),
-            client=client,
-        )
-
-        result = provider.get_matrix(
-            MatrixRequest(
-                profile="mapbox/driving-traffic",
-                sources=coordinates,
-                destinations=coordinates,
-            )
-        )
-
-    assert len(request_coordinate_counts) > 0
-    assert max(request_coordinate_counts) <= 6
-    assert result.durations_seconds[0][0] == pytest.approx(1001.0)
-    assert result.durations_seconds[5][5] == pytest.approx(6006.0)
-    assert result.distances_meters is not None
-    assert result.distances_meters[0][5] == pytest.approx(106.0)
-
-
-def test_mapbox_transport_route_provider_matrix_null_cell_raises_no_route_error():
-    def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": "Ok", "durations": [[None]], "distances": [[1000.0]]})
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(mapbox_access_token="mapbox-test-token", mapbox_max_retries=0),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderNoRouteError) as exc_info:
-            provider.get_matrix(
-                MatrixRequest(
-                    profile="mapbox/driving",
-                    sources=[TransportRouteCoordinate(longitude=103.8607, latitude=1.2834)],
-                    destinations=[TransportRouteCoordinate(longitude=103.8519, latitude=1.2903)],
-                )
-            )
-
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "matrix"
-    assert "unroutable cell" in str(exc_info.value)
-
-
-def test_mapbox_transport_route_provider_requires_token_before_http_call():
-    call_count = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        return httpx.Response(200, json={"features": []})
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(mapbox_access_token=None, mapbox_max_retries=0),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderAuthError) as exc_info:
-            provider.geocode(
-                GeocodeRequest(
-                    address="10 Bayfront Avenue",
-                    zip_code="018956",
-                    country_name="Singapore",
-                )
-            )
-
-    assert call_count == 0
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "geocode"
-    assert "not configured" in str(exc_info.value)
-
-
-def test_mapbox_transport_route_provider_maps_invalid_token_to_auth_error():
-    call_count = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        return httpx.Response(401, json={"message": "unauthorized"})
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(mapbox_access_token="mapbox-test-token", mapbox_max_retries=2),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderAuthError) as exc_info:
-            provider.geocode(
-                GeocodeRequest(
-                    address="10 Bayfront Avenue",
-                    zip_code="018956",
-                    country_name="Singapore",
-                )
-            )
-
-    assert call_count == 1
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "geocode"
-    assert exc_info.value.status_code == 401
-    assert "rejected" in str(exc_info.value)
-
-
-def test_mapbox_transport_route_provider_maps_timeout_to_controlled_error():
-    call_count = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        raise httpx.ReadTimeout("timed out", request=request)
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(
-                mapbox_access_token="mapbox-test-token",
-                mapbox_timeout_seconds=2,
-                mapbox_max_retries=1,
-            ),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderTimeoutError) as exc_info:
-            provider.geocode(
-                GeocodeRequest(
-                    address="10 Bayfront Avenue",
-                    zip_code="018956",
-                    country_name="Singapore",
-                )
-            )
-
-    assert call_count == 2
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "geocode"
-    assert "timed out after 2 seconds" in str(exc_info.value)
-
-
-def test_mapbox_transport_route_provider_preserves_4xx_status_on_invalid_response():
-    def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={"message": "not found"})
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(mapbox_access_token="mapbox-test-token", mapbox_max_retries=0),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderInvalidResponseError) as exc_info:
-            provider.geocode(
-                GeocodeRequest(
-                    address="10 Bayfront Avenue",
-                    zip_code="018956",
-                    country_name="Singapore",
-                )
-            )
-
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "geocode"
-    assert exc_info.value.status_code == 404
-    assert "status 404" in str(exc_info.value)
-
-
-def test_mapbox_transport_route_provider_preserves_5xx_status_after_retry_exhaustion():
-    call_count = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        return httpx.Response(502, json={"message": "bad gateway"})
-
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://api.mapbox.com",
-    ) as client:
-        provider = MapboxTransportRouteProvider(
-            settings_obj=Settings(mapbox_access_token="mapbox-test-token", mapbox_max_retries=1),
-            client=client,
-        )
-
-        with pytest.raises(TransportRouteProviderInvalidResponseError) as exc_info:
-            provider.geocode(
-                GeocodeRequest(
-                    address="10 Bayfront Avenue",
-                    zip_code="018956",
-                    country_name="Singapore",
-                )
-            )
-
-    assert call_count == 2
-    assert exc_info.value.provider == "mapbox"
-    assert exc_info.value.operation == "geocode"
-    assert exc_info.value.status_code == 502
-    assert "status 502" in str(exc_info.value)

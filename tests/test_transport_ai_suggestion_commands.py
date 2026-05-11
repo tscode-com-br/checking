@@ -31,7 +31,6 @@ def _build_transport_ai_suggestion_commands_env(tmp_path: Path) -> dict[str, str
             "TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE": "phase8-loadtest-2026-05-05",
             "TRANSPORT_AI_MAX_CONCURRENT_RUNS": "1",
             "OPENAI_API_KEY": "sk-test-openai-token",
-            "MAPBOX_ACCESS_TOKEN": "test-mapbox-token",
         }
     )
     return env
@@ -759,7 +758,6 @@ def test_transport_ai_save_and_latest_return_saved_suggestion(tmp_path):
         assert start_payload["run_key"] in combined_audit_text
         assert suggestion_key in combined_audit_text
         assert "sk-test-openai-token" not in combined_audit_text
-        assert "test-mapbox-token" not in combined_audit_text
 
         recent_ai_reasons = {
             event.reason
@@ -1041,7 +1039,6 @@ def test_transport_ai_apply_creates_vehicle_assignments_and_route_stops(tmp_path
         assert start_payload["run_key"] in combined_audit_text
         assert suggestion_key in combined_audit_text
         assert "sk-test-openai-token" not in combined_audit_text
-        assert "test-mapbox-token" not in combined_audit_text
 
         recent_ai_reasons = {
             event.reason

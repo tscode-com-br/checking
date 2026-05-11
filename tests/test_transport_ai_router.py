@@ -100,7 +100,6 @@ def _build_transport_ai_router_env(tmp_path: Path) -> dict[str, str]:
         }
     )
     env.pop("OPENAI_API_KEY", None)
-    env.pop("MAPBOX_ACCESS_TOKEN", None)
     env.pop("HERE_API_KEY", None)
     return env
 
@@ -2069,39 +2068,6 @@ def test_transport_ai_run_status_rewrites_legacy_planning_failure_envelope_to_pr
     _run_transport_ai_router_script(tmp_path, script=script)
 
 
-def test_transport_ai_run_status_humanizes_mapbox_timeout_and_keeps_runtime_issue_detail(tmp_path):
-    assertions = textwrap.dedent(
-        """
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert payload["ok"] is False
-        assert payload["status"] == "failed"
-        assert payload["suggestion"] is None
-        assert payload["suggestion_ready"] is False
-        assert payload["error_code"] == "mapbox_geocode_timeout"
-        assert payload["failure_category"] == "route_provider"
-        assert payload["review_state"] == "fatal_error"
-        assert payload["message_key"] == "transport_ai.error.mapbox_geocode_timeout"
-        assert payload["message"] == "Transport AI timed out while waiting for Mapbox geocoding."
-        assert payload["message"] != payload["issues"][0]["message"]
-        assert payload["issues"][0]["code"] == "mapbox_geocode_timeout"
-        assert payload["issues"][0]["source"] == "run_error"
-        assert payload["issues"][0]["message"] == "Mapbox geocode request timed out after 20 seconds."
-        """
-    ).strip()
-    script = _build_transport_ai_run_status_script(
-        run_status="failed",
-        include_suggestion=False,
-        run_key="transport-ai-run:polling-mapbox-timeout-001",
-        error_code="mapbox_geocode_timeout",
-        error_message="Mapbox geocode request timed out after 20 seconds.",
-        preflight_issues_json='[{"code":"mapbox_geocode_timeout","message":"Mapbox geocode request timed out after 20 seconds.","blocking":true,"setting_name":"transport_ai_mapbox_geocode","source":"run_error"}]',
-        route_provider="mapbox",
-        assertions=assertions,
-    )
-    _run_transport_ai_router_script(tmp_path, script=script)
-
-
 def test_transport_ai_run_status_humanizes_passenger_geocode_low_confidence_issue(tmp_path):
     assertions = textwrap.dedent(
         """
@@ -2126,7 +2092,7 @@ def test_transport_ai_run_status_humanizes_passenger_geocode_low_confidence_issu
         error_code="passenger_origin_geocode_low_confidence",
         error_message="Passenger 'Worker 42' (W042) returned low geocode confidence (0.64).",
         preflight_issues_json='[{"code":"passenger_origin_geocode_low_confidence","message":"Passenger \'Worker 42\' (W042) returned low geocode confidence (0.64).","blocking":true,"setting_name":"transport_route_points","source":"run_error"}]',
-        route_provider="mapbox",
+        route_provider="here",
         assertions=assertions,
     )
     _run_transport_ai_router_script(tmp_path, script=script)

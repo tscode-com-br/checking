@@ -1761,29 +1761,6 @@ def _resolve_transport_ai_route_provider_failure_code(exc: TransportRouteProvide
             return f"here_{operation}_invalid_response"
         return "transport_ai_agent_execution_failed"
 
-    if provider != "mapbox":
-        return "transport_ai_agent_execution_failed"
-
-    if isinstance(exc, TransportRouteProviderAuthError):
-        if exc.status_code in {401, 403}:
-            return f"mapbox_{operation}_auth_failed"
-        return "mapbox_access_token_missing"
-    if isinstance(exc, TransportRouteProviderTimeoutError):
-        return f"mapbox_{operation}_timeout"
-    if isinstance(exc, TransportRouteProviderNoResultError):
-        if operation == "geocode":
-            return "mapbox_geocode_no_result"
-        return f"mapbox_{operation}_invalid_response"
-    if isinstance(exc, TransportRouteProviderNoRouteError):
-        return f"mapbox_{operation}_no_route"
-    if isinstance(exc, TransportRouteProviderInvalidResponseError):
-        if exc.status_code is not None:
-            return (
-                f"mapbox_{operation}_request_5xx"
-                if int(exc.status_code) >= 500
-                else f"mapbox_{operation}_request_4xx"
-            )
-        return f"mapbox_{operation}_invalid_response"
     return "transport_ai_agent_execution_failed"
 
 

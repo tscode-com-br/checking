@@ -48,7 +48,6 @@ def test_transport_ai_route_planner_prompt_avoids_secrets_and_builds_langchain_t
     prompt_template = build_transport_ai_route_planner_prompt_template()
 
     assert "OPENAI_API_KEY" not in prompt_text
-    assert "MAPBOX_ACCESS_TOKEN" not in prompt_text
     assert "sk-" not in prompt_text
     assert set(prompt_template.input_variables) == set(TRANSPORT_AI_PROMPT_TEMPLATE_VARIABLES)
 
@@ -58,9 +57,9 @@ def test_transport_ai_route_planner_prompt_avoids_secrets_and_builds_langchain_t
         route_kind="home_to_work",
         earliest_boarding_time="06:50",
         arrival_at_work_time="07:45",
-        route_provider="mapbox",
-        matrix_profile="mapbox/driving-traffic",
-        directions_profile="mapbox/driving-traffic",
+        route_provider="here",
+        matrix_profile="here/car-fast",
+        directions_profile="here/car-fast",
         planning_input_hash="a" * 64,
     )
     assert rendered_messages[0].content

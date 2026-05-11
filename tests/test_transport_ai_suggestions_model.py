@@ -70,7 +70,7 @@ def _create_transport_ai_run(session: Session, *, actor_user_id: int) -> Transpo
         earliest_boarding_time="06:50",
         arrival_at_work_time="07:45",
         openai_model="gpt-5-2025-08-07",
-        route_provider="mapbox",
+        route_provider="here",
         price_currency_code="SGD",
         price_rate_unit="day",
         baseline_snapshot_json=json.dumps({"snapshot_key": "baseline-001"}),

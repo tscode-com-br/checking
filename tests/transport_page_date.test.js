@@ -4528,7 +4528,7 @@ test('transport ai changes summary render shows increases and controlled placeho
       route_kind: 'home_to_work',
       service_date: '2026-06-20',
       message: 'Transport AI suggestion was saved and is ready to be applied.',
-      route_provider: 'mapbox',
+      route_provider: 'here',
       openai_model: 'gpt-5-2025-08-07',
       suggestion: {
         status: 'saved',
@@ -4590,7 +4590,7 @@ test('transport ai changes summary render shows increases and controlled placeho
 
   assert.equal(increasedSummaryModel.cost.deltaDirection, 'increase');
   assert.equal(increasedSummaryModel.cost.deltaLabel, 'Increase');
-  assert.equal(increasedSummaryModel.runtime.routeProviderText, 'mapbox');
+  assert.equal(increasedSummaryModel.runtime.routeProviderText, 'here');
   assert.equal(increasedSummaryModel.runtime.modelText, 'gpt-5-2025-08-07');
   assert.match(increasedSummaryModel.cost.deltaText, /40\.00/);
 

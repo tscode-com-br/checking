@@ -45,7 +45,6 @@ def _build_transport_ai_openai_smoke_env(tmp_path: Path) -> dict[str, str]:
             "TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE": "transport-ai-openai-opt-in-smoke",
             "TRANSPORT_AI_MAX_CONCURRENT_RUNS": "1",
             "TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY": Fernet.generate_key().decode("utf-8"),
-            "MAPBOX_ACCESS_TOKEN": "test-mapbox-token",
             "OPENAI_TIMEOUT_SECONDS": "120",
             "OPENAI_MAX_RETRIES": "1",
             TRANSPORT_AI_TEST_OPENAI_API_KEY_ENV: openai_api_key,

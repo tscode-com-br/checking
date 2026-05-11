@@ -42,7 +42,6 @@ def _build_session_factory(tmp_path: Path) -> tuple[sessionmaker[Session], sa.En
 
 def _build_cache_settings(**overrides) -> Settings:
     values = {
-        "mapbox_geocoding_permanent": False,
         "transport_ai_geocode_cache_ttl_days": 30,
         "transport_ai_route_cache_ttl_seconds": 3600,
     }
@@ -83,7 +82,7 @@ def test_transport_ai_route_point_cache_hits_for_same_normalized_address(tmp_pat
             country_name=" Singapore ",
             longitude=103.8607,
             latitude=1.2834,
-            provider="mapbox",
+            provider="here",
             provider_place_id="place-001",
             confidence=0.95,
             settings_obj=cache_settings,
@@ -93,7 +92,7 @@ def test_transport_ai_route_point_cache_hits_for_same_normalized_address(tmp_pat
 
         cached_point = get_cached_transport_ai_route_point(
             session,
-            provider=" mapbox ",
+            provider=" here ",
             address="10 Bayfront Avenue",
             zip_code="018956",
             country_name="singapore",
@@ -127,7 +126,7 @@ def test_transport_ai_route_point_cache_misses_for_different_address(tmp_path):
             country_name="Singapore",
             longitude=103.8545,
             latitude=1.2823,
-            provider="mapbox",
+            provider="here",
             confidence=0.88,
             settings_obj=cache_settings,
             created_at=reference_time,
@@ -136,7 +135,7 @@ def test_transport_ai_route_point_cache_misses_for_different_address(tmp_path):
 
         cached_point = get_cached_transport_ai_route_point(
             session,
-            provider="mapbox",
+            provider="here",
             address="10 Bayfront Avenue",
             zip_code="018956",
             country_name="Singapore",
@@ -158,8 +157,8 @@ def test_transport_ai_route_matrix_cache_expires_and_is_not_reused(tmp_path):
     with session_factory() as session:
         persisted_matrix = upsert_transport_ai_route_matrix(
             session,
-            provider="mapbox",
-            profile="mapbox/driving-traffic",
+            provider="here",
+            profile="here/car-fast",
             sources=sources,
             destinations=destinations,
             durations=[[0, 480, 660], [470, 0, 540]],
@@ -171,16 +170,16 @@ def test_transport_ai_route_matrix_cache_expires_and_is_not_reused(tmp_path):
 
         cached_before_expiry = get_cached_transport_ai_route_matrix(
             session,
-            provider="mapbox",
-            profile="mapbox/driving-traffic",
+            provider="here",
+            profile="here/car-fast",
             sources=sources,
             destinations=destinations,
             reference_time=reference_time + timedelta(seconds=30),
         )
         cached_after_expiry = get_cached_transport_ai_route_matrix(
             session,
-            provider="mapbox",
-            profile="mapbox/driving-traffic",
+            provider="here",
+            profile="here/car-fast",
             sources=sources,
             destinations=destinations,
             reference_time=reference_time + timedelta(seconds=61),
@@ -203,8 +202,8 @@ def test_transport_ai_route_matrix_cache_hits_for_same_coordinates_and_profile(t
     with session_factory() as session:
         persisted_matrix = upsert_transport_ai_route_matrix(
             session,
-            provider="mapbox",
-            profile="mapbox/driving",
+            provider="here",
+            profile="here/car-fast",
             sources=sources,
             destinations=destinations,
             durations=[[0, 480], [470, 0]],
@@ -217,8 +216,8 @@ def test_transport_ai_route_matrix_cache_hits_for_same_coordinates_and_profile(t
 
         cached_matrix = get_cached_transport_ai_route_matrix(
             session,
-            provider="mapbox",
-            profile="mapbox/driving",
+            provider="here",
+            profile="here/car-fast",
             sources=[(103.86070039, 1.28340031), (103.85450039, 1.28230009)],
             destinations=[(103.85190039, 1.29030019)],
             depart_at=reference_time,
@@ -234,7 +233,7 @@ def test_transport_ai_route_matrix_cache_hits_for_same_coordinates_and_profile(t
 
 def test_transport_ai_route_point_does_not_persist_raw_response_when_geocoding_is_not_permanent(tmp_path):
     session_factory, engine = _build_session_factory(tmp_path)
-    cache_settings = _build_cache_settings(mapbox_geocoding_permanent=False)
+    cache_settings = _build_cache_settings()
     reference_time = datetime(2026, 4, 30, 12, 0, 0, tzinfo=ZoneInfo("Asia/Singapore"))
 
     with session_factory() as session:
@@ -248,7 +247,7 @@ def test_transport_ai_route_point_does_not_persist_raw_response_when_geocoding_i
             country_name="Singapore",
             longitude=103.8520,
             latitude=1.2840,
-            provider="mapbox",
+            provider="here",
             provider_place_id="place-raw-001",
             confidence=0.91,
             raw_response_json={"features": [{"id": "place-raw-001"}]},

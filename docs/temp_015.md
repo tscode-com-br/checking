@@ -69,7 +69,7 @@ Se o diretorio remoto mudar sem nome fixo de volume, o Docker Compose criara nov
 
 A funcionalidade de IA do Transport depende da API e do estado persistido:
 
-- `MAPBOX_ACCESS_TOKEN`;
+- `HERE_API_KEY`;
 - `TRANSPORT_AI_ENABLED`;
 - `TRANSPORT_AI_AGENT_MODE`;
 - `TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY`;
@@ -442,7 +442,7 @@ Checklist:
 2. salvar `docker ps`, `docker compose ps`, `docker volume ls`;
 3. validar publicamente `/api/health`, `/checking/admin`, `/checking/user`, `/checking/transport`;
 4. salvar o SHA atualmente em producao para API e para cada site, se ja existirem imagens separadas;
-5. confirmar o valor e a presenca de `TRANSPORT_AI_ENABLED`, `TRANSPORT_AI_AGENT_MODE`, `TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY`, `MAPBOX_ACCESS_TOKEN` e `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE` no host;
+5. confirmar o valor e a presenca de `TRANSPORT_AI_ENABLED`, `TRANSPORT_AI_AGENT_MODE`, `TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY`, `HERE_API_KEY` e `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE` no host;
 6. capturar um smoke do dashboard Transport com a IA funcionando;
 7. capturar um backup do `.env` atual da API;
 8. capturar backup do banco e de `event_archives`.
@@ -595,7 +595,7 @@ Sequencia proibida:
 Durante o split do dashboard, nao rotacionar ao mesmo tempo:
 
 - `TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY`;
-- `MAPBOX_ACCESS_TOKEN`;
+- `HERE_API_KEY`;
 - `TRANSPORT_AI_ENABLED`;
 - `TRANSPORT_AI_AGENT_MODE`;
 - `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE`;
@@ -628,7 +628,7 @@ Checklist minimo:
 7. confirmar exibicao correta do estado da IA no dashboard;
 8. executar um fluxo de calculo de rota em ambiente controlado ou projeto de smoke;
 9. confirmar polling/consulta do status da execucao;
-10. confirmar que nenhum erro de `transport_ai_llm_settings_missing`, `mapbox`, `approval evidence` ou `encryption key` apareceu nos logs.
+10. confirmar que nenhum erro de `transport_ai_llm_settings_missing`, `here_api_key_missing`, `approval evidence` ou `encryption key` apareceu nos logs.
 
 ### 10.6 Gate de deploy do repo `checking_transport`
 

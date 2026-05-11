@@ -18,12 +18,6 @@ def test_transport_ai_settings_default_to_safe_server_side_values():
     assert settings.openai_temperature == 0
     assert settings.openai_timeout_seconds == 120
     assert settings.openai_max_retries == 2
-    assert settings.mapbox_access_token is None
-    assert settings.mapbox_matrix_profile == "mapbox/driving-traffic"
-    assert settings.mapbox_directions_profile == "mapbox/driving-traffic"
-    assert settings.mapbox_timeout_seconds == 20
-    assert settings.mapbox_max_retries == 2
-    assert settings.mapbox_geocoding_permanent is False
     assert settings.here_api_key is None
     assert settings.here_matrix_profile == "here/car-fast"
     assert settings.here_directions_profile == "here/car-fast"
@@ -60,7 +54,6 @@ def test_app_boots_without_ai_keys_when_transport_ai_is_disabled(tmp_path):
         }
     )
     env.pop("OPENAI_API_KEY", None)
-    env.pop("MAPBOX_ACCESS_TOKEN", None)
 
     result = subprocess.run(
         [
