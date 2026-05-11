@@ -407,7 +407,7 @@ def _build_transport_ai_tool_issue_from_exception(
     *,
     code: str = "transport_ai_tool_execution_failed",
 ) -> TransportAILangChainToolIssue:
-    normalized_message = _truncate_transport_ai_error_message(str(exc)) or "Transport AI tool execution failed."
+    normalized_message = _truncate_transport_ai_issue_message(str(exc)) or "Transport AI tool execution failed."
     if isinstance(exc, TransportRouteProviderError):
         error_code = _resolve_transport_ai_route_provider_failure_code(exc)
         _friendly_message, message_key, message_params = _resolve_transport_ai_failure_contract(
@@ -1643,6 +1643,15 @@ def _truncate_transport_ai_error_message(message: str | None) -> str | None:
     return f"{normalized[:997]}..."
 
 
+def _truncate_transport_ai_issue_message(message: str | None) -> str | None:
+    if message is None:
+        return None
+    normalized = message.strip()
+    if len(normalized) <= 500:
+        return normalized
+    return f"{normalized[:497]}..."
+
+
 def _resolve_transport_ai_failure_contract(
     *,
     error_code: str | None,
@@ -1699,7 +1708,7 @@ def _build_transport_ai_runtime_issue(
     message_params: TransportAIMessageParams | None = None,
     setting_name: str | None = None,
 ) -> TransportAIPreflightIssue:
-    normalized_message = _truncate_transport_ai_error_message(message) or "Transport AI runtime failure."
+    normalized_message = _truncate_transport_ai_issue_message(message) or "Transport AI runtime failure."
     return TransportAIPreflightIssue(
         code=code,
         message=normalized_message,
@@ -2154,7 +2163,7 @@ def _build_transport_ai_retry_feedback_from_parsing_error(
         issues=[
             TransportAIPreflightIssue(
                 code=error_code,
-                message=_truncate_transport_ai_error_message(str(parsing_error))
+                message=_truncate_transport_ai_issue_message(str(parsing_error))
                 or "Transport AI returned invalid structured output.",
                 message_key=message_key,
                 message_params=dict(message_params or {}),
