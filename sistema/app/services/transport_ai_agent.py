@@ -2844,6 +2844,11 @@ def run_transport_ai_agent(
             observability=observability_summary,
         )
     except Exception as exc:
+        logger.error(
+            "Transport AI agent execution failed with unexpected exception",
+            exc_info=True,
+            extra={"run_id": run.id, "current_phase": current_phase, "exc_type": type(exc).__name__},
+        )
         if observability_summary is None and context.state.planning_input is not None:
             observability_summary = _ensure_transport_ai_observability_summary(context, run=run)
         if observability_summary is not None:
