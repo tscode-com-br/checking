@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 import hashlib
 from math import ceil
+import time
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -1126,6 +1127,7 @@ class MapboxTransportRouteProvider(TransportRouteProvider):
             if response.status_code == 429 or response.status_code >= 500:
                 last_retryable_status_code = response.status_code
                 if attempt < attempt_count:
+                    time.sleep(2 ** (attempt - 1))
                     continue
             if response.status_code >= 400:
                 raise TransportRouteProviderInvalidResponseError(
@@ -1669,6 +1671,7 @@ class HereTransportRouteProvider(TransportRouteProvider):
             if response.status_code == 429 or response.status_code >= 500:
                 last_retryable_status_code = response.status_code
                 if attempt < attempt_count:
+                    time.sleep(2 ** (attempt - 1))
                     continue
             if response.status_code >= 400:
                 raise TransportRouteProviderInvalidResponseError(

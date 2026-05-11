@@ -211,6 +211,9 @@ def mount_static_site(app: FastAPI, *, site_name: str, route_path: str, director
     app.mount(route_path, StaticFiles(directory=directory), name=site_name)
 
 
+_STARTUP_LOGGER = logging.getLogger("checking.startup")
+
+
 def _load_here_api_key_from_db() -> None:
     from .database import SessionLocal
     try:
@@ -219,7 +222,7 @@ def _load_here_api_key_from_db() -> None:
             if here_api_key:
                 settings.here_api_key = here_api_key
     except Exception:
-        pass
+        _STARTUP_LOGGER.warning("Failed to load HERE API key from database at startup.", exc_info=True)
 
 
 @asynccontextmanager
