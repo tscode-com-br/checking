@@ -882,3 +882,150 @@ Complemento importante para pedidos envolvendo Transport AI:
 ```text
 Se a entrega depender de configuracao de ambiente, secret ou dado manual de producao, nao trate commit/push como suficiente. Diga explicitamente o que ficou fora do Git e o que precisa ser sincronizado para o proximo deploy nao reverter o comportamento.
 ```
+
+## 15. Regras criticas aprendidas na pratica sobre GitHub Actions neste repositorio
+
+Esta secao documenta armadilhas reais que quebraram o pipeline de producao e que nao sao obvias lendo a documentacao oficial do GitHub Actions.
+
+### 15.1 NUNCA use `secrets.*` diretamente em condicoes `if:` de steps
+
+**Regra:**
+
+```yaml
+# ERRADO — o GitHub Actions nao avalia secrets em condicoes if:
+- name: Meu step
+  if: ${{ secrets.MINHA_VARIAVEL != '' }}
+
+# CERTO — exponha o secret como env var e verifique a env var
+- name: Meu step
+  env:
+    MINHA_VARIAVEL: ${{ secrets.MINHA_VARIAVEL }}
+  if: env.MINHA_VARIAVEL != ''
+```
+
+**Por que isso importa:**
+
+Quando um step usa `secrets.*` diretamente em `if:`, o GitHub Actions falha ao parsear o workflow
+inteiro. O resultado e um run com duracao de `0s` e a mensagem "This run likely failed because of a
+workflow file issue". Nenhum job e executado, nenhum log e gerado, e o erro e silencioso.
+
+Isso aconteceu com o step "Apply nginx edge routes" em `deploy-oceandrive.yml` em 2026-05-11.
+A consequencia foi que TODOS os deploys falharam silenciosamente por horas sem que nenhum passo
+chegasse a rodar.
+
+**Como identificar esse problema:**
+
+```powershell
+gh run list --workflow deploy-oceandrive.yml --limit 5
+```
+
+Se a coluna de duracao mostrar `0s` para varios runs consecutivos, e o `gh run view <id>` mostrar
+"This run likely failed because of a workflow file issue" com `total_count: 0` jobs, e um erro de
+parse YAML no workflow — nao um erro de execucao.
+
+**Regra para uso de secrets dentro de `script:` de steps:**
+
+Dentro do campo `script:` de um step que usa `uses: appleboy/ssh-action`, secrets podem ser
+referenciados normalmente via `${{ secrets.X }}`. O problema ocorre APENAS no campo `if:`.
+
+Se voce precisar usar o secret tanto no `if:` quanto no `script:`, declare-o como env var e use
+`${{ env.X }}` nos dois lugares:
+
+```yaml
+- name: Aplica nginx
+  env:
+    OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
+  if: env.OCEAN_NGINX_SERVER_CONFIG != ''
+  uses: appleboy/ssh-action@...
+  with:
+    script: |
+      bash manage.sh --server-config '${{ env.OCEAN_NGINX_SERVER_CONFIG }}'
+```
+
+### 15.2 O deploy agora aplica nginx automaticamente se o secret estiver configurado
+
+O step "Apply nginx edge routes" foi adicionado em `deploy-oceandrive.yml` (entre "Start application
+runtime" e "Snapshot disk usage after restart"). Ele roda apenas quando o secret
+`OCEAN_NGINX_SERVER_CONFIG` esta preenchido.
+
+**O que o step faz:**
+
+1. executa `manage_checking_edge_cutover.sh apply` no host remoto;
+2. aplica o conteudo de `deploy/nginx/checking-edge-routes.conf` dentro do bloco
+   `# BEGIN CHECKCHECK EDGE ROUTES` / `# END CHECKCHECK EDGE ROUTES` do arquivo nginx;
+3. roda `nginx -t` para validar;
+4. recarrega nginx com `systemctl reload nginx`.
+
+**Estado atual do secret:**
+
+| Secret | Valor atual | Funcao |
+|---|---|---|
+| `OCEAN_NGINX_SERVER_CONFIG` | `/etc/nginx/sites-enabled/checkcheck` | Caminho do arquivo de configuracao nginx do servidor que serve `tscode.com.br` |
+
+**Consequencia pratica:**
+
+Qualquer alteracao em `deploy/nginx/checking-edge-routes.conf` e automaticamente aplicada no
+proximo deploy, sem necessidade de workflow manual separado. O reload do nginx faz parte do
+fluxo de deploy normal.
+
+### 15.3 Backups do nginx nunca devem ficar em `sites-enabled/`
+
+O script `deploy/nginx/manage_checking_edge_cutover.sh` cria um backup do arquivo de configuracao
+antes de modificar. O backup padrao fica em `/tmp/`, NAO no mesmo diretorio do arquivo original.
+
+**Por que isso importa:**
+
+nginx carrega todos os arquivos dentro de `sites-enabled/` sem excecao, incluindo arquivos `.bak`.
+Se um backup como `checkcheck.bak.20260511082439` for criado dentro de `sites-enabled/`, nginx
+detectara um `default_server` duplicado e recusara recarregar, com erro:
+
+```
+[emerg] a duplicate default server for 0.0.0.0:80 in
+/etc/nginx/sites-enabled/checkcheck.bak.20260511082439:2
+nginx: configuration file /etc/nginx/nginx.conf test failed
+```
+
+O script ja foi corrigido para usar `/tmp/nginx-<nome>.bak.<timestamp>` como destino padrao.
+Nao reverter esse comportamento.
+
+### 15.4 Como diagnosticar um deploy que falhou em 0 segundos
+
+Sequencia de diagnostico quando o run aparece com `0s`:
+
+```powershell
+# 1. Verificar se jobs foram criados
+gh api repos/tscode-com-br/checking/actions/runs/<run-id>/jobs --jq '.total_count'
+# Se retornar 0, e erro de parse do workflow
+
+# 2. Tentar obter logs (vai falhar com "log not found" se for erro de parse)
+gh run view <run-id> --log-failed
+
+# 3. Validar o YAML do workflow localmente antes de commitar
+# (GitHub Actions nao tem validator CLI oficial, mas o erro mais comum
+#  e secrets.* em condicoes if: — revise todos os steps com if: no arquivo)
+```
+
+### 15.5 Fluxo do deploy atualizado (maio 2026)
+
+O fluxo atual do `deploy-oceandrive.yml`, na ordem de execucao, inclui agora o step de nginx:
+
+1. Checkout do repositorio
+2. Build e push da imagem Docker para `ghcr.io/tscode-com-br/checkcheck-app:<sha>`
+3. Verificacao de fingerprint SSH do host
+4. Criacao do diretorio remoto
+5. Remocao de diretorios legados (`checking_android_new`, `checking_kotlin`, `checking_kotlin_new`)
+6. `rsync --delete` do projeto para o host (inclui `deploy/nginx/checking-edge-routes.conf`)
+7. Preflight de disco (limpeza e verificacao de espaco livre)
+8. Snapshot de disco antes do restart
+9. Materializacao do `.env` a partir do secret `OCEAN_APP_ENV_B64`
+10. Pull da imagem no host
+11. Migracao do banco (`alembic upgrade head`)
+12. Start do runtime (`docker compose up`)
+13. **[NOVO] Apply nginx edge routes** (se `OCEAN_NGINX_SERVER_CONFIG` estiver configurado)
+14. Snapshot de disco depois do restart
+15. Validacao de health local
+16. Validacao de health publica (`https://tscode.com.br/api/health`)
+17. Marcacao do release
+18. Instalacao do SSD cleanup automation
+19. Execucao do SSD cleanup
+20. Verificacao de residuos de deploy
