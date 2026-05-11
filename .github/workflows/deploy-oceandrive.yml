@@ -321,7 +321,9 @@ jobs:
               --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
 
       - name: Apply nginx edge routes
-        if: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG != '' }}
+        env:
+          OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
+        if: env.OCEAN_NGINX_SERVER_CONFIG != ''
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -335,7 +337,7 @@ jobs:
             set -euo pipefail
             cd ${{ steps.deploy_dir.outputs.path }}
             bash deploy/nginx/manage_checking_edge_cutover.sh apply \
-              --server-config '${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}' \
+              --server-config '${{ env.OCEAN_NGINX_SERVER_CONFIG }}' \
               --routes-file deploy/nginx/checking-edge-routes.conf \
               --http-config-target /etc/nginx/conf.d/checkcheck-edge-http.conf \
               --http-rules-file deploy/nginx/checking-edge-http.conf \
