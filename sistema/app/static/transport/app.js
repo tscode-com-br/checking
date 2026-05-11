@@ -10445,6 +10445,10 @@
             && timeState.timeField === "boarding_time"
           ),
         };
+      }).sort(function (a, b) {
+        if (a.timeSortValue < b.timeSortValue) return -1;
+        if (a.timeSortValue > b.timeSortValue) return 1;
+        return 0;
       });
     }
 
