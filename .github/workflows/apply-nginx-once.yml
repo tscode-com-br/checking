@@ -47,8 +47,11 @@ jobs:
 
             cd '${{ secrets.OCEAN_APP_DIR }}'
 
+            backup_file="/tmp/nginx-$(basename "$server_config").bak.$(date +%Y%m%d%H%M%S)"
+
             bash deploy/nginx/manage_checking_edge_cutover.sh apply \
               --server-config "$server_config" \
+              --backup-file "$backup_file" \
               --routes-file deploy/nginx/checking-edge-routes.conf \
               --http-config-target /etc/nginx/conf.d/checkcheck-edge-http.conf \
               --http-rules-file deploy/nginx/checking-edge-http.conf \
