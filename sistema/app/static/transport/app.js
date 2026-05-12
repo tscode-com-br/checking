@@ -10544,10 +10544,17 @@
       const resolvedOptions = detailOptions || {};
       const previewRequestRow = resolvedOptions.previewRequestRow || null;
       const resolvedRouteKind = resolveVehicleDetailsRouteKind(vehicle, resolvedOptions);
+      const scope = resolveVehicleDetailsScope(vehicle, resolvedOptions);
       const visiblePassengerRows = buildVehiclePassengerPreviewRows(
         assignedRows,
         previewRequestRow,
         VEHICLE_DETAILS_MAX_ROWS
+      );
+
+      const effectiveDepartureTime = getEffectiveWorkToHomeDepartureTime(state.dashboard, state.workToHomeTime);
+      const vehicleW2hTime = normalizeTransportTimeValue(
+        getVehicleDepartureTime(vehicle, effectiveDepartureTime, scope),
+        ""
       );
 
       return visiblePassengerRows.map(function (requestRow) {
@@ -10561,6 +10568,8 @@
         );
         const isConfirmed = String(requestRow && requestRow.assignment_status || "").trim() === "confirmed";
         const routeKind = getRouteKindForRequestRow(requestRow, resolvedRouteKind);
+        const h2wBoardingTime = normalizeTransportTimeValue(requestRow && requestRow.boarding_time, "");
+        const hasH2wBoardingTime = isValidTransportTimeValue(h2wBoardingTime);
 
         return {
           requestRow,
@@ -10568,17 +10577,17 @@
           isConfirmed,
           routeKind,
           timeState,
-          resolvedTime: hasTime ? normalizedTime : "",
+          resolvedTime: hasH2wBoardingTime ? h2wBoardingTime : "",
           timeSortValue: hasTime
             ? String(parseTransportTimeToMinutes(normalizedTime)).padStart(4, "0")
             : "9999",
+          h2wBoardingTime: hasH2wBoardingTime ? h2wBoardingTime : "",
+          w2hTime: vehicleW2hTime,
           canEditBoardingTime: Boolean(
             requestRow
             && !isPreviewRow
             && isConfirmed
-            && timeState
-            && timeState.mode === "eta"
-            && timeState.timeField === "boarding_time"
+            && routeKind === "home_to_work"
           ),
         };
       }).sort(function (a, b) {
@@ -10589,10 +10598,6 @@
     }
 
     function buildVehicleDetailsColumnDefinitions(vehicle, rowViewModels, detailOptions) {
-      const headerTimeState = rowViewModels.length
-        ? rowViewModels[0].timeState
-        : resolveVehicleDetailsPassengerTime(vehicle, null, detailOptions);
-
       return [
         {
           key: "passenger",
@@ -10611,15 +10616,37 @@
           },
         },
         {
-          key: "operational-time",
-          headerKey: getVehicleDetailsTimeHeaderKey(headerTimeState),
+          key: "h2w-boarding",
+          headerKey: "vehicleDetails.h2wBoardingHeader",
           headerClassName: "transport-vehicle-passenger-time-header",
           cellClassName: "transport-vehicle-passenger-time",
           getSortValue: function (rowViewModel) {
             return rowViewModel && rowViewModel.timeSortValue ? rowViewModel.timeSortValue : "9999";
           },
           renderCell: function (rowViewModel) {
-            return createVehiclePassengerTimeContent(rowViewModel);
+            if (rowViewModel && rowViewModel.canEditBoardingTime) {
+              return createVehiclePassengerTimeEditor(rowViewModel);
+            }
+            var bt = rowViewModel && rowViewModel.h2wBoardingTime || "";
+            return createNode(
+              "span",
+              "transport-vehicle-passenger-time-value" + (bt ? "" : " is-placeholder"),
+              bt || t("vehicleDetails.timeMissing")
+            );
+          },
+        },
+        {
+          key: "w2h-time",
+          headerKey: "vehicleDetails.w2hTimeHeader",
+          headerClassName: "transport-vehicle-passenger-w2h-time-header",
+          cellClassName: "transport-vehicle-passenger-w2h-time",
+          renderCell: function (rowViewModel) {
+            var wt = rowViewModel && rowViewModel.w2hTime || "";
+            return createNode(
+              "span",
+              "transport-vehicle-passenger-time-value" + (wt ? "" : " is-placeholder"),
+              wt || t("vehicleDetails.timeMissing")
+            );
           },
         },
         {
