@@ -5974,6 +5974,7 @@
       aiRoutePollingTimer: null,
       aiRoutePollingAttempt: 0,
       aiRouteRequestPending: false,
+      aiRouteInBackground: false,
       aiLatestSuggestionLoading: false,
       aiChangesCommandPending: false,
       aiChangesPendingAction: "",
@@ -6735,8 +6736,8 @@
       });
 
       document.querySelectorAll("[data-ai-agent-cancel]").forEach(function (buttonElement) {
-        buttonElement.disabled = hasActiveRun;
-        buttonElement.textContent = t("ai.agentSettingsCancel");
+        buttonElement.disabled = hasActiveRun && !state.aiRouteInBackground;
+        buttonElement.textContent = state.aiRouteInBackground ? "Fechar" : t("ai.agentSettingsCancel");
       });
       document.querySelectorAll("[data-ai-agent-submit]").forEach(function (buttonElement) {
         buttonElement.disabled = !state.isAuthenticated || hasActiveRun;
@@ -6772,6 +6773,7 @@
       aiAgentFeedback.hidden = false;
       aiAgentFeedback.textContent = feedbackMessage;
       aiAgentFeedback.dataset.tone = state.aiAgentFeedbackTone || "info";
+      syncAiMenuControls();
     }
 
     function getTransportAiSettingsProjectCatalogStatus() {
@@ -7286,8 +7288,16 @@
     }
 
     function syncAiMenuControls() {
+      const hasActiveRun = state.aiRouteRequestPending
+        || state.aiRoutePollingTimer !== null
+        || shouldContinuePollingAiRouteRun(state.aiRouteRunStatus);
+      const hasSuggestionReady = hasRenderableTransportAiReview(
+        state.aiRouteRunStatus || { suggestion: state.aiRouteSuggestion }
+      );
       if (aiMenuShell) {
         aiMenuShell.classList.toggle("is-open", state.aiMenuOpen);
+        aiMenuShell.classList.toggle("is-calculating", hasActiveRun);
+        aiMenuShell.classList.toggle("is-suggestion-ready", !hasActiveRun && hasSuggestionReady);
       }
       if (aiMenuTrigger) {
         aiMenuTrigger.setAttribute("aria-expanded", String(state.aiMenuOpen));
@@ -7762,6 +7772,7 @@
         clearPendingAiRoutePolling();
         resetAiRoutePollingBackoff();
         state.aiRouteRequestPending = false;
+        state.aiRouteInBackground = false;
         state.aiRouteRunStatus = null;
         state.aiRouteRunKey = null;
         state.aiRouteSuggestion = null;
@@ -9626,18 +9637,25 @@
           const responseMessageOptions = resolveTransportApiStructuredMessageOptions(response);
           if (hasRenderableTransportAiReview(response)) {
             resetAiRoutePollingBackoff();
+            state.aiRouteInBackground = false;
             setAiAgentFeedback(
               responseMessage,
               "success",
               responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsReadyForReview" })
             );
             requestDashboardRefresh({ announce: false });
-            openAiChangesModal(response);
+            if (!aiAgentModal || aiAgentModal.hidden) {
+              // Modal foi fechado (modo background) — não abrir automaticamente, só exibir botão verde
+              syncAiMenuControls();
+            } else {
+              openAiChangesModal(response);
+            }
             return response;
           }
 
           if (!response || response.ok === false || String(response.status || "").trim().toLowerCase() === "failed") {
             resetAiRoutePollingBackoff();
+            state.aiRouteInBackground = false;
             const errorMessage = resolveTransportAiStructuredMessage(response);
             const baselineComplement = resolveTransportAiBaselineComplement(response);
             const displayMessage = baselineComplement ? errorMessage + " " + baselineComplement : errorMessage;
@@ -9653,11 +9671,13 @@
           const pollingDisplayMessage = isPolling
             ? getAiRoutePollingStatusLabel(response && response.status)
             : responseMessage;
-          setAiAgentFeedback(
-            pollingDisplayMessage,
-            isPolling ? "warning" : "success",
-            isPolling ? undefined : (responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" }))
-          );
+          if (!state.aiRouteInBackground) {
+            setAiAgentFeedback(
+              pollingDisplayMessage,
+              isPolling ? "warning" : "success",
+              isPolling ? undefined : (responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" }))
+            );
+          }
           if (isPolling) {
             queueAiRouteRunPoll(state.aiRouteRunKey, getNextAiRoutePollDelay());
           } else {
@@ -9667,6 +9687,7 @@
         })
         .catch(function (error) {
           resetAiRoutePollingBackoff();
+          state.aiRouteInBackground = false;
           const fallbackErrorMessage = t("ai.routeCalculationFailed");
           const resolvedMessage = resolveTransportApiStructuredMessage(error && error.payload)
             || localizeTransportApiMessage(error && error.message)
@@ -9748,6 +9769,18 @@
           state.aiRouteRunStatus = response || null;
           state.aiRouteSuggestion = null;
 
+          if (state.aiRouteRunKey) {
+            // 202 response: fire-and-poll mode — calculation runs in background
+            state.aiRouteInBackground = true;
+            setAiAgentFeedback(
+              "As rotas ser\u00e3o calculadas em segundo plano. Clique em 'IA \u203a Implementar Modifica\u00e7\u00f5es' para ver os resultados quando o bot\u00e3o 'IA' estiver verde.",
+              "info"
+            );
+            syncAiAgentSettingsControls({ preserveInputs: true });
+            syncAiMenuControls();
+            return pollAiRouteRun(state.aiRouteRunKey);
+          }
+
           const responseMessage = resolveTransportApiStructuredMessage(response)
             || String(response && response.message || "").trim();
           const responseMessageOptions = resolveTransportApiStructuredMessageOptions(response);
@@ -9756,15 +9789,6 @@
             response && response.suggestion_ready ? "success" : "warning",
             responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" })
           );
-
-          if (state.aiRouteRunKey) {
-            // After the fire-and-poll backend change, the POST returns HTTP 202 quickly
-            // with suggestion_ready=false. Polling is now the primary success path.
-            // The loading state persists during polling because syncAiAgentSettingsControls
-            // checks aiRoutePollingTimer and shouldContinuePollingAiRouteRun in addition
-            // to aiRouteRequestPending.
-            return pollAiRouteRun(state.aiRouteRunKey);
-          }
           return response || null;
         })
         .catch(function (error) {
@@ -9829,7 +9853,7 @@
       const hasActiveRun = state.aiRouteRequestPending
         || state.aiRoutePollingTimer !== null
         || shouldContinuePollingAiRouteRun(state.aiRouteRunStatus);
-      if (!closeOptions.force && hasActiveRun) {
+      if (!closeOptions.force && hasActiveRun && !state.aiRouteInBackground) {
         return;
       }
 

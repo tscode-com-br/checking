@@ -219,6 +219,19 @@ button {
   animation: transport-ai-border-spin calc(var(--transport-ai-hover-duration) / 2) linear 2;
 }
 
+.transport-ai-menu-shell.is-calculating .transport-ai-trigger::before {
+  animation: transport-ai-border-spin 0.7s linear infinite;
+}
+
+.transport-ai-menu-shell.is-suggestion-ready .transport-ai-trigger::before {
+  background: #4cd193;
+  animation: none;
+}
+
+.transport-ai-menu-shell.is-suggestion-ready .transport-ai-trigger {
+  box-shadow: 0 0 0 2px rgba(76, 209, 147, 0.3), 0 0 20px rgba(76, 209, 147, 0.45), 0 12px 24px rgba(0, 0, 0, 0.24);
+}
+
 .transport-ai-trigger:focus-visible {
   outline: 2px solid rgba(100, 210, 255, 0.72);
   outline-offset: 4px;
