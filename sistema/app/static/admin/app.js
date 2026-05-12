@@ -71,6 +71,7 @@ let adminAccessScope = "full";
 let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"];
 let adminCanViewActivityTime = true;
 let currentAdminChave = "";
+let currentAdminPerfil = 0;
 let currentAdminProjectNames = [];
 let currentAdminProjectScopeResolved = false;
 let currentAdminProjectScopeLoadPromise = null;
@@ -1155,6 +1156,7 @@ function resetAdminAccessState() {
   adminAccessScope = "full";
   allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
   adminCanViewActivityTime = true;
+  currentAdminPerfil = 0;
   applyAdminTabVisibility();
   syncAdminResponsiveState({ force: true });
 }
@@ -1926,6 +1928,7 @@ function showAdminShell(admin) {
   isAuthenticated = true;
   setAdminAccessState(admin);
   currentAdminChave = String(admin?.chave ?? "").trim().toUpperCase();
+  currentAdminPerfil = Number(admin?.perfil ?? 0);
   currentAdminProjectNames = [];
   currentAdminProjectScopeResolved = false;
   currentAdminProjectScopeLoadPromise = null;
@@ -4760,16 +4763,26 @@ function setEndpointsStatus(message, ok) {
 function makeEndpointRow(row) {
   const tr = document.createElement("tr");
   tr.dataset.endpointName = row.endpoint_name;
-  const maskedKey = row.secret_key.slice(0, 6) + "••••••••••••••••••••••" + row.secret_key.slice(-4);
-  tr.innerHTML = `<td data-label="Nome do Endpoint">${escapeHtml(row.endpoint_name)}</td><td data-label="Chave Secreta"><code class="endpoint-secret-key">${escapeHtml(maskedKey)}</code></td><td data-label="Ações"><button type="button" class="secondary-button" data-endpoint-rotate="${escapeHtml(row.endpoint_name)}">Alterar</button></td>`;
+  const isPartnerAdmin = currentAdminPerfil === 9;
+  const keyDisplay = isPartnerAdmin
+    ? `<code class="endpoint-secret-key endpoint-secret-key--visible">${escapeHtml(row.secret_key)}</code>`
+    : `<code class="endpoint-secret-key">${escapeHtml(row.secret_key.slice(0, 6) + "••••••••••••••••••••••" + row.secret_key.slice(-4))}</code>`;
+  const actionsHtml = isPartnerAdmin
+    ? `<button type="button" class="secondary-button endpoint-copy-btn" data-endpoint-copy="${escapeHtml(row.endpoint_name)}" data-endpoint-key="${escapeHtml(row.secret_key)}" title="Copiar chave">Copiar</button><button type="button" class="secondary-button" data-endpoint-rotate="${escapeHtml(row.endpoint_name)}">Alterar</button>`
+    : `<span class="endpoint-restricted-label">Restrito</span>`;
+  tr.innerHTML = `<td data-label="Nome do Endpoint">${escapeHtml(row.endpoint_name)}</td><td data-label="Chave Secreta">${keyDisplay}</td><td data-label="Ações">${actionsHtml}</td>`;
   return tr;
 }
 
 async function loadEndpoints() {
   const body = document.getElementById("endpointsBody");
   if (!body) return;
-  const rows = await fetchJson("/api/partner/admin/endpoint-keys");
   body.innerHTML = "";
+  if (currentAdminPerfil !== 9) {
+    renderEmptyStateRow("endpointsBody", 3, "Acesso restrito ao perfil 9.");
+    return;
+  }
+  const rows = await fetchJson("/api/partner/admin/endpoint-keys");
   if (!Array.isArray(rows) || rows.length === 0) {
     renderEmptyStateRow("endpointsBody", 3, "Nenhum endpoint cadastrado.");
     return;
@@ -6494,6 +6507,20 @@ function bindActions() {
       const target = event.target;
       const button = target instanceof Element ? target.closest("button") : null;
       if (!(button instanceof HTMLButtonElement)) return;
+      if (button.dataset.endpointCopy) {
+        const keyToCopy = button.dataset.endpointKey || "";
+        if (navigator.clipboard && keyToCopy) {
+          navigator.clipboard.writeText(keyToCopy)
+            .then(() => {
+              const original = button.textContent;
+              button.textContent = "Copiado!";
+              setTimeout(() => { button.textContent = original; }, 1500);
+            })
+            .catch(() => {
+              setEndpointsStatus("Não foi possível copiar a chave.", false);
+            });
+        }
+      }
       if (button.dataset.endpointRotate) {
         const endpointName = button.dataset.endpointRotate;
         button.disabled = true;

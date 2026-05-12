@@ -2666,6 +2666,17 @@ input.inline, select.inline, textarea.inline {
   word-break: break-all;
 }
 
+.cadastro-section-panel--endpoints .endpoint-secret-key--visible {
+  color: #1a2a40;
+  user-select: all;
+}
+
+.cadastro-section-panel--endpoints .endpoint-restricted-label {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary, #888);
+  font-style: italic;
+}
+
 .cadastro-endpoints-table th:nth-child(1),
 .cadastro-endpoints-table td:nth-child(1) {
   width: 22%;
@@ -2676,6 +2687,10 @@ input.inline, select.inline, textarea.inline {
 }
 .cadastro-endpoints-table th:nth-child(3),
 .cadastro-endpoints-table td:nth-child(3) {
-  width: 100px;
+  width: 140px;
   text-align: right;
+}
+
+.cadastro-endpoints-table .endpoint-copy-btn {
+  margin-right: 6px;
 }

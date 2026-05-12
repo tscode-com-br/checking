@@ -1,6 +1,6 @@
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from ..schemas import (
     EndpointApiKeyRow,
     EndpointApiKeyRotateResponse,
 )
-from ..services.admin_auth import require_full_admin_session
+from ..services.admin_auth import get_authenticated_admin_from_session, user_has_admin_access, require_full_admin_session
 from ..services.project_catalog import list_projects
 from ..services.time_utils import build_timezone_context, now_sgt
 from ..services.user_sync import resolve_latest_user_activities
@@ -24,6 +24,23 @@ from ..routers.admin import format_assiduidade_label, build_presence_activity_fi
 router = APIRouter(prefix="/api/partner", tags=["partner"])
 
 CHECKINGINFO_ENDPOINT_NAME = "checkinginfo"
+
+ADMIN_PARTNER_PERFIL = 9
+
+
+def require_partner_admin_session(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User:
+    """Requires an admin session with perfil = 9 (partner manager)."""
+    admin = get_authenticated_admin_from_session(request, db)
+    if admin is None:
+        raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
+    if not user_has_admin_access(admin):
+        raise HTTPException(status_code=403, detail="Este usuario nao possui permissao para esta area do Admin.")
+    if (admin.perfil or 0) != ADMIN_PARTNER_PERFIL:
+        raise HTTPException(status_code=403, detail="Apenas administradores com perfil 9 podem gerenciar chaves de endpoints.")
+    return admin
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +134,7 @@ def get_checking_info(
 @router.get(
     "/admin/endpoint-keys",
     response_model=list[EndpointApiKeyRow],
-    dependencies=[Depends(require_full_admin_session)],
+    dependencies=[Depends(require_partner_admin_session)],
 )
 def list_endpoint_api_keys(db: Session = Depends(get_db)) -> list[EndpointApiKeyRow]:
     rows = db.execute(select(EndpointApiKey).order_by(EndpointApiKey.id)).scalars().all()
@@ -136,7 +153,7 @@ def list_endpoint_api_keys(db: Session = Depends(get_db)) -> list[EndpointApiKey
 @router.post(
     "/admin/endpoint-keys/{endpoint_name}/rotate",
     response_model=EndpointApiKeyRotateResponse,
-    dependencies=[Depends(require_full_admin_session)],
+    dependencies=[Depends(require_partner_admin_session)],
 )
 def rotate_endpoint_api_key(
     endpoint_name: str,
