@@ -21,6 +21,8 @@ from ..models import (
     PendingRegistration,
     Project,
     ProjectAutoCheckoutDistance,
+    TransportAssignment,
+    TransportRequest,
     Workplace,
     User,
     UserSyncEvent,
@@ -3468,6 +3470,14 @@ def remove_user(
         pending = db.execute(select(PendingRegistration).where(PendingRegistration.rfid == user_rfid)).scalar_one_or_none()
     if pending is not None:
         db.delete(pending)
+
+    # Delete transport data (no cascade on transport_requests.user_id)
+    user_request_ids = db.execute(
+        select(TransportRequest.id).where(TransportRequest.user_id == user.id)
+    ).scalars().all()
+    if user_request_ids:
+        db.execute(delete(TransportAssignment).where(TransportAssignment.request_id.in_(user_request_ids)))
+        db.execute(delete(TransportRequest).where(TransportRequest.user_id == user.id))
 
     db.execute(delete(UserSyncEvent).where(UserSyncEvent.user_id == user.id))
     db.delete(user)
