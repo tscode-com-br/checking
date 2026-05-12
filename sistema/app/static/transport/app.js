@@ -10928,24 +10928,19 @@
         removeVehicleFromRoute(vehicle);
       });
 
-      if (!isVehicleReadyForAllocation(vehicle)) {
-        const actionRow = createNode("div", "transport-vehicle-details-actions");
-        const editButton = createNode("button", "transport-secondary-button transport-vehicle-edit-button", t("misc.edit"));
+      const actionRow = createNode("div", "transport-vehicle-details-actions");
+      const editButton = createNode("button", "transport-secondary-button transport-vehicle-edit-button", t("misc.edit"));
 
-        editButton.type = "button";
-        editButton.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openVehicleEditModal(vehicle);
-        });
+      editButton.type = "button";
+      editButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openVehicleEditModal(vehicle);
+      });
 
-        actionRow.appendChild(editButton);
-        actionRow.appendChild(deleteButton);
-        detailsPanel.insertBefore(actionRow, passengerTableShell);
-        return detailsPanel;
-      }
-
-      detailsPanel.insertBefore(deleteButton, passengerTableShell);
+      actionRow.appendChild(editButton);
+      actionRow.appendChild(deleteButton);
+      detailsPanel.insertBefore(actionRow, passengerTableShell);
       return detailsPanel;
     }
 
