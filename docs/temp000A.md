@@ -172,3 +172,81 @@ Foram implementados os testes solicitados (10 no total, cobrindo todos os 5 crit
 - `tests/schemas/test_accident_schemas.py` (novo)
 - `tests/schemas/__init__.py` (novo — para reconhecimento como pacote)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task A3 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco A / Task A3** foi concluída com a criação do script de migração SQL para Postgres.
+
+## 1) Script de migração criado
+
+Arquivo criado: `sistema/scripts/migrate_accidents_v1.sql`
+
+O script é completamente idempotente (`IF NOT EXISTS` em todas as instruções) e cria as 5 tabelas do Modo Acidente em Postgres de produção (Digital Ocean).
+
+### Tabelas criadas:
+
+| Tabela | Descrição |
+|---|---|
+| `accidents` | Registro central de cada acidente, com snapshots e actor de abertura/encerramento |
+| `accident_user_reports` | Última resposta de cada usuário a um acidente específico |
+| `accident_video_uploads` | Vídeos capturados pelos usuários durante o acidente |
+| `accident_archives` | Snapshot final, XLSX e ZIP gerados ao encerrar o acidente |
+| `email_delivery_logs` | Log de todos os e-mails enviados com rastreio de status |
+
+### Constraints incluídas (correspondem 1:1 com os modelos SQLAlchemy):
+
+- `uq_accidents_accident_number` — número de acidente único global
+- `ck_accidents_origin_allowed` — `origin IN ('admin', 'web')`
+- `ck_accidents_number_non_negative` — `accident_number >= 0`
+- `ck_accidents_opened_by_actor_required` — exatamente um dos dois (admin ou user) preenchido
+- `uq_accident_user_reports_accident_id_user_id` — par `(accident_id, user_id)` único
+- `ck_accident_user_reports_zone_allowed` — `zone IN ('waiting', 'safety', 'accident')`
+- `ck_accident_user_reports_status_allowed` — `status IN ('waiting', 'ok', 'help')`
+- `uq_accident_video_uploads_idempotency_key` — chave de idempotência única
+- `uq_accident_archives_accident_id` — um archive por acidente
+- `ck_email_delivery_logs_status_allowed` — `delivery_status IN ('queued', 'sent', 'failed')`
+
+### FKs e ON DELETE semântico:
+
+- `accident_user_reports.accident_id` → `accidents(id)` **ON DELETE CASCADE**
+- `accident_video_uploads.accident_id` → `accidents(id)` **ON DELETE CASCADE**
+- `accident_archives.accident_id` → `accidents(id)` **ON DELETE CASCADE**
+- `email_delivery_logs.accident_id` → `accidents(id)` **ON DELETE SET NULL** (preserva log histórico)
+
+### Índices criados:
+
+- `ix_accidents_single_active` — índice parcial único em `closed_at WHERE closed_at IS NULL` (somente um acidente ativo)
+- `ix_accidents_single_active_guard` — índice parcial único em constante `(1)` `WHERE closed_at IS NULL` (redundância para garantir unicidade mesmo em edge cases do planner do Postgres)
+- `ix_accident_video_uploads_accident_user` — índice composto `(accident_id, user_id)` para queries de vídeos por usuário/acidente
+- `ix_email_delivery_logs_accident` — índice em `accident_id` para queries de e-mails por acidente
+
+## 2) Verificações executadas
+
+1. Validação dos conteúdos do SQL via script Python:
+   - Todas as 5 tabelas: **OK**
+   - Todas as 10 constraints: **OK**
+   - Todos os 4 índices: **OK**
+   - `IF NOT EXISTS` em 9 instruções DDL + 1 no cabeçalho comentado: **OK**
+   - `ON DELETE CASCADE` em 3 tabelas: **OK**
+   - `ON DELETE SET NULL` em 1 tabela: **OK**
+
+2. Docker não disponível no ambiente de desenvolvimento — testes manuais com `docker run postgres:15` são realizados conforme descrito na seção "Testes manuais" da tarefa:
+   ```bash
+   docker run -d --name pg-test -e POSTGRES_PASSWORD=test postgres:15
+   docker exec -i pg-test psql -U postgres < sistema/scripts/migrate_accidents_v1.sql
+   docker exec -i pg-test psql -U postgres -c "\dt"
+   docker exec -i pg-test psql -U postgres -c "\d accidents"
+   docker rm -f pg-test
+   ```
+
+## 3) Alembic
+
+Verificado que não há configuração de Alembic convencional (sem `versions/` com migrações auto-geradas). O padrão do projeto é `Base.metadata.create_all` em dev e SQL manual em produção. O script gerado segue esse padrão.
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/scripts/migrate_accidents_v1.sql` (novo)
+- `sistema/scripts/` (diretório criado)
+- `docs/temp000A.md` (atualizado com este resumo)
