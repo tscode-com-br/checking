@@ -320,3 +320,135 @@ Arquivo criado: `tests/services/test_admin_updates_brokers.py`
 - `tests/services/test_admin_updates_brokers.py` (novo)
 - `tests/services/__init__.py` (novo)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task B2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco B / Task B2** adicionou o endpoint SSE `/api/web/check/stream` ao roteador da Checking Web.
+
+## 1) Alterações em `sistema/app/routers/web_check.py`
+
+### Bloco de imports atualizado (próximo da linha 37–41):
+
+```python
+from ..services.admin_updates import (
+    notify_admin_data_changed,
+    notify_transport_data_changed,
+    notify_web_check_data_changed,
+    transport_updates_broker,
+    web_check_updates_broker,
+)
+```
+
+### Novo endpoint `stream_web_check_updates` (adicionado após `stream_web_transport_updates`):
+
+```python
+@router.get("/check/stream")
+async def stream_web_check_updates(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    _require_matching_authenticated_web_user(request, db, chave)
+    subscriber_id, queue = web_check_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield _encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            web_check_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+```
+
+## 2) Comportamento e segurança
+
+- **Autenticação**: usa o guard `_require_matching_authenticated_web_user(request, db, chave)`, idêntico ao endpoint de transporte. A sessão web deve ter `web_user_chave` correspondendo ao parâmetro `chave`, e o usuário deve ter `senha` definida — caso contrário retorna HTTP 401.
+- **Primeiro evento**: ao conectar, o cliente recebe imediatamente `data: {"reason": "connected"}`.
+- **Keep-alive**: a cada 15 segundos sem mensagens, o servidor envia `: keep-alive` (comentário SSE) para manter a conexão aberta.
+- **Desconexão limpa**: o `finally` chama `web_check_updates_broker.unsubscribe(subscriber_id)`, liberando a fila interna.
+- **Publicação**: qualquer chamada a `notify_web_check_data_changed(reason=..., metadata=...)` entrega a mensagem a todos os subscribers deste endpoint.
+
+## 3) Testes obrigatórios criados
+
+Arquivo criado: `tests/routers/test_web_check_stream.py`
+
+Os 4 testes foram implementados com `@pytest.mark.anyio` (asyncio), chamando o endpoint diretamente (sem HTTP) para contornar limitação fundamental do `httpx.ASGITransport` que bufferiza toda a resposta antes de entregá-la (impossibilitando testes de streaming infinito via HTTP in-process):
+
+1. `test_stream_requires_session` — mock request sem sessão web → `HTTPException` 401
+2. `test_stream_initial_connected_event` — conecta com user válido → primeiro chunk contém `"connected"`
+3. `test_stream_receives_published_payload` — publica `notify_web_check_data_changed(reason="test")` concorrentemente → chunk com `"reason": "test"` entregue
+4. `test_stream_keepalive_after_15s` — substitui `asyncio.wait_for` por versão que sempre lança `TimeoutError` → chunk `: keep-alive` entregue
+
+### Padrão dos testes:
+
+```python
+@pytest.mark.anyio
+async def test_stream_initial_connected_event(db_session):
+    user = _ensure_test_user(db_session)
+    mock_req = _make_mock_request(disconnect_after=1)
+    response = await stream_web_check_updates(
+        request=mock_req, chave=TEST_CHAVE, db=db_session
+    )
+    chunks = await _collect_events(response.body_iterator)
+    assert any("connected" in c for c in chunks)
+```
+
+### Helper `_make_mock_request`:
+
+```python
+def _make_mock_request(disconnect_after: int = 2):
+    mock_req = MagicMock()
+    mock_req.session = {"web_user_chave": TEST_CHAVE}
+    call_count = 0
+    async def is_disconnected():
+        nonlocal call_count
+        call_count += 1
+        return call_count > disconnect_after
+    mock_req.is_disconnected = is_disconnected
+    return mock_req
+```
+
+## 4) Limitação técnica descoberta (`httpx.ASGITransport`)
+
+O `httpx.ASGITransport.handle_async_request` coleta TODOS os chunks de `http.response.body` numa lista e só retorna quando `more_body=False` (i.e., o gerador é exaurido). Para geradores SSE infinitos, isso nunca acontece — a conexão fica pendurada indefinidamente. Esta é uma limitação fundamental do design do httpx para transporte ASGI, não um bug do endpoint.
+
+A solução adotada (chamar o endpoint diretamente e iterar `StreamingResponse.body_iterator`) é a abordagem correta para testar streaming SSE em FastAPI.
+
+## 5) Verificações executadas
+
+1. Import direto:
+   - `from sistema.app.routers.web_check import stream_web_check_updates`
+   - resultado: **OK**
+
+2. Testes:
+   - `python -m pytest -q tests/routers/test_web_check_stream.py`
+   - resultado: **4 passed** (asyncio)
+
+3. Suite completa dos novos testes:
+   - `python -m pytest tests/models/ tests/schemas/ tests/services/ tests/routers/ -v`
+   - resultado: **28 passed** (A1: 9, A2: 10, B1: 5, B2: 4)
+
+## 6) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (edição — import e endpoint adicionados)
+- `tests/routers/test_web_check_stream.py` (novo)
+- `tests/routers/__init__.py` (novo)
+- `docs/temp000A.md` (atualizado com este resumo)

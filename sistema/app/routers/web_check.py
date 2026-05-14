@@ -37,7 +37,9 @@ from ..schemas import (
 from ..services.admin_updates import (
     notify_admin_data_changed,
     notify_transport_data_changed,
+    notify_web_check_data_changed,
     transport_updates_broker,
+    web_check_updates_broker,
 )
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.location_matching import (
@@ -585,7 +587,39 @@ async def stream_web_transport_updates(
     )
 
 
-@router.post("/transport/address", response_model=WebTransportActionResponse)
+@router.get("/check/stream")
+async def stream_web_check_updates(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    _require_matching_authenticated_web_user(request, db, chave)
+    subscriber_id, queue = web_check_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield _encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            web_check_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 def update_web_transport_address(
     payload: WebTransportAddressUpdateRequest,
     request: Request,
