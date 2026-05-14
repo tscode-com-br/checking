@@ -452,3 +452,64 @@ A solução adotada (chamar o endpoint diretamente e iterar `StreamingResponse.b
 - `tests/routers/test_web_check_stream.py` (novo)
 - `tests/routers/__init__.py` (novo)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task C1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco C / Task C1** criou o serviço de numeração sequencial de acidentes.
+
+## 1) Arquivo criado: `sistema/app/services/accident_numbering.py`
+
+```python
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+
+def next_accident_number(db: Session) -> int:
+    """Devolve o próximo número sequencial (>=0). Primeiro acidente = 0."""
+    row = db.execute(
+        text("SELECT COALESCE(MAX(accident_number), -1) + 1 FROM accidents")
+    ).scalar_one()
+    return int(row)
+
+
+def format_accident_number(number: int) -> str:
+    """Formata como 4 dígitos zero-padded ('0000', '0001', ...)."""
+    return f"{int(number):04d}"
+```
+
+### Comportamento
+
+- `next_accident_number(db)` usa `COALESCE(MAX(accident_number), -1) + 1`: quando não há acidentes, `MAX` retorna `NULL` → `COALESCE` retorna `-1` → resultado é `0` (primeiro acidente = 0000).
+- Compatível com SQLite (dev) e Postgres (produção) — usa SQL padrão.
+- `format_accident_number` usa f-string `{n:04d}` para zero-pad; aceita valores maiores que 9999 sem truncar (ex: 10000 → "10000").
+
+## 2) Testes obrigatórios criados
+
+Arquivo criado: `tests/services/test_accident_numbering.py`
+
+4 testes implementados (todos passam):
+
+1. `test_next_accident_number_starts_at_zero` — banco vazio → resultado 0
+2. `test_next_accident_number_increments` — insere acidente com `accident_number=42` → resultado 43
+3. `test_format_accident_number_pads_to_4_digits` — 0→"0000", 42→"0042", 9999→"9999", 1→"0001"
+4. `test_format_accident_number_handles_large_values` — 10000→"10000", 99999→"99999"
+
+Os testes usam SQLite in-file (via `tmp_path`) e criam `Project` + `AdminUser` + `Accident` diretamente.
+
+## 3) Verificações executadas
+
+1. Import:
+   - `from sistema.app.services.accident_numbering import next_accident_number, format_accident_number`
+   - resultado: **OK**
+
+2. Testes:
+   - `python -m pytest -v tests/services/test_accident_numbering.py`
+   - resultado: **4 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_numbering.py` (novo)
+- `tests/services/test_accident_numbering.py` (novo)
+- `docs/temp000A.md` (atualizado com este resumo)
