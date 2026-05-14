@@ -250,3 +250,73 @@ Verificado que não há configuração de Alembic convencional (sem `versions/` 
 - `sistema/scripts/migrate_accidents_v1.sql` (novo)
 - `sistema/scripts/` (diretório criado)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task B1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco B / Task B1** adicionou o terceiro broker de tempo real (`web_check_updates_broker`) ao serviço de atualizações em tempo real.
+
+## 1) Alterações em `sistema/app/services/admin_updates.py`
+
+### Novo broker (linha 275):
+```python
+web_check_updates_broker = AdminUpdatesBroker("checking_web_check_updates")
+```
+
+### `start_realtime_brokers()` — adicionado:
+```python
+web_check_updates_broker.start()
+```
+
+### `stop_realtime_brokers()` — adicionado:
+```python
+web_check_updates_broker.stop()
+```
+
+### Novo helper `notify_web_check_data_changed` (linha 298):
+```python
+def notify_web_check_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
+    web_check_updates_broker.publish(reason=reason, metadata=metadata)
+```
+
+## 2) Contexto de arquitetura
+
+Os três brokers são instâncias independentes de `AdminUpdatesBroker`, cada um com seu próprio canal Postgres LISTEN/NOTIFY:
+
+| Broker | Canal Postgres | Consumidor |
+|---|---|---|
+| `admin_updates_broker` | `checking_admin_updates` | Painel admin |
+| `transport_updates_broker` | `checking_transport_updates` | Dashboard de transporte |
+| `web_check_updates_broker` | `checking_web_check_updates` | Checking Web (usuários) |
+
+Em dev (SQLite), os brokers operam apenas com fan-out em memória (sem Postgres LISTEN/NOTIFY), tornando `start()`/`stop()` no-ops seguros.
+
+## 3) Testes obrigatórios criados
+
+Arquivo criado: `tests/services/test_admin_updates_brokers.py`
+
+5 testes implementados (3 obrigatórios + 2 extras de cobertura):
+
+1. `test_web_check_broker_publish_fanout` — subscribe + publish + assert payload com `reason` e `metadata`
+2. `test_web_check_broker_isolated_from_admin` — publish em `admin_updates_broker` não chega ao `web_check_updates_broker`
+3. `test_start_stop_all_brokers` — `start_realtime_brokers()` e `stop_realtime_brokers()` sem erro
+4. `test_three_brokers_are_distinct_instances` — os 3 objetos são instâncias distintas
+5. `test_web_check_broker_channel_name` — canal interno está correto
+
+## 4) Verificações executadas
+
+1. Import direto:
+   - `from sistema.app.services.admin_updates import web_check_updates_broker, notify_web_check_data_changed`
+   - resultado: **OK**
+
+2. Testes:
+   - `python -m pytest -q tests\services\test_admin_updates_brokers.py`
+   - resultado: **5 passed**
+
+## 5) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/admin_updates.py` (edição)
+- `tests/services/test_admin_updates_brokers.py` (novo)
+- `tests/services/__init__.py` (novo)
+- `docs/temp000A.md` (atualizado com este resumo)

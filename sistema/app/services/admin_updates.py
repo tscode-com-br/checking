@@ -272,16 +272,19 @@ class AdminUpdatesBroker:
 
 admin_updates_broker = AdminUpdatesBroker("checking_admin_updates")
 transport_updates_broker = AdminUpdatesBroker("checking_transport_updates")
+web_check_updates_broker = AdminUpdatesBroker("checking_web_check_updates")
 
 
 def start_realtime_brokers() -> None:
     admin_updates_broker.start()
     transport_updates_broker.start()
+    web_check_updates_broker.start()
 
 
 def stop_realtime_brokers() -> None:
     admin_updates_broker.stop()
     transport_updates_broker.stop()
+    web_check_updates_broker.stop()
 
 
 def notify_admin_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
@@ -290,3 +293,7 @@ def notify_admin_data_changed(reason: str = "refresh", *, metadata: dict[str, ob
 
 def notify_transport_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
     transport_updates_broker.publish(reason=reason, metadata=metadata)
+
+
+def notify_web_check_data_changed(reason: str = "refresh", *, metadata: dict[str, object] | None = None) -> None:
+    web_check_updates_broker.publish(reason=reason, metadata=metadata)
