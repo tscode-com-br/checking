@@ -4288,3 +4288,148 @@ class MobileLocationsResponse(BaseModel):
     synced_at: datetime
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
     minimum_checkout_distance_meters_by_project: dict[str, int] = Field(default_factory=dict)
+
+
+# ---- Modo Acidente ----
+
+_CHAVE_PATTERN = re.compile(r"^[A-Z0-9]{4}$")
+
+
+class AccidentProjectOption(BaseModel):
+    id: int
+    name: str
+
+
+class AccidentLocationOption(BaseModel):
+    id: int
+    name: str
+    registered: bool
+
+
+class AccidentVideoLink(BaseModel):
+    video_id: int
+    public_url: str
+    captured_at: datetime
+    content_type: str
+    size_bytes: int
+
+
+class SituacaoPessoalRow(BaseModel):
+    user_id: int
+    event_time: datetime
+    name: str
+    chave: str
+    projects: list[str]
+    local: str | None
+    zone: Literal["Aguardando", "Segurança", "Acidente"]
+    status: Literal["Aguardando", "OK", "AJUDA"]
+    phone: str | None
+    videos: list[AccidentVideoLink]
+    priority: int  # 1..5
+    row_color: Literal["white", "blinking-red", "yellow", "turquoise", "light-green", "light-gray"]
+
+
+class AccidentSummary(BaseModel):
+    id: int
+    accident_number: int
+    accident_number_label: str  # zero-padded 4 digits, e.g. "0042"
+    project_name: str
+    location_name: str
+    location_is_registered: bool
+    origin: Literal["admin", "web"]
+    opened_by_label: str
+    opened_at: datetime
+    closed_at: datetime | None
+
+
+class AdminAccidentStateResponse(BaseModel):
+    is_active: bool
+    accident: AccidentSummary | None = None
+    situation_rows: list[SituacaoPessoalRow] = []
+
+
+class AdminAccidentOpenRequest(BaseModel):
+    project_id: int
+    location_id: int | None = None
+    custom_location_name: str | None = None
+
+    @model_validator(mode="after")
+    def check_location_xor(self) -> Self:
+        has_id = self.location_id is not None
+        has_custom = self.custom_location_name is not None and self.custom_location_name.strip() != ""
+        if has_id and has_custom:
+            raise ValueError("Forneça apenas location_id ou custom_location_name, não os dois.")
+        if not has_id and not has_custom:
+            raise ValueError("É obrigatório fornecer location_id ou custom_location_name.")
+        return self
+
+
+class WebAccidentUserReport(BaseModel):
+    zone: Literal["safety", "accident"] | None
+    status: Literal["ok", "help"] | None
+    reported_at: datetime | None
+
+
+class WebAccidentStateResponse(BaseModel):
+    is_active: bool
+    accident_number_label: str | None = None
+    project_name: str | None = None
+    location_name: str | None = None
+    current_user_report: WebAccidentUserReport | None = None
+
+
+class WebAccidentOpenRequest(BaseModel):
+    chave: str
+    project_id: int
+    location_id: int | None
+    custom_location_name: str | None
+    zone: Literal["safety", "accident"]
+    status: Literal["ok", "help"]
+
+    @field_validator("chave", mode="before")
+    @classmethod
+    def normalize_chave(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("chave deve ser uma string.")
+        normalized = v.strip().upper()
+        if not _CHAVE_PATTERN.match(normalized):
+            raise ValueError("chave deve ter 4 caracteres alfanuméricos (A-Z, 0-9).")
+        return normalized
+
+    @model_validator(mode="after")
+    def check_location_xor(self) -> Self:
+        has_id = self.location_id is not None
+        has_custom = self.custom_location_name is not None and self.custom_location_name.strip() != ""
+        if has_id and has_custom:
+            raise ValueError("Forneça apenas location_id ou custom_location_name, não os dois.")
+        if not has_id and not has_custom:
+            raise ValueError("É obrigatório fornecer location_id ou custom_location_name.")
+        return self
+
+
+class WebAccidentReportRequest(BaseModel):
+    chave: str
+    zone: Literal["safety", "accident"]
+    status: Literal["ok", "help"]
+
+
+class AccidentVideoUploadResponse(BaseModel):
+    video_id: int
+    public_url: str
+    captured_at: datetime
+
+
+class AccidentClosedRow(BaseModel):
+    id: int
+    accident_number_label: str
+    project_name: str
+    author_label: str
+    opened_at: datetime
+    closed_at: datetime
+    download_url: str
+    download_ready: bool  # False while archive is still being built
+    can_delete: bool
+
+
+class AccidentClosedListResponse(BaseModel):
+    rows: list[AccidentClosedRow]
