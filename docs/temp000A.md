@@ -513,3 +513,72 @@ Os testes usam SQLite in-file (via `tmp_path`) e criam `Project` + `AdminUser` +
 - `sistema/app/services/accident_numbering.py` (novo)
 - `tests/services/test_accident_numbering.py` (novo)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task C2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco C / Task C2** criou o service principal do ciclo de vida de acidentes.
+
+## 1) Arquivo criado: `sistema/app/services/accident_lifecycle.py`
+
+### Exceções customizadas
+
+`python
+class AccidentAlreadyActiveError(RuntimeError): pass
+class NoActiveAccidentError(RuntimeError): pass
+class InvalidAccidentLocationError(ValueError): pass
+`
+
+### Funções implementadas
+
+| Função | Descrição |
+|---|---|
+| `open_accident(db, *, origin, project_id, ...)` | Valida, cria acidente, pré-popula relatórios, publica em ambos os brokers |
+| `list_active_accident(db)` | Retorna o acidente com `closed_at IS NULL` ou `None` |
+| `close_accident(db, *, accident, closed_by_admin_id)` | Marca encerramento, publica em ambos os brokers |
+
+## 2) Fluxo de `open_accident`
+
+1. **Verificação de acidente ativo**: SELECT em `accidents WHERE closed_at IS NULL`. Se encontrar → `AccidentAlreadyActiveError`.
+2. **Resolver projeto**: `db.get(Project, project_id)`. Se None → `ValueError`.
+3. **Resolver local**:
+   - `location_id` fornecido → carrega `ManagedLocation`. Se origin="admin" e projeto não está no `projects_json` → `InvalidAccidentLocationError`. Se origin="web" → aceita mesmo assim.
+   - Sem `location_id` → usa `custom_location_name.strip()`.
+4. **Criar `Accident`** com `next_accident_number(db)`, `flush()` para obter ID.
+5. **Pré-popular `AccidentUserReport`** para todos os `User.checkin == True`.
+6. **Tratar autor web**: se `origin="web"`, atualizar zone/status na linha do autor (se estava checked-in) ou criar linha nova (se não estava).
+7. **`db.commit()`** e publicar `"accident_opened"` em `notify_admin_data_changed` e `notify_web_check_data_changed`.
+
+## 3) Compatibilidade SQLite/Postgres
+
+O `FOR UPDATE` da spec original não é suportado em SQLite. A implementação usa SELECT simples — a proteção real é o índice parcial único `ix_accidents_single_active_guard`. Em Postgres produção, o índice parcial torna o segundo INSERT atômico.
+
+## 4) Testes obrigatórios criados
+
+Arquivo criado: `tests/services/test_accident_lifecycle.py`
+
+12 testes implementados (11 obrigatórios + 1 extra):
+
+1. `test_open_accident_creates_with_number_zero`
+2. `test_open_accident_raises_when_already_active`
+3. `test_close_accident_marks_closed_at_and_admin`
+4. `test_close_then_open_increments_number`
+5. `test_open_admin_validates_location_belongs_to_project`
+6. `test_open_web_accepts_location_from_other_project`
+7. `test_open_prepopulates_user_reports_for_checked_in_users`
+8. `test_open_web_sets_reporter_zone_status_for_author`
+9. `test_open_web_creates_report_for_non_checkedin_author` *(extra)*
+10. `test_close_raises_when_not_active`
+11. `test_open_publishes_to_both_brokers`
+12. `test_close_publishes_to_both_brokers`
+
+## 5) Verificações executadas
+
+- `python -m pytest -v tests/services/test_accident_lifecycle.py` → **12 passed**
+
+## 6) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_lifecycle.py` (novo)
+- `tests/services/test_accident_lifecycle.py` (novo)
+- `docs/temp000A.md` (atualizado com este resumo)
