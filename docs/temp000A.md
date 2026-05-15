@@ -958,3 +958,70 @@ Durante a edição de D1, o decorator `@router.get("/administrators", ...)` havi
 - `sistema/app/routers/admin.py` (editado — novos imports + endpoint POST + bug fix no decorator)
 - `tests/routers/test_admin_accidents.py` (editado — 5 testes D2 adicionados)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task D3 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D3** adicionou o endpoint `POST /api/admin/accidents/close` ao router admin, permitindo ao administrador encerrar o acidente ativo e disparar a geração do arquivo em background.
+
+## 1) Arquivo alterado: `sistema/app/routers/admin.py`
+
+### Novos imports
+
+- `BackgroundTasks` adicionado ao import de `fastapi`
+- `close_accident`, `NoActiveAccidentError` adicionados ao bloco `from ..services.accident_lifecycle import (...)`
+
+### Stub adicionado
+
+```python
+def build_and_attach_archive_for_accident(accident_id: int) -> None:
+    # TODO Task F2: build XLSX + ZIP, upload to Spaces, update accident.archive_object_key,
+    # publish accident_closed again with ready=True.
+    pass
+```
+
+Inserido logo antes do endpoint `/accidents/close`. Será substituído pela implementação real na Task F2 (Phase 10).
+
+### Endpoint adicionado
+
+```python
+@router.post("/accidents/close", response_model=AdminAccidentStateResponse,
+             dependencies=[Depends(require_full_admin_session)])
+def close_admin_accident(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+```
+
+- Caminho: `POST /api/admin/accidents/close`
+- Requer sessão admin com perfil completo (`require_full_admin_session`).
+- Sem sessão → 401; sem permissão → 403.
+- Sem acidente ativo → 409 `"Nenhum acidente em curso."`.
+- Acidente ativo → encerra via `close_accident()`, agenda `build_and_attach_archive_for_accident` como BackgroundTask, loga evento, retorna `AdminAccidentStateResponse(is_active=False)`.
+- `close_accident()` publica internamente `"accident_closed"` nos dois brokers SSE.
+
+## 2) Arquivo alterado: `tests/routers/test_admin_accidents.py`
+
+4 testes D3 adicionados (total do arquivo: 12 testes):
+
+| Teste | Descrição |
+|---|---|
+| `test_close_requires_full_admin` | Usuário com `perfil=0` → 403 |
+| `test_close_conflict_when_none_active` | Sem acidente ativo → 409 |
+| `test_close_marks_closed_and_publishes` | Encerramento → 200 `is_active=False`, `accident_closed` publicado em ambos os brokers |
+| `test_close_schedules_archive_build` | `build_and_attach_archive_for_accident` chamado como BackgroundTask com `accident_id` correto |
+
+**Nota:** `TestClient` do Starlette/FastAPI executa `BackgroundTasks` sincronamente, permitindo verificar diretamente o mock após o request.
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_admin_accidents.py -v` → **12 passed** (3 D1 + 5 D2 + 4 D3)
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **78 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/admin.py` (editado — `BackgroundTasks` import + lifecycle imports + stub + endpoint)
+- `tests/routers/test_admin_accidents.py` (editado — 4 testes D3 adicionados)
+- `docs/temp000A.md` (atualizado com este resumo)
