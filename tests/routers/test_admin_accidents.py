@@ -1026,3 +1026,58 @@ def test_wizard_locations_404_for_unknown_project():
     client = _logged_in_client()
     resp = client.get(WIZARD_LOCATIONS_URL, params={"project_id": 999999999})
     assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_close_admin_accident_calls_real_archive_builder
+# ---------------------------------------------------------------------------
+
+
+def test_close_admin_accident_calls_real_archive_builder(tmp_path):
+    """POST /close calls the real archive builder and creates an AccidentArchive row.
+
+    BackgroundTasks runs synchronously in TestClient so the archive is created
+    before the response is returned.  We mock only object_storage settings
+    (no real Spaces) and the lifecycle + archive brokers (no SSE threads).
+    """
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as _patch
+    import sqlalchemy as _sa
+
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _open_accident(db, proj, admin_user)
+        accident_id = accident.id
+
+    client = _logged_in_client()
+
+    fake_settings = MagicMock(
+        event_archives_dir=str(tmp_path),
+        do_spaces_bucket=None,
+        do_spaces_access_key=None,
+        do_spaces_secret_key=None,
+        tz_name="UTC",
+    )
+
+    with (
+        _patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        _patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        _patch("sistema.app.services.accident_archive_builder.notify_admin_data_changed"),
+        _patch("sistema.app.services.object_storage.settings", fake_settings),
+        _patch("sistema.app.services.accident_archive_builder._use_remote", return_value=False),
+    ):
+        resp = client.post("/api/admin/accidents/close")
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+    with SessionLocal() as db:
+        archive = db.execute(
+            _sa.select(AccidentArchive).where(AccidentArchive.accident_id == accident_id)
+        ).scalar_one_or_none()
+
+    assert archive is not None, "AccidentArchive row not created by real builder"
+    assert archive.zip_object_key is not None
+    assert archive.xlsx_object_key is not None
+    assert archive.size_bytes is not None and archive.size_bytes > 0

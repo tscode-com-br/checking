@@ -178,6 +178,7 @@ from ..services.accident_lifecycle import (
     open_accident,
 )
 from ..services.accident_numbering import format_accident_number
+from ..services.accident_archive_builder import build_and_attach_archive_for_accident
 from ..services.accident_situation_table import build_situation_rows
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -2055,11 +2056,6 @@ def open_admin_accident(
     )
 
 
-def build_and_attach_archive_for_accident(accident_id: int) -> None:
-    from ..services.accident_archive_builder import (
-        build_and_attach_archive_for_accident as _build,
-    )
-    _build(accident_id)
 
 
 @router.post("/accidents/close", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
