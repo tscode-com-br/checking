@@ -488,3 +488,152 @@ def test_report_does_not_schedule_email_on_repeat_help():
     assert resp.status_code == 200, resp.text
     mock_no_queue.assert_not_called()
 
+
+# ---------------------------------------------------------------------------
+# E3 — video upload tests
+# ---------------------------------------------------------------------------
+
+VIDEO_URL = "/api/web/check/accident/video"
+_IDEM_KEY = "test-idem-key-001"
+
+
+def _make_video_form(
+    *,
+    content: bytes = b"fake-video-data",
+    content_type: str = "video/mp4",
+    chave: str = _WEB_CHAVE,
+    idempotency_key: str = _IDEM_KEY,
+    duration_seconds: str | None = None,
+) -> dict:
+    """Build a multipart form dict for the video upload endpoint."""
+    fields: dict = {
+        "chave": (None, chave, "text/plain"),
+        "idempotency_key": (None, idempotency_key, "text/plain"),
+        "video": ("clip.mp4", content, content_type),
+    }
+    if duration_seconds is not None:
+        fields["duration_seconds"] = (None, duration_seconds, "text/plain")
+    return fields
+
+
+def _open_and_get_client() -> tuple[TestClient, int]:
+    """Open an accident and return (client, proj_id)."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        _ensure_web_user(db)
+        proj_id = proj.id
+
+    client = _logged_in_web_client()
+    _open_accident_via_api(client, proj_id)
+    return client, proj_id
+
+
+# ---------------------------------------------------------------------------
+# test_video_requires_active_accident
+# ---------------------------------------------------------------------------
+
+
+def test_video_requires_active_accident():
+    """POST /check/accident/video when no accident is active → 409."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        _ensure_project(db)
+        _ensure_web_user(db)
+
+    client = _logged_in_web_client()
+    resp = client.post(VIDEO_URL, files=_make_video_form())
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_video_rejects_unsupported_type
+# ---------------------------------------------------------------------------
+
+
+def test_video_rejects_unsupported_type():
+    """Unsupported content-type → 415."""
+    client, _ = _open_and_get_client()
+
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(
+            VIDEO_URL,
+            files=_make_video_form(content_type="video/avi", idempotency_key="unsupported-type-key"),
+        )
+
+    assert resp.status_code == 415, f"Expected 415, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_video_rejects_oversized
+# ---------------------------------------------------------------------------
+
+
+def test_video_rejects_oversized():
+    """Video > 50MB → 413."""
+    client, _ = _open_and_get_client()
+
+    oversized = b"x" * (50 * 1024 * 1024 + 1)
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(
+            VIDEO_URL,
+            files=_make_video_form(content=oversized, idempotency_key="oversized-video-key1"),
+        )
+
+    assert resp.status_code == 413, f"Expected 413, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_video_upload_success
+# ---------------------------------------------------------------------------
+
+
+def test_video_upload_success():
+    """Valid upload → 200 with video_id and public_url."""
+    client, _ = _open_and_get_client()
+
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(
+            VIDEO_URL,
+            files=_make_video_form(idempotency_key="success-upload-key1"),
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "video_id" in data
+    assert "public_url" in data
+    assert data["public_url"] != ""
+    assert "captured_at" in data
+
+
+# ---------------------------------------------------------------------------
+# test_video_upload_idempotent
+# ---------------------------------------------------------------------------
+
+
+def test_video_upload_idempotent():
+    """Same idempotency_key twice → same video_id returned."""
+    client, _ = _open_and_get_client()
+
+    idem = "idempotent-key-xyz1"
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        r1 = client.post(VIDEO_URL, files=_make_video_form(idempotency_key=idem))
+        r2 = client.post(VIDEO_URL, files=_make_video_form(idempotency_key=idem))
+
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r1.json()["video_id"] == r2.json()["video_id"]
+    assert r1.json()["public_url"] == r2.json()["public_url"]
+

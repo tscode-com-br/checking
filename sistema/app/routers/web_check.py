@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from ..schemas import (
     WebAccidentReportRequest,
     WebAccidentStateResponse,
     WebAccidentUserReport,
+    AccidentVideoUploadResponse,
     WebCheckHistoryResponse,
     WebLocationOptionsResponse,
     WebPasswordActionResponse,
@@ -47,6 +48,7 @@ from ..services.admin_updates import (
 )
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
+    attach_video_upload,
     list_active_accident,
     open_accident,
     upsert_user_safety_report,
@@ -99,6 +101,9 @@ WEB_TRANSPORT_REQUEST_LABELS = {
     "weekend": "Transporte Fim de Semana",
     "extra": "Transporte Extra",
 }
+
+MAX_VIDEO_BYTES = 50 * 1024 * 1024  # 50 MB
+ALLOWED_VIDEO_TYPES = {"video/webm", "video/mp4", "video/quicktime"}
 
 WEB_CHECK_CHANNEL = FormsSubmitChannel(
     event_label="Web check event",
@@ -944,3 +949,70 @@ def report_web_accident_status(
     if fired_help:
         background_tasks.add_task(queue_help_request_emails, accident_id=active.id, requester_user_id=user.id)
     return get_web_accident_state(request=request, chave=payload.chave, db=db)
+
+
+# ---------------------------------------------------------------------------
+# E3 — Video upload
+# ---------------------------------------------------------------------------
+
+
+async def stream_upload_to_storage(
+    *,
+    object_key: str,
+    upload_file: UploadFile,
+    content_type: str,
+    max_bytes: int,
+) -> tuple[int, str]:
+    # TODO Task F1: replace with real object-storage upload.
+    data = await upload_file.read()
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Video excede o tamanho maximo permitido.")
+    public_url = f"http://localhost/dev-storage/{object_key}"
+    return len(data), public_url
+
+
+@router.post("/check/accident/video", response_model=AccidentVideoUploadResponse)
+async def upload_accident_video(
+    request: Request,
+    chave: str = Form(...),
+    idempotency_key: str = Form(..., min_length=8, max_length=80),
+    duration_seconds: int | None = Form(None),
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> AccidentVideoUploadResponse:
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+    if video.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(status_code=415, detail="Tipo de video nao suportado.")
+
+    accident_label = format_accident_number(active.accident_number)
+    ext_map = {"video/webm": "webm", "video/mp4": "mp4", "video/quicktime": "mov"}
+    ext = ext_map[video.content_type]
+    safe_key = idempotency_key.replace("/", "_").replace(" ", "_")
+    object_key = f"accidents/{accident_label}/{user.chave}/{safe_key}.{ext}"
+
+    size_bytes, public_url = await stream_upload_to_storage(
+        object_key=object_key,
+        upload_file=video,
+        content_type=video.content_type,
+        max_bytes=MAX_VIDEO_BYTES,
+    )
+
+    upload = attach_video_upload(
+        db,
+        accident=active,
+        user=user,
+        object_key=object_key,
+        public_url=public_url,
+        content_type=video.content_type,
+        size_bytes=size_bytes,
+        duration_seconds=duration_seconds,
+        idempotency_key=idempotency_key,
+    )
+    return AccidentVideoUploadResponse(
+        video_id=upload.id,
+        public_url=upload.public_url,
+        captured_at=upload.captured_at,
+    )
