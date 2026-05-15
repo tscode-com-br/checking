@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..database import get_database_diagnostics
 from ..models import (
+    Accident,
     AdminAccessRequest,
+    AdminUser,
     CheckEvent,
     CheckingHistory,
     ManagedLocation,
@@ -29,6 +31,8 @@ from ..models import (
     Vehicle,
 )
 from ..schemas import (
+    AccidentSummary,
+    AdminAccidentStateResponse,
     AdminAccessRequestCreate,
     AdminActionResponse,
     DatabaseDiagnosticsResponse,
@@ -159,6 +163,9 @@ from ..services.user_projects import (
     resolve_user_active_project,
 )
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
+from ..services.accident_lifecycle import list_active_accident
+from ..services.accident_numbering import format_accident_number
+from ..services.accident_situation_table import build_situation_rows
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -1960,7 +1967,40 @@ async def stream_updates(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])
+def _accident_summary(db: Session, accident: Accident) -> AccidentSummary:
+    opened_by_label = "—"
+    if accident.opened_by_admin_id:
+        admin = db.get(AdminUser, accident.opened_by_admin_id)
+        if admin:
+            opened_by_label = admin.nome_completo
+    elif accident.opened_by_user_id:
+        user = db.get(User, accident.opened_by_user_id)
+        if user:
+            opened_by_label = user.nome
+    return AccidentSummary(
+        id=accident.id,
+        accident_number=accident.accident_number,
+        accident_number_label=format_accident_number(accident.accident_number),
+        project_name=accident.project_name_snapshot,
+        location_name=accident.location_name_snapshot,
+        location_is_registered=accident.location_is_registered,
+        origin=accident.origin,
+        opened_by_label=opened_by_label,
+        opened_at=accident.opened_at,
+        closed_at=accident.closed_at,
+    )
+
+
+@router.get("/accidents/active", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_admin_session)])
+def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentStateResponse:
+    active = list_active_accident(db)
+    if active is None:
+        return AdminAccidentStateResponse(is_active=False)
+    return AdminAccidentStateResponse(
+        is_active=True,
+        accident=_accident_summary(db, active),
+        situation_rows=build_situation_rows(db, accident=active),
+    )
 def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRow]:
     return list_admin_rows(db)
 
