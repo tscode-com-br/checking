@@ -1305,3 +1305,96 @@ Insere um `ManagedLocation` no banco com `projects_json` serializado, para uso n
 - `sistema/app/routers/admin.py` (editado — imports + 2 endpoints wizard)
 - `tests/routers/test_admin_accidents.py` (editado — import ManagedLocation + helper + 3 testes D6)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task E1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco E / Task E1** adicionou dois endpoints ao router `web_check` para que o usuário web possa consultar o estado do Modo Acidente e abri-lo diretamente pelo portal web.
+
+## 1) Arquivo alterado: `sistema/app/routers/web_check.py`
+
+### Novos imports de modelo
+
+```python
+from ..models import Accident, AccidentUserReport, AdminAccessRequest, ...
+```
+
+`Accident` e `AccidentUserReport` adicionados ao import de modelos (linha 10).
+
+### Novos imports de schema
+
+```python
+WebAccidentOpenRequest,
+WebAccidentStateResponse,
+WebAccidentUserReport,
+```
+
+Adicionados ao bloco `from ..schemas import (...)`.
+
+### Novos imports de serviço
+
+```python
+from ..services.accident_lifecycle import (
+    AccidentAlreadyActiveError,
+    list_active_accident,
+    open_accident,
+)
+from ..services.accident_numbering import format_accident_number
+```
+
+Adicionados após o bloco `from ..services.admin_updates import (...)`.
+
+### Endpoint GET /check/accident/state (linha ~877)
+
+```python
+@router.get("/check/accident/state", response_model=WebAccidentStateResponse)
+def get_web_accident_state(request, chave, db) -> WebAccidentStateResponse
+```
+
+- Requer sessão web autenticada + chave correspondente (via `_require_matching_authenticated_web_user`).
+- Sem acidente ativo → `{"is_active": false}`.
+- Com acidente ativo → retorna `accident_number_label`, `project_name`, `location_name` e `current_user_report` com `zone`/`status`/`reported_at` do relatório do usuário atual (se existir).
+
+### Endpoint POST /check/accident/open (linha ~910)
+
+```python
+@router.post("/check/accident/open", response_model=WebAccidentStateResponse)
+def open_web_accident(payload, request, db) -> WebAccidentStateResponse
+```
+
+- Requer sessão web autenticada + chave correspondente no payload.
+- Chama `open_accident(..., origin="web", opened_by_user_id=user.id, reporter_zone, reporter_status)`.
+- `AccidentAlreadyActiveError` → 409 "Outro usuario ja reportou um acidente."
+- Em caso de sucesso, delega a `get_web_accident_state` para retornar o estado atualizado.
+
+## 2) Arquivo criado: `tests/routers/test_web_accidents.py`
+
+6 testes obrigatórios:
+
+| Teste | Descrição |
+|---|---|
+| `test_state_requires_session` | Sem sessão web → 401 |
+| `test_state_returns_inactive_when_none` | Sem acidente ativo → `is_active=False`, sem campos extras |
+| `test_state_returns_user_report_when_active` | Acidente aberto via `/open` → state retorna `is_active=True`, `current_user_report.zone="safety"`, `current_user_report.status="ok"` |
+| `test_open_creates_with_origin_web` | Acidente criado com `origin="web"` e `opened_by_user_id` preenchido no banco |
+| `test_open_returns_409_when_active` | Segundo `/open` com acidente já ativo → 409 |
+| `test_open_publishes_brokers` | `notify_admin_data_changed` e `notify_web_check_data_changed` chamados uma vez cada |
+
+### Infraestrutura de teste
+
+- Usuário web criado com `chave="E1WB"`, `senha="WebE1Test!"`, `checkin=True`, `perfil=1`.
+- Login via `POST /api/web/auth/login` com cookies persistentes no `TestClient`.
+- `_close_all_accidents(db)` limpa acidentes + filhos antes de cada teste.
+- Brokers mockados via `patch("sistema.app.services.accident_lifecycle.notify_*")`.
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_web_accidents.py -v` → **6 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **97 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (editado — imports + 2 endpoints E1)
+- `tests/routers/test_web_accidents.py` (novo — 6 testes E1)
+- `docs/temp000A.md` (atualizado com este resumo)
