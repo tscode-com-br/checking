@@ -106,7 +106,7 @@ from ..services.admin_auth import (
     user_profile_has_access,
     verify_password,
 )
-from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
+from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_web_check_data_changed
 from ..services.admin_project_scope import (
     location_matches_effective_admin_scope,
     project_matches_effective_admin_scope,
@@ -2139,6 +2139,46 @@ def download_accident_archive(
         raise HTTPException(status_code=404, detail="Arquivo do acidente ainda nao esta pronto.")
     presigned_url = generate_presigned_url(object_key=archive.zip_object_key, expires_in_seconds=300)
     return RedirectResponse(url=presigned_url, status_code=307)
+
+
+def delete_prefix(prefix: str) -> None:
+    # TODO Task E2: delete all objects under the given prefix from the object storage provider.
+    pass
+
+
+@router.delete("/accidents/{accident_id}", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
+def delete_accident_endpoint(
+    accident_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminActionResponse:
+    if current_admin.perfil != 9:
+        raise HTTPException(status_code=403, detail="Apenas perfil 9 pode remover acidentes.")
+    accident = db.get(Accident, accident_id)
+    if accident is None:
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+    if accident.closed_at is None:
+        raise HTTPException(status_code=409, detail="Nao e possivel remover um acidente em curso. Encerre o Modo Acidente primeiro.")
+
+    accident_number = accident.accident_number
+    db.delete(accident)  # cascade removes reports, videos, archive
+    db.commit()
+
+    delete_prefix(prefix=f"accidents/{format_accident_number(accident_number)}/")
+    log_event(
+        db,
+        source="admin",
+        action="accident_delete",
+        status="done",
+        message=f"Accident {accident_number} deleted",
+        details=f"by admin={current_admin.chave}",
+        commit=True,
+    )
+
+    notify_admin_data_changed("accident_closed", metadata={"deleted_accident_id": accident_id})
+    notify_web_check_data_changed("accident_closed", metadata={"deleted_accident_id": accident_id})
+
+    return AdminActionResponse(ok=True, message="Acidente removido com sucesso.")
 
 
 @router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])

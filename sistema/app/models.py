@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 
@@ -782,6 +782,12 @@ class Accident(Base):
     archive_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # ORM-level cascade: ensures child rows are deleted when an Accident is deleted,
+    # even in SQLite where PRAGMA foreign_keys is off and DB-level CASCADE doesn't fire.
+    user_reports = relationship("AccidentUserReport", cascade="all, delete-orphan")
+    video_uploads = relationship("AccidentVideoUpload", cascade="all, delete-orphan")
+    archive = relationship("AccidentArchive", cascade="all, delete-orphan", uselist=False)
 
 
 class AccidentUserReport(Base):

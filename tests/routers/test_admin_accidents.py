@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from sistema.app.database import Base, SessionLocal, engine  # noqa: E402
 from sistema.app.main import app  # noqa: E402
-from sistema.app.models import Accident, AdminUser, Project, User  # noqa: E402
+from sistema.app.models import Accident, AccidentArchive, AccidentUserReport, AccidentVideoUpload, AdminUser, Project, User  # noqa: E402
 from sistema.app.services.passwords import hash_password  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
@@ -91,13 +91,21 @@ def _ensure_project(db: Session, name: str = "D1PROJ") -> Project:
 
 
 def _close_all_accidents(db: Session) -> None:
-    """Close any open accident so tests start clean."""
+    """Close any open accident and wipe all child rows so each test starts clean.
+
+    AccidentUserReport rows created by open_accident() would otherwise accumulate
+    across runs and trigger UNIQUE(accident_id, user_id) errors on the next run
+    when the same accident id gets reused by SQLite.
+    """
     now = datetime.now(tz=timezone.utc)
     db.execute(
         sa.update(Accident)
         .where(Accident.closed_at.is_(None))
         .values(closed_at=now, updated_at=now)
     )
+    db.execute(sa.delete(AccidentArchive))
+    db.execute(sa.delete(AccidentVideoUpload))
+    db.execute(sa.delete(AccidentUserReport))
     db.commit()
 
 
@@ -576,8 +584,14 @@ def _insert_closed_accident(db: Session, proj: Project, admin_user: User, number
 
 
 def _insert_archive(db: Session, accident: Accident) -> None:
-    """Insert a fake AccidentArchive row for the given accident."""
-    from sistema.app.models import AccidentArchive
+    """Insert a fake AccidentArchive row for the given accident (idempotent)."""
+    # Remove existing archive to avoid unique constraint violation from prior runs
+    existing = db.execute(
+        sa.select(AccidentArchive).where(AccidentArchive.accident_id == accident.id)
+    ).scalar_one_or_none()
+    if existing:
+        db.delete(existing)
+        db.flush()
     now = datetime.now(tz=timezone.utc)
     archive = AccidentArchive(
         accident_id=accident.id,
@@ -752,3 +766,172 @@ def test_download_returns_404_when_archive_missing():
     client = _logged_in_client()
     resp = client.get(_make_archive_url(accident_id))
     assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+
+def _delete_accident_url(accident_id: int) -> str:
+    return f"/api/admin/accidents/{accident_id}"
+
+
+def _logged_in_perfil9_client() -> TestClient:
+    """Return a TestClient logged in as a perfil=9 admin (already created in D4 tests)."""
+    with SessionLocal() as db:
+        from sistema.app.services.passwords import hash_password as _hp
+        user = db.execute(sa.select(User).where(User.chave == "D4P9")).scalar_one_or_none()
+        if user is None:
+            user = User(
+                chave="D4P9",
+                nome="D4 Perfil9",
+                projeto="D1PROJ",
+                checkin=False,
+                local="Sala",
+                last_active_at=datetime.now(tz=timezone.utc),
+                inactivity_days=0,
+                senha=_hp("Perfil9D4!"),
+                perfil=9,
+            )
+            db.add(user)
+        else:
+            user.senha = _hp("Perfil9D4!")
+            user.perfil = 9
+        db.commit()
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(ADMIN_LOGIN_URL, json={"chave": "D4P9", "senha": "Perfil9D4!"})
+    assert resp.status_code == 200, f"perfil=9 login failed: {resp.text}"
+    return client
+
+
+# ---------------------------------------------------------------------------
+# test_delete_forbidden_for_non_perfil_9
+# ---------------------------------------------------------------------------
+
+
+def test_delete_forbidden_for_non_perfil_9():
+    """DELETE /accidents/{id} must return 403 for admins with perfil != 9."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _insert_closed_accident(db, proj, admin_user)
+        accident_id = accident.id
+
+    # perfil=19 admin — has full-admin access but perfil!=9
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.routers.admin.notify_admin_data_changed"),
+        patch("sistema.app.routers.admin.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.delete_prefix"),
+    ):
+        resp = client.delete(_delete_accident_url(accident_id))
+
+    assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_delete_404_when_unknown
+# ---------------------------------------------------------------------------
+
+
+def test_delete_404_when_unknown():
+    """DELETE /accidents/{id} must return 404 for non-existent accident id."""
+    client = _logged_in_perfil9_client()
+    with (
+        patch("sistema.app.routers.admin.notify_admin_data_changed"),
+        patch("sistema.app.routers.admin.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.delete_prefix"),
+    ):
+        resp = client.delete(_delete_accident_url(999999999))
+
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_delete_409_when_active
+# ---------------------------------------------------------------------------
+
+
+def test_delete_409_when_active():
+    """DELETE /accidents/{id} must return 409 when accident is still active (not closed)."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _open_accident(db, proj, admin_user)
+        accident_id = accident.id
+
+    client = _logged_in_perfil9_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.notify_admin_data_changed"),
+        patch("sistema.app.routers.admin.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.delete_prefix"),
+    ):
+        resp = client.delete(_delete_accident_url(accident_id))
+
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+
+    # Clean up
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+
+# ---------------------------------------------------------------------------
+# test_delete_removes_cascade
+# ---------------------------------------------------------------------------
+
+
+def test_delete_removes_cascade():
+    """DELETE /accidents/{id} → 200, accident row removed from DB."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _insert_closed_accident(db, proj, admin_user)
+        accident_id = accident.id
+
+    client = _logged_in_perfil9_client()
+    with (
+        patch("sistema.app.routers.admin.notify_admin_data_changed"),
+        patch("sistema.app.routers.admin.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.delete_prefix"),
+    ):
+        resp = client.delete(_delete_accident_url(accident_id))
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["ok"] is True
+
+    # Verify the accident is gone from the DB
+    with SessionLocal() as db:
+        gone = db.get(Accident, accident_id)
+        assert gone is None, f"Accident {accident_id} should be deleted but still exists"
+
+
+# ---------------------------------------------------------------------------
+# test_delete_calls_delete_prefix
+# ---------------------------------------------------------------------------
+
+
+def test_delete_calls_delete_prefix():
+    """DELETE /accidents/{id} must call delete_prefix with the accident's numbered prefix."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _insert_closed_accident(db, proj, admin_user, number_override=42)
+        accident_id = accident.id
+
+    client = _logged_in_perfil9_client()
+    with (
+        patch("sistema.app.routers.admin.notify_admin_data_changed"),
+        patch("sistema.app.routers.admin.notify_web_check_data_changed"),
+        patch("sistema.app.routers.admin.delete_prefix") as mock_delete_prefix,
+    ):
+        resp = client.delete(_delete_accident_url(accident_id))
+
+    assert resp.status_code == 200, resp.text
+    mock_delete_prefix.assert_called_once()
+    call_prefix = mock_delete_prefix.call_args[1].get("prefix") or mock_delete_prefix.call_args[0][0]
+    # accident_number=42 → format_accident_number → "0042"
+    assert "0042" in call_prefix, f"Expected '0042' in prefix, got: {call_prefix!r}"
