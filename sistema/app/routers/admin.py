@@ -2056,9 +2056,10 @@ def open_admin_accident(
 
 
 def build_and_attach_archive_for_accident(accident_id: int) -> None:
-    # TODO Task F2: build XLSX + ZIP, upload to Spaces, update accident.archive_object_key,
-    # publish accident_closed again with ready=True.
-    pass
+    from ..services.accident_archive_builder import (
+        build_and_attach_archive_for_accident as _build,
+    )
+    _build(accident_id)
 
 
 @router.post("/accidents/close", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
