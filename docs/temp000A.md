@@ -1102,3 +1102,103 @@ def list_closed_accidents_endpoint(
 - `sistema/app/routers/admin.py` (editado — novos imports + stub `generate_presigned_url` + 2 novos endpoints)
 - `tests/routers/test_admin_accidents.py` (editado — 5 testes D4 + helpers adicionados)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+
+# Task D5 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D5** adicionou o endpoint DELETE /api/admin/accidents/{id} restrito a admins com perfil=9, e corrigiu dois bugs de isolamento de testes que faziam 500s aparecerem nos testes de abertura de acidente.
+
+## 1) Arquivo alterado: sistema/app/routers/admin.py
+
+### Novos imports
+
+- 
+otify_web_check_data_changed adicionado ao import de ..services.admin_updates
+
+### Novo stub
+
+- delete_prefix(prefix: str) -> None — stub vazio com TODO Task E2, para futuramente deletar objetos do armazenamento de objeto (Spaces/S3) pelo prefixo.
+
+### Novo endpoint
+
+`
+DELETE /api/admin/accidents/{accident_id}
+`
+
+- Requer sessão admin completa (equire_full_admin_session).
+- **403** se current_admin.perfil != 9.
+- **404** se o acidente não existir.
+- **409** se o acidente ainda estiver ativo (closed_at IS NULL).
+- **200** com {"ok": true, "message": "Acidente removido com sucesso."} em caso de sucesso.
+- Cascata: db.delete(accident) remove o acidente; graças aos relacionamentos ORM (cascade="all, delete-orphan") adicionados ao modelo, todas as linhas filhas (AccidentUserReport, AccidentVideoUpload, AccidentArchive) também são removidas automaticamente.
+- Chama delete_prefix(f"accidents/{format_accident_number(accident_number)}/") para limpar objetos no Spaces.
+- Registra evento via log_event(...) e dispara 
+otify_admin_data_changed + 
+otify_web_check_data_changed.
+
+## 2) Arquivo alterado: sistema/app/models.py
+
+### Relacionamentos ORM com cascade adicionados ao Accident
+
+- rom sqlalchemy.orm import Mapped, mapped_column, relationship — elationship adicionado ao import existente.
+- Três relacionamentos adicionados à classe Accident:
+  `python
+  user_reports = relationship("AccidentUserReport", cascade="all, delete-orphan")
+  video_uploads = relationship("AccidentVideoUpload", cascade="all, delete-orphan")
+  archive = relationship("AccidentArchive", cascade="all, delete-orphan", uselist=False)
+  `
+  Esses relacionamentos garantem que, ao chamar db.delete(accident) no ORM, as linhas filhas sejam deletadas mesmo em SQLite sem PRAGMA foreign_keys=ON (que não é habilitado pelo database.py do projeto).
+
+## 3) Arquivo criado: 	ests/conftest.py
+
+**Bug raiz corrigido:** sem conftest.py, o engine SQLAlchemy era criado com a URL padrão sqlite:///./checking.db sempre que arquivos de teste de serviços/modelos (como 	est_accident_lifecycle.py) eram importados primeiro pelo pytest — antes de 	est_admin_accidents.py ter a chance de setar DATABASE_URL. Isso fazia os testes de router rodarem contra o banco de desenvolvimento em vez do banco de testes.
+
+O 	ests/conftest.py (novo arquivo) seta todas as variáveis de ambiente necessárias com os.environ.setdefault(...) **antes** que qualquer módulo da aplicação seja importado, pois o pytest processa conftest.py antes de coletar/importar os módulos de teste.
+
+## 4) Arquivo alterado: 	ests/routers/test_admin_accidents.py
+
+### Correções de bugs
+
+- **aise_server_exceptions**: Revertido de True para False em _logged_in_client() (linha que criava TestClient) — estava True como artefato de debugging, causando propagação de exceções internas em vez de retorno de HTTP 500.
+- **Import lazy removido**: rom sistema.app.models import AccidentArchive dentro de _insert_archive() removido; AccidentArchive agora importado no topo junto com os demais modelos.
+- **_close_all_accidents() estendida**: Além de fechar acidentes abertos, agora também deleta todas as linhas de AccidentArchive, AccidentVideoUpload e AccidentUserReport. Isso previne acúmulo de linhas órfãs entre execuções de testes, que causava UNIQUE constraint failed: accident_user_reports.accident_id, accident_user_reports.user_id quando um acidente com ID reutilizado tentava inserir relatórios para usuários já presentes.
+
+### Import adicionado ao topo
+
+`python
+from sistema.app.models import Accident, AccidentArchive, AccidentUserReport, AccidentVideoUpload, AdminUser, Project, User
+`
+
+### 5 testes D5 adicionados
+
+| Teste | Descrição |
+|---|---|
+| 	est_delete_forbidden_for_non_perfil_9 | Admin perfil=19 → 403 |
+| 	est_delete_404_when_unknown | ID inexistente → 404 |
+| 	est_delete_409_when_active | Acidente ativo (sem closed_at) → 409 |
+| 	est_delete_removes_cascade | 200 + acidente removido do banco confirmado |
+| 	est_delete_calls_delete_prefix | delete_prefix chamado com prefixo contendo o número formatado do acidente (ex.: "0042") |
+
+### Helpers de suporte adicionados
+
+- _delete_accident_url(accident_id) — monta a URL do endpoint DELETE.
+- _logged_in_perfil9_client() — cria/reusa usuário D4P9 com perfil=9 e retorna TestClient autenticado.
+
+## 5) Arquivo deletado
+
+- 	ests/debug_failure.py — script temporário de debugging removido.
+
+## 6) Verificações executadas
+
+- Combinação antes falha 	est_open_accident_creates_with_number_zero + 	est_open_creates_when_none + 	est_open_publishes_brokers → **3 passed**
+- python -m pytest tests/models tests/schemas tests/services tests/routers -q → **88 passed** (era 83 antes do D5)
+
+## 7) Arquivos alterados nesta tarefa
+
+- sistema/app/routers/admin.py (editado — import 
+otify_web_check_data_changed + stub delete_prefix + endpoint DELETE)
+- sistema/app/models.py (editado — import elationship + 3 relacionamentos cascade em Accident)
+- 	ests/conftest.py (novo — bootstrap de variáveis de ambiente de teste)
+- 	ests/routers/test_admin_accidents.py (editado — correções de bugs + 5 testes D5)
+- 	ests/debug_failure.py (deletado)
+- docs/temp000A.md (atualizado com este resumo)
