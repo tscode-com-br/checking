@@ -1460,3 +1460,101 @@ Helper adicionado: `_open_accident_via_api(client, proj_id)` — abre acidente v
 - `sistema/app/routers/web_check.py` (editado — imports + stub + endpoint E2)
 - `tests/routers/test_web_accidents.py` (editado — helper + 4 testes E2)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task E3 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco E / Task E3** adicionou o endpoint `POST /api/web/check/accident/video` ao router `web_check`, permitindo ao usuário web enviar um vídeo gravado durante um acidente ativo. O endpoint é assíncrono (usa `async def`) por necessidade de `await` no upload.
+
+## 1) Arquivo alterado: `sistema/app/routers/web_check.py`
+
+### Imports adicionados
+
+- `File`, `Form`, `UploadFile` adicionados ao import de `fastapi` (linha 4).
+- `AccidentVideoUploadResponse` adicionado ao bloco `from ..schemas import (...)`.
+- `attach_video_upload` adicionado ao bloco `from ..services.accident_lifecycle import (...)`.
+- `format_accident_number` adicionado ao import de `from ..services.accident_numbering import (...)`.
+
+### Constantes adicionadas (~linha 107)
+
+```python
+MAX_VIDEO_BYTES = 50 * 1024 * 1024  # 50 MB
+ALLOWED_VIDEO_TYPES = {"video/webm", "video/mp4", "video/quicktime"}
+```
+
+### Stub `stream_upload_to_storage` (~linha 956)
+
+```python
+async def stream_upload_to_storage(
+    object_key: str,
+    upload_file: UploadFile,
+    content_type: str,
+    max_bytes: int,
+) -> tuple[int, str]:
+    # TODO Task F1: stream to object storage (Spaces/S3).
+    data = await upload_file.read()
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Video excede o tamanho maximo permitido.")
+    public_url = f"http://localhost/dev-storage/{object_key}"
+    return len(data), public_url
+```
+
+Grava em memória (modo dev). Retorna `(size_bytes, public_url)`. Lança 413 se arquivo exceder o limite. Será substituído pela implementação real na Task F1.
+
+### Endpoint POST /check/accident/video (~linha 974)
+
+```python
+@router.post("/check/accident/video", response_model=AccidentVideoUploadResponse)
+async def upload_accident_video(
+    request: Request,
+    chave: str = Form(...),
+    idempotency_key: str = Form(..., min_length=8, max_length=80),
+    duration_seconds: int | None = Form(None),
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> AccidentVideoUploadResponse:
+```
+
+- Requer sessão web autenticada com chave correspondente.
+- 409 se não há acidente ativo.
+- 415 se `video.content_type` não está em `ALLOWED_VIDEO_TYPES` (`video/webm`, `video/mp4`, `video/quicktime`).
+- `accident_label` gerado via `format_accident_number(active.accident_number)`.
+- `object_key = f"accidents/{accident_label}/{user.chave}/{safe_key}.{ext}"` onde `safe_key` substitui `/` e espaços por `_`.
+- Upload via `await stream_upload_to_storage(...)` (stub dev por ora).
+- Chama `attach_video_upload(db, ...)` — idempotente por `idempotency_key`; retorna row existente se já houver.
+- Retorna `AccidentVideoUploadResponse(video_id, public_url, captured_at)`.
+
+## 2) Arquivo alterado: `tests/routers/test_web_accidents.py`
+
+Helpers adicionados:
+- `_make_video_form(chave, idempotency_key, content, content_type, duration_seconds)` — monta dict de multipart para `client.post(files=...)`.
+- `_open_and_get_client(db)` — fecha acidentes existentes, abre novo, retorna `(client, chave)`.
+
+Constante adicionada: `VIDEO_URL = "/api/web/check/accident/video"`.
+
+5 testes E3 adicionados:
+
+| Teste | Descrição |
+|---|---|
+| `test_video_requires_active_accident` | Sem acidente ativo → 409 |
+| `test_video_rejects_unsupported_type` | `content_type="image/png"` → 415 |
+| `test_video_rejects_oversized` | Arquivo de 50 MB + 1 byte → 413 |
+| `test_video_upload_success` | Upload válido → 200 com `video_id`, `public_url`, `captured_at` |
+| `test_video_upload_idempotent` | Mesmo `idempotency_key` → segundo POST retorna mesmo `video_id` |
+
+## 3) Dependência adicionada: `requirements.txt`
+
+- `python-multipart>=0.0.18` adicionado (necessário para FastAPI processar `Form` e `File` parameters).
+
+## 4) Verificações executadas
+
+- `python -m pytest tests/routers/test_web_accidents.py -v -k "video"` → **5 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **106 passed**
+
+## 5) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (editado — imports + constantes + stub `stream_upload_to_storage` + endpoint E3)
+- `tests/routers/test_web_accidents.py` (editado — helpers + constante + 5 testes E3)
+- `requirements.txt` (editado — `python-multipart` adicionado)
+- `docs/temp000A.md` (atualizado com este resumo)
