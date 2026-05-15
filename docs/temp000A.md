@@ -1784,3 +1784,57 @@ Infraestrutura de mock:
 - `sistema/app/routers/admin.py` (editado — stub substituído)
 - `tests/services/test_accident_archive_builder.py` (novo — 7 testes)
 - `docs/temp000A.md` (atualizado)
+
+
+---
+
+## ✅ Task F3 — Concluído
+
+### Resumo detalhado
+
+**Objetivo:** Substituir o stub local de `build_and_attach_archive_for_accident` no router admin pelo import real da Task F2.
+
+### Arquivo alterado: `sistema/app/routers/admin.py`
+
+- Removida a função stub local de 5 linhas que fazia lazy-import de `accident_archive_builder` internamente:
+  ```python
+  # removido:
+  def build_and_attach_archive_for_accident(accident_id: int) -> None:
+      from ..services.accident_archive_builder import build_and_attach_archive_for_accident as _impl
+      _impl(accident_id)
+  ```
+- Adicionado import top-level junto aos demais imports de services:
+  ```python
+  from ..services.accident_archive_builder import build_and_attach_archive_for_accident
+  ```
+- O endpoint `POST /accidents/close` continua chamando `background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)` sem alteração — apenas o símbolo agora é o real.
+- O teste existente `test_close_schedules_archive_build` (que usa `patch("sistema.app.routers.admin.build_and_attach_archive_for_accident")`) continua funcionando porque `patch` substitui o nome no namespace do módulo de qualquer forma.
+
+### Arquivo alterado: `tests/routers/test_admin_accidents.py`
+
+Adicionado ao final do arquivo:
+
+- **`test_close_admin_accident_calls_real_archive_builder(tmp_path)`** — teste de integração que:
+  1. Abre um acidente via `_open_accident`.
+  2. Faz `client.post("/api/admin/accidents/close")` sem mock de `build_and_attach_archive_for_accident` (builder real executado).
+  3. Mocka apenas:
+     - `sistema.app.services.accident_lifecycle.notify_admin_data_changed` e `notify_web_check_data_changed` (evita threads SSE)
+     - `sistema.app.services.accident_archive_builder.notify_admin_data_changed` (idem)
+     - `sistema.app.services.object_storage.settings` com `MagicMock` apontando `event_archives_dir=tmp_path` (sem disco real do sistema)
+     - `sistema.app.services.accident_archive_builder._use_remote` retornando `False` (sem chamadas ao DO Spaces)
+  4. Após o response 200, consulta o DB e verifica:
+     - `AccidentArchive` row existe para o `accident_id`
+     - `zip_object_key` não é `None`
+     - `xlsx_object_key` não é `None`
+     - `size_bytes > 0`
+  - Como `BackgroundTasks` executa sincronamente no `TestClient`, o arquivo já foi criado quando o response chega.
+
+### Resultado de testes
+
+- `tests/routers/test_admin_accidents.py`: **26 passed** (era 25 + novo teste)
+- `tests/models/ + tests/services/ + tests/routers/test_admin_accidents.py + tests/routers/test_web_accidents.py`: **109 passed**
+- Falhas no suite completo são em `test_transport_ai_*` — pré-existentes, não relacionadas a este bloco.
+
+### Commit
+
+`feat: Promote build_and_attach_archive_for_accident to top-level import in admin router (Task F3)`
