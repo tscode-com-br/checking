@@ -1891,3 +1891,48 @@ Dois testes:
 ## 5) Commit
 
 `feat: Add SMTP configuration settings to config.py (Task G1)`
+
+
+---
+
+# Task G2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco G / Task G2** criou o módulo de templates de e-mail.
+
+## 1) Arquivo criado: `sistema/app/services/email_templates.py`
+
+Função única exportada:
+
+```python
+def render_help_request_email(
+    *,
+    recipient_name: str,
+    requester_name: str,
+    requester_chave: str,
+    project_name: str,
+    location_name: str,
+) -> tuple[str, str]:
+```
+
+- Retorna `(subject, body)` como strings puras (sem HTML).
+- `subject` fixo: `"(CHECKING) PEDIDO DE SOCORRO"`.
+- `body` segue exatamente o texto especificado no descritivo item 5.2 Ação 3.
+
+## 2) Arquivo criado: `tests/services/test_email_templates.py`
+
+4 testes:
+
+| Teste | Descrição |
+|---|---|
+| `test_subject_matches_spec` | `subject == "(CHECKING) PEDIDO DE SOCORRO"` |
+| `test_body_includes_recipient_name` | `"Prezado Admin Silva,"` presente no body |
+| `test_body_includes_project_and_location` | `project_name`, `location_name`, `chave` e `requester_name` presentes |
+| `test_body_confirms_help` | `"AJUDA IMEDIATA"`, `"CONFIRMADO"` e `"Checking App"` presentes |
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/services/test_email_templates.py -v` → **4 passed**
+
+## 4) Commit
+
+`feat: Add email_templates service with render_help_request_email (Task G2)`
