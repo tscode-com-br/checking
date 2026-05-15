@@ -431,3 +431,107 @@ def test_open_publishes_brokers():
     # Clean up
     with SessionLocal() as db:
         _close_all_accidents(db)
+
+
+CLOSE_URL = "/api/admin/accidents/close"
+
+
+# ---------------------------------------------------------------------------
+# test_close_requires_full_admin
+# ---------------------------------------------------------------------------
+
+
+def test_close_requires_full_admin():
+    """User with panel-only access (perfil=0) must receive 403 on POST /accidents/close."""
+    client = _logged_in_limited_client()
+    resp = client.post(CLOSE_URL)
+    assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_close_conflict_when_none_active
+# ---------------------------------------------------------------------------
+
+
+def test_close_conflict_when_none_active():
+    """POST /accidents/close with no active accident → 409."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(CLOSE_URL)
+
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_close_marks_closed_and_publishes
+# ---------------------------------------------------------------------------
+
+
+def test_close_marks_closed_and_publishes():
+    """POST /accidents/close → 200, is_active=False, accident_closed published to both brokers."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        _open_accident(db, proj, admin_user)
+
+    client = _logged_in_client()
+    with (
+        patch(
+            "sistema.app.services.accident_lifecycle.notify_admin_data_changed"
+        ) as mock_admin,
+        patch(
+            "sistema.app.services.accident_lifecycle.notify_web_check_data_changed"
+        ) as mock_web,
+    ):
+        resp = client.post(CLOSE_URL)
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["is_active"] is False
+    assert data["accident"] is None
+    assert data["situation_rows"] == []
+
+    # close_accident() must have published accident_closed to both brokers
+    assert any(
+        call[0][0] == "accident_closed" for call in mock_admin.call_args_list
+    ), f"accident_closed not published to admin broker. Calls: {mock_admin.call_args_list}"
+    assert any(
+        call[0][0] == "accident_closed" for call in mock_web.call_args_list
+    ), f"accident_closed not published to web broker. Calls: {mock_web.call_args_list}"
+
+
+# ---------------------------------------------------------------------------
+# test_close_schedules_archive_build
+# ---------------------------------------------------------------------------
+
+
+def test_close_schedules_archive_build():
+    """POST /accidents/close must schedule build_and_attach_archive_for_accident as a BackgroundTask."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        _open_accident(db, proj, admin_user)
+
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch(
+            "sistema.app.routers.admin.build_and_attach_archive_for_accident"
+        ) as mock_archive,
+    ):
+        resp = client.post(CLOSE_URL)
+
+    assert resp.status_code == 200, resp.text
+    # BackgroundTasks runs synchronously in TestClient, so mock should have been called
+    mock_archive.assert_called_once()
+    called_accident_id = mock_archive.call_args[0][0]
+    assert isinstance(called_accident_id, int), f"Expected int accident_id, got {called_accident_id!r}"

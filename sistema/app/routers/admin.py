@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import ValidationError
@@ -167,6 +167,8 @@ from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
     InvalidAccidentLocationError,
+    NoActiveAccidentError,
+    close_accident,
     list_active_accident,
     open_accident,
 )
@@ -2046,6 +2048,39 @@ def open_admin_accident(
         accident=_accident_summary(db, accident),
         situation_rows=build_situation_rows(db, accident=accident),
     )
+
+
+def build_and_attach_archive_for_accident(accident_id: int) -> None:
+    # TODO Task F2: build XLSX + ZIP, upload to Spaces, update accident.archive_object_key,
+    # publish accident_closed again with ready=True.
+    pass
+
+
+@router.post("/accidents/close", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+def close_admin_accident(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+
+    closed = close_accident(db, accident=active, closed_by_admin_id=current_admin.id)
+    background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_close",
+        status="done",
+        message="Accident closed by admin",
+        request_path="/api/admin/accidents/close",
+        http_status=200,
+        details=f"accident_id={closed.id}",
+        commit=True,
+    )
+    return AdminAccidentStateResponse(is_active=False)
 
 
 @router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])
