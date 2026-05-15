@@ -1838,3 +1838,56 @@ Adicionado ao final do arquivo:
 ### Commit
 
 `feat: Promote build_and_attach_archive_for_accident to top-level import in admin router (Task F3)`
+
+
+---
+
+# Task G1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco G / Task G1** adicionou 11 settings SMTP ao módulo de configuração central.
+
+## 1) Arquivo alterado: `sistema/app/core/config.py`
+
+Adicionado bloco de 11 campos ao final da classe `Settings`, após a seção DO Spaces:
+
+```python
+# SMTP e-mail delivery
+smtp_host: str | None = None
+smtp_port: int = 587
+smtp_user: str | None = None
+smtp_password: str | None = None
+smtp_from_email: str | None = None
+smtp_from_name: str = "CheckCheck"
+smtp_use_tls: bool = False
+smtp_use_starttls: bool = True
+smtp_timeout_seconds: int = 30
+smtp_max_retries: int = 3
+smtp_accident_notify_email: str | None = None
+```
+
+- `smtp_host` é `None` por default — indica SMTP desabilitado.
+- Variáveis de ambiente (maiúsculas) são lidas automaticamente pelo `pydantic-settings` (ex: `SMTP_HOST`, `SMTP_PORT`).
+- `smtp_use_tls=False` + `smtp_use_starttls=True` é o padrão seguro para porta 587 (STARTTLS).
+- `smtp_accident_notify_email` é o endereço de destino para notificações de acidente (usado na Task G3).
+
+## 2) Arquivo criado: `tests/core/__init__.py`
+
+Arquivo vazio para tornar `tests/core/` um pacote Python.
+
+## 3) Arquivo criado: `tests/core/test_smtp_settings.py`
+
+Dois testes:
+
+| Teste | Descrição |
+|---|---|
+| `test_smtp_defaults_to_disabled` | Instancia `Settings()` sem env vars e verifica todos os 11 campos com seus defaults (`smtp_host=None`, `smtp_port=587`, `smtp_use_tls=False`, `smtp_use_starttls=True`, etc.) |
+| `test_smtp_env_overrides` | Usa `monkeypatch.setenv` para definir os 11 `SMTP_*` vars e instancia `Settings(_env_file=None)` — verifica que todos os valores são lidos corretamente |
+
+## 4) Verificações executadas
+
+- `python -c "from sistema.app.core.config import settings; print(settings.smtp_host)"` → `None`
+- `python -m pytest tests/core/test_smtp_settings.py -v` → **2 passed**
+
+## 5) Commit
+
+`feat: Add SMTP configuration settings to config.py (Task G1)`
