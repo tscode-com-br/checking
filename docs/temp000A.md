@@ -1643,3 +1643,68 @@ WEB_WIZARD_LOCATIONS_URL = "/api/web/check/accident/wizard/locations"
 - `sistema/app/routers/web_check.py` (editado — imports + 2 endpoints wizard)
 - `tests/routers/test_web_accidents.py` (editado — import + helpers + constantes + 3 testes E4)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+
+---
+
+# Task F1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco F / Task F1** criou o serviço `object_storage.py` com suporte a DigitalOcean Spaces (via boto3) e fallback local para desenvolvimento.
+
+## 1) Arquivo editado: `sistema/app/core/config.py`
+
+6 novos campos opcionais adicionados à classe `Settings`: `do_spaces_endpoint_url`, `do_spaces_region`, `do_spaces_bucket`, `do_spaces_access_key`, `do_spaces_secret_key`, `do_spaces_public_base_url`. Todos com default `None`.
+
+## 2) Arquivo criado: `sistema/app/services/object_storage.py`
+
+- `_use_remote()` — retorna `True` se bucket + credenciais configurados
+- `_make_boto3_client()` — cria cliente boto3 com credenciais DO Spaces (lazy import)
+- `upload_stream(...)` — upload de stream `IO[bytes]`; retorna URL pública (remota ou `/api/admin/accidents/local-asset/...` em dev)
+- `generate_presigned_url(...)` — URL assinada (remoto) ou local-asset URL (dev)
+- `delete_object(...)` — remove objeto único
+- `delete_prefix(...)` — remove recursivamente todos objetos com prefixo; retorna contagem de arquivos removidos
+- `stream_upload_to_storage(...)` — `async`; lê `UploadFile` em chunks de 1 MB, lança HTTP 413 se exceder `max_bytes`, faz upload via `upload_stream`
+
+## 3) Arquivo editado: `sistema/app/routers/admin.py`
+
+- Stub `generate_presigned_url` substituído por delegação real para `object_storage.generate_presigned_url`.
+- Stub `delete_prefix` substituído por delegação real para `object_storage.delete_prefix`.
+- Novo endpoint `GET /accidents/local-asset/{path:path}` (dev-only): serve arquivos do disco local via `FileResponse`; retorna 404 em produção quando `_use_remote() == True`.
+
+## 4) Arquivo editado: `sistema/app/routers/web_check.py`
+
+- Stub local `stream_upload_to_storage` substituído por delegação para `object_storage.stream_upload_to_storage`.
+
+## 5) Arquivo editado: `requirements.txt`
+
+- `boto3>=1.34` adicionado.
+
+## 6) Arquivo criado: `tests/services/test_object_storage.py`
+
+6 testes obrigatórios:
+
+| Teste | Descrição |
+|---|---|
+| `test_upload_local_writes_file` | `upload_stream` grava bytes corretos no disco |
+| `test_upload_local_returns_path_url` | URL retornada é `/api/admin/accidents/local-asset/...` |
+| `test_delete_prefix_removes_all` | `delete_prefix` apaga 3 arquivos e retorna contagem=3 |
+| `test_stream_upload_rejects_oversized` | Arquivo >max_bytes levanta HTTP 413 |
+| `test_generate_presigned_url_local_falls_back_to_path` | Sem credenciais → URL local retornada |
+| `test_remote_mode_uses_boto3_mock` | Com credenciais mockadas → `upload_fileobj` chamado; URL correta |
+
+Todos os testes usam `unittest.mock.patch` para isolar `settings` por teste via `tmp_path`; sem dependência de moto.
+
+## 7) Verificações executadas
+
+- `python -m pytest tests/services/test_object_storage.py -v` → **6 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **115 passed** (era 109 antes do F1)
+
+## 8) Arquivos alterados nesta tarefa
+
+- `sistema/app/core/config.py` (editado — 6 novos campos DO Spaces)
+- `sistema/app/services/object_storage.py` (novo — serviço completo)
+- `sistema/app/routers/admin.py` (editado — stubs substituídos + endpoint local-asset)
+- `sistema/app/routers/web_check.py` (editado — stub `stream_upload_to_storage` substituído)
+- `requirements.txt` (editado — `boto3>=1.34` adicionado)
+- `tests/services/test_object_storage.py` (novo — 6 testes)
+- `docs/temp000A.md` (atualizado com este resumo)
