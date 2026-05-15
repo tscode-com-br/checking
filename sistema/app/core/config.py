@@ -84,5 +84,18 @@ class Settings(BaseSettings):
     do_spaces_secret_key: str | None = None
     do_spaces_public_base_url: str | None = None
 
+    # SMTP e-mail delivery
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "CheckCheck"
+    smtp_use_tls: bool = False
+    smtp_use_starttls: bool = True
+    smtp_timeout_seconds: int = 30
+    smtp_max_retries: int = 3
+    smtp_accident_notify_email: str | None = None
+
 
 settings = Settings()
