@@ -723,3 +723,80 @@ Arquivo criado: `tests/services/test_accident_situation_table.py`
 - `sistema/app/services/accident_situation_table.py` (novo)
 - `tests/services/test_accident_situation_table.py` (novo)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task C5 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco C / Task C5** integrou o hook de check-in/check-out ao modo acidente, garantindo que qualquer evento de ponto registrado durante um acidente em aberto reflita automaticamente na tabela `AccidentUserReport`.
+
+## 1) Arquivo alterado: `sistema/app/services/accident_lifecycle.py`
+
+### Novos imports
+
+- `import logging` e `_logger = logging.getLogger(__name__)`
+
+### Função adicionada
+
+`fire_accident_hook_for_check_event(db, *, user, action, event_time)`
+
+- Recebe `action` nos formatos `"checkin"/"checkout"` (sem hífen) ou `"check-in"/"check-out"` (com hífen) e normaliza para `"check-in"/"check-out"`.
+- Ações desconhecidas retornam silenciosamente.
+- Chama `list_active_accident(db)` — se não há acidente ativo, retorna (noop).
+- Chama `update_accident_membership_for_check_event(...)` para atualizar ou criar o `AccidentUserReport`.
+- Todo o corpo é envolvido em `try/except Exception` com `_logger.warning(..., exc_info=True)`, garantindo que **jamais** propaga exceção para o fluxo de check-in.
+
+## 2) Arquivo alterado: `sistema/app/services/forms_submit.py`
+
+- Import adicionado: `from .accident_lifecycle import fire_accident_hook_for_check_event`
+- Hook inserido logo após `notify_admin_data_changed(action)` em **ambas** as branches de sucesso de `submit_forms_event`:
+  - Branch "not-queued" (evento aceito sem Forms)
+  - Branch "queued" (evento aceito e enfileirado para Forms)
+- Variável `event_time` usada: `normalized_event_time` (já com timezone normalizado).
+
+## 3) Arquivo alterado: `sistema/app/routers/device.py`
+
+- Import adicionado: `from ..services.accident_lifecycle import fire_accident_hook_for_check_event`
+- Hook inserido após `notify_admin_data_changed(action)` em **dois** pontos de sucesso:
+  - Path local (não enfileirado)
+  - Path enfileirado
+- **Não** inserido no path de `checkout bloqueado` (linha ~182) — o check-out não foi concluído, estado do usuário não mudou.
+- Variável `event_time` usada: `activity_time` (= `now_sgt()`).
+
+## 4) Arquivo alterado: `sistema/app/routers/mobile.py`
+
+- Import adicionado: `from ..services.accident_lifecycle import fire_accident_hook_for_check_event`
+- Hook inserido após `notify_admin_data_changed(payload.action)` em **três** pontos:
+  - Submit path not-queued (endpoint `/events/submit`)
+  - Submit path queued (endpoint `/events/submit`)
+  - Sync path (endpoint `/events/sync`)
+- Variável `event_time` usada: `event_time` (normalizado via `normalize_event_time` em todos os casos).
+
+## 5) Arquivo criado: `tests/services/test_accident_check_event_hook.py`
+
+6 testes (5 unitários + 1 integração):
+
+| Teste | Tipo | Descrição |
+|---|---|---|
+| `test_hook_skips_when_no_active_accident` | Unit | Sem acidente ativo → noop, nenhum report criado |
+| `test_hook_creates_waiting_report_for_new_user_check_in` | Unit | Acidente ativo + usuário novo → report criado com zone/status="waiting" |
+| `test_hook_updates_last_action_for_existing_user_check_out` | Unit | Report existente + checkout → `last_checkin_action`="check-out", zone/status preservados |
+| `test_hook_swallows_exceptions` | Unit | Mock levanta RuntimeError → nenhuma exceção propaga |
+| `test_hook_ignores_unknown_action` | Unit | Action desconhecida → silenciosa, nenhum report criado |
+| `test_web_check_post_calls_hook` | Integration | POST `/api/web/check` → mock `fire_accident_hook_for_check_event` verificado chamado |
+
+**Nota:** Testes unitários usam `tmp_path` com SQLite isolado. Teste de integração usa `test_checking.db` (banco compartilhado) e configura `UserProjectMembership` explicitamente para garantir isolamento de dados legados.
+
+## 6) Verificações executadas
+
+- `python -m pytest tests/services/test_accident_check_event_hook.py -v` → **6 passed**
+- `python -m pytest tests/models tests/schemas tests/services -q` → **62 passed**
+
+## 7) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_lifecycle.py` (editado — `fire_accident_hook_for_check_event` + logging)
+- `sistema/app/services/forms_submit.py` (editado — 2 hook calls)
+- `sistema/app/routers/device.py` (editado — 2 hook calls)
+- `sistema/app/routers/mobile.py` (editado — 3 hook calls)
+- `tests/services/test_accident_check_event_hook.py` (novo — 6 testes)
+- `docs/temp000A.md` (atualizado com este resumo)
