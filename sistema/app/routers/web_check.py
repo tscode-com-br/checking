@@ -965,12 +965,13 @@ async def stream_upload_to_storage(
     content_type: str,
     max_bytes: int,
 ) -> tuple[int, str]:
-    # TODO Task F1: replace with real object-storage upload.
-    data = await upload_file.read()
-    if len(data) > max_bytes:
-        raise HTTPException(status_code=413, detail="Video excede o tamanho maximo permitido.")
-    public_url = f"http://localhost/dev-storage/{object_key}"
-    return len(data), public_url
+    from ..services.object_storage import stream_upload_to_storage as _stream_upload
+    return await _stream_upload(
+        object_key=object_key,
+        upload_file=upload_file,
+        content_type=content_type,
+        max_bytes=max_bytes,
+    )
 
 
 @router.post("/check/accident/video", response_model=AccidentVideoUploadResponse)

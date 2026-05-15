@@ -76,5 +76,13 @@ class Settings(BaseSettings):
     serve_user_site_in_api: bool = True
     serve_transport_site_in_api: bool = True
 
+    # DigitalOcean Spaces / S3-compatible object storage
+    do_spaces_endpoint_url: str | None = None
+    do_spaces_region: str | None = None
+    do_spaces_bucket: str | None = None
+    do_spaces_access_key: str | None = None
+    do_spaces_secret_key: str | None = None
+    do_spaces_public_base_url: str | None = None
+
 
 settings = Settings()

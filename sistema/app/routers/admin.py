@@ -2089,8 +2089,8 @@ def close_admin_accident(
 
 
 def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:
-    # TODO Task E2: generate a real pre-signed URL from the object storage provider.
-    raise NotImplementedError("generate_presigned_url not yet implemented (Task E2)")
+    from ..services.object_storage import generate_presigned_url as _gen_url
+    return _gen_url(object_key=object_key, expires_in_seconds=expires_in_seconds)
 
 
 @router.get("/accidents", response_model=AccidentClosedListResponse, dependencies=[Depends(require_full_admin_session)])
@@ -2168,8 +2168,20 @@ def list_accident_wizard_locations(
 
 
 def delete_prefix(prefix: str) -> None:
-    # TODO Task E2: delete all objects under the given prefix from the object storage provider.
-    pass
+    from ..services.object_storage import delete_prefix as _del_prefix
+    _del_prefix(prefix=prefix)
+
+
+@router.get("/accidents/local-asset/{path:path}")
+def serve_local_asset(path: str) -> Response:
+    """Serve locally-stored accident assets (dev only). Returns 404 in production."""
+    from ..services.object_storage import _use_remote, _local_root
+    if _use_remote():
+        raise HTTPException(status_code=404, detail="Not available in production.")
+    target = _local_root() / path
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Asset nao encontrado.")
+    return FileResponse(str(target))
 
 
 @router.delete("/accidents/{accident_id}", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
