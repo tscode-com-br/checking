@@ -2377,3 +2377,65 @@ Resultado: **8 passed**, 0 failed.
 - sistema/app/static/admin/app.js (editado -- 481 insercoes, 4 substituicoes)
 - tests/check_admin_accident_ui.test.js (criado -- 8 testes)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I1 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar o botao "Reportar Acidente" ao frontend checking web (abaixo do botao "Registrar"), com CSS correspondente.
+
+### 1) Arquivo editado: sistema/app/static/check/index.html
+
+Adicionado imediatamente apos `<button id="submitButton" ...>Registrar</button>` (linha 229), ainda dentro do `<form>`:
+
+```html
+<button
+  id="accidentReportButton"
+  type="button"
+  class="accident-report-button"
+  aria-pressed="false"
+  hidden
+>
+  <span class="accident-report-button-label">Reportar Acidente</span>
+</button>
+```
+
+Caracteristicas:
+- `type="button"` -- nao submete o formulario.
+- `hidden` -- invisivel ate que o JS de login o mostre (Task I2).
+- `aria-pressed="false"` -- indica estado nao ativo; JS altera para "true" quando o acidente esta em andamento.
+- `class="accident-report-button-label"` -- permite que JS altere apenas o texto sem reescrever o botao.
+
+### 2) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionado apos o bloco `.submit-button:disabled`:
+
+**`.accident-report-button`:**
+- `display: block; width: 100%` -- largura total igual ao submitButton.
+- `margin-top: 8px` -- espacamento vertical abaixo do submitButton.
+- `padding: 14px 16px` -- mesma altura visual do submitButton.
+- `background: #c8222a` -- vermelho de acidente.
+- `color: #fff; border: 2px solid transparent` -- texto branco, borda transparente por default.
+- `border-radius: 12px` -- bordas arredondadas.
+- `font-weight: 700; font-size: 1rem` -- texto em negrito.
+- `transition: box-shadow 0.2s, transform 0.1s` -- animacao suave.
+
+**`.accident-report-button[aria-pressed="true"]`:**
+- `border-color: #ff4d57` -- borda vermelha brilhante quando ativo.
+- `box-shadow: 0 0 0 3px #ff4d57, 0 0 18px #ff4d57` -- glow duplo (inner + outer).
+- `transform: scale(0.98)` -- leve reducao para indicar estado pressionado.
+
+### 3) Verificacoes executadas
+
+- Todas as 11 verificacoes programaticas (HTML + CSS) passaram: id, class, aria-pressed, hidden, label span, CSS rules, background, box-shadow, posicao relativa ao submitButton.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+- Falha pre-existente em check_responsive_layout.test.js (nao relacionada a esta tarefa).
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/index.html (editado -- botao inserido)
+- sistema/app/static/check/styles.css (editado -- 2 blocos CSS adicionados)
+- docs/temp000A.md (atualizado)
