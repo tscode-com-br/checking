@@ -2151,3 +2151,59 @@ gba(15,118,110,0.12) shadow) mantidas como hardcoded.
 
 - sistema/app/static/admin/styles.css (editado -- 27 insercoes, 11 substituicoes)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task H4 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar aba "Acidente" (oculta por default) e tabela "Situacao de Pessoal" ao painel admin.
+
+### 1) Arquivo editado: sistema/app/static/admin/index.html
+
+**Nav tabs** -- inserido antes de data-tab="checkin":
+`html
+<button data-tab="acidente" id="accidentTabButton" class="tab-accident hidden">Acidente</button>
+`
+A aba inicia com class="hidden" e so aparece em modo acidente (Task H6).
+
+**Section #tab-acidente** -- inserida antes de #tab-checkin dentro de <main>:
+- Cabecalho com #accidentSectionTitle ("Acidente em curso"), #accidentSectionMeta (metadados do acidente), #accidentSectionCount ("0 registros").
+- Tabela 
+esponsive-table situacao-pessoal-table com 9 colunas: Horario, Nome, Chave, Projetos, Local, Zona de, Situacao, Contato, Registros.
+- <tbody id="situacaoPessoalBody"> vazio -- populado via JS (Task H6).
+
+### 2) Arquivo editado: sistema/app/static/admin/styles.css
+
+Adicionado apos .accident-wizard-confirm-text:
+
+**Aba acidente:**
+- .tab-accident -- fundo vermelho #c8222a, borda e glow #ff4d57.
+- .tab-accident.active -- fundo mais escuro #b7141c.
+
+**Tabela situacao-pessoal:**
+- .situacao-pessoal-table td -- ertical-align: top.
+- .registros-cell -- max-height: 140px; overflow-y: auto.
+- .registros-cell a -- display: block.
+
+**Cores de linha:**
+- .situacao-row-white -- branco.
+- .situacao-row-light-green -- verde claro rgba(160,230,160,0.4).
+- .situacao-row-turquoise -- turquesa rgba(120,220,220,0.4).
+- .situacao-row-yellow -- amarelo rgba(255,234,120,0.45).
+- .situacao-row-blinking-red -- vermelho piscante com animacao situacao-blink (1s steps).
+- .situacao-row-light-gray -- cinza rgba(0,0,0,0.06), texto #555.
+- @keyframes situacao-blink -- alterna entre rgba(255,80,90,0.18) e rgba(255,80,90,0.45).
+
+### 3) Verificacoes executadas
+
+- IDs verificados programaticamente: todos presentes.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed**.
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/admin/index.html (editado -- aba + section inseridas)
+- sistema/app/static/admin/styles.css (editado -- 23 regras CSS adicionadas)
+- docs/temp000A.md (atualizado)
