@@ -68,7 +68,7 @@ let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
-let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"];
+let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"];
 let adminCanViewActivityTime = true;
 let currentAdminChave = "";
 let currentAdminPerfil = 0;
@@ -116,6 +116,12 @@ let reportsHasLoadedResult = false;
 let reportsExportQueryString = "";
 let reportsResultsPayload = null;
 let reportsSearchUsersByChave = new Map();
+
+let accidentState = { isActive: false, accident: null, situationRows: [] };
+let accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null };
+let accidentRefreshDebounceTimer = null;
+let accidentPollingHandle = null;
+const ACCIDENT_POLL_INTERVAL_MS = 30000;
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
 const SUPPORTED_PROJECT_COUNTRIES = Object.freeze([
@@ -834,7 +840,7 @@ const TAB_LABELS = {
   "banco-dados": "Banco de Dados",
 };
 const ADMIN_MOBILE_VIEWPORT_QUERY = "(max-width: 800px)";
-const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]);
+const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"]);
 const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
 const MOBILE_FILTER_PANEL_KEYS = Object.freeze(["checkin", "checkout", "inactive", "relatorios"]);
 let adminViewportMediaQueryList = null;
@@ -1917,6 +1923,8 @@ function showAuthShell(message = "", kind = "info") {
   sessionBar.classList.add("hidden");
   const accidentToggleButtonLogout = document.getElementById("accidentToggleButton");
   if (accidentToggleButtonLogout) accidentToggleButtonLogout.classList.add("hidden");
+  stopAccidentPolling();
+  applyAccidentTheme(false);
   stopRealtimeUpdates();
   stopAutoRefresh();
   setAuthStatus(message, kind);
@@ -1943,6 +1951,8 @@ function showAdminShell(admin) {
   setAuthStatus("");
   syncAdminResponsiveState({ force: true });
   updateOperationalChrome();
+  fetchAccidentState();
+  startAccidentPolling();
 }
 
 function applyResponsiveLabels(tbodyId) {
@@ -5463,10 +5473,19 @@ function startRealtimeUpdates() {
     realtimeConnected = true;
     updateOperationalChrome();
   };
-  eventStream.onmessage = () => {
+  eventStream.onmessage = (event) => {
     realtimeConnected = true;
     updateOperationalChrome();
-    requestRefreshAllTables();
+    try {
+      const data = JSON.parse(event.data);
+      if (data.reason && data.reason.startsWith("accident_")) {
+        scheduleAccidentRefresh();
+      } else {
+        requestRefreshAllTables();
+      }
+    } catch {
+      requestRefreshAllTables();
+    }
   };
   eventStream.onerror = () => {
     realtimeConnected = false;
@@ -6579,11 +6598,396 @@ function bindActions() {
     }
   });
 
+  // Accident mode — toggle button and wizard wiring
+  const accidentToggleBtn = document.getElementById("accidentToggleButton");
+  if (accidentToggleBtn) {
+    accidentToggleBtn.addEventListener("click", () => {
+      if (accidentState.isActive) {
+        document.getElementById("accidentEndError").textContent = "";
+        _showAccidentModal("accidentEndModal");
+      } else {
+        openAccidentWizard();
+      }
+    });
+  }
+  document.getElementById("accidentWizardProjectCancel").addEventListener("click", () => _hideAccidentModal("accidentWizardProjectModal"));
+  document.getElementById("accidentWizardProjectAdvance").addEventListener("click", advanceWizardToLocations);
+  document.getElementById("accidentWizardLocationCancel").addEventListener("click", () => {
+    _hideAccidentModal("accidentWizardLocationModal");
+    _showAccidentModal("accidentWizardProjectModal");
+  });
+  document.getElementById("accidentWizardLocationAdvance").addEventListener("click", advanceWizardToConfirm);
+  document.getElementById("accidentWizardConfirmCancel").addEventListener("click", () => {
+    _hideAccidentModal("accidentWizardConfirmModal");
+    _showAccidentModal("accidentWizardLocationModal");
+  });
+  document.getElementById("accidentWizardConfirmSubmit").addEventListener("click", submitAccidentOpen);
+  document.getElementById("accidentEndBack").addEventListener("click", () => _hideAccidentModal("accidentEndModal"));
+  document.getElementById("accidentEndConfirm").addEventListener("click", submitAccidentClose);
+  document.getElementById("refreshAccidentsButton").addEventListener("click", () => {
+    fetchAccidentsHistory().catch((err) => console.warn("fetchAccidentsHistory failed", err));
+  });
+
   Object.keys(presenceTableStates).forEach((tableKey) => {
     syncPresenceControls(tableKey);
     syncPresenceSortHeaders(tableKey);
   });
 }
+
+// ========== Accident Mode ==========
+
+function applyAccidentTheme(isActive) {
+  document.documentElement.classList.toggle("accident-mode", !!isActive);
+}
+
+function updateAccidentButton(state) {
+  const btn = document.getElementById("accidentToggleButton");
+  if (!btn) return;
+  btn.classList.remove("hidden");
+  btn.setAttribute("aria-pressed", state.isActive ? "true" : "false");
+  btn.querySelector(".accident-button-label").textContent = state.isActive ? "Acidente Reportado" : "Reportar Acidente";
+}
+
+function renderAccidentTab(state) {
+  const tabBtn = document.getElementById("accidentTabButton");
+  if (!tabBtn) return;
+  if (state.isActive) {
+    tabBtn.classList.remove("hidden");
+    document.getElementById("accidentSectionTitle").textContent = `Acidente ${state.accident.accident_number_label}`;
+    document.getElementById("accidentSectionMeta").textContent =
+      `Projeto ${state.accident.project_name} — Local ${state.accident.location_name} — Aberto por ${state.accident.opened_by_label} em ${new Date(state.accident.opened_at).toLocaleString()}`;
+    renderSituacaoPessoal(state.situationRows);
+  } else {
+    tabBtn.classList.add("hidden");
+    if (tabBtn.classList.contains("active")) {
+      switchTab("checkin");
+    }
+  }
+}
+
+function renderSituacaoPessoal(rows) {
+  const tbody = document.getElementById("situacaoPessoalBody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.className = `situacao-row situacao-row-${row.row_color}`;
+    tr.appendChild(td(formatDateTime(row.event_time)));
+    tr.appendChild(td(row.name));
+    tr.appendChild(td(row.chave));
+    tr.appendChild(td(row.projects.join(", ")));
+    tr.appendChild(td(row.local || ""));
+    tr.appendChild(td(row.zone));
+    tr.appendChild(td(row.status));
+    tr.appendChild(td(row.phone || ""));
+    tr.appendChild(tdVideos(row.videos));
+    tbody.appendChild(tr);
+  });
+  document.getElementById("accidentSectionCount").textContent = `${rows.length} registros`;
+}
+
+function td(text) {
+  const c = document.createElement("td");
+  c.textContent = text;
+  return c;
+}
+
+function tdVideos(videos) {
+  const c = document.createElement("td");
+  if (!videos || !videos.length) { c.textContent = ""; return c; }
+  const wrapper = document.createElement("div");
+  wrapper.className = "registros-cell";
+  videos.forEach((v) => {
+    const a = document.createElement("a");
+    a.href = v.public_url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = `Vídeo ${formatDateTime(v.captured_at)}`;
+    wrapper.appendChild(a);
+  });
+  c.appendChild(wrapper);
+  return c;
+}
+
+async function fetchAccidentState() {
+  try {
+    const response = await fetch("/api/admin/accidents/active", { credentials: "include" });
+    if (!response.ok) return;
+    accidentState = await response.json();
+    applyAccidentTheme(accidentState.isActive);
+    renderAccidentTab(accidentState);
+    updateAccidentButton(accidentState);
+  } catch (err) {
+    console.warn("fetchAccidentState failed", err);
+  }
+}
+
+async function fetchAccidentsHistory() {
+  const response = await fetch("/api/admin/accidents", { credentials: "include" });
+  if (!response.ok) return;
+  const { rows } = await response.json();
+  renderAccidentsHistory(rows);
+}
+
+function renderAccidentsHistory(rows) {
+  const tbody = document.getElementById("accidentsBody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(td(row.accident_number_label));
+    tr.appendChild(td(row.project_name));
+    tr.appendChild(td(row.author_label));
+    tr.appendChild(td(formatDateTime(row.opened_at)));
+    tr.appendChild(td(formatDateTime(row.closed_at)));
+    const dl = document.createElement("td");
+    if (row.download_ready) {
+      const a = document.createElement("a");
+      a.href = row.download_url;
+      a.textContent = "Baixar";
+      dl.appendChild(a);
+    } else {
+      dl.innerHTML = '<span class="download-pending">Preparando...</span>';
+    }
+    tr.appendChild(dl);
+    const actions = document.createElement("td");
+    if (row.can_delete) {
+      const btn = document.createElement("button");
+      btn.className = "secondary-button delete-button";
+      btn.textContent = "Remover";
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Tem certeza que deseja excluir o acidente ${row.accident_number_label}?`)) return;
+        await fetch(`/api/admin/accidents/${row.id}`, { method: "DELETE", credentials: "include" });
+        fetchAccidentsHistory();
+      });
+      actions.appendChild(btn);
+    }
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+async function openAccidentWizard() {
+  accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null };
+  const advanceBtn = document.getElementById("accidentWizardProjectAdvance");
+  if (advanceBtn) advanceBtn.disabled = true;
+  document.getElementById("accidentWizardProjectError").textContent = "";
+  try {
+    const response = await fetch("/api/admin/accidents/wizard/projects", { credentials: "include" });
+    if (!response.ok) {
+      document.getElementById("accidentWizardProjectError").textContent = "Erro ao carregar projetos.";
+      return;
+    }
+    const projects = await response.json();
+    renderProjectRadios(projects);
+    _showAccidentModal("accidentWizardProjectModal");
+  } catch (err) {
+    console.warn("openAccidentWizard failed", err);
+  }
+}
+
+function renderProjectRadios(projects) {
+  const container = document.getElementById("accidentWizardProjectOptions");
+  container.innerHTML = "";
+  projects.forEach((p) => {
+    const label = document.createElement("label");
+    label.innerHTML = `<input type="radio" name="accidentProjectChoice" value="${p.id}" /> <span>${p.name}</span>`;
+    container.appendChild(label);
+  });
+  container.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      document.getElementById("accidentWizardProjectAdvance").disabled = false;
+      accidentWizardData.projectId = parseInt(inp.value, 10);
+      accidentWizardData.projectName = projects.find((p) => p.id === accidentWizardData.projectId).name;
+    });
+  });
+}
+
+async function advanceWizardToLocations() {
+  if (!accidentWizardData.projectId) return;
+  const advanceBtn = document.getElementById("accidentWizardLocationAdvance");
+  if (advanceBtn) advanceBtn.disabled = true;
+  const customInput = document.getElementById("accidentWizardCustomLocation");
+  if (customInput) { customInput.disabled = true; customInput.value = ""; }
+  document.getElementById("accidentWizardLocationError").textContent = "";
+  try {
+    const response = await fetch(`/api/admin/accidents/wizard/locations?project_id=${accidentWizardData.projectId}`, { credentials: "include" });
+    if (!response.ok) {
+      document.getElementById("accidentWizardLocationError").textContent = "Erro ao carregar locais.";
+      return;
+    }
+    const locations = await response.json();
+    renderLocationRadios(locations);
+    _hideAccidentModal("accidentWizardProjectModal");
+    _showAccidentModal("accidentWizardLocationModal");
+  } catch (err) {
+    console.warn("advanceWizardToLocations failed", err);
+  }
+}
+
+function renderLocationRadios(locations) {
+  const container = document.getElementById("accidentWizardLocationOptions");
+  container.innerHTML = "";
+  locations.forEach((loc) => {
+    const label = document.createElement("label");
+    label.innerHTML = `<input type="radio" name="accidentLocationChoice" value="${loc.id}" /> <span>${loc.name}</span>`;
+    container.appendChild(label);
+  });
+  const customRadio = document.querySelector('input[name="accidentLocationChoice"][value="__custom__"]');
+  const customInput = document.getElementById("accidentWizardCustomLocation");
+  const advanceBtn = document.getElementById("accidentWizardLocationAdvance");
+  const handleLocationChange = (inp) => {
+    if (inp.value === "__custom__") {
+      customInput.disabled = false;
+      customInput.focus();
+      accidentWizardData.locationId = null;
+      accidentWizardData.locationName = customInput.value.trim() || null;
+      accidentWizardData.locationRegistered = false;
+      advanceBtn.disabled = !(customInput.value.trim());
+    } else {
+      customInput.disabled = true;
+      accidentWizardData.locationId = parseInt(inp.value, 10);
+      accidentWizardData.locationName = locations.find((l) => l.id === accidentWizardData.locationId)?.name || "";
+      accidentWizardData.locationRegistered = true;
+      advanceBtn.disabled = false;
+    }
+  };
+  container.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("change", () => handleLocationChange(inp));
+  });
+  if (customRadio) {
+    customRadio.addEventListener("change", () => handleLocationChange(customRadio));
+  }
+  if (customInput) {
+    customInput.addEventListener("input", () => {
+      if (customRadio && customRadio.checked) {
+        accidentWizardData.locationName = customInput.value.trim() || null;
+        advanceBtn.disabled = !(customInput.value.trim());
+      }
+    });
+  }
+}
+
+function advanceWizardToConfirm() {
+  const locName = accidentWizardData.locationName || "";
+  const projName = accidentWizardData.projectName || "";
+  document.getElementById("accidentWizardConfirmText").textContent =
+    `Projeto: ${projName} — Local: ${locName}`;
+  document.getElementById("accidentWizardConfirmError").textContent = "";
+  _hideAccidentModal("accidentWizardLocationModal");
+  _showAccidentModal("accidentWizardConfirmModal");
+}
+
+async function submitAccidentOpen() {
+  const submitBtn = document.getElementById("accidentWizardConfirmSubmit");
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const body = {
+      project_id: accidentWizardData.projectId,
+      location_id: accidentWizardData.locationId,
+      location_name: accidentWizardData.locationName,
+      location_is_registered: accidentWizardData.locationRegistered,
+    };
+    const response = await fetch("/api/admin/accidents/open", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "Erro ao abrir acidente." }));
+      document.getElementById("accidentWizardConfirmError").textContent = err.detail || "Erro ao abrir acidente.";
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+    _hideAccidentModal("accidentWizardConfirmModal");
+    await fetchAccidentState();
+    await fetchAccidentsHistory();
+  } catch (err) {
+    console.warn("submitAccidentOpen failed", err);
+    document.getElementById("accidentWizardConfirmError").textContent = "Erro de conexão.";
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function submitAccidentClose() {
+  const confirmBtn = document.getElementById("accidentEndConfirm");
+  if (confirmBtn) confirmBtn.disabled = true;
+  document.getElementById("accidentEndError").textContent = "";
+  try {
+    const response = await fetch("/api/admin/accidents/close", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "Erro ao encerrar acidente." }));
+      document.getElementById("accidentEndError").textContent = err.detail || "Erro ao encerrar acidente.";
+      if (confirmBtn) confirmBtn.disabled = false;
+      return;
+    }
+    _hideAccidentModal("accidentEndModal");
+    if (confirmBtn) confirmBtn.disabled = false;
+    await fetchAccidentState();
+    await fetchAccidentsHistory();
+  } catch (err) {
+    console.warn("submitAccidentClose failed", err);
+    document.getElementById("accidentEndError").textContent = "Erro de conexão.";
+    if (confirmBtn) confirmBtn.disabled = false;
+  }
+}
+
+function _showAccidentModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.setAttribute("aria-hidden", "false");
+}
+
+function _hideAccidentModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add("hidden");
+  el.setAttribute("aria-hidden", "true");
+}
+
+function _hideAllAccidentModals() {
+  ["accidentWizardProjectModal", "accidentWizardLocationModal", "accidentWizardConfirmModal", "accidentEndModal"]
+    .forEach(_hideAccidentModal);
+}
+
+function scheduleAccidentRefresh() {
+  if (accidentRefreshDebounceTimer !== null) clearTimeout(accidentRefreshDebounceTimer);
+  accidentRefreshDebounceTimer = setTimeout(async () => {
+    accidentRefreshDebounceTimer = null;
+    const wasActive = accidentState.isActive;
+    await fetchAccidentState();
+    if (wasActive && !accidentState.isActive) {
+      await fetchAccidentsHistory();
+    } else if (!wasActive && accidentState.isActive) {
+      // Another admin opened an accident — close wizard modals if any are open
+      const wizardOpen = ["accidentWizardProjectModal", "accidentWizardLocationModal", "accidentWizardConfirmModal"]
+        .some((id) => !document.getElementById(id)?.classList.contains("hidden"));
+      if (wizardOpen) {
+        _hideAllAccidentModals();
+      }
+      await fetchAccidentsHistory();
+    }
+  }, 250);
+}
+
+function startAccidentPolling() {
+  stopAccidentPolling();
+  accidentPollingHandle = setInterval(fetchAccidentState, ACCIDENT_POLL_INTERVAL_MS);
+}
+
+function stopAccidentPolling() {
+  if (accidentPollingHandle) {
+    clearInterval(accidentPollingHandle);
+    accidentPollingHandle = null;
+  }
+}
+
+// ========== End Accident Mode ==========
 
 async function bootstrap() {
   bindActions();
