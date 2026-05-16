@@ -98,6 +98,14 @@ header,
 }
 .accident-button.hidden { display: none; }
 
+/* ── Accident wizard modals ─────────────────────────────────────── */
+.accident-wizard-options { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.accident-wizard-options label { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; cursor: pointer; }
+.accident-wizard-options label:hover { background: rgba(0,0,0,0.04); }
+.accident-wizard-custom { display: flex; align-items: center; gap: 8px; padding-top: 12px; }
+.accident-wizard-custom input[type="text"] { flex: 1; }
+.accident-wizard-confirm-text { font-weight: 600; }
+
 .session-user-label {
   font-weight: 700;
   max-width: min(44vw, 420px);

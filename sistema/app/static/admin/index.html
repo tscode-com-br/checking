@@ -676,6 +676,48 @@
         </div>
       </div>
 
+      <div id="accidentWizardProjectModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardProjectTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardProjectTitle">Selecione o Projeto</h2></div>
+          <div id="accidentWizardProjectOptions" class="accident-wizard-options"></div>
+          <p id="accidentWizardProjectError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardProjectCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardProjectAdvance" type="button" disabled>Avançar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentWizardLocationModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardLocationTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardLocationTitle">Local do Acidente</h2></div>
+          <div id="accidentWizardLocationOptions" class="accident-wizard-options"></div>
+          <label class="accident-wizard-custom">
+            <input type="radio" name="accidentLocationChoice" value="__custom__" />
+            <span>Outro local:</span>
+            <input id="accidentWizardCustomLocation" type="text" maxlength="120" placeholder="Descreva o local" disabled />
+          </label>
+          <p id="accidentWizardLocationError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardLocationCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardLocationAdvance" type="button" disabled>Avançar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentWizardConfirmModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardConfirmTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardConfirmTitle">Confirmação de Acidente</h2></div>
+          <p id="accidentWizardConfirmText" class="accident-wizard-confirm-text"></p>
+          <p>Você confirma esta ação?</p>
+          <p id="accidentWizardConfirmError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardConfirmCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardConfirmSubmit" type="button">Confirmar</button>
+          </div>
+        </div>
+      </div>
+
       <p id="statusLine"></p>
       </main>
     </div>
