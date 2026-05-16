@@ -21,6 +21,30 @@
   --settings-trigger-size: clamp(42px, 9vw, 50px);
 }
 
+:root.accident-mode {
+  --primary: #c8222a;
+  --primary-hover: #8c1a20;
+  --accent-bg-soft: #fde7e9;
+}
+
+:root.accident-mode header {
+  background: #c8222a;
+}
+
+:root.accident-mode .submit-button {
+  background: #c8222a;
+}
+
+:root.accident-mode .submit-button:hover {
+  background: #8c1a20;
+}
+
+/* Preservar border-color dos campos chave/senha sem override em modo acidente */
+:root.accident-mode #chaveInput,
+:root.accident-mode #passwordInput {
+  /* border-color controlled by auth-status rules — not overridden here */
+}
+
 html {
   width: 100%;
   min-height: 100%;
