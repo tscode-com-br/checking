@@ -2249,3 +2249,131 @@ Adicionado apos @keyframes situacao-blink:
 - sistema/app/static/admin/index.html (editado -- modal + tabela inseridos)
 - sistema/app/static/admin/styles.css (editado -- 2 regras CSS adicionadas)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task H6 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Implementar toda a logica JavaScript do Modo Acidente no painel admin: estado global, fetch de dados, renderizacao de tabelas, wizard de abertura, SSE reativo, polling de fallback e wiring de botoes.
+
+### Arquivo editado: sistema/app/static/admin/app.js
+
+#### 1) Variaveis de estado globais (apos `let reportsSearchUsersByChave`)
+
+- `let accidentState = { isActive: false, accident: null, situationRows: [] }` -- estado corrente do acidente ativo.
+- `let accidentWizardData = { projectId, projectName, locationId, locationName, locationRegistered }` -- dados coletados pelo wizard antes do POST.
+- `let accidentRefreshDebounceTimer = null` -- handle do debounce SSE.
+- `let accidentPollingHandle = null` -- handle do setInterval de polling.
+- `const ACCIDENT_POLL_INTERVAL_MS = 30000` -- intervalo do polling (30s).
+
+#### 2) Constante DEFAULT_ADMIN_ALLOWED_TABS e allowedAdminTabs
+
+- "acidente" adicionado a `DEFAULT_ADMIN_ALLOWED_TABS` (Object.freeze) para que `switchTab("acidente")` e `isAdminTabAllowed("acidente")` funcionem.
+- "acidente" adicionado ao array inicial de `allowedAdminTabs`.
+
+#### 3) Modificacao em `showAuthShell` (logout)
+
+Antes de `stopRealtimeUpdates()`, adicionado:
+- `stopAccidentPolling()` -- cancela o setInterval de polling.
+- `applyAccidentTheme(false)` -- remove a classe `accident-mode` do `<html>`.
+
+#### 4) Modificacao em `showAdminShell` (login bem-sucedido)
+
+Apos `updateOperationalChrome()`, adicionado:
+- `fetchAccidentState()` -- carrega estado inicial do acidente.
+- `startAccidentPolling()` -- inicia o polling de 30s.
+
+#### 5) Modificacao em `startRealtimeUpdates` -- SSE onmessage
+
+Substituido o handler simples (que chamava `requestRefreshAllTables()` sempre) por logica reativa:
+- Tenta `JSON.parse(event.data)`.
+- Se `data.reason.startsWith("accident_")` -> chama `scheduleAccidentRefresh()`.
+- Caso contrario -> chama `requestRefreshAllTables()` (comportamento anterior).
+- Em caso de erro de parse -> chama `requestRefreshAllTables()`.
+
+#### 6) Bloco de funcoes do Modo Acidente (adicionado antes de `bootstrap()`)
+
+**Tema:**
+- `applyAccidentTheme(isActive)` -- `document.documentElement.classList.toggle("accident-mode", !!isActive)`.
+
+**Botao de acidente:**
+- `updateAccidentButton(state)` -- remove "hidden", seta `aria-pressed` e label ("Acidente Reportado" / "Reportar Acidente").
+
+**Aba de acidente:**
+- `renderAccidentTab(state)` -- mostra/oculta `#accidentTabButton`, popula `#accidentSectionTitle` e `#accidentSectionMeta`, chama `renderSituacaoPessoal`. Ao ocultar, se a aba estiver ativa redireciona para "checkin" via `switchTab("checkin")`.
+
+**Tabela Situacao de Pessoal:**
+- `renderSituacaoPessoal(rows)` -- popula `#situacaoPessoalBody` com rows coloridas (classe `situacao-row-${row.row_color}`), atualiza `#accidentSectionCount`.
+- `td(text)` -- helper de criacao de `<td>`.
+- `tdVideos(videos)` -- helper que cria celula com links para videos (public_url, captured_at).
+
+**Fetch estado ativo:**
+- `fetchAccidentState()` -- GET `/api/admin/accidents/active`, atualiza `accidentState`, chama `applyAccidentTheme`, `renderAccidentTab`, `updateAccidentButton`.
+
+**Tabela Acidentes (Cadastro):**
+- `fetchAccidentsHistory()` -- GET `/api/admin/accidents`, chama `renderAccidentsHistory`.
+- `renderAccidentsHistory(rows)` -- popula `#accidentsBody` com numero, projeto, autor, datas, link de download (ou "Preparando..."), botao "Remover" so quando `row.can_delete` e verdadeiro (DELETE `/api/admin/accidents/${row.id}`).
+
+**Wizard de abertura:**
+- `openAccidentWizard()` -- reseta `accidentWizardData`, busca `/api/admin/accidents/wizard/projects`, chama `renderProjectRadios`, exibe `#accidentWizardProjectModal`.
+- `renderProjectRadios(projects)` -- popula `#accidentWizardProjectOptions` com radios, ao selecionar habilita "Avanciar" e guarda `projectId`/`projectName`.
+- `advanceWizardToLocations()` -- busca `/api/admin/accidents/wizard/locations?project_id=X`, chama `renderLocationRadios`, troca para modal de locais.
+- `renderLocationRadios(locations)` -- popula `#accidentWizardLocationOptions` com locais registrados + opcao "__custom__" (campo de texto livre). Ao selecionar local registrado: habilita "Avanciar", guarda `locationId`/`locationName`/`locationRegistered=true`. Ao selecionar "__custom__": habilita campo de texto, guarda `locationName`/`locationRegistered=false`, habilita "Avanciar" so quando campo tem texto.
+- `advanceWizardToConfirm()` -- monta texto de confirmacao (`Projeto: X -- Local: Y`), exibe `#accidentWizardConfirmModal`.
+- `submitAccidentOpen()` -- POST `/api/admin/accidents/open` com `{ project_id, location_id, location_name, location_is_registered }`, fecha modal e chama `fetchAccidentState()` + `fetchAccidentsHistory()`.
+
+**Wizard de encerramento:**
+- `submitAccidentClose()` -- POST `/api/admin/accidents/close`, fecha `#accidentEndModal`, chama `fetchAccidentState()` + `fetchAccidentsHistory()`.
+
+**Helpers de modal:**
+- `_showAccidentModal(id)` / `_hideAccidentModal(id)` / `_hideAllAccidentModals()` -- wrappers DRY para mostrar/ocultar modais de acidente.
+
+**SSE e polling:**
+- `scheduleAccidentRefresh()` -- debounce de 250ms. Ao resolver: chama `fetchAccidentState()`. Se acidente foi encerrado: chama `fetchAccidentsHistory()`. Se novo acidente aberto por outro admin: fecha wizard se estiver aberto, chama `fetchAccidentsHistory()`.
+- `startAccidentPolling()` -- `setInterval(fetchAccidentState, ACCIDENT_POLL_INTERVAL_MS)`.
+- `stopAccidentPolling()` -- `clearInterval` do handle.
+
+#### 7) Wiring de botoes em `bindActions()` (adicionado antes do bloco `Object.keys(presenceTableStates)`)
+
+| Elemento | Evento | Acao |
+|---|---|---|
+| `#accidentToggleButton` | click | Se isActive -> mostra `#accidentEndModal`; Senao -> `openAccidentWizard()` |
+| `#accidentWizardProjectCancel` | click | Oculta `#accidentWizardProjectModal` |
+| `#accidentWizardProjectAdvance` | click | `advanceWizardToLocations()` |
+| `#accidentWizardLocationCancel` | click | Oculta location modal, exibe project modal |
+| `#accidentWizardLocationAdvance` | click | `advanceWizardToConfirm()` |
+| `#accidentWizardConfirmCancel` | click | Oculta confirm modal, exibe location modal |
+| `#accidentWizardConfirmSubmit` | click | `submitAccidentOpen()` |
+| `#accidentEndBack` | click | Oculta `#accidentEndModal` |
+| `#accidentEndConfirm` | click | `submitAccidentClose()` |
+| `#refreshAccidentsButton` | click | `fetchAccidentsHistory()` |
+
+### Arquivo criado: tests/check_admin_accident_ui.test.js
+
+8 testes estaticos (node:test, regex sobre conteudo do HTML/JS):
+
+1. `test_accident_button_visible_after_login` -- verifica IDs no HTML e chamada classList.remove("hidden") apos login.
+2. `test_accident_button_label_changes_on_state` -- verifica textContent e aria-pressed em updateAccidentButton.
+3. `test_wizard_advances_after_project_selection` -- verifica renderProjectRadios, projectId, habilitacao do botao Avanciar, advanceWizardToLocations.
+4. `test_wizard_advances_after_location_selection` -- verifica renderLocationRadios, locationId, locationRegistered, advanceWizardToConfirm.
+5. `test_confirm_text_includes_project_and_location` -- verifica texto de confirmacao e submitAccidentOpen com POST.
+6. `test_situacao_table_renders_rows_in_order` -- verifica renderSituacaoPessoal, row_color, contagem de registros.
+7. `test_accidents_table_renders_history` -- verifica fetchAccidentsHistory, renderAccidentsHistory, download link.
+8. `test_delete_button_only_for_perfil_9` -- verifica can_delete, delete-button class, DELETE endpoint.
+
+Resultado: **8 passed**, 0 failed.
+
+### Verificacoes executadas
+
+- node --test tests/check_admin_accident_ui.test.js -> **8 passed**.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+- Teste `check_admin_table_refresh_ui.test.js` falha em 1 assertion pre-existente (nao relacionada a esta tarefa).
+
+### Arquivos alterados nesta tarefa
+
+- sistema/app/static/admin/app.js (editado -- 481 insercoes, 4 substituicoes)
+- tests/check_admin_accident_ui.test.js (criado -- 8 testes)
+- docs/temp000A.md (atualizado)
