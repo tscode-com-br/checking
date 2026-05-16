@@ -71,6 +71,7 @@ from ..services.location_settings import (
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
+from ..services.email_sender import queue_help_request_emails
 from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
     TransportRequestConflictError,
@@ -929,11 +930,6 @@ def open_web_accident(
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
     return get_web_accident_state(request=request, chave=payload.chave, db=db)
-
-
-def queue_help_request_emails(accident_id: int, requester_user_id: int) -> None:
-    # TODO Task G3: send help-request notification emails to admins.
-    pass
 
 
 @router.post("/check/accident/report", response_model=WebAccidentStateResponse)
