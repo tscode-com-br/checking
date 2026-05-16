@@ -2083,3 +2083,71 @@ Adicionado apos .accident-button.hidden:
 - sistema/app/static/admin/index.html (editado -- 3 modais inseridos)
 - sistema/app/static/admin/styles.css (editado -- 6 regras CSS adicionadas)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task H3 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar suporte a tema "Modo Acidente" no CSS do painel admin via CSS custom properties e classe .accident-mode no elemento <html>.
+
+### Arquivo editado: sistema/app/static/admin/styles.css
+
+#### 1) Bloco :root adicionado no topo do arquivo
+
+`css
+:root {
+  --primary: #0f766e;       /* verde primario atual */
+  --primary-hover: #0d5e58; /* verde mais escuro */
+  --accent-bg-soft: #e6f6f5;
+  --danger: #c8222a;
+}
+`
+
+A cor primaria identificada via grep foi #0f766e (teal/verde), usada em header, botoes, e varios elementos do painel.
+
+#### 2) Bloco :root.accident-mode adicionado apos :root
+
+`css
+:root.accident-mode {
+  --primary: #c8222a;
+  --primary-hover: #8c1a20;
+  --accent-bg-soft: #fde7e9;
+}
+:root.accident-mode .app-header { background: #c8222a; }
+:root.accident-mode .tabs { border-bottom-color: #c8222a; }
+:root.accident-mode .tabs button.active { color: #c8222a; border-bottom-color: #c8222a; }
+`
+
+Adicionar ccident-mode ao <html> recolore instantaneamente o tema para vermelho via CSS cascade.
+
+#### 3) Refatoracao: 11 ocorrencias de #0f766e substituidas por ar(--primary)
+
+| Linha aprox. | Seletor | Propriedade |
+|---|---|---|
+| 49 | header, .app-header | ackground |
+| 219 | utton | ackground |
+| 338 | .sortable-header:hover | color |
+| 342 | .sortable-header.is-active | color |
+| 353 | .sortable-header.is-active .sort-indicator | color |
+| 501 | .reports-group-count | color |
+| 1132 | .archive-record-count | color |
+| 1503 | .user-row-editing .inline:focus | order-color |
+| 1746 | .membership-projects-button[aria-expanded="true"] | ackground |
+| 1883 | .location-projects-button[aria-expanded="true"] | ackground |
+| 2028 | coordinate count badge | color |
+
+Cores semanticas (#065f46 status-ok, #134e4a tab active, 
+gba(15,118,110,0.12) shadow) mantidas como hardcoded.
+
+### Verificacoes executadas
+
+- document.documentElement.classList.add("accident-mode") -> header e botoes ficam vermelhos (validacao visual).
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### Arquivos alterados nesta tarefa
+
+- sistema/app/static/admin/styles.css (editado -- 27 insercoes, 11 substituicoes)
+- docs/temp000A.md (atualizado)
