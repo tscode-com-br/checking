@@ -2000,3 +2000,47 @@ Três funções exportadas:
 ## 5) Commit
 
 `feat: Add email_sender service with queue+retry delivery (Task G3)`
+
+---
+
+## Bloco H — Frontend Admin, Task H1 — Header redesenhado + botão "Reportar Acidente"
+
+### Resumo detalhado
+
+**Objetivo:** Substituir o `<header>` simples do painel admin por um layout de grade de 3 colunas com botão circular centralizado "Reportar Acidente", mantendo brand à esquerda e sessionBar à direita.
+
+### 1) Arquivo editado: `sistema/app/static/admin/index.html`
+
+- `<header>` renomeado para `<header class="app-header">`.
+- Inserido `<button id="accidentToggleButton" type="button" class="accident-button accident-button-off hidden" aria-pressed="false" aria-label="Reportar Acidente">` entre `.header-brand` e `#sessionBar`.
+- SVG e texto do brand preservados sem alteração.
+- Botão e sessionBar iniciam com `class="hidden"` — só aparecem após login.
+
+### 2) Arquivo editado: `sistema/app/static/admin/styles.css`
+
+- Seletor `header` expandido para `header, .app-header`; layout alterado de `flex` para `grid` com `grid-template-columns: 1fr auto 1fr`.
+- `.app-header .session-bar { justify-self: end; }` adicionado.
+- Bloco `.accident-button` adicionado (84x84px, circular, vermelho #c8222a, borda preta):
+  - `:hover` → `scale(1.03)`
+  - `[aria-pressed="true"]` → borda e glow em #ff4d57 + `scale(0.97)`
+  - `@media (max-width: 700px)` → 64x64px
+  - `.accident-button.hidden { display: none; }`
+- Responsivo mobile (`max-width: 800px`): `header, .app-header` colapsa para coluna única (`grid-template-columns: 1fr`).
+
+### 3) Arquivo editado: `sistema/app/static/admin/app.js`
+
+- No fluxo de **login** (após `sessionBar.classList.remove("hidden")`): `accidentToggleButton.classList.remove("hidden")` adicionado.
+- No fluxo de **logout** (após `sessionBar.classList.add("hidden")`): `accidentToggleButton.classList.add("hidden")` adicionado.
+- Ambas as chamadas usam `getElementById` + guarda nula para robustez.
+
+### 4) Verificações executadas
+
+- `python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q` → **137 passed** (sem regressões).
+- Testes de browser: manual (ver critérios de aceitação na spec).
+
+### 5) Arquivos alterados nesta tarefa
+
+- `sistema/app/static/admin/index.html` (editado)
+- `sistema/app/static/admin/styles.css` (editado)
+- `sistema/app/static/admin/app.js` (editado)
+- `docs/temp000A.md` (atualizado)
