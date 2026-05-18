@@ -3278,3 +3278,60 @@ O archive builder importa `upload_stream` com `from .object_storage import uploa
 
 - `tests/integration/__init__.py` (criado — módulo vazio)
 - `tests/integration/test_accident_admin_flow.py` (criado — 1 teste de integração E2E, 10 passos)
+
+
+---
+
+## Task L3 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Testar o fluxo E2E completo do lado web do Modo Acidente: um usuário abre o acidente, reporta pedido de ajuda, faz upload de vídeo, um segundo usuário vê o acidente e reporta seu status, e um admin confirma que ambos aparecem em `situation_rows`.
+
+### Abordagem
+
+Criado `tests/integration/test_accident_web_flow.py` com a função `test_complete_web_flow` que executa 8 passos em sequência, criando seus próprios usuários e projeto dedicados (`L3WebProject`, chaves `WL31`/`WL32`/`WL3A`) para isolamento total dos demais testes.
+
+O teste usa os seguintes patches ativos durante os passos 1–7:
+- `sistema.app.services.accident_lifecycle.notify_admin_data_changed`
+- `sistema.app.services.accident_lifecycle.notify_web_check_data_changed`
+- `sistema.app.routers.web_check.stream_upload_to_storage` — substituído por `AsyncMock(return_value=(1024, "https://fake-storage.example.com/..."))` para evitar I/O de storage
+- `sistema.app.routers.web_check.queue_help_request_emails` — substituído por `MagicMock` para capturar a chamada sem envio real de e-mails
+
+### Passo a passo verificado
+
+| Passo | Operação | Verificação |
+|---|---|---|
+| 1 | `POST /api/web/auth/login` (WL31) | 200, cookie de sessão |
+| 2 | `GET /api/web/check/accident/state` | `is_active=False` |
+| 3 | `POST /api/web/check/accident/open` `{zone:"safety", status:"ok"}` | `is_active=True`, `project_name`, `location_name`, `current_user_report` corretos |
+| 4 | `POST /api/web/check/accident/report` `{zone:"accident", status:"help"}` | `current_user_report.status="help"`; `queue_help_request_emails.assert_called_once()` com `accident_id` e `requester_user_id` |
+| 5 | `POST /api/web/check/accident/video` (multipart) | 200, `video_id`, `public_url` começa com `https://fake-storage.example.com/` |
+| 6 | `GET /state` (WL32) | `is_active=True`, `project_name` e `location_name` corretos |
+| 7 | `POST /report` (WL32) `{zone:"safety", status:"ok"}` | `current_user_report.zone="safety"`, `status="ok"` |
+| 8 | `GET /api/admin/accidents/active` (admin WL3A) | `is_active=True`; `situation_rows` contém WL31 (zone="Acidente", status="AJUDA") e WL32 (zone="Segurança", status="OK") |
+
+### Decisões de design
+
+**Validação de senha:** A rota de login web valida máximo de 10 caracteres para a senha; as senhas usadas nos fixtures respeitam esse limite (`WLu1pass!`, `WLu2pass!`, `WLadmin!`).
+
+**Mock de e-mail vs verificação de SMTP:** Como `deliver_pending_emails` exige `settings.smtp_host` para enviar via SMTP, e configurar isso não é o foco do teste E2E, optou-se por substituir `queue_help_request_emails` por um `MagicMock` e verificar que foi chamado com os kwargs corretos. Isso valida o trigger de e-mail sem simular infraestrutura SMTP.
+
+**Localized zone/status:** O schema `SituacaoPessoalRow` retorna valores localizados em português: `zone∈{"Aguardando","Segurança","Acidente"}` e `status∈{"Aguardando","OK","AJUDA"}`.
+
+**AsyncMock para video upload:** `stream_upload_to_storage` em `web_check.py` é uma coroutine; `patch` com `AsyncMock` é necessário para que o endpoint async a aguarde corretamente. `side_effect` com async function normal não funciona bem com `MagicMock`; `AsyncMock(return_value=(...))` é a forma correta.
+
+**Isolamento de fixtures:** O teste não usa as fixtures de `conftest_accident.py` para evitar interferência com outros testes que usem `open_accident_fixture`. Cria seu próprio projeto (`L3WebProject`) e usuários dedicados.
+
+### Resultado dos testes
+
+- `test_complete_web_flow`: **PASSED** em ~0.75s.
+- Suite models + services + routers + integration: **131 passed**.
+
+### Commit
+
+`(pendente)`
+
+### Arquivos criados nesta tarefa
+
+- `tests/integration/test_accident_web_flow.py` (criado — 1 teste de integração E2E web, 8 passos)
