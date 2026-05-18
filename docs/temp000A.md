@@ -2626,3 +2626,49 @@ Adicionados apos o bloco `.history-card { ... }`:
 - sistema/app/static/check/index.html (editado -- secao accidentInquiryCard inserida)
 - sistema/app/static/check/styles.css (editado -- 3 blocos CSS adicionados)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I5 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar override CSS para o banner de notificacao em modo acidente e o botao "Permitir Audio & Video" na aba Ajustes.
+
+### 1) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionado apos o bloco `:root.accident-mode #chaveInput, #passwordInput` (linha 46):
+
+**`:root.accident-mode #notificationLinePrimary`:**
+- `color: #c8222a` -- texto vermelho quando modo acidente ativo.
+- `font-weight: 700` -- negrito para destaque visual.
+
+Reaproveita o elemento `#notificationLinePrimary` ja existente na linha ~83 do HTML (dentro de `.notification-card`). JS (Task I6) escreve o texto do banner neste elemento durante modo acidente.
+
+### 2) Arquivo editado: sistema/app/static/check/index.html
+
+Adicionado imediatamente apos o `div.settings-option-row` do botao "Permitir localizacao" (linha ~447), dentro do `#settingsDialogForm`:
+
+```html
+<div class="settings-option-row settings-option-row-action">
+  <button id="settingsAudioVideoPermissionButton" type="button" class="secondary-button settings-option-action">Permitir Audio &amp; Video</button>
+</div>
+```
+
+Caracteristicas:
+- `id="settingsAudioVideoPermissionButton"` -- JS I6 capta o click para chamar `navigator.mediaDevices.getUserMedia`.
+- `class="secondary-button settings-option-action"` -- estilo consistente com os outros botoes do dialog Ajustes.
+- `&amp;` -- encoding HTML correto para o caractere `&`.
+- Posicionado logo apos "Permitir localizacao" para agrupamento logico de permissoes do navegador.
+
+### 3) Verificacoes executadas
+
+- Todas as verificacoes programaticas passaram: ID do botao, texto, CSS selector, color, font-weight.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/styles.css (editado -- 4 linhas adicionadas)
+- sistema/app/static/check/index.html (editado -- 4 linhas adicionadas)
+- docs/temp000A.md (atualizado)
