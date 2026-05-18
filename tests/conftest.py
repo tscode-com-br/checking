@@ -18,3 +18,6 @@ os.environ.setdefault("BOOTSTRAP_ADMIN_NAME", "Tamer Salmem")
 os.environ.setdefault("BOOTSTRAP_ADMIN_PASSWORD", "eAcacdLe2")
 os.environ.setdefault("FORMS_QUEUE_ENABLED", "false")
 os.environ.setdefault("TRANSPORT_EXPORTS_DIR", "./test_transport_exports")
+
+# Register accident-mode fixtures so they are available to every test_*.py.
+pytest_plugins = ["tests.conftest_accident"]

@@ -3139,3 +3139,87 @@ Todos os 10 arquivos seguem a mesma estrutura:
 ### Arquivos alterados nesta tarefa
 
 - `docs/descritivos/modo_acidente_arquitetura.md` (criado — documento de arquitetura)
+
+---
+
+## Task L1 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar fixtures pytest reutilizáveis para os testes do Modo Acidente, disponíveis automaticamente em qualquer `test_*.py` do projeto.
+
+### Abordagem
+
+Criado `tests/conftest_accident.py` como arquivo de plugin pytest, registrado via `pytest_plugins = ["tests.conftest_accident"]` no `tests/conftest.py` existente. Isso garante que todas as fixtures são descobertas automaticamente por pytest sem nenhuma importação manual nos arquivos de teste.
+
+### Fixtures implementadas
+
+**`accident_project`**
+- Escopo: `function`
+- Cria (ou reutiliza) `Project(name="P-Test", country_code="SG", ...)` no shared test DB.
+- Usa `SessionLocal` + lógica `upsert` idempotente (create_or_reuse) para evitar conflitos entre execuções.
+
+**`accident_location`**
+- Escopo: `function`
+- Depende de `accident_project`.
+- Cria (ou reutiliza) `ManagedLocation(local="L-Test", latitude=1.3521, longitude=103.8198, projects_json='["P-Test"]', tolerance_meters=50)`.
+
+**`user_in_project`**
+- Escopo: `function`
+- Depende de `accident_project`.
+- Cria (ou reutiliza) `User(chave="LTST", perfil=0, checkin=True, email="l1user@test.example.com", projeto="P-Test")`.
+- Senha setada via `hash_password` para suportar login via TestClient se necessário.
+
+**`admin_perfil_1`**
+- Escopo: `function`
+- Cria (ou reutiliza) `User(chave="LA01", perfil=1)` — full admin (dígito "1" no perfil).
+- Realiza login via `POST /api/admin/auth/login` com TestClient.
+- Retorna `AdminSession(user, client)` — NamedTuple com o objeto User e o TestClient autenticado.
+
+**`admin_perfil_9`**
+- Escopo: `function`
+- Cria (ou reutiliza) `User(chave="LA09", perfil=9)` — super-admin (FULL_ACCESS_DIGIT).
+- Retorna `AdminSession(user, client)` da mesma forma.
+
+**`open_accident_fixture`**
+- Escopo: `function`
+- Depende de `accident_project` e `admin_perfil_1`.
+- Setup: fecha qualquer acidente aberto existente e deleta rows filhas (archive, video, reports), depois chama `open_accident(origin="admin", custom_location_name="Fixture Zone")`.
+- Yield: o objeto `Accident` aberto.
+- Teardown: chama `close_accident` se o acidente ainda estiver ativo. Ambos `notify_admin_data_changed` e `notify_web_check_data_changed` são patchados durante setup e teardown para evitar dependência de Postgres.
+- Helper privado `_wipe_accident_rows(db)` e `_ensure_admin_row(db, user)` são usados tanto no setup quanto no teardown.
+
+**`mock_smtp`**
+- Escopo: `function`
+- Patcha `smtplib.SMTP` e `smtplib.SMTP_SSL` com um único `MagicMock`.
+- O mock suporta context manager (`__enter__`/`__exit__`).
+- `mock_smtp.sent_messages` (lista) acumula todos os objetos `email.message.Message` passados para `send_message()`.
+- Yield: o MagicMock configurado.
+
+**`mock_storage`**
+- Escopo: `function`
+- Patcha `sistema.app.services.object_storage.upload_stream` com uma função fake que retorna `"https://fake-storage.example.com/{object_key}"`.
+- Yield: o objeto `patch` para inspeção de `call_count`, `call_args`, etc.
+
+### Tipo auxiliar
+
+`AdminSession` — `NamedTuple` com campos `(user: User, client: TestClient)`. Permite que fixtures e testes desconstruam naturalmente: `user, client = admin_perfil_1`.
+
+### Integração com conftest.py
+
+`tests/conftest.py` recebeu a linha:
+```python
+pytest_plugins = ["tests.conftest_accident"]
+```
+Isso registra o arquivo como plugin pytest, tornando todas as 8 fixtures disponíveis globalmente sem nenhuma importação explícita nos arquivos de teste.
+
+### Verificação
+
+- `python -c "from tests.conftest_accident import ..."` — importa sem erro.
+- `pytest tests/routers/test_admin_accidents.py::test_active_requires_session` — passa (conftest plugin carregado corretamente).
+- `pytest tests/services/test_accident_lifecycle.py tests/services/test_accident_event_logging.py tests/models/test_accident_models.py` — 33 testes passam.
+
+### Arquivos alterados nesta tarefa
+
+- `tests/conftest_accident.py` (criado — 8 fixtures + NamedTuple AdminSession)
+- `tests/conftest.py` (editado — adicionado `pytest_plugins = ["tests.conftest_accident"]`)
