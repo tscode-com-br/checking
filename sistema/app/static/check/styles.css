@@ -45,6 +45,11 @@
   /* border-color controlled by auth-status rules — not overridden here */
 }
 
+:root.accident-mode #notificationLinePrimary {
+  color: #c8222a;
+  font-weight: 700;
+}
+
 html {
   width: 100%;
   min-height: 100%;
