@@ -3008,3 +3008,36 @@ Importacao adicionada: `from .event_logger import log_event`.
 - `sistema/app/routers/web_check.py` (editado -- import log_event, captura retorno open_accident, 3 chamadas log_event)
 - `sistema/app/services/email_sender.py` (editado -- import log_event, contadores sent/failed, chamada log_event)
 - `tests/services/test_accident_event_logging.py` (criado -- 4 testes J1)
+
+
+---
+
+## Task K1 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar o arquivo `CLAUDE.md` na raiz do repositorio com uma secao "Modo Acidente" que serve de referencia rapida para agentes de IA ao trabalhar no projeto.
+
+### 1) Arquivo criado: CLAUDE.md
+
+O arquivo nao existia; foi criado do zero. Estrutura adotada:
+
+**Secoes gerais (contexto do projeto):**
+- Visao geral: tecnologias (FastAPI, SQLAlchemy, ESP32, Docker)
+- Estrutura de diretorios: mapa dos arquivos mais relevantes (models, schemas, routers, services, static)
+- Convencoes de codigo: mapped_column, Text para JSON serializado, String(16) para action, notificacoes SSE, convencoes de testes
+
+**Secao "## Modo Acidente"** (requisito principal da tarefa):
+
+1. **Visao geral do fluxo:** abertura por admin ou web, relatorio de situacao, encerramento apenas pelo admin, geracao de archive ZIP ao encerrar.
+2. **Tabelas envolvidas:** tabela Markdown com as 5 tabelas (`accidents`, `accident_user_reports`, `accident_video_uploads`, `accident_archives`, `email_delivery_logs`).
+3. **Endpoints principais:** duas tabelas separadas (Admin e Check Web) com metodo, path e descricao de cada endpoint.
+4. **Brokers SSE:** `checking_admin_updates` e `checking_web_check_updates`, funcoes `notify_admin_data_changed` / `notify_web_check_data_changed`.
+5. **Dependencias externas:** SMTP (variaveis de env) e DO Spaces (S3) com variaveis de configuracao.
+6. **Onde mexer:** tabela com arquivo -> responsabilidade para os 10 arquivos mais relevantes do Modo Acidente.
+7. **Eventos de log:** tabela action/source/momento + aviso sobre o limite String(16).
+
+### Arquivos alterados nesta tarefa
+
+- `CLAUDE.md` (criado -- novo arquivo na raiz do repositorio)
+- `docs/temp000A.md` (atualizado -- K1 summary adicionado)
