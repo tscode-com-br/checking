@@ -3208,12 +3208,14 @@ test('transport ai agent settings helpers keep defaults, preserve raw edits, and
   assert.deepEqual(transportPage.getDefaultAiAgentSettings(), {
     earliestBoardingTime: '06:50',
     arrivalAtWorkTime: '07:45',
+    minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
     requestKinds: ['extra', 'weekend', 'regular'],
   });
 
   assert.deepEqual(transportPage.readAiAgentSettingsDraft(undefined), {
     earliestBoardingTime: '06:50',
     arrivalAtWorkTime: '07:45',
+    minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
     requestKinds: ['extra', 'weekend', 'regular'],
   });
   assert.deepEqual(
@@ -3236,6 +3238,7 @@ test('transport ai agent settings helpers keep defaults, preserve raw edits, and
     {
       earliestBoardingTime: '06:55',
       arrivalAtWorkTime: '07:35',
+      minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
       requestKinds: ['weekend'],
     }
   );
@@ -3248,6 +3251,7 @@ test('transport ai agent settings helpers keep defaults, preserve raw edits, and
     {
       earliestBoardingTime: '',
       arrivalAtWorkTime: '07:35',
+      minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
       requestKinds: [],
     }
   );
@@ -3265,6 +3269,7 @@ test('transport ai agent settings helpers keep defaults, preserve raw edits, and
       draft: {
         earliestBoardingTime: '06:50',
         arrivalAtWorkTime: '07:45',
+        minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
         requestKinds: ['regular'],
       },
     }
@@ -3360,6 +3365,7 @@ test('transport ai route request helpers build the backend payload and only poll
       route_kind: 'home_to_work',
       earliest_boarding_time: '06:50',
       arrival_at_work_time: '07:45',
+      min_occupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
       request_route_kinds: {
         weekend: 'home_to_work',
         regular: 'home_to_work',
@@ -3389,6 +3395,7 @@ test('transport ai route request helpers build the backend payload and only poll
       route_kind: 'work_to_home',
       earliest_boarding_time: '06:50',
       arrival_at_work_time: '07:45',
+      min_occupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
       request_route_kinds: {
         extra: 'work_to_home',
         regular: 'home_to_work',
@@ -5717,6 +5724,7 @@ test('transport ai settings save flow updates the provider note, posts the trimm
         project_id: 101,
         provider: 'deepseek',
         api_key: 'sk-test-9999',
+        here_api_key: null,
       });
       assert.equal(getElement('[data-ai-settings-modal]').hidden, true);
       assert.equal(getElement('[data-status-message]').textContent, 'AI settings saved.');
@@ -6074,6 +6082,7 @@ test('transport ai settings modal switches projects, reloads isolated hints, and
         project_id: 202,
         provider: 'deepseek',
         api_key: 'sk-project-202',
+        here_api_key: null,
       });
     }
   );

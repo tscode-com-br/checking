@@ -1,0 +1,232 @@
+IMPLEMENTAÇÃO DO BOTÃO 'Acidente Reportado' no website do administrador ('sistema\app\static\admin') e na aplicação web 'Checking Web' ('sistema\app\static\check'):
+
+1. Partes Afetadas
+
+Esta implementação implica em modificações em todas as partes do sistema Checking:
+- API do sistema ('sistema\app');
+- Website do administrador ('sistema\app\static\admin');
+- Aplicação Web 'Checking Web' ('sistema\app\static\check');
+
+
+
+2. Descrição Simplificada
+
+Ao ser acionado, o sistema Checking inteiro entra em 'Modo Acidente. A API deve informar a todos os usuários que estão cadastrados no projeto envolvido no acidente que algum acidente ocorreu em um determinado local, e solicita que os usuários do projeto em questão a reportem se estão em 'Zona de Segurança' ou em 'Zona de Acidente'. A API deve fazer isso através da aplicação web 'Checking Web'.
+
+
+
+3. Alterações em Layout
+
+3.1. No website do administrador ('sistema\app\static\admin'):
+
+3.1.1. Este botão 'Acidente Reportado' deverá ser redondo, grande e vermelho, com bordas pretas, centralizado horizontalmente, no topo da página, na mesma linha onde está a logotipo e o título 'Checking'. O botão deve ter a label 'Reportar Acidente' na cor branca. O layout deve se integrar com a faixa verde correspondente ao título do website do administrador.
+3.1.2. Deverá ser um botão 'on/off' que, quando ligado, alterará a label para 'Acidente Reportado', e as bordas ficam vermelhas e brilhantes. O botão deve ter um aspecto de 'pressionado' quando estiver ligado.
+3.1.3. Na aba 'Cadastro', crie uma tabela chamada 'Acidentes', imediatamente abaixo da tabela 'Pendências'. Esta tabela será descrita no item 6 deste documento.
+
+3.2. Na aplicação web 'Checking Web' ('sistema\app\static\check'):
+
+3.2.1. Este botão 'Acidente Reportado' deve aparecer abaixo do botão 'Registrar' e deve ter o mesmo formato e tamanho do botão 'Registrar'. A cor do botão deve ser vermelha. O botão deve ter a label 'Reportar Acidente' na cor branca.
+3.2.2. Deverá ser um botão igual ao botão 'Registrar' que, quando pressionado, deverá considerar se o sistema já está em 'modo acidente' alterará a label para 'Acidente Reportado', e as bordas ficam vermelhas e brilhantes. O botão deve ter um aspecto de 'pressionado' quando estiver ligado. Quando estiver ligado, todo o sistema Checking será alterado.
+3.2.3. No widget 'Ajustes' da aplicação web 'Checking Web', deve ser incluído um botão 'Permitir Audio & Video' que, se pressionado, antecipa o pedido de permissão para acessar câmera e microfone, de forma que, quando o usuário pressionar o botão 'Audio & Video' durante um acidente, estas permissões já estejam concedidas.
+
+
+4. Acionamento do botão 'Reportar Acidente' para iniciar o 'Modo Acidente':
+
+
+4.1. No website do administrador ('sistema\app\static\admin'):
+
+Quando o administrador pressionar o botão do website do administrador, deve abrir um widget chamado 'Selecione o Projeto', com um radio button para cada projeto cadastrado. No rodapé do widget 'Selecione o Projeto', deve haver botões 'Cancelar' e 'Avançar'. Se clicar em 'cancelar', então a tela retorna para a página inicial do website do administrador.
+
+Se clicar em 'avançar', então o widget 'Selecione o Projeto' deve ser fechado, e um novo widget, chamado 'Local do Acidente' deve aparecer. Neste novo widget 'Local do Acidente', deve haver um radio button para cada localização cadastrada do projeto que foi selecionado no widget anterior. Além disso, deve haver mais um radio button com um campo input ao lado, para que o administrador possa descrever uma possível localização que não esteja cadastrada no projeto. No rodapé do widget 'Local do Acidente', deve haver botões 'Cancelar' e 'Avançar'. Se clicar em 'cancelar', então a tela retorna para a página inicial do website do administrador.
+
+Se clicar em 'avançar, então o widget 'Local do Acidente' deve ser fechado, e um widget de confirmação deve aparecer, mostrando os dados selecionados. Exemplo:
+
+Linha 1 (título): 'Confirmação de Acidente'
+Linha 2: <pule uma linha>
+Linha 3: Texto 'Você está prestes a reportar um acidente na localização <nome da localização> do projeto <nome do projeto>.
+Linha 4: <pule uma linha>
+Linha 5: Você confirma esta ação?
+Linha 6: <pule uma linha>
+Linha 7: Botões 'Cancelar' e 'Confirmar'. Se clicar em cancelar, tudo é descartado e retorna à tela inicial do website do administrador.
+
+Se clicar em 'Confirmar, então toda a aplicação web Checking e o website do administrador entram no 'Modo Acidente'. Siga para o item 5.1.
+
+
+4.2. Na aplicação web 'Checking Web' ('sistema\app\static\check'):
+
+Quando o usuário pressionar o botão 'Reportar Acidente', deve abrir um widget chamado 'Selecione o Projeto', com um radio button para cada projeto cadastrado. No rodapé do widget 'Selecione o Projeto', deve haver botões 'Cancelar' e 'Avançar'. Se clicar em 'cancelar', então a tela retorna para a página inicial da aplicação web 'Checking Web'.
+
+Se clicar em 'avançar', então o widget 'Selecione o Projeto' deve ser fechado, e um novo widget, chamado 'Local do Acidente' deve aparecer. Neste novo widget 'Local do Acidente', deve haver um radio button para cada localização cadastrada do projeto que foi selecionado no widget anterior. Além disso, deve haver mais um radio button com um campo input ao lado, para que o usuário possa descrever uma possível localização que não esteja cadastrada no projeto. No rodapé do widget 'Local do Acidente', deve haver botões 'Cancelar' e 'Avançar'. Se clicar em 'cancelar', então a tela retorna para a página inicial da aplicação web 'Checking Web'.
+
+Se clicar em 'avançar, então o widget 'Local do Acidente' deve ser fechado, e um novo widget chamado 'Sua Situação:' deve ser aberto, com os seguintes radio buttons:
+- Estou em Zona de Segurança;
+- Estou em Zona de Acidente, mas estou bem;
+- Estou em Zona de Acidente, e preciso de ajuda;
+No rodapé do widget 'Sua Situação:', deve haver botões 'Cancelar' e 'Confirmar Acidente'. Se clicar em 'cancelar', então a tela retorna para a página inicial da aplicação web 'Checking Web'.
+
+Se clicar em 'Confirmar Acidente', então o widget 'Sua Situação:' deve ser fechado e um widget de confirmação deve aparecer, mostrando os dados selecionados. Exemplo:
+Linha 1 (título): 'Confirmação de Acidente'
+Linha 2: <pule uma linha>
+Linha 3: Texto 'Você está prestes a reportar um acidente na localização <nome da localização> do projeto <nome do projeto>.
+Linha 4: <pule uma linha>
+Linha 5: Sua situação: <informação marcada no widget 'Sua Situação:'>
+Linha 6: <pule uma linja>
+Linha 7: Você confirma esta ação?
+Linha 8: <pule uma linha>
+Linha 9: Botões 'Cancelar' e 'Confirmar'. Se clicar em cancelar, tudo é descartado e retorna à tela inicial do website do administrador.
+
+Se clicar em 'Confirmar, então toda a aplicação web Checking e o website do administrador entram no 'Modo Acidente'. Siga para o item 5.2.
+
+
+5. Modo Acidente:
+
+5.1. Quando o modo acidente for acionado pelo botão 'Reportar Acidente' que está no site do administrador ('sistema\app\static\admin'):
+
+5.1.1. Alterações no website do administrador ('sistema\app\static\admin'):
+
+Todo o tema do website do administrador deverá ser alterado para vermelho. Tudo que tiver tons de verde, deverá ter tons de vermelho. Este tema deve permanecer assim até que o botão 'Acidente Reportado' no website do administrador seja pressionado novamente para que o 'modo acidente' seja desligado.
+
+Antes da aba 'Check-in', à esquerda, deverá aparecer uma aba chamada 'Acidente'. A cor desta aba deve ser vermelha com as bordas brilhantes para que se destaque das outras abas. Nesta aba, deverá ser criada uma tabela chamada 'Situação de Pessoal', atualizada em tempo real como as outras tabelas são, com as seguintes colunas:
+
+- Horário: diferentemente das tabelas 'Usuários em Check-in' e 'Usuários em Check-out', esta tabela deverá mostrar a data e a hora para todos os perfis, seja qual for o número do perfil. A tabela 'Situação de Pessoal' deve ser organizada por esta coluna, com o evento mais recente aparecendo em primeiro.;
+- Nome: deve mostrar o nome completo do usuário;
+- Chave: deve mostrar a chave do usuário;
+- Projetos: deve mostrar os projetos em que o usuário está alocado;
+- Local: Deve mostrar o local em que o usuário foi localizado;
+- Zona de: Deve mostrar 'Segurança' ou 'Acidente'. Caso o usuário esteja em Zona de Segurança, então a linha inteira da tabela referente ao registro deste usuário deve ficar com a cor de fundo levemente em verde claro. Caso o usuário esteja em Zona de Acidente, então a linha inteira da tabela referente ao registro deste usuário deve ficar com a cor de fundo levemente em vermelho;
+- Situação: Deve mostrar 'OK' ou 'Ajuda', conforme as informações recebidas pelo usuário;
+- Contato: Se o usuário tiver um telefone cadastrado no sistema, então mostre-o. Caso contrário, deixe o campo em branco;
+- Registros: Se o usuário estiver em local de acidente e enviar um ou mais videos, então deve haver um link para acessar cada video enviado. Dentro do mesmo campo, quebre linha para mostrar um ou mais links. Se houver mais de 5 videos enviados e, portanto, mais de 5 links, inclua uma barra de rolagem no campo para que o campo não fique com uma altura exagerada;
+
+Esta tabela 'Situação de Pessoal' deve ser imediatamente populada por todos os usuários cuja última atividade tenha sido um check-in. Inicialmente, todos os usuários devem ser incluídos com a string 'Aguardando' na coluna 'Zona de'. Enquanto o valor deste campo for 'Aguardando', então a linha inteira da tabela referente ao registro deste usuário deve ficar com a cor de fundo branco.
+
+A tabela 'Situação de Pessoal' deve ser ordenada prioritariamente na seguinte ordem:
+
+- Prioridade 1. Usuários que marcaram a opção 'Estou em Zona de Acidente, e preciso de ajuda.'. Estes usuários devem ser incluídos na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'AJUDA'. A cor de preenchimento das linhas de registro destes usuários na tabela 'Situação de Pessoal' devem ser vermelho claro piscante;
+- Prioridade 2. Usuários que marcaram a opção 'Estou em Zona de Acidente, mas estou bem.'. Estes usuários devem ser incluídos na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'OK'. A cor de preenchimento das linhas de registro destes usuários na tabela 'Situação de Pessoal' devem ser amarelo claro;
+- Prioridade 3. Usuários que realizaram check-in na data do acidente e ainda não responderam se estão na Zona de Acidente e se estão bem ou precisando de ajuda. A cor de preenchimento das linhas de registro destes usuários na tabela 'Situação de Pessoal' devem ser azul-turquesa claro;
+- Prioridade 4. Usuários que marcaram a opção 'Estou em Zona de Segurança.'. Estes usuários devem ser incluídos na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Segurança' e 'Situação' = 'OK'. A cor de preenchimento das linhas de registro destes usuários na tabela 'Situação de Pessoal' devem ser verde claro;
+- Prioridade 5. Usuários que realizaram check-out durante o 'Modo Acidente';
+
+Como preencher a tabela 'Situação de Pessoal':
+- Usuários que haviam realizado check-out antes do 'Modo Acidente' se ativado não precisam ser incluídos na tabela 'Situação de Pessoal';
+- Se um usuário realizar a atividade de check-in durante o modo acidente, este usuário também deve ser incluído na tabela 'Situação de Pessoal';
+- Se o usuário realizar check-out durante o 'modo acidente', então o usuário deve permanecer na tabela 'Situação de Pessoal';
+- Nenhum usuário deve ser removido da tabela 'Situação de Pessoal' até que o 'Modo Acidente' seja desligado no website do administrador;
+- As demais planilhas do website do administrador devem permanecer funcionando normalmente. O funcionamento de todas as outras tabelas não deve ser alterado;
+
+
+5.1.2. Alterações na aplicação web 'Checking Web' ('sistema\app\static\check'):
+
+Todo o tema da aplicação web 'Checking Web' deverá ser alterado para vermelho. Tudo que tiver tons de verde, deverá ter tons de vermelho, exceto as bordas dos campos 'chave' e 'senha', que possuem suas próprias regras de cores conforme a autenticação do usuário. Estas cores devem ser mantidas como estão. Este tema deve permanecer assim até que o botão 'Acidente Reportado' no website do administrador seja pressionado novamente para que o 'modo acidente' seja desligado.
+
+A barra de notificações deverá mostrar a mensagem, na cor vermelha e em negrito, "Acidente Reportado no projeto <nome do projeto>!".
+
+No lugar dos containers 'Último Check-In' e 'Último Check-Out', deverá aparecer um container com o título 'Estou em:' com dois botões lado a lado com o mesmo tamanho dos containers 'Último Check-In' e 'Último Check-Out':
+- Zona de Segurança;
+- Zona de Acidente;
+
+Se o usuário pressionar 'Zona de Acidente', então:
+- o título do container 'Estou em:' deve ser alterado para 'Sua Situação';
+- o botão 'Zona de Segurança' deve ser alterado para 'Estou bem.';
+- o botão 'Zona de Acidente' deve ser alterado para 'Preciso de Ajuda!';
+
+
+Situação 1: Usuário clica em 'Zona de Segurança':
+
+Um widget chamado 'Confirmação' deve aparecer, mostrando a seguinte mensagem:
+Linha 1: 'Confirmação'
+Linha 2: <pule uma linha>
+Linha 3: Você confirma que está fora de perigo?
+Linha 4: <pule uma linha>
+Linha 5: Botões 'Cancelar' e 'Confirmar'.
+
+Se clicar em 'Cancelar', a aplicação web 'Checking Web' retorna à tela principal com as opções do 'Modo Acidente' ativas (container 'Estou em:') para que o usuário confirme sua situação, sem enviar nada para a API. Se clicar em 'Confirmar', as informações marcadas pelo usuário devem ser imediatamente enviadas para a API. Então, este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Segurança' e 'Situação' = 'OK'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser verde claro.
+
+A aplicação web 'Checking Web' retorna ao estado normal, porém, com o tema vermelho enquanto o 'Modo Acidente' estiver habilitado no website do administrador.
+
+Situação 2: Usuário clica em 'Zona de Acidente' e 'Estou bem.':
+
+Um widget chamado 'Confirmação' deve aparecer, mostrando a seguinte mensagem:
+Linha 1: 'Confirmação'
+Linha 2: <pule uma linha>
+Linha 3: Você confirma que está na zona do acidente e que está fora de perigo?
+Linha 4: <pule uma linha>
+Linha 5: Botões 'Cancelar' e 'Confirmar'.
+
+Se clicar em 'Cancelar', a aplicação web 'Checking Web' retorna à tela principal com as opções do 'Modo Acidente' ativas (container 'Estou em:') para que o usuário confirme sua situação, sem enviar nada para a API. Se o usuário pressionar 'Confirmar', então este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'OK'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser amarelo claro.
+
+
+Situação 3: Usuário clica em 'Zona de Acidente' e 'Preciso de Ajuda!':
+
+Um widget chamado 'Confirmação' deve aparecer, mostrando a seguinte mensagem:
+Linha 1: 'Confirmação'
+Linha 2: <pule uma linha>
+Linha 3: Você confirma que está na zona do acidente e que precisa de ajuda?
+Linha 4: <pule uma linha>
+Linha 5: Botões 'Cancelar' e 'Confirmar'.
+
+Se clicar em 'Cancelar', a aplicação web 'Checking Web' retorna à tela principal com as opções do 'Modo Acidente' ativas (container 'Estou em:') para que o usuário confirme sua situação, sem enviar nada para a API. Se o usuário pressionar 'Confirmar', então este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'AJUDA'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser vermelho claro piscante.
+
+A API deve disparar as 'Ações de Emergência' (descritas adiante) somente após esta confirmação. O e-mail descrito na Ação 3 só é disparado depois que o usuário pressionar 'Confirmar' neste widget.
+
+
+5.2. Quando o modo acidente for acionado pelo botão 'Reportar Acidente' que está na aplicação web 'Checking Web' ('sistema\app\static\check'), então, as seguintes ações devem ocorrer:
+
+- Ação 1: A API deve agir como se um administrador tivesse pressionado o botão 'Reportar Acidente', e deve ativar o 'modo acidente' no website do administrador. Veja o item 5.1.1. O website do administrador ('sistema\app\static\admin') entra no 'Modo Acidente', com as informações passadas pelo usuário da aplicação web 'Checking Web' (projeto, local). A aba 'Acidente' com a tabela 'Situação de Pessoal' deve ser criada e deve funcionar como descrita na seção 5.1.1 deste documento.
+
+A aplicação web 'Checking Web' deve agir conforme o item 5.1.2 para todos os usuários. Ou seja, todos os usuários devem ter que responder aos questionamentos, através dos botões descritos no item 5.1.2 para que o sistema mapeie a situação individual de cada usuário.
+
+- Ação 2: Após entrar no modo acidente e criar a tabela 'Situação de Pessoal', o primeiro registro deve ser do usuário que iniciou o 'modo acidente' através da aplicação web 'Checking Web'. O registro deve ser preenchido seguinte as seguintes regras:
+A) Se o usuário que reportou o acidente através da aplicação web 'Checking Web' tiver marcado a opção 'Estou em Zona de Segurança.', então este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Segurança' e 'Situação' = 'OK'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser verde claro.
+B) Se o usuário que reportou o acidente através da aplicação web 'Checking Web' tiver marcado a opção 'Estou em Zona de Acidente, mas estou bem.', então este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'OK'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser amarelo claro.
+C) Se o usuário que reportou o acidente através da aplicação web 'Checking Web' tiver marcado a opção 'Estou em Zona de Acidente, e preciso de ajuda.', então este usuário deve ser incluído na tabela 'Situação de Pessoal' com os campos 'Zona de' = 'Acidente' e 'Situação' = 'AJUDA'. A cor de preenchimento da linha de registro deste usuário na tabela 'Situação de Pessoal' deve ser vermelho claro piscante.
+
+Estas 3 regras também se aplicam a qualquer usuário que informar sua situação durante o modo acidente. A forma como os usuários reportam sua situação quando o 'modo acidente'.
+
+Observação: As Ações 3 e 4 descritas a seguir aplicam-se a qualquer cenário em que o 'Modo Acidente' esteja ativo, independentemente de o modo ter sido acionado pelo administrador (item 5.1) ou por um usuário através da Checking Web (item 5.2). Já as Ações 1 e 2 são específicas do acionamento via Checking Web.
+
+- Ação 3: Se um usuário reportar 'Estou em Zona de Acidente, e preciso de ajuda.', então um e-mail deve ser disparado para todos os usuários que estão cadastrados no projeto em que o usuário solicitou ajuda está cadastrado. A mensagem deve ser:
+
+Subject: (CHECKING) PEDIDO DE SOCORRO
+
+Mensagem:
+""""""
+Prezado <nome do usuário que recebe a mensagem>,
+
+O usuário <nome do usuário que pediu ajuda>, chave <chave do usuário>, pede AJUDA IMEDIATA, ao reportar um acidente ocorrido no projeto <nome do projeto>, local <nome do local>.
+
+Esta mensagem foi disparada após o pedido de ajuda ter sido CONFIRMADO.
+
+Atenciosamente,
+Checking App
+""""""
+
+Observação: o Sistema ainda não tem nada que possa disparar e-mails. Precisamos configurar todo o sistema SMTP para que isto aconteça. Vou precisar de sua ajuda para configurar todo o serviço e criar todos os arquivos com os códigos necessários.
+
+- Ação 4: Na aplicação web 'Checking Web', durante o modo acidente, o botão 'Reportar Acidente' deve abrir um widget com duas opções: 'Audio & Video' e 'Reportar Novo Acidente'. Se o usuário pressionar uma vez o botão 'Audio & Video', a aplicação web 'Checking Web' pede autorização para usar a câmera e o microfone (caso ainda não tenha sido autorizado) e, assim que permitidas, inicia imediatamente a gravação de um video com a câmera traseira do dispositivo. Deve haver um botão 'Encerrar' que, quando pressionado, finaliza a gravação do video e envia o video para a API. O video pode ser acessado no registro do usuário na tabela 'Situação de Pessoal', na coluna 'Registros'. Se o usuário enviar mais de um video, então deverá ser criado mais de um link, sendo um para cada video. Os videos devem ser armazenados em uma pasta específica do provedor Digital Ocean. Já o botão 'Reportar Novo Acidente' deve estar sem nenhuma ação por enquanto.
+
+
+6. Encerramento do 'Modo Acidente'
+
+O acidente só pode ser encerrado através do website do administrador.
+Durante o modo acidente, se um administrador pressionar o botão 'Acidente Reportado', então um widget 'Encerramento do Modo Acidente' deve aparecer.
+
+Linha 1: Encerramento do Modo Acidente
+Linha 2: <pule uma linha>
+Linha 3: Tem certeza que deseja finalizar o 'Modo Acidente'?
+Linha 4: <pule uma linha>
+Linha 5: Deve haver 2 botões: "Voltar" e "Confirmar". Se o administrador clicar em 'Voltar', então o widget desaparece e o 'Modo Acidente' continua ativo. Se o Administrador clicar em 'Confirmar', então o sistema volta para o modo normal. Tanto a aplicação web 'Checking Web' como o website do administrador retornam ao layout e ao tema de cores original, em verde.
+
+A aba 'Acidente' desaparece.
+
+A nova tabela 'Acidentes' da aba 'Cadastro' deve ser preenchida da seguinte forma:
+
+Número do Acidente: mostra um número sequencial do acidente registrado, com 4 dígitos. O primeiro acidente deve ser o 0000.
+Projeto: mostra o projeto em que o acidente foi registrado.
+Autor: mostra o usuário ou o administrador que relatou o acidente.
+Download: um arquivo ZIP contendo um arquivo XLSX na pasta raiz do arquivo zip, e uma subpasta chamada 'Registros' contendo todos os videos enviados pelos usuários:
+- O arquivo XLSX deve ter o nome igual ao número do acidente. Exemplo: 0000.XLSX;
+- O arquivo XLSX deve conter uma tabela idêntica à tabela 'Situação de Pessoal' congelada no momento em que o acidente foi encerrado;
+- A coluna 'Registros' desta tabela deve conter os links para os arquivos de video que estão na subpasta 'Registros' de forma que a funcionalidade dos links dos registros esteja preservada, ou seja, que seja possível ver o video que cada usuário enviou.
+Ações: Coloque um botão 'Remover' para que o acidente seja removido. Apenas um administrador com perfil = 9 poderá remover um acidente.

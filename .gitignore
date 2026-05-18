@@ -9,6 +9,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .vscode/
+.coverage
+htmlcov/
 
 # Local/runtime databases
 *.db
