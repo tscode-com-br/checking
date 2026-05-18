@@ -3439,3 +3439,62 @@ Unico teste `@pytest.mark.anyio`: `test_50_users_report_concurrently`.
 ### Arquivos criados nesta tarefa
 
 - `tests/integration/test_accident_load.py` (criado — 1 teste de carga L5)
+
+---
+
+## Task L6 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar o documento de checklist E2E manual (`docs/descritivos/e2e_modo_acidente_checklist.md`) a ser executado antes de cada deploy em produção do Modo Acidente.
+
+### 1) Arquivo criado: docs/descritivos/e2e_modo_acidente_checklist.md
+
+O arquivo foi criado do zero. Estrutura adotada:
+
+**Cabecalho:**
+- Versao, destinatario (QA/Engenharia), ambiente alvo (staging com SMTP e DO Spaces reais ou MailHog/mock).
+- Pre-requisitos globais: servidor rodando, BD limpo, SMTP configurado, storage configurado, usuarios de teste preparados (3x checkin=True, 1x checkin=False, admin perfil 1 e perfil 9).
+- Convencao de registro: PASS/FAIL checkboxes + campo Notas.
+
+**10 cenarios (cada um com: Objetivo, Atores, Passos, Verificacoes com checkboxes PASS/FAIL, campo Notas):**
+
+| # | Cenario | Cor/comportamento validado |
+|---|---------|--------------------------|
+| 1 | Admin abre acidente; Web reage <2s | SSE propagacao em <2s |
+| 2 | Usuario reporta safety; linha verde | `row_color=light-green` (zone=safety, status=ok) |
+| 3 | Usuario reporta help; vermelho piscante + e-mail | `row_color=blinking-red` (zone=accident, status=help) + SMTP |
+| 4 | Upload video ~5s; admin ve link | Object storage URL pre-assinada |
+| 5 | Check-in mobile durante acidente; linha turquesa | `row_color=turquoise` (zone=waiting, recentemente adicionado) |
+| 6 | Admin encerra; UI normaliza em ambos | SSE propagacao + archive ZIP em background |
+| 7 | Perfil 1 ve historico sem botao Remover | Controle de acesso perfil 1 vs perfil 9 |
+| 8 | Perfil 9 remove acidente; linha some | DELETE endpoint exclusivo perfil 9 |
+| 9 | Web abre acidente; Admin ve <2s; autor e primeiro registro | origin=web, blinking-red priority 1, e-mail disparado |
+| 10 | Reload preserva estado | Estado persistido no servidor, recarregado ao reconectar SSE |
+
+**Tabela de resumo de execucao** ao final:
+- 10 linhas: Cenario | Resultado | Executor | Data/Hora.
+- Totalizadores PASS/FAIL.
+- Decisao de deploy: checkbox "aprovado", "aprovado com ressalvas" ou "nao fazer deploy".
+
+**Cores de referencia (mapeadas a partir de `accident_situation_table.py`):**
+- `blinking-red` (priority 1) — zone=accident + status=help
+- `yellow` (priority 2) — zone=accident + status=ok
+- `turquoise` (priority 3) — zone=waiting (nao reportou ainda)
+- `light-green` (priority 4) — zone=safety + status=ok
+- `light-gray` (priority 5) — checked-out durante o acidente
+
+### 2) Criterios de aceitacao verificados
+
+- Documento publicado no repositorio em `docs/descritivos/`.
+- Todos os 10 cenarios da especificacao cobertos com passos detalhados, checkboxes e campo de notas.
+- A tabela de resumo permite registro auditavel por executor e data.
+- Nota explicita: "Executar antes de qualquer deploy em producao do Modo Acidente".
+
+### Commit
+
+`(pendente)`
+
+### Arquivos criados nesta tarefa
+
+- `docs/descritivos/e2e_modo_acidente_checklist.md` (criado — checklist E2E manual L6)
