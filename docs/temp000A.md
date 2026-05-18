@@ -3041,3 +3041,53 @@ O arquivo nao existia; foi criado do zero. Estrutura adotada:
 
 - `CLAUDE.md` (criado -- novo arquivo na raiz do repositorio)
 - `docs/temp000A.md` (atualizado -- K1 summary adicionado)
+
+
+---
+
+## Task K2 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar documentacao de referencia para os 10 endpoints do Modo Acidente, seguindo o template de `docs/endpoints/checkinginfo.md`.
+
+### Estrutura de cada arquivo
+
+Todos os 10 arquivos seguem a mesma estrutura:
+- Visao geral (metodo, path, autenticacao, formato)
+- Autenticacao (detalhe da sessao necessaria)
+- Parametros (path, query, body com tipos e obrigatoriedade)
+- Resposta (exemplo JSON + tabela de campos)
+- Codigos HTTP (tabela com significado de cada codigo + exemplos de erro)
+- Side effects (brokers SSE, emails, log_event, storage)
+- Exemplo cURL contra ambiente local (`http://127.0.0.1:8000`)
+
+### Arquivos criados
+
+**Endpoints Admin (`/api/admin/accidents/*`):**
+
+1. `docs/endpoints/get_accidents_active.md` -- `GET /api/admin/accidents/active`: retorna estado ativo + tabela de situacao de usuarios. Documenta os campos de `AccidentSummary` e `SituacaoPessoalRow` (zone, status, priority, row_color, videos).
+
+2. `docs/endpoints/post_accidents_open.md` -- `POST /api/admin/accidents/open`: abre acidente pelo admin. Documenta regra XOR location_id/custom_location_name, erros 409/422, side effects (SSE + log_event).
+
+3. `docs/endpoints/post_accidents_close.md` -- `POST /api/admin/accidents/close`: encerra acidente ativo. Documenta geracao de archive ZIP em background task, nota sobre download_ready.
+
+4. `docs/endpoints/get_accidents_list.md` -- `GET /api/admin/accidents`: lista acidentes encerrados. Documenta `AccidentClosedRow` com campos download_url, download_ready, can_delete.
+
+5. `docs/endpoints/get_accident_archive.md` -- `GET /api/admin/accidents/{id}/archive`: redireciona 307 para URL pre-assinada DO Spaces (validade 5 min). Documenta estrutura interna do ZIP.
+
+6. `docs/endpoints/delete_accident.md` -- `DELETE /api/admin/accidents/{id}`: remove acidente encerrado (apenas perfil=9). Documenta cascata no banco + remocao de prefixo no storage.
+
+**Endpoints Check Web (`/api/web/check/accident/*`):**
+
+7. `docs/endpoints/get_web_accident_state.md` -- `GET /api/web/check/accident/state`: estado do acidente do ponto de vista do usuario. Documenta `WebAccidentStateResponse` e `WebAccidentUserReport`.
+
+8. `docs/endpoints/post_web_accident_open.md` -- `POST /api/web/check/accident/open`: abre acidente pelo usuario web (origin=web). Documenta regra XOR de location, campos zone/status iniciais.
+
+9. `docs/endpoints/post_web_accident_report.md` -- `POST /api/web/check/accident/report`: atualiza zona/status do usuario. Documenta trigger de emails de ajuda quando status="help" pela primeira vez.
+
+10. `docs/endpoints/post_web_accident_video.md` -- `POST /api/web/check/accident/video`: upload de video em multipart. Documenta tipos aceitos, limite de 50 MB, idempotency_key, destino no storage, e retorno `AccidentVideoUploadResponse`.
+
+### Commit
+
+`b3b1beb` -- "K2: add endpoint docs for all 10 Modo Acidente endpoints"
