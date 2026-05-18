@@ -3091,3 +3091,51 @@ Todos os 10 arquivos seguem a mesma estrutura:
 ### Commit
 
 `b3b1beb` -- "K2: add endpoint docs for all 10 Modo Acidente endpoints"
+
+---
+
+## Task K3 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar documento de arquitetura do Modo Acidente com diagramas ASCII auto-contidos, legíveis em fonte monospace.
+
+### Arquivo criado
+
+**`docs/descritivos/modo_acidente_arquitetura.md`** — documento com 7 seções:
+
+**1. Diagrama de Arquitetura (fluxo de dados)**
+- Diagrama ASCII de 3 camadas: Clientes (Admin SPA + Check Web SPA) → FastAPI Routers (admin.py e web_check.py com todos os endpoints listados) → Services (accident_lifecycle.py, accident_archive_builder.py, accident_situation_table.py, email_sender.py) → Banco de Dados → Postgres NOTIFY Brokers (checking_admin_updates, checking_web_check_updates) → SSE Streams → de volta aos clientes.
+- Dependências externas: SMTP e DigitalOcean Spaces.
+
+**2. Diagrama de Estados do Acidente**
+- NULL → ABERTO (admin POST /accidents/open OU web POST /check/accident/open).
+- ABERTO → ENCERRADO (admin POST /accidents/close, gera ZIP em background).
+- ENCERRADO → REMOVIDO (admin DELETE /accidents/{id}, somente perfil=9, hard delete).
+- Nota sobre o índice único parcial `ix_accidents_single_active` que garante no máximo 1 acidente aberto.
+- Descrição dos campos `opened_at` / `closed_at` que codificam o estado.
+
+**3. Sequência do Ciclo de Pedido de Ajuda**
+- Diagrama de sequência mostrando: Check Web SPA → POST /check/accident/report {status:"help"} → web_check.py → accident_lifecycle.py → INSERT accident_user_reports → cria EmailDeliveryLog (queued) → notifyBroker → email_sender.py (background) → SMTP → caixas de e-mail dos admins.
+- Detalhe de que a tabela HTML no e-mail é gerada por `accident_situation_table.py`.
+
+**4. Mapa de Privilégios Admin por Endpoint**
+- Tabela com 3 colunas: Endpoint / Autenticação / Requisito de perfil.
+- GET /accidents/active: require_admin_session → qualquer admin (perfil 0, 1, 9...).
+- POST open/close, GET list/archive, wizard/projects, wizard/locations: require_full_admin_session → dígito "1" OU "9" no perfil.
+- DELETE /accidents/{id}: require_full_admin_session + verificação interna → APENAS perfil=9.
+- Web endpoints: sessão web do usuário.
+- Explicação do sistema de dígitos compostos (0=limitado, 1=full admin, 2=transport, 9=super-admin).
+
+**5. Mapa de Arquivos por Função**
+- Tabela texto com função → arquivo principal para: estado, renderização, arquivo ZIP, e-mails, storage, endpoints admin/web, modelos, schemas, SSE, auth, log.
+
+**6. Tabelas do Banco de Dados**
+- Descrição esquemática de todas as 5 tabelas do Modo Acidente com campos, tipos, FKs, constraints e índices.
+
+**7. Eventos de Log (`check_events`)**
+- Tabela com os 6 action names usados (≤16 chars), quando são gerados e qual o source.
+
+### Arquivos alterados nesta tarefa
+
+- `docs/descritivos/modo_acidente_arquitetura.md` (criado — documento de arquitetura)
