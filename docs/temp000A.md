@@ -3828,3 +3828,81 @@ Guia operacional completo com:
 - `.env.example` (editado — adicionado bloco DO Spaces + SMTP ao final)
 - `deploy/.env.production.example` (editado — adicionado bloco DO Spaces + SMTP apos MAPBOX_ACCESS_TOKEN)
 - `docs/descritivos/env_vars_modo_acidente.md` (criado — referencia completa de variaveis + procedimento de atualizacao)
+
+---
+
+## Task M5 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Configurar alertas de monitoramento pos-deploy para o Modo Acidente e documentar procedimentos de resposta.
+
+### 1) Script criado: scripts/monitor_accident_mode.py
+
+Script Python autossuficiente (268 linhas) com 3 checks SQL, emissao de logs JSON e envio de alerta por e-mail.
+
+**Check 1 — EMAIL_FAIL_RATE (critical):**
+- Query: `delivery_status='failed'` nas ultimas 24h vs. total de registros.
+- Threshold: taxa de falha > 5%.
+- Se violado: e-mail de alerta com contagem de falhas, total e percentual.
+
+**Check 2 — FORGOTTEN_ACCIDENT (critical):**
+- Query: `closed_at IS NULL AND opened_at < NOW() - INTERVAL '24 hours'`.
+- Threshold: qualquer acidente que satisfaca a condicao.
+- Se violado: lista de acidentes esquecidos com `id`, `accident_number`, `project` e `hours_open`.
+
+**Check 3 — LARGE_ARCHIVE (warning):**
+- Query: `accident_archives.size_bytes > 209715200` (200 MB).
+- Threshold: qualquer archive que satisfaca a condicao.
+- Se violado: lista de archives grandes com `size_mb` e detalhes do acidente.
+
+**Saida JSON por linha** (parsavel por ferramentas de log como Loki, Datadog, etc.):
+```json
+{"ts":"...","level":"INFO","check":"EMAIL_FAIL_RATE","status":"ok","msg":"Email fail rate 0.0%..."}
+{"ts":"...","level":"WARNING","check":"FORGOTTEN_ACCIDENT","status":"violation","msg":"1 accident(s) open for more than 24h..."}
+```
+
+**Envio de alerta por e-mail:** automatico quando `--alert-email` + `--smtp-host` estao configurados. O assunto contem os nomes dos checks violados.
+
+**Exit codes:** 0 = OK, 1 = violacoes, 2 = erro fatal (DB inacessivel).
+
+**Interface CLI:**
+```bash
+python scripts/monitor_accident_mode.py \
+    --database-url "$DATABASE_URL" \
+    --alert-email ops@example.com \
+    --smtp-host smtp.example.com --smtp-port 587 \
+    --smtp-user alerts@example.com --smtp-password "$SMTP_PASSWORD"
+```
+
+**Validacao:** `python -m py_compile scripts/monitor_accident_mode.py` → OK.
+
+### 2) Documento criado: docs/operacoes/monitoramento_modo_acidente.md
+
+Documento de referencia operacional com:
+
+**Tabelas de alerta** (3 tabelas): check, query, threshold, severidade, impacto, acao imediata para cada alerta.
+
+**Queries de diagnostico SQL:** uma por alerta, prontas para rodar em `psql` para investigar violacoes.
+
+**Uso do script:** linha de comando, formato de saida JSON, codigos de exit.
+
+**Configuracao cron:** linha pronta para `/etc/cron.d/checking-monitor` (execucao a cada 15 min) + config de `logrotate`.
+
+**Alternativa Docker:** fragmento `docker-compose.api.yml` para rodar o monitor como servico autonomo em loop com `sleep 900`.
+
+**Procedimento de resposta** (3 secoes):
+- `EMAIL_FAIL_RATE`: verificar vars, reprocessar e-mails com falha via SQL UPDATE, reiniciar API.
+- `FORGOTTEN_ACCIDENT`: contatar equipe, fechar via API ou SQL UPDATE direto.
+- `LARGE_ARCHIVE`: verificar quota DO Spaces, revisar politica de tamanho de video.
+
+### Criterios de aceitacao
+
+- Alertas configurados: **sim** — 3 checks implementados no script com thresholds exatos da especificacao.
+- Documento existe: **sim** — `docs/operacoes/monitoramento_modo_acidente.md` criado.
+- Execucao real em producao: **requer configuracao do cron no droplet pos-deploy** (procedimento documentado).
+
+### Arquivos criados nesta tarefa
+
+- `scripts/monitor_accident_mode.py` (criado — script de monitoramento com 3 checks SQL + alerta por e-mail)
+- `docs/operacoes/monitoramento_modo_acidente.md` (criado — documento de referencia operacional + procedimentos de resposta)
