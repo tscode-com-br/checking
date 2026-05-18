@@ -3378,8 +3378,64 @@ def _make_mock_request(disconnects_after: int, session_override: dict | None) ->
 
 ### Commit
 
-`(pendente)`
+`55e1ad5` — "L4: add realtime SSE broker integration tests"
 
 ### Arquivos criados nesta tarefa
 
 - `tests/integration/test_accident_realtime.py` (criado — 5 testes async L4)
+
+---
+
+## Task L5 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Validar que 50 usuarios simultaneos conseguem reportar seu status de acidente sem race conditions no banco de dados, sem deadlock no indice parcial `ix_accidents_single_active`, e que o broker SSE entrega todos os eventos.
+
+### 1) Arquivo criado: tests/integration/test_accident_load.py
+
+Unico teste `@pytest.mark.anyio`: `test_50_users_report_concurrently`.
+
+**Estrategia de concorrencia:**
+- `asyncio.gather` + `loop.run_in_executor(ThreadPoolExecutor(max_workers=50))` dispara 50 workers simultaneos.
+- Cada worker cria seu proprio `TestClient(app)`, faz `POST /api/web/auth/login` e `POST /api/web/check/accident/report`.
+- SQLAlchemy 2.0 pysqlite define `check_same_thread=False` automaticamente; SQLite serializa writes internamente.
+
+**Setup dos dados de teste (chaves unicas para nao conflitar com outros testes):**
+- `Project("L5LoadProject")` criado ou reutilizado.
+- Opener `"L5OP"` (`checkin=False`) — abre o acidente; nao infla os 50 pre-populated rows.
+- 50 usuarios de carga `"L500"`.."L549"` (`checkin=True`) — todos pre-populados pelo `open_accident`.
+- Admin `"L5AD"` (`perfil=1`) — para verificar `/api/admin/accidents/active` apos os reports.
+
+**Abertura do acidente (`_open_test_accident`):**
+- Fecha qualquer acidente ativo existente via update direto no DB (sem FK para AdminUser).
+- Chama `open_accident(db, origin="web", ...)` que internamente: (a) faz `db.flush()` para obter `accident.id`; (b) insere 50 `AccidentUserReport` rows com `status="waiting"`; (c) chama `db.commit()`; (d) dispara `notify_web_check_data_changed("accident_opened")`.
+
+**Coleta de eventos do broker (solucao para `maxsize=20`):**
+- O broker tem `DEFAULT_SUBSCRIBER_QUEUE_SIZE = 20` — insuficiente para 50 eventos simultaneos.
+- Criada task assincrona `_drain_continuously()` que faz `await queue.get()` em loop e acumula em `broker_events: list[dict]`. Isso impede overflow (a queue nunca fica cheia enquanto a task drena continuamente).
+- `asyncio.create_task(_drain_continuously())` iniciada ANTES da fase concorrente.
+- Apos `await asyncio.gather(*futures) + await asyncio.sleep(0.3)`, a task e cancelada com `drain_task.cancel()` + `await drain_task` para capturar `CancelledError`.
+
+**Teardown (`_teardown_accident`):**
+- `sa.update(Accident).where(Accident.closed_at.is_(None)).values(closed_at=now)` — nao requer AdminUser FK.
+
+**Verificacoes (Assertions):**
+1. `failed_reqs == []` — todos os 50 pares (login, report) retornaram HTTP 200.
+2. `ok_count == 50` — query SQL confirma 50 `AccidentUserReport` com `status="ok"` para o `accident_id` correto.
+3. `len(report_events) >= 50` — broker entregou >=50 eventos `reason="accident_user_report"`.
+4. Admin `/api/admin/accidents/active` retorna `is_active=True` e `len(situation_rows) >= 50`.
+5. `elapsed < 30` — tempo total do teste em CI (obtido: ~9s).
+
+### 2) Resultado dos testes
+
+- `tests/integration/test_accident_load.py`: **1/1 passed** em ~9.74s.
+- Suite completa (excluindo `test_api_flow.py` por lock de arquivo no Windows): **433 passed, 24 failed** (os 24 failures sao todos em `test_transport_ai_suggestion_commands.py`, pre-existentes desde antes desta feature).
+
+### Commit
+
+`(pendente)`
+
+### Arquivos criados nesta tarefa
+
+- `tests/integration/test_accident_load.py` (criado — 1 teste de carga L5)
