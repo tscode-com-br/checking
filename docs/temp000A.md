@@ -3493,7 +3493,7 @@ O arquivo foi criado do zero. Estrutura adotada:
 
 ### Commit
 
-`(pendente)`
+`b80bfc1` — "L6: add E2E manual test checklist for Accident Mode"
 
 ### Arquivos criados nesta tarefa
 
