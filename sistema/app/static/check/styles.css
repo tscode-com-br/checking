@@ -202,6 +202,54 @@ header {
   background: #fde7e9;
 }
 
+.accident-camera-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.accident-camera-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: #1e293b;
+  border-radius: 16px;
+  width: min(92vw, 480px);
+}
+
+.accident-camera-preview {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+  max-height: 60vh;
+  object-fit: cover;
+}
+
+.accident-camera-status {
+  margin: 0;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.accident-camera-stop-button {
+  width: 100%;
+  padding: 12px;
+  background: #c8222a;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
 .notification-card {
   display: grid;
   grid-template-rows: repeat(2, minmax(1.15em, auto));

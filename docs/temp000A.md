@@ -2672,3 +2672,87 @@ Caracteristicas:
 - sistema/app/static/check/styles.css (editado -- 4 linhas adicionadas)
 - sistema/app/static/check/index.html (editado -- 4 linhas adicionadas)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I6 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar o modulo `accident-camera.js` com captura de video, dialogo de gravacao em tempo real, e upload para o backend.
+
+### 1) Arquivo criado: sistema/app/static/check/accident-camera.js
+
+Implementado como IIFE (`(function () { ... })()`). Exporta `window.AccidentCamera = { startRecording, stopRecording }`.
+
+**Estrutura interna:**
+
+**`RecordingState`** -- objeto compartilhado entre as funcoes:
+- `stream` -- MediaStream ativo ou null.
+- `recorder` -- instancia MediaRecorder ou null.
+- `chunks` -- array de Blob de dados gravados.
+- `dialog` -- referencia ao overlay ({ backdrop, statusEl }) ou null.
+
+**`getMimeType()`** -- detecta o melhor MIME suportado pelo navegador:
+- Ordem de preferencia: `video/webm;codecs=vp9,opus` -> `video/webm` -> `video/mp4`.
+- Retorna string vazia se nenhum suportado (MediaRecorder usara default do browser).
+
+**`startRecording(chave)`** -- async:
+1. Chama `navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: true })`.
+2. Em caso de erro: exibe alert pedindo para habilitar em Ajustes e retorna `false`.
+3. Chama `showRecordingDialog()` para criar o overlay com preview ao vivo.
+4. Instancia `MediaRecorder` com o MIME preferido (ou default do browser).
+5. Em caso de erro: chama `cleanup()` e exibe alert de suporte insuficiente, retorna `false`.
+6. Configura `ondataavailable` para acumular chunks e `onstop` para chamar `uploadRecording(chave, mime)`.
+7. Inicia gravacao com `recorder.start()`.
+8. Retorna `true`.
+
+**`stopRecording()`** -- para o recorder se estiver ativo (state !== "inactive").
+
+**`uploadRecording(chave, mime)`** -- async:
+1. Constroi Blob a partir dos chunks.
+2. Monta FormData com campos: `chave`, `idempotency_key` (crypto.randomUUID com fallback), `video` (arquivo nomeado `recording.webm` ou `recording.mp4`).
+3. Atualiza status do overlay para "Enviando video...".
+4. POST para `/api/web/check/accident/video` com `credentials: "include"`.
+5. Em sucesso: status "Video enviado.". Em erro: status "Falha ao enviar video: <msg>".
+6. No bloco `finally`: chama `cleanup()`.
+
+**`showRecordingDialog()`** -- cria e insere overlay no DOM:
+- Backdrop `div.accident-camera-backdrop` cobrindo toda a tela (z-index 200, background semi-opaco escuro).
+- Card `div.accident-camera-card` centralizado, fundo `#1e293b`.
+- `<video class="accident-camera-preview" autoplay muted playsinline>` com `srcObject = RecordingState.stream`.
+- `<p class="accident-camera-status">Gravando...</p>` para mensagens de status.
+- `<button class="accident-camera-stop-button">Encerrar</button>` que chama `stopRecording()`.
+
+**`setStatus(msg)`** -- atualiza `statusEl.textContent` se dialog existir.
+
+**`cleanup()`** -- para todos os tracks do stream, anula `stream/recorder/chunks`, chama `hideRecordingDialog()`.
+
+**`hideRecordingDialog()`** -- remove o backdrop do DOM e anula `RecordingState.dialog`.
+
+### 2) Arquivo editado: sistema/app/static/check/index.html
+
+Adicionado `<script src="accident-camera.js"></script>` imediatamente antes de `<script src="app.js"></script>` (linha ~729).
+
+### 3) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionados apos `.accident-inquiry-button:hover` os blocos CSS do overlay da camera:
+
+- `.accident-camera-backdrop` -- `position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.82)` -- overlay full-screen escuro.
+- `.accident-camera-card` -- `display: flex; flex-direction: column; padding: 16px; background: #1e293b; border-radius: 16px; width: min(92vw, 480px)` -- card centralizado.
+- `.accident-camera-preview` -- `width: 100%; border-radius: 10px; max-height: 60vh; object-fit: cover` -- preview de video responsivo.
+- `.accident-camera-status` -- `color: #f1f5f9; font-size: 0.9rem; text-align: center` -- texto de status claro sobre fundo escuro.
+- `.accident-camera-stop-button` -- `background: #c8222a; color: #fff; font-weight: 700; border-radius: 10px; padding: 12px` -- botao vermelho de destaque para encerrar gravacao.
+
+### 4) Verificacoes executadas
+
+- Verificacoes programaticas passaram: todas as funcoes, IDs, classes e chaves semanticas presentes no JS, HTML e CSS.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### 5) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/accident-camera.js (criado -- modulo completo de captura de video)
+- sistema/app/static/check/index.html (editado -- script tag adicionado antes de app.js)
+- sistema/app/static/check/styles.css (editado -- 5 blocos CSS do overlay da camera adicionados)
+- docs/temp000A.md (atualizado)
