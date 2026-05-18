@@ -2564,3 +2564,65 @@ document.documentElement.classList.remove('accident-mode');
 
 - sistema/app/static/check/styles.css (editado -- 24 linhas adicionadas no inicio do arquivo, apos :root)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I4 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar o container "Estou em:" com botoes de zona e CSS correspondente ao frontend checking web.
+
+### 1) Arquivo editado: sistema/app/static/check/index.html
+
+Adicionado imediatamente apos `</section>` da `.history-card` (linha 69), antes da `.notification-card`:
+
+```html
+<section id="accidentInquiryCard" class="history-card accident-inquiry-card is-hidden" hidden>
+  <p id="accidentInquiryTitle" class="history-label">Estou em:</p>
+  <div class="accident-inquiry-grid">
+    <button id="accidentZoneSafetyButton" type="button" class="accident-inquiry-button">Zona de Seguranca</button>
+    <button id="accidentZoneAccidentButton" type="button" class="accident-inquiry-button">Zona de Acidente</button>
+  </div>
+</section>
+```
+
+Caracteristicas:
+- `class="history-card accident-inquiry-card"` -- herda padding/border-radius do history-card, sobrescreve fundo/borda via classe especifica.
+- `hidden` + `is-hidden` -- invisivel por padrao; JS ativa durante modo acidente.
+- `accidentInquiryTitle` -- label "Estou em:" (atualizavel por JS se necessario).
+- `accidentZoneSafetyButton` / `accidentZoneAccidentButton` -- botoes de selecao de zona (JS I5 capta o click e abre o modal de confirmacao compartilhado).
+
+**Modal de confirmacao compartilhado:** `accidentReportConfirmBackdrop` e `accidentReportConfirmDialog` ja existiam desde a Task I2 e possuem todos os IDs necessarios (`accidentReportConfirmText`, `accidentReportConfirmError`, `accidentReportConfirmCancel`, `accidentReportConfirmSubmit`). Nao foi necessario adicionar um segundo modal -- o mesmo e reaproveitado pelo JS I5 para as 3 situacoes (abertura wizard + atualizacao de zona).
+
+### 2) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionados apos o bloco `.history-card { ... }`:
+
+**`.accident-inquiry-card`:**
+- `background: rgba(255, 80, 90, 0.1)` -- fundo rosado suave.
+- `border: 2px solid #c8222a` -- borda vermelha de destaque.
+
+**`.accident-inquiry-grid`:**
+- `display: grid; grid-template-columns: 1fr 1fr` -- dois botoes lado a lado.
+- `gap: 8px` -- espaco entre os botoes.
+
+**`.accident-inquiry-button`:**
+- `padding: 14px` -- area de toque generosa.
+- `background: #fff; border: 2px solid #c8222a; color: #c8222a` -- estilo outline vermelho.
+- `font-weight: 700; border-radius: 8px; cursor: pointer` -- formatacao de botao.
+
+**`.accident-inquiry-button:hover`:**
+- `background: #fde7e9` -- fundo rosado no hover.
+
+### 3) Verificacoes executadas
+
+- Todas as verificacoes programaticas passaram: IDs, classes, textos, CSS rules.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/index.html (editado -- secao accidentInquiryCard inserida)
+- sistema/app/static/check/styles.css (editado -- 3 blocos CSS adicionados)
+- docs/temp000A.md (atualizado)
