@@ -172,6 +172,31 @@ header {
   background: rgba(248, 250, 252, 0.9);
 }
 
+.accident-inquiry-card {
+  background: rgba(255, 80, 90, 0.1);
+  border: 2px solid #c8222a;
+}
+
+.accident-inquiry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.accident-inquiry-button {
+  padding: 14px;
+  background: #fff;
+  border: 2px solid #c8222a;
+  color: #c8222a;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.accident-inquiry-button:hover {
+  background: #fde7e9;
+}
+
 .notification-card {
   display: grid;
   grid-template-rows: repeat(2, minmax(1.15em, auto));
