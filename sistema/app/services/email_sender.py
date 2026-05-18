@@ -9,6 +9,7 @@ from ..core.config import settings
 from ..database import SessionLocal
 from ..models import Accident, EmailDeliveryLog, Project, User, UserProjectMembership
 from .email_templates import render_help_request_email
+from .event_logger import log_event
 from .time_utils import now_sgt
 
 
@@ -78,6 +79,8 @@ def deliver_pending_emails(log_ids: list[int]) -> None:
     if not settings.smtp_host:
         return
     with SessionLocal() as db:
+        sent_count = 0
+        failed_count = 0
         for log_id in log_ids:
             log = db.get(EmailDeliveryLog, log_id)
             if log is None or log.delivery_status != "queued":
@@ -87,13 +90,24 @@ def deliver_pending_emails(log_ids: list[int]) -> None:
                     _send_via_smtp(log)
                     log.delivery_status = "sent"
                     log.sent_at = now_sgt()
+                    sent_count += 1
                     break
                 except Exception as exc:
                     log.retry_count = attempt + 1
                     log.error_message = str(exc)[:1000]
                     if attempt == settings.smtp_max_retries - 1:
                         log.delivery_status = "failed"
+                        failed_count += 1
             db.commit()
+        log_event(
+            db,
+            source="system",
+            action="accident_email",
+            status="done",
+            message="Email delivery batch completed",
+            details=f"recipient_count={len(log_ids)} sent_count={sent_count} failed_count={failed_count}",
+            commit=True,
+        )
 
 
 def _send_via_smtp(log: EmailDeliveryLog) -> None:

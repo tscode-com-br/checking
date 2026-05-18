@@ -72,6 +72,7 @@ from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
 from ..services.email_sender import queue_help_request_emails
+from ..services.event_logger import log_event
 from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
     TransportRequestConflictError,
@@ -916,7 +917,7 @@ def open_web_accident(
 ) -> WebAccidentStateResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
     try:
-        open_accident(
+        accident = open_accident(
             db,
             origin="web",
             project_id=payload.project_id,
@@ -929,6 +930,18 @@ def open_web_accident(
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
+    log_event(
+        db,
+        source="web",
+        action="accident_open",
+        status="done",
+        message="Accident opened by web user",
+        request_path="/api/web/check/accident/open",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_number={accident.accident_number} project_id={payload.project_id}",
+        commit=True,
+    )
     return get_web_accident_state(request=request, chave=payload.chave, db=db)
 
 
@@ -946,6 +959,18 @@ def report_web_accident_status(
     _, fired_help = upsert_user_safety_report(db, accident=active, user=user, zone=payload.zone, status=payload.status)
     if fired_help:
         background_tasks.add_task(queue_help_request_emails, accident_id=active.id, requester_user_id=user.id)
+    log_event(
+        db,
+        source="web",
+        action="accident_report",
+        status="done",
+        message="User safety report submitted",
+        request_path="/api/web/check/accident/report",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id} zone={payload.zone} status={payload.status}",
+        commit=True,
+    )
     return get_web_accident_state(request=request, chave=payload.chave, db=db)
 
 
@@ -1009,6 +1034,18 @@ async def upload_accident_video(
         size_bytes=size_bytes,
         duration_seconds=duration_seconds,
         idempotency_key=idempotency_key,
+    )
+    log_event(
+        db,
+        source="web",
+        action="accident_video",
+        status="done",
+        message="Accident video uploaded",
+        request_path="/api/web/check/accident/video",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id} size_bytes={size_bytes}",
+        commit=True,
     )
     return AccidentVideoUploadResponse(
         video_id=upload.id,
