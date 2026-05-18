@@ -3335,3 +3335,51 @@ O teste usa os seguintes patches ativos durante os passos 1–7:
 ### Arquivos criados nesta tarefa
 
 - `tests/integration/test_accident_web_flow.py` (criado — 1 teste de integração E2E web, 8 passos)
+
+---
+
+## Task L4 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Validar que o broker SSE entrega eventos em tempo real para clientes admin e web-check, cobrindo: mensagem `connected` inicial, entrega de `accident_opened` dentro de 2 segundos via `asyncio.wait_for`, e cenário multi-cliente simultâneo.
+
+### Arquivo criado: `tests/integration/test_accident_realtime.py`
+
+**Abordagem:** Chamada direta dos handlers de SSE (sem HTTP real), passando `MagicMock` de `Request` com `is_disconnected()` controlável — mesmo padrão adotado em `tests/routers/test_web_check_stream.py`. Os testes são `async def` decorados com `@pytest.mark.anyio` (anyio 4.13.0 disponível no projeto).
+
+**5 testes implementados:**
+
+| Teste | Descrição |
+|---|---|
+| `test_admin_sse_connected_event` | Chama `admin_stream_handler(request=mock)` diretamente; coleta eventos do `body_iterator`; verifica que o primeiro evento é `{"reason": "connected"}`. |
+| `test_web_sse_connected_event` | Chama `web_stream_handler(request=mock, chave="L4WB", db=db)` diretamente; mesmo assert. |
+| `test_admin_broker_receives_accident_opened_within_2s` | Chama `admin_updates_broker.subscribe()`, dispara `notify_admin_data_changed("accident_opened")`, aguarda via `asyncio.wait_for(queue.get(), timeout=2)`, verifica `payload["reason"] == "accident_opened"`. |
+| `test_web_check_broker_receives_accident_opened_within_2s` | Mesmo padrão para `web_check_updates_broker` / `notify_web_check_data_changed`. |
+| `test_both_sse_streams_receive_accident_opened_simultaneously` | Abre 2 streams (admin + web); usa `anyio.create_task_group` com 3 tarefas: `read_admin`, `read_web`, `publish_after_both_connected`; verifica que ambos recebem `"connected"` e `"accident_opened"`. |
+
+**Padrão de mock para Request:**
+```python
+def _make_mock_request(disconnects_after: int, session_override: dict | None) -> MagicMock:
+    call_count = 0
+    async def is_disconnected(): ...  # retorna True após N chamadas
+    mock_req.session = session_override or {}
+    mock_req.is_disconnected = is_disconnected
+```
+
+**Usuário web criado:** chave `L4WB`, projeto `L4RealtimeProject`, senha `L4webpass` (≤10 chars).
+
+**Isolamento:** A dependência `require_admin_stream_session` é um decorator dependency que não é executado ao chamar `admin_stream_handler` diretamente — não precisa de sessão de admin para o teste de broker.
+
+### Resultado dos testes
+
+- `tests/integration/test_accident_realtime.py`: **5/5 passed** em ~45s (o teste de cenário completo aguarda o stream fechar via `disconnects_after=2`).
+- Suite completa (excluindo `test_api_flow.py` por lock de arquivo no Windows): **432 passed, 24 failed** (os 24 failures são todos em `test_transport_ai_suggestion_commands.py`, pré-existentes desde antes desta feature).
+
+### Commit
+
+`(pendente)`
+
+### Arquivos criados nesta tarefa
+
+- `tests/integration/test_accident_realtime.py` (criado — 5 testes async L4)
