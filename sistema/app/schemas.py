@@ -4191,6 +4191,7 @@ class MobileSubmitResponse(BaseModel):
     ok: bool
     duplicate: bool = False
     queued_forms: bool = True
+    worker_healthy: bool = True
     message: str
     state: MobileSyncStateResponse
 

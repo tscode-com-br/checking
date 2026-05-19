@@ -66,6 +66,18 @@ jobs:
           docker push "$API_IMAGE:main"
           docker logout ghcr.io || true
 
+      - name: Build and push forms-worker image
+        env:
+          FORMS_WORKER_IMAGE: ghcr.io/tscode-com-br/checkcheck-forms-worker
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$FORMS_WORKER_IMAGE:main" || true
+          docker build --pull --target forms-worker-runtime --cache-from "$FORMS_WORKER_IMAGE:main" -t "$FORMS_WORKER_IMAGE:${{ github.sha }}" -t "$FORMS_WORKER_IMAGE:main" .
+          docker push "$FORMS_WORKER_IMAGE:${{ github.sha }}"
+          docker push "$FORMS_WORKER_IMAGE:main"
+          docker logout ghcr.io || true
+
       - name: Resolve SSH verification settings
         id: ssh_verification
         env:
@@ -159,6 +171,7 @@ jobs:
               exit 1
             fi
             API_IMAGE='ghcr.io/tscode-com-br/checkcheck-api:${{ github.sha }}'
+            FORMS_WORKER_IMAGE='ghcr.io/tscode-com-br/checkcheck-forms-worker:${{ github.sha }}'
             TEMP_DOCKER_CONFIG="$(mktemp -d)"
             cleanup() {
               rm -rf "$TEMP_DOCKER_CONFIG"
@@ -169,8 +182,9 @@ jobs:
             docker compose -f docker-compose.api.yml up -d db
             printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             CHECKCHECK_API_IMAGE="$API_IMAGE" docker compose -f docker-compose.api.yml pull api
+            CHECKCHECK_FORMS_WORKER_IMAGE="$FORMS_WORKER_IMAGE" docker compose -f docker-compose.api.yml pull forms-worker
             docker logout ghcr.io || true
-            CHECKCHECK_API_IMAGE="$API_IMAGE" docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api
+            CHECKCHECK_API_IMAGE="$API_IMAGE" CHECKCHECK_FORMS_WORKER_IMAGE="$FORMS_WORKER_IMAGE" docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api forms-worker
 
       - name: Validate API health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
@@ -180,7 +194,7 @@ jobs:
           key: ${{ secrets.OCEAN_SSH_KEY }}
           port: ${{ env.OCEAN_PORT }}
           timeout: 60s
-          command_timeout: 3m
+          command_timeout: 5m
           fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
             set -e
@@ -190,3 +204,21 @@ jobs:
               --compose-file docker-compose.api.yml \
               --service api \
               --url http://127.0.0.1:18080/api/health
+
+            attempt=1
+            max_attempts=15
+            sleep_seconds=6
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if docker compose -f docker-compose.api.yml exec -T forms-worker python -m sistema.app.forms_worker_healthcheck >/dev/null 2>&1; then
+                echo "[validate-forms-worker-health] healthy on attempt $attempt"
+                docker compose -f docker-compose.api.yml exec -T forms-worker python -m sistema.app.forms_worker_healthcheck || true
+                exit 0
+              fi
+              sleep "$sleep_seconds"
+              attempt=$((attempt + 1))
+            done
+
+            echo "forms-worker healthcheck did not become healthy within $((max_attempts * sleep_seconds))s"
+            docker compose -f docker-compose.api.yml ps forms-worker || true
+            docker compose -f docker-compose.api.yml logs --tail=200 forms-worker || true
+            exit 1

@@ -20,7 +20,7 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.accident_lifecycle import fire_accident_hook_for_check_event
 from ..services.event_logger import log_event
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
-from ..services.forms_queue import enqueue_forms_submission
+from ..services.forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now
 from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
@@ -239,6 +239,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         ok=True,
         duplicate=False,
         queued_forms=True,
+        worker_healthy=is_forms_worker_healthy_now(),
         message="Mobile event accepted and queued for Forms submission",
         state=state,
     )

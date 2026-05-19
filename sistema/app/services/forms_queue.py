@@ -300,6 +300,63 @@ def _assets_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "assets"
 
 
+_WORKER_DOWN_WARN_DEBOUNCE_SECONDS = 300
+_worker_down_warn_state: dict[str, Any] = {"last_emitted_at": None}
+_worker_down_warn_lock = threading.Lock()
+
+
+def is_forms_worker_healthy_now(*, snapshot: dict[str, Any] | None = None) -> bool:
+    return get_forms_worker_health_failure_reason(snapshot=snapshot) is None
+
+
+def _should_emit_worker_down_warning(reference_time: datetime) -> bool:
+    with _worker_down_warn_lock:
+        last_emitted_at = _worker_down_warn_state.get("last_emitted_at")
+        if last_emitted_at is not None:
+            elapsed_seconds = (reference_time - last_emitted_at).total_seconds()
+            if elapsed_seconds < _WORKER_DOWN_WARN_DEBOUNCE_SECONDS:
+                return False
+        _worker_down_warn_state["last_emitted_at"] = reference_time
+        return True
+
+
+def reset_worker_down_warn_debounce_state() -> None:
+    with _worker_down_warn_lock:
+        _worker_down_warn_state["last_emitted_at"] = None
+
+
+def _maybe_emit_worker_down_warning(
+    db,
+    *,
+    request_id: str,
+    reference_time: datetime | None = None,
+) -> bool:
+    reference = reference_time or now_sgt()
+    snapshot = get_forms_worker_observed_snapshot(reference_time=reference)
+    reason = get_forms_worker_health_failure_reason(snapshot=snapshot)
+    if reason is None:
+        return False
+    if not _should_emit_worker_down_warning(reference):
+        return False
+    backlog_count = int(snapshot.get("last_loop_processed_count") or 0)
+    log_event(
+        db,
+        source="system",
+        action="forms_warn",
+        status="warning",
+        message="Forms enqueued while worker is down",
+        details=(
+            f"reason={reason}; "
+            f"running={bool(snapshot.get('running'))}; "
+            f"stale={bool(snapshot.get('stale'))}; "
+            f"request_id={request_id}; "
+            f"last_heartbeat_at={snapshot.get('last_heartbeat_at')}; "
+            f"recent_processed={backlog_count}"
+        ),
+    )
+    return True
+
+
 def enqueue_forms_submission(
     db,
     *,
@@ -335,6 +392,7 @@ def enqueue_forms_submission(
     except IntegrityError:
         db.rollback()
         raise
+    _maybe_emit_worker_down_warning(db, request_id=request_id, reference_time=timestamp)
     return submission
 
 

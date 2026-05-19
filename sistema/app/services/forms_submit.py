@@ -13,7 +13,7 @@ from ..schemas import MobileSubmitResponse
 from .admin_updates import notify_admin_data_changed
 from .accident_lifecycle import fire_accident_hook_for_check_event
 from .event_logger import log_event
-from .forms_queue import enqueue_forms_submission
+from .forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now
 from .time_utils import resolve_project_timezone_name
 from .user_sync import (
     apply_user_state,
@@ -197,6 +197,7 @@ def submit_forms_event(
         ok=True,
         duplicate=False,
         queued_forms=True,
+        worker_healthy=is_forms_worker_healthy_now(),
         message=message,
         state=state,
     )

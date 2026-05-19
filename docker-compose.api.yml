@@ -96,6 +96,40 @@ services:
     environment: *api_runtime_environment
     command: ["python", "-m", "alembic", "upgrade", "head"]
 
+  forms-worker:
+    image: ${CHECKCHECK_FORMS_WORKER_IMAGE:-checkcheck-forms-worker:local}
+    build:
+      context: .
+      target: forms-worker-runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/checking}
+      DATABASE_POOL_SIZE: ${FORMS_WORKER_DATABASE_POOL_SIZE:-2}
+      DATABASE_MAX_OVERFLOW: ${FORMS_WORKER_DATABASE_MAX_OVERFLOW:-1}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${FORMS_WORKER_DATABASE_POOL_TIMEOUT_SECONDS:-5}
+      DATABASE_POOL_RECYCLE_SECONDS: ${FORMS_WORKER_DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      FORMS_URL: ${FORMS_URL}
+      TZ_NAME: ${TZ_NAME:-Asia/Singapore}
+      FORMS_TIMEOUT_SECONDS: ${FORMS_TIMEOUT_SECONDS:-30}
+      FORMS_MAX_RETRIES: ${FORMS_MAX_RETRIES:-3}
+      FORMS_QUEUE_ENABLED: ${FORMS_QUEUE_ENABLED:-true}
+      FORMS_WORKER_HEALTH_UPDATE_SECONDS: ${FORMS_WORKER_HEALTH_UPDATE_SECONDS:-5}
+      FORMS_WORKER_HEALTH_STALE_SECONDS: ${FORMS_WORKER_HEALTH_STALE_SECONDS:-20}
+      FORMS_WORKER_UNHEALTHY_CONSECUTIVE_ERRORS: ${FORMS_WORKER_UNHEALTHY_CONSECUTIVE_ERRORS:-3}
+      EVENT_ARCHIVES_DIR: ${EVENT_ARCHIVES_DIR:-/app/data/event_archives}
+    volumes:
+      - event_archives:/app/data/event_archives
+    healthcheck:
+      test: ["CMD-SHELL", "python -m sistema.app.forms_worker_healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
 volumes:
   pgdata:
   event_archives:

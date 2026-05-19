@@ -105,7 +105,7 @@ run_migration() {
 
 start_http_runtime() {
   echo "[checkpoint] start-http"
-  docker compose up -d --no-build --force-recreate --remove-orphans app
+  docker compose up -d --no-build --force-recreate --remove-orphans app forms-worker
 }
 
 validate_local_health() {
@@ -116,6 +116,25 @@ validate_local_health() {
     --service app \
     --url "$local_health_url" \
     --contains "$local_health_contains"
+
+  echo "[checkpoint] validate-forms-worker-health"
+  attempt=1
+  max_attempts=15
+  sleep_seconds=6
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if docker compose exec -T forms-worker python -m sistema.app.forms_worker_healthcheck >/dev/null 2>&1; then
+      echo "[validate-forms-worker-health] healthy on attempt $attempt"
+      docker compose exec -T forms-worker python -m sistema.app.forms_worker_healthcheck || true
+      return 0
+    fi
+    sleep "$sleep_seconds"
+    attempt=$((attempt + 1))
+  done
+
+  echo "forms-worker healthcheck did not become healthy within $((max_attempts * sleep_seconds))s"
+  docker compose ps forms-worker || true
+  docker compose logs --tail=200 forms-worker || true
+  exit 1
 }
 
 validate_public_health() {

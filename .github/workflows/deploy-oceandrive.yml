@@ -75,6 +75,18 @@ jobs:
           docker push "$APP_IMAGE:main"
           docker logout ghcr.io || true
 
+      - name: Build and push forms-worker image
+        env:
+          FORMS_WORKER_IMAGE: ghcr.io/tscode-com-br/checkcheck-forms-worker
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$FORMS_WORKER_IMAGE:main" || true
+          docker build --pull --target forms-worker-runtime --cache-from "$FORMS_WORKER_IMAGE:main" -t "$FORMS_WORKER_IMAGE:${{ github.sha }}" -t "$FORMS_WORKER_IMAGE:main" .
+          docker push "$FORMS_WORKER_IMAGE:${{ github.sha }}"
+          docker push "$FORMS_WORKER_IMAGE:main"
+          docker logout ghcr.io || true
+
       - name: Resolve SSH verification settings
         id: ssh_verification
         env:
@@ -271,6 +283,7 @@ jobs:
               exit 1
             fi
             APP_IMAGE='ghcr.io/tscode-com-br/checkcheck-app:${{ github.sha }}'
+            FORMS_WORKER_IMAGE='ghcr.io/tscode-com-br/checkcheck-forms-worker:${{ github.sha }}'
             TEMP_DOCKER_CONFIG="$(mktemp -d)"
             cleanup() {
               rm -rf "$TEMP_DOCKER_CONFIG"
@@ -280,6 +293,7 @@ jobs:
             docker compose up -d db
             printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             CHECKCHECK_APP_IMAGE="$APP_IMAGE" docker compose pull app
+            CHECKCHECK_FORMS_WORKER_IMAGE="$FORMS_WORKER_IMAGE" docker compose pull forms-worker
             docker logout ghcr.io || true
 
       - name: Run database migration
@@ -297,6 +311,7 @@ jobs:
             set -euo pipefail
             cd ${{ steps.deploy_dir.outputs.path }}
             export CHECKCHECK_APP_IMAGE='ghcr.io/tscode-com-br/checkcheck-app:${{ github.sha }}'
+            export CHECKCHECK_FORMS_WORKER_IMAGE='ghcr.io/tscode-com-br/checkcheck-forms-worker:${{ github.sha }}'
             bash deploy/maintenance/run_app_rollout.sh \
               --phase migrate \
               --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
@@ -316,6 +331,7 @@ jobs:
             set -euo pipefail
             cd ${{ steps.deploy_dir.outputs.path }}
             export CHECKCHECK_APP_IMAGE='ghcr.io/tscode-com-br/checkcheck-app:${{ github.sha }}'
+            export CHECKCHECK_FORMS_WORKER_IMAGE='ghcr.io/tscode-com-br/checkcheck-forms-worker:${{ github.sha }}'
             bash deploy/maintenance/run_app_rollout.sh \
               --phase start \
               --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
