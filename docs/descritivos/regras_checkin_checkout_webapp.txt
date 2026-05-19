@@ -48,7 +48,7 @@ Situação 5:
 Situação 6:
 - A aplicação web 'Checking Web' já está em primeiro plano;
 - A última atividade do usuário foi um check-in;
-- A checkbox 'Atividades Automáticas está marcada;
+- A checkbox 'Atividades Automáticas está habilitada;
 - O usuário pressiona o botão 'Atualizar' para atualizar a sua localização;
 - A aplicação web 'Checking Web' atualiza a localização do usuário para uma localização diferente da que foi registrada no check-in imediatamente anterior.
 - Nesta situação, a aplicação web 'Checking Web' deve realizar um novo check-in do usuário, apenas para atualizar sua localização.
@@ -56,7 +56,7 @@ Situação 6:
 Situação 7:
 - A aplicação web 'Checking Web' já está em primeiro plano;
 - A última atividade do usuário foi um check-out;
-- A checkbox 'Atividades Automáticas' está marcada;
+- A checkbox 'Atividades Automáticas' está habilitada;
 - A aplicação web 'Checking Web' atualiza a localização do usuário e percebe que ele está na localização 'Zona de CheckOut';
 - A aplicação web 'Checking Web', então, não toma nenhuma ação, pois a última atividade já foi um check-out;
 - Em seguida, o usuário pressiona o botão 'Atualizar' apenas para atualizar a sua localização;
@@ -83,6 +83,16 @@ Situação 8:
 - Exceção imediata após check-out em 'Zona Mista': se o usuário for localizado em qualquer outra localização cadastrada na API, exceto 'Zona de CheckOut' e 'Zona Mista', ou se o usuário não estiver em nenhuma localização cadastrada, mas ainda estiver a uma distância menor ou igual à definida na tabela 'Distância mínima para check-out automático' para o projeto em que o usuário está alocado, desconsiderando a 'Zona de CheckOut', então a aplicação web 'Checking Web' deve realizar imediatamente um novo check-in do usuário. Neste caso, o cooldown configurado para a 'Zona Mista' deve ser descartado;
 - Ou seja, a repetição consecutiva da 'Zona Mista' só bloqueia uma nova alternância automática enquanto `tempo_decorrido < intervalo`, e a alternância volta a ser permitida quando `tempo_decorrido >= intervalo`.
 
+Situação 9:
+- O usuário carrega a aplicação web 'Checking Web', ou o usuário pressiona 'Refresh' para atualizar o link da aplicação web 'Checking Web', ou o usuário traz o navegador para primeiro plano com a URL da aplicação web 'Checking Web' aberta, ou o usuário alterna para a aba onde a aplicação web 'Checking Web' está aberta;
+- O usuário já está cadastrado no sistema, com senha. Quando abre a aplicação web 'Checking Web', o usuário é autenticado com sucesso.
+- A checkbox 'Atividades Automáticas' está DESABILITADA. Não importa se a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web', ou se a permissão foi negada;
+- A aplicação web 'Checking Web' atualiza a localização do usuário (isto sempre deve ocorrer) se houver permissão para isso. Se não houver, apenas mostre a mensagem 'Permissão negada' como já está implementado;
+- O usuário seleciona 'check-in' ou 'check-out';
+- O usuário seleciona 'Normal' ou 'Retroativo';
+- A dropdown box 'Local' deve estar disponível sempre que a checkbox 'Atividades Automáticas' estiver desabilitada. O usuário então seleciona o local onde deseja realizar a atividade.
+- O usuário clica em 'Registrar';
+- A aplicação web 'Checking Web' deve seguir o fluxo normal existente e realizar a atividade conforme as seleções do usuário.
 
 
 

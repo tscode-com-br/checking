@@ -5755,7 +5755,11 @@
   }
 
   function shouldAllowManualLocationSelection() {
-    return !gpsLocationPermissionGranted || isAccuracyTooLowManualFallbackActive();
+    return clientState.shouldOfferManualLocationSelection({
+      automaticActivitiesEnabled: isAutomaticActivitiesEnabled(),
+      gpsLocationPermissionGranted,
+      accuracyTooLowFallbackActive: isAccuracyTooLowManualFallbackActive(),
+    });
   }
 
   function setLocationWithoutPermission() {
@@ -6128,9 +6132,13 @@
       return;
     }
 
-    const nextManualValue = manualLocationOptions.includes(manualLocationSelect.value)
-      ? manualLocationSelect.value
-      : getDefaultManualLocation();
+    const currentSelection = manualLocationSelect.value;
+    const gpsMatchedLocal = resolveMatchedOperationalLocation(currentLocationMatch);
+    const nextManualValue = manualLocationOptions.includes(currentSelection)
+      ? currentSelection
+      : (gpsMatchedLocal && manualLocationOptions.includes(gpsMatchedLocal)
+        ? gpsMatchedLocal
+        : getDefaultManualLocation());
     setLocationSelectOptions(manualLocationOptions, nextManualValue, {
       placeholder: typeof t === 'function' ? t('location.noKnownLocations') : 'Sem localizações cadastradas',
     });

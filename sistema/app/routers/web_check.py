@@ -640,6 +640,9 @@ async def stream_web_check_updates(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/transport/address", response_model=WebTransportActionResponse)
 def update_web_transport_address(
     payload: WebTransportAddressUpdateRequest,
     request: Request,

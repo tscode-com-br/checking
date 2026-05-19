@@ -192,6 +192,33 @@ def test_hook_ignores_unknown_action(tmp_path: Path):
     assert db.execute(select(AccidentUserReport)).scalars().all() == []
 
 
+def test_fire_accident_hook_rollback_after_query_failure(tmp_path: Path):
+    """Reproduces the production regression where list_active_accident raised
+    `psycopg.errors.UndefinedTable` because the accidents table was missing.
+
+    Postgres aborts the surrounding transaction on such failures, leaving the
+    session in `InFailedSqlTransaction` for any subsequent query. The hook must
+    swallow the exception AND call db.rollback() so the response builder that
+    runs immediately after (build_mobile_sync_state) can still query the
+    session successfully.
+    """
+    db = _make_session(tmp_path)
+    user = _make_user(db)
+    db.commit()
+
+    with patch(
+        "sistema.app.services.accident_lifecycle.list_active_accident",
+        side_effect=RuntimeError("forced failure"),
+    ):
+        # Must not raise
+        fire_accident_hook_for_check_event(db, user=user, action="checkin", event_time=_NOW)
+
+    # The session must still be usable for follow-up queries (this is what
+    # build_mobile_sync_state would do right after the hook in production).
+    fetched = db.execute(select(User).where(User.id == user.id)).scalar_one()
+    assert fetched.chave == user.chave
+
+
 # ---------------------------------------------------------------------------
 # Integration test — /api/web/check POST calls the hook
 # ---------------------------------------------------------------------------

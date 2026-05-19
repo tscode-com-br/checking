@@ -365,3 +365,7 @@ def fire_accident_hook_for_check_event(
             )
     except Exception:
         _logger.warning("Accident hook failed for check event", exc_info=True)
+        try:
+            db.rollback()
+        except Exception:
+            _logger.warning("Accident hook rollback also failed", exc_info=True)

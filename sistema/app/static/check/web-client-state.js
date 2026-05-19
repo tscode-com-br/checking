@@ -152,6 +152,22 @@
     return true;
   }
 
+  function shouldOfferManualLocationSelection({
+    automaticActivitiesEnabled,
+    gpsLocationPermissionGranted,
+    accuracyTooLowFallbackActive,
+  }) {
+    // Situation 9 from docs/descritivos/regras_checkin_checkout_webapp.txt:
+    // when "Atividades Automáticas" is disabled, the Local dropdown must
+    // always be available regardless of GPS state, so the user can pick
+    // a location manually and submit. Auto-on keeps the legacy rule
+    // (dropdown only shown when GPS is denied or accuracy too low).
+    if (!automaticActivitiesEnabled) {
+      return true;
+    }
+    return !gpsLocationPermissionGranted || Boolean(accuracyTooLowFallbackActive);
+  }
+
   function isPasswordLengthValid(password) {
     const rawPassword = String(password ?? '');
     return rawPassword.length >= 3 && rawPassword.length <= 10 && rawPassword.trim().length > 0;
@@ -354,6 +370,7 @@
     normalizeProjectValue,
     normalizeProjectValues,
     shouldAttemptSilentLocationLookup,
+    shouldOfferManualLocationSelection,
     isPasswordLengthValid,
     isPasswordVerificationInputValid,
     autofillPetrobrasEmailDomain,
