@@ -78,7 +78,7 @@ Em produção (Postgres) a FK é enforçada. Em dev (SQLite) costuma estar desli
 
 | Símbolo | Uso |
 |---|---|
-| `AdminIdentity(user, admin_user)` | Dataclass que carrega o par. `identity.user.id` para FK→`users.id`; `identity.admin_user.id` para FK→`admin_users.id`. |
+| `AdminActorIdentity(user, admin_user)` | Dataclass que carrega o par. `identity.user.id` para FK→`users.id`; `identity.admin_user.id` para FK→`admin_users.id`. |
 | `ensure_admin_user_by_chave(db, chave, nome_completo)` | Upsert idempotente do `AdminUser` por `chave`. Cria se ausente, atualiza `nome_completo` se mudou. |
 | `resolve_admin_user_for_user(db, user)` | Atalho: dado um `User`, devolve o `AdminUser` pareado (criando se necessário). |
 
@@ -87,7 +87,7 @@ Em produção (Postgres) a FK é enforçada. Em dev (SQLite) costuma estar desli
 | Dependência FastAPI | Retorna | Quando usar |
 |---|---|---|
 | `require_full_admin_session` | `User` | Endpoints que só precisam validar acesso admin e ler dados. |
-| `require_admin_identity` | `AdminIdentity` | Endpoints que **escrevem** em colunas FK→`admin_users.id`. |
+| `require_admin_identity` | `AdminActorIdentity` | Endpoints que **escrevem** em colunas FK→`admin_users.id`. |
 
 ### Padrões corretos vs. armadilhas
 
@@ -98,7 +98,7 @@ Em produção (Postgres) a FK é enforçada. Em dev (SQLite) costuma estar desli
 def open_admin_accident(
     payload: AdminAccidentOpenRequest,
     db: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(require_admin_identity),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
 ):
     accident = open_accident(
         db, ...,

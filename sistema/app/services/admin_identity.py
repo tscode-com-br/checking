@@ -33,13 +33,16 @@ from .time_utils import now_sgt
 
 
 @dataclass(frozen=True)
-class AdminIdentity:
+class AdminActorIdentity:
     """Par (``User``, ``AdminUser``) representando o admin autenticado.
 
     - ``identity.user.id`` para FK em colunas que referenciam ``users.id``.
     - ``identity.admin_user.id`` para FK em colunas que referenciam
       ``admin_users.id`` (qualquer coluna ``*_by_admin_id`` ou
       ``actor_user_id``).
+
+    O nome carrega "Actor" para evitar conflito com ``schemas.AdminIdentity``,
+    que e o Pydantic publico devolvido ao frontend pela sessao admin.
     """
 
     user: User

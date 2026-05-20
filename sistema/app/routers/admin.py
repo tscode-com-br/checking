@@ -109,7 +109,7 @@ from ..services.admin_auth import (
     user_profile_has_access,
     verify_password,
 )
-from ..services.admin_identity import AdminIdentity
+from ..services.admin_identity import AdminActorIdentity
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_web_check_data_changed
 from ..services.admin_project_scope import (
     location_matches_effective_admin_scope,
@@ -2023,7 +2023,7 @@ def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentSta
 def open_admin_accident(
     payload: AdminAccidentOpenRequest,
     db: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(require_admin_identity),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
     try:
         accident = open_accident(
@@ -2064,7 +2064,7 @@ def open_admin_accident(
 def close_admin_accident(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(require_admin_identity),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
     active = list_active_accident(db)
     if active is None:

@@ -129,6 +129,26 @@ def test_admin_close_accident_uses_admin_users_id(
         assert admin_row.chave == admin_perfil_1.user.chave
 
 
+def test_admin_session_endpoint_returns_identity_after_login(
+    admin_perfil_1: AdminSession,
+) -> None:
+    """Regression: ``GET /api/admin/auth/session`` builds the public
+    Pydantic ``AdminIdentity`` (from schemas) via ``build_admin_identity``.
+
+    A previous version of the fix shadowed that symbol with the internal
+    ``AdminActorIdentity`` dataclass, causing this endpoint to 500 in
+    production with ``TypeError: AdminIdentity.__init__() got an
+    unexpected keyword argument 'id'``. The /auth/login endpoint does
+    NOT exercise this code path, which is why the failure escaped the
+    other tests in this file.
+    """
+    response = admin_perfil_1.client.get("/api/admin/auth/session")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["authenticated"] is True
+    assert body["admin"]["chave"] == admin_perfil_1.user.chave
+
+
 def test_admin_open_accident_rejects_when_one_is_already_active(
     admin_perfil_1: AdminSession,
     accident_project,
