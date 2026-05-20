@@ -891,12 +891,13 @@ def test_transport_ai_apply_creates_vehicle_assignments_and_route_stops(tmp_path
                 approved_at=approved_at,
             )
 
-        def _tracked_apply_transport_operational_proposal(db, *, proposal, actor, applied_at=None):
+        def _tracked_apply_transport_operational_proposal(db, *, proposal, actor, admin_user_id, applied_at=None):
             proposal_call_order.append("apply")
             return original_apply_transport_operational_proposal(
                 db,
                 proposal=proposal,
                 actor=actor,
+                admin_user_id=admin_user_id,
                 applied_at=applied_at,
             )
 

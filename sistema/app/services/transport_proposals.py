@@ -838,6 +838,7 @@ def apply_transport_operational_proposal(
     *,
     proposal: TransportOperationalProposal,
     actor: TransportIdentity,
+    admin_user_id: int,
     applied_at: datetime | None = None,
 ) -> tuple[TransportOperationalProposal, list[TransportOperationalAppliedAssignment]]:
     effective_applied_at = applied_at or now_sgt()
@@ -911,7 +912,7 @@ def apply_transport_operational_proposal(
             vehicle=vehicle,
             boarding_time=decision.boarding_time,
             response_message=decision.response_message,
-            admin_user_id=actor.id,
+            admin_user_id=admin_user_id,
         )
         applied_assignments.append(
             TransportOperationalAppliedAssignment(

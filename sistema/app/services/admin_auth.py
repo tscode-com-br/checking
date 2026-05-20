@@ -261,6 +261,27 @@ def require_full_admin_session(
     raise HTTPException(status_code=403, detail="Este usuario nao possui permissao para esta area do Admin.")
 
 
+def require_admin_identity(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Same auth as ``require_full_admin_session`` but returns ``AdminIdentity``.
+
+    Use this dependency in any endpoint that writes to a column whose FK
+    targets ``admin_users.id`` (``*_by_admin_id``, ``actor_user_id``). The
+    returned ``AdminIdentity`` exposes both the session ``User`` and the
+    paired ``AdminUser`` row (lazily created if missing), so endpoints
+    never have to confuse the two IDs.
+    """
+    # Local import avoids a circular dependency: admin_identity imports
+    # from models, and several callers import admin_auth at module load.
+    from .admin_identity import AdminIdentity, resolve_admin_user_for_user
+
+    admin = require_full_admin_session(request, db)
+    admin_user = resolve_admin_user_for_user(db, admin)
+    return AdminIdentity(user=admin, admin_user=admin_user)
+
+
 def require_admin_stream_session(
     request: Request,
     db: Session = Depends(get_db),

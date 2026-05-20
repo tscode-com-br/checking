@@ -99,6 +99,7 @@ from ..services.admin_auth import (
     normalize_admin_key,
     normalize_user_profile,
     remove_profile_access,
+    require_admin_identity,
     require_full_admin_session,
     require_admin_session,
     require_admin_stream_session,
@@ -108,6 +109,7 @@ from ..services.admin_auth import (
     user_profile_has_access,
     verify_password,
 )
+from ..services.admin_identity import AdminIdentity
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_web_check_data_changed
 from ..services.admin_project_scope import (
     location_matches_effective_admin_scope,
@@ -2017,11 +2019,11 @@ def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentSta
     )
 
 
-@router.post("/accidents/open", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+@router.post("/accidents/open", response_model=AdminAccidentStateResponse)
 def open_admin_accident(
     payload: AdminAccidentOpenRequest,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_full_admin_session),
+    identity: AdminIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
     try:
         accident = open_accident(
@@ -2030,7 +2032,7 @@ def open_admin_accident(
             project_id=payload.project_id,
             location_id=payload.location_id,
             custom_location_name=payload.custom_location_name,
-            opened_by_admin_id=current_admin.id,
+            opened_by_admin_id=identity.admin_user.id,
             opened_by_user_id=None,
         )
     except AccidentAlreadyActiveError:
@@ -2058,17 +2060,17 @@ def open_admin_accident(
 
 
 
-@router.post("/accidents/close", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+@router.post("/accidents/close", response_model=AdminAccidentStateResponse)
 def close_admin_accident(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_full_admin_session),
+    identity: AdminIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
     active = list_active_accident(db)
     if active is None:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
 
-    closed = close_accident(db, accident=active, closed_by_admin_id=current_admin.id)
+    closed = close_accident(db, accident=active, closed_by_admin_id=identity.admin_user.id)
     background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)
 
     log_event(

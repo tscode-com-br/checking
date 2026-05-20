@@ -3764,6 +3764,7 @@ def apply_transport_ai_suggestion(
             db,
             proposal=approved_proposal,
             actor=actor_identity,
+            admin_user_id=actor_admin_user.id,
             applied_at=timestamp,
         )
         if proposal_has_blocking_issues(applied_proposal) or applied_proposal.proposal_status != "applied":

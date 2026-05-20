@@ -303,30 +303,17 @@ def ensure_transport_ai_actor_admin_user(
     nome_completo: str,
     ensured_at: datetime | None = None,
 ) -> AdminUser:
-    timestamp = ensured_at or now_sgt()
-    normalized_chave = str(chave or "").strip().upper()
-    normalized_nome = " ".join(str(nome_completo or "").strip().split()) or normalized_chave
+    # Thin wrapper around the canonical helper in services.admin_identity.
+    # Kept here to preserve the existing import path used across
+    # routers/transport_ai.py.
+    from .admin_identity import ensure_admin_user_by_chave
 
-    admin_user = db.execute(select(AdminUser).where(AdminUser.chave == normalized_chave)).scalar_one_or_none()
-    if admin_user is None:
-        admin_user = AdminUser(
-            chave=normalized_chave,
-            nome_completo=normalized_nome,
-            password_hash=None,
-            requires_password_reset=False,
-            approved_by_admin_id=None,
-            approved_at=None,
-            password_reset_requested_at=None,
-            created_at=timestamp,
-            updated_at=timestamp,
-        )
-        db.add(admin_user)
-    elif admin_user.nome_completo != normalized_nome:
-        admin_user.nome_completo = normalized_nome
-        admin_user.updated_at = timestamp
-
-    db.flush()
-    return admin_user
+    return ensure_admin_user_by_chave(
+        db,
+        chave=chave,
+        nome_completo=nome_completo,
+        ensured_at=ensured_at,
+    )
 
 
 def save_transport_ai_planning_input(

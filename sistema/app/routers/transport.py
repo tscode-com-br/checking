@@ -52,6 +52,7 @@ from ..services.admin_auth import (
     user_has_transport_access,
     verify_password,
 )
+from ..services.admin_identity import resolve_admin_user_for_user
 from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_transport_data_changed
 from ..services.transport_assignment_operations import update_transport_assignment_boarding_time
 from ..services.location_settings import (
@@ -531,10 +532,12 @@ def apply_transport_proposal_command(
     transport_user: User = Depends(require_transport_session),
     db: Session = Depends(get_db),
 ) -> TransportOperationalProposalApplyResult:
+    actor_admin_user = resolve_admin_user_for_user(db, transport_user)
     applied_proposal, applied_assignments = apply_transport_operational_proposal(
         db,
         proposal=payload.proposal,
         actor=build_transport_identity(transport_user),
+        admin_user_id=actor_admin_user.id,
     )
     is_ok = applied_proposal.proposal_status == "applied"
     if is_ok:
@@ -1201,6 +1204,7 @@ def save_transport_assignment_boarding_time(
             ],
         )
 
+    actor_admin_user = resolve_admin_user_for_user(db, current_transport_user)
     try:
         assignment = update_transport_assignment_boarding_time(
             db,
@@ -1208,7 +1212,7 @@ def save_transport_assignment_boarding_time(
             service_date=payload.service_date,
             route_kind=payload.route_kind,
             boarding_time=payload.boarding_time,
-            admin_user_id=current_transport_user.id,
+            admin_user_id=actor_admin_user.id,
         )
     except ValueError as exc:
         technical_detail = str(exc)
