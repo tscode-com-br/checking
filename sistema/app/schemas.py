@@ -990,7 +990,7 @@ class AdminIdentity(BaseModel):
     perfil: int
     can_view_activity_time: bool
     access_scope: Literal["limited", "full"]
-    allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]] = Field(default_factory=list)
+    allowed_tabs: list[Literal["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"]] = Field(default_factory=list)
 
 
 class AdminSessionResponse(BaseModel):

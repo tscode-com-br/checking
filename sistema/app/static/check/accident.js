@@ -160,6 +160,11 @@
 
     document.getElementById("accidentReportConfirmCancel").onclick = function () {
       hideDialog(dialog, backdrop);
+      // Restore the inquiry card to its initial state ("Zona de Seguranca" /
+      // "Zona de Acidente"). Without this, after going through
+      // "Zona de Acidente" -> "Estou bem." -> Cancel, the buttons stay in the
+      // intermediate "Estou bem." / "Preciso de Ajuda!" state.
+      resetInquiryCard();
     };
     document.getElementById("accidentReportConfirmSubmit").onclick = async function () {
       hideDialog(dialog, backdrop);

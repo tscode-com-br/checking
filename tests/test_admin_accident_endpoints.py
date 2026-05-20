@@ -180,6 +180,11 @@ def test_admin_session_endpoint_returns_identity_after_login(
     body = response.json()
     assert body["authenticated"] is True
     assert body["admin"]["chave"] == admin_perfil_1.user.chave
+    # Regression: full admins must have the "acidente" tab in their
+    # allowed_tabs list. The frontend uses this list to gate switchTab,
+    # so a missing entry silently disables the Acidente tab even when
+    # the button is visible.
+    assert "acidente" in body["admin"]["allowed_tabs"]
 
 
 def test_admin_open_accident_rejects_when_one_is_already_active(
