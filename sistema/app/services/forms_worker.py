@@ -1,5 +1,5 @@
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Literal
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -83,6 +83,7 @@ class FormsWorker:
         while monotonic() < deadline:
             if predicate():
                 return
+            sleep(1.0)
 
         raise FormsStepValidationError(step_name=step_name, details=failure_details)
 
