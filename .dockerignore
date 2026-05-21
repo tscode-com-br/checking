@@ -13,6 +13,9 @@ __pycache__
 deploy/*
 !deploy/nginx/
 !deploy/nginx/static-site.conf
+!deploy/docker/
+!deploy/docker/admin2-web/
+!deploy/docker/admin2-web/**
 docs/
 firmware/
 node_modules/
