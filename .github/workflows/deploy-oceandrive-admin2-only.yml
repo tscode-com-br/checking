@@ -196,7 +196,10 @@ jobs:
               --url http://127.0.0.1:18084/ \
               --contains "Checking"
 
-      - name: Diagnose admin2 routing
+      - name: Apply nginx edge routes
+        env:
+          OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
+        if: env.OCEAN_NGINX_SERVER_CONFIG != ''
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -207,9 +210,11 @@ jobs:
           command_timeout: 2m
           fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
-            echo "=== docker ps (admin2) ==="
-            docker ps -a --filter "name=admin2" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            echo "=== port 18084 test ==="
-            curl -s -o /dev/null -w "http_code=%{http_code}\n" http://127.0.0.1:18084/ || echo "curl failed on 18084"
-            echo "=== nginx server blocks (listen + server_name + admin2 lines) ==="
-            grep -n "listen\|server_name\|admin2\|BEGIN CHECKCHECK\|END CHECKCHECK" /etc/nginx/sites-enabled/checkcheck 2>/dev/null || echo "file not found"
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+            bash deploy/nginx/manage_checking_edge_cutover.sh apply \
+              --server-config '${{ env.OCEAN_NGINX_SERVER_CONFIG }}' \
+              --routes-file deploy/nginx/checking-edge-routes.conf \
+              --http-config-target /etc/nginx/conf.d/checkcheck-edge-http.conf \
+              --http-rules-file deploy/nginx/checking-edge-http.conf \
+              --reload
