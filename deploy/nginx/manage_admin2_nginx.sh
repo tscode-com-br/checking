@@ -30,7 +30,7 @@ done
 [ -f "$server_config" ] || fail "Server config not found: $server_config"
 [ -f "$routes_file" ]   || fail "Routes file not found: $routes_file"
 
-backup="${server_config}.admin2.bak.$(date +%Y%m%d%H%M%S)"
+backup="/tmp/nginx-$(basename "$server_config").admin2.bak.$(date +%Y%m%d%H%M%S)"
 cp "$server_config" "$backup"
 
 temp="$(mktemp)"
@@ -88,7 +88,7 @@ mv "$merged" "$server_config"
 
 if ! nginx -t 2>&1; then
   cp "$backup" "$server_config"
-  fail "nginx config test failed after admin2 route injection; config restored from $backup"
+  fail "nginx config test failed after admin2 route injection; config restored from backup"
 fi
 
 if [ "$reload_nginx" = "true" ]; then
