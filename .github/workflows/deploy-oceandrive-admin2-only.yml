@@ -196,7 +196,7 @@ jobs:
               --url http://127.0.0.1:18084/ \
               --contains "Checking"
 
-      - name: Apply nginx edge routes
+      - name: Apply admin2 nginx routes
         env:
           OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
         if: env.OCEAN_NGINX_SERVER_CONFIG != ''
@@ -212,9 +212,7 @@ jobs:
           script: |
             set -euo pipefail
             cd ${{ steps.deploy_dir.outputs.path }}
-            bash deploy/nginx/manage_checking_edge_cutover.sh apply \
+            bash deploy/nginx/manage_admin2_nginx.sh \
               --server-config '${{ env.OCEAN_NGINX_SERVER_CONFIG }}' \
-              --routes-file deploy/nginx/checking-edge-routes.conf \
-              --http-config-target /etc/nginx/conf.d/checkcheck-edge-http.conf \
-              --http-rules-file deploy/nginx/checking-edge-http.conf \
+              --routes-file deploy/nginx/checking-admin2-routes.conf \
               --reload

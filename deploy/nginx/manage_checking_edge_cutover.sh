@@ -74,35 +74,48 @@ replace_managed_block() {
   ' "$target_file" > "$temp_file"
 
   if ! awk -v begin="$begin_marker" -v end="$end_marker" -v source="$source_file" '
-    BEGIN { n = 0 }
-    { lines[++n] = $0 }
-    END {
-      in_server = 0; depth = 0; has_443 = 0; target_close = 0
-      for (i = 1; i <= n; i++) {
-        tmp = lines[i]; opens = gsub(/\{/, "", tmp)
-        tmp = lines[i]; closes = gsub(/\}/, "", tmp)
-        if (!in_server && lines[i] ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/) {
-          in_server = 1; depth = 0; has_443 = 0
-        }
-        if (in_server) {
-          if (lines[i] ~ /listen[[:space:]].*443/) has_443 = 1
-          if (closes > 0 && depth + opens - closes == 0) {
-            if (has_443) target_close = i
-            in_server = 0
-          }
-          depth += opens - closes
-        }
+    function emit_block() {
+      print ""
+      print begin
+      while ((getline line < source) > 0) {
+        print line
       }
-      if (target_close == 0) exit 2
-      for (i = 1; i <= n; i++) {
-        if (i == target_close) {
-          print ""
-          print begin
-          while ((getline bline < source) > 0) print bline
-          close(source)
-          print end
-        }
-        print lines[i]
+      close(source)
+      print end
+    }
+
+    BEGIN {
+      in_server = 0
+      depth = 0
+      inserted = 0
+    }
+
+    {
+      line = $0
+      opens_line = line
+      closes_line = line
+      opens = gsub(/\{/, "{", opens_line)
+      closes = gsub(/\}/, "}", closes_line)
+
+      if (!in_server && line ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/) {
+        in_server = 1
+      }
+
+      if (in_server && !inserted && closes > 0 && depth + opens - closes == 0) {
+        emit_block()
+        inserted = 1
+      }
+
+      print line
+
+      if (in_server) {
+        depth += opens - closes
+      }
+    }
+
+    END {
+      if (!inserted) {
+        exit 2
       }
     }
   ' "$temp_file" > "$merged_file"; then
