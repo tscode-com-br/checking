@@ -148,6 +148,13 @@
   // the project's `name` field. Returns false when either side is missing.
   function _userCheckedInAtAccidentProject(s, webState) {
     if (!webState || webState.current_action !== "checkin") return false;
+    // If the backend already seeded a report for this user in this accident,
+    // they are confirmed members of the accident's project — show the card
+    // without relying on project-name string comparison (which can fail when
+    // webState comes from MobileSyncStateResponse instead of
+    // WebCheckHistoryResponse, or when the project catalog hasn't been
+    // resolved yet on the client).
+    if (s && s.current_user_report != null) return true;
     const userProject = (webState.projeto || "").trim();
     const accidentProject = (s && s.project_name ? String(s.project_name) : "").trim();
     return !!userProject && userProject === accidentProject;
@@ -963,6 +970,7 @@
     // and to provide the latest user activity context (current_action, projeto)
     // used by renderInquiryCard to decide between the 4 scenarios of item 4.1.
     onCheckWebState: function (webState) {
+      const prevAction = _latestWebCheckState && _latestWebCheckState.current_action;
       _latestWebCheckState = webState || null;
       _canReportAccident = !!(
         webState && webState.has_current_day_checkin && webState.current_action === "checkin"
@@ -972,6 +980,12 @@
       // (e.g. user transitioned from check-out to check-in while modo acidente
       // was active — the auto check-in retry resolved successfully).
       renderInquiryCard(state);
+      // When the user transitions from check-out to check-in while the accident
+      // is active, trigger a fresh /check/accident/state fetch so that
+      // current_user_report is up-to-date and the inquiry card shows reliably.
+      if (state.is_active && prevAction === "checkout" && webState && webState.current_action === "checkin") {
+        scheduleRefresh();
+      }
     },
     // Exposed by app.js after login; triggers a lifecycle update cycle (auto check-in if GPS available)
     requestAutoCheckin: null,
