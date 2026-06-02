@@ -770,6 +770,7 @@ def build_event_row_payload(
     project_names = sorted({row.project for row in rows if row.project})
     user_keys_by_rfid: dict[str, str] = {}
     user_names_by_rfid: dict[str, str] = {}
+    user_names_by_chave: dict[str, str] = {}
     projects_by_name: dict[str, Project] = {}
     if rfids:
         for rfid, chave, nome in db.execute(
@@ -780,6 +781,23 @@ def build_event_row_payload(
                     user_keys_by_rfid[rfid] = chave
                 if nome is not None:
                     user_names_by_rfid[rfid] = nome
+
+    # Collect chaves from event details so users without RFID also get nome
+    detail_chaves: set[str] = set()
+    for row in rows:
+        details_map = parse_event_details(row.details)
+        for field_name in EVENT_KEY_FIELDS:
+            value = details_map.get(field_name)
+            if value:
+                detail_chaves.add(value.upper())
+                break
+    if detail_chaves:
+        for chave, nome in db.execute(
+            select(User.chave, User.nome).where(User.chave.in_(detail_chaves))
+        ).all():
+            if chave is not None and nome is not None:
+                user_names_by_chave[chave.upper()] = nome
+
     if project_names:
         projects_by_name = {
             project.name: project
@@ -800,13 +818,17 @@ def build_event_row_payload(
             timezone_context=timezone_context,
             can_view_activity_time=can_view_activity_time,
         )
+        resolved_chave = resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid)
+        resolved_nome = (
+            user_names_by_rfid.get(row.rfid) if row.rfid else None
+        ) or (user_names_by_chave.get(resolved_chave.upper()) if resolved_chave else None)
         payload.append(
             EventRow(
                 id=row.id,
                 source=row.source,
                 rfid=row.rfid,
-                chave=resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid),
-                nome=user_names_by_rfid.get(row.rfid) if row.rfid else None,
+                chave=resolved_chave,
+                nome=resolved_nome,
                 device_id=row.device_id,
                 local=row.local,
                 action=row.action,
