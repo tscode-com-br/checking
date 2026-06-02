@@ -3655,6 +3655,7 @@ class EventRow(BaseModel):
     source: str
     rfid: Optional[str]
     chave: Optional[str]
+    nome: Optional[str] = None
     device_id: Optional[str]
     local: Optional[str]
     action: str

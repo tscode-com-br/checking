@@ -24,34 +24,44 @@ Observacao importante:
 
 ## 2. Comandos basicos de acesso
 
-Abrir shell remoto a partir da raiz do repo no Windows PowerShell:
+Observacao importante sobre o ambiente Windows:
+
+O OpenSSH nativo do Windows PowerShell nao consegue ler a chave `do_checkcheck` quando o arquivo esta em uma pasta NTFS (problemas de permissao e formato de path). Usar **WSL** e o metodo confiavel. Todos os comandos abaixo devem ser executados no PowerShell invocando WSL.
+
+Abrir shell remoto interativo:
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21; rm -f /tmp/do_ck"
 ```
 
-Abrir shell e cair direto no diretorio do app:
+Executar um comando remoto sem abrir shell interativo:
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "cd /root/checkcheck && bash"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'cd /root/checkcheck && docker compose ps'; rm -f /tmp/do_ck"
 ```
 
 Validar saude local da API sem abrir shell interativo:
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "curl -fsS http://127.0.0.1:8000/api/health"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'curl -fsS http://127.0.0.1:8000/api/health'; rm -f /tmp/do_ck"
 ```
 
 Ver containers e servicos da stack:
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "cd /root/checkcheck && docker compose ps"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'cd /root/checkcheck && docker compose ps'; rm -f /tmp/do_ck"
 ```
 
 Ver status de disco e uso do diretorio do app:
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "df -h && du -sh /root/checkcheck"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'df -h && du -sh /root/checkcheck'; rm -f /tmp/do_ck"
+```
+
+Padrao geral para qualquer comando remoto:
+
+```powershell
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'COMANDO_AQUI'; rm -f /tmp/do_ck"
 ```
 
 ## 3. Estrutura remota relevante
@@ -134,11 +144,11 @@ O script ja contem guardas para impedir habilitacao parcial da IA quando `TRANSP
 
 ## 6. Validacoes minimas apos acesso ou deploy
 
-No host:
+No host (via WSL):
 
 ```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "cd /root/checkcheck && docker compose ps"
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "curl -fsS http://127.0.0.1:8000/api/health"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'cd /root/checkcheck && docker compose ps'; rm -f /tmp/do_ck"
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'curl -fsS http://127.0.0.1:8000/api/health'; rm -f /tmp/do_ck"
 ```
 
 Publicamente:

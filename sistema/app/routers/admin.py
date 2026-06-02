@@ -769,13 +769,17 @@ def build_event_row_payload(
     rfids = sorted({row.rfid for row in rows if row.rfid})
     project_names = sorted({row.project for row in rows if row.project})
     user_keys_by_rfid: dict[str, str] = {}
+    user_names_by_rfid: dict[str, str] = {}
     projects_by_name: dict[str, Project] = {}
     if rfids:
-        user_keys_by_rfid = {
-            rfid: chave
-            for rfid, chave in db.execute(select(User.rfid, User.chave).where(User.rfid.in_(rfids))).all()
-            if rfid is not None
-        }
+        for rfid, chave, nome in db.execute(
+            select(User.rfid, User.chave, User.nome).where(User.rfid.in_(rfids))
+        ).all():
+            if rfid is not None:
+                if chave is not None:
+                    user_keys_by_rfid[rfid] = chave
+                if nome is not None:
+                    user_names_by_rfid[rfid] = nome
     if project_names:
         projects_by_name = {
             project.name: project
@@ -802,6 +806,7 @@ def build_event_row_payload(
                 source=row.source,
                 rfid=row.rfid,
                 chave=resolve_event_key(row, user_keys_by_rfid=user_keys_by_rfid),
+                nome=user_names_by_rfid.get(row.rfid) if row.rfid else None,
                 device_id=row.device_id,
                 local=row.local,
                 action=row.action,
