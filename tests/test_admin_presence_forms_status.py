@@ -87,7 +87,7 @@ def test_presence_rows_include_correlated_forms_status():
         )
         db.commit()
 
-        rows = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
+        rows, _ = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
 
     assert len(rows) == 1
     assert rows[0].forms_status == "filling"
@@ -169,7 +169,7 @@ def test_presence_rows_include_not_realized_forms_status_for_skipped_forms():
         )
         db.commit()
 
-        rows = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
+        rows, _ = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
 
     assert len(rows) == 1
     assert rows[0].forms_status == "not_realized"

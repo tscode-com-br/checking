@@ -954,7 +954,7 @@ def build_presence_rows(
     action: str,
     current_admin: User | None = None,
     reference_time=None,
-) -> list[UserRow]:
+) -> tuple[list[UserRow], int]:
     all_projects = list_projects(db)
     current_time = reference_time or now_sgt()
     can_view_activity_time = True if current_admin is None else user_can_view_activity_time(current_admin)
@@ -965,7 +965,8 @@ def build_presence_rows(
         current_admin=current_admin,
     )
     if current_admin is not None and effective_admin_projects == []:
-        return []
+        return [], 0
+    total_in_scope = len(rows)
 
     latest_activities = resolve_latest_user_activities(db, users=rows)
     presence_request_ids = {
@@ -1030,7 +1031,7 @@ def build_presence_rows(
         )
 
     payload.sort(key=lambda item: item[0], reverse=True)
-    return [row for _, row in payload]
+    return [row for _, row in payload], total_in_scope
 
 
 def build_missing_checkout_rows(db: Session, *, reference_time=None) -> list[UserRow]:
@@ -3058,6 +3059,7 @@ def set_administrator_password(
 
 @router.get("/checkin", response_model=list[UserRow])
 def list_checkin(
+    response: Response,
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_admin_session),
 ) -> list[UserRow]:
@@ -3069,11 +3071,14 @@ def list_checkin(
     if descadastrado:
         notify_admin_views("register")
         notify_web_check_data_changed("inactivity_descadastro")
-    return build_presence_rows(db, action="checkin", current_admin=current_admin, reference_time=reference_time)
+    rows, total_in_scope = build_presence_rows(db, action="checkin", current_admin=current_admin, reference_time=reference_time)
+    response.headers["X-Total-In-Scope"] = str(total_in_scope)
+    return rows
 
 
 @router.get("/checkout", response_model=list[UserRow])
 def list_checkout(
+    response: Response,
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_admin_session),
 ) -> list[UserRow]:
@@ -3085,7 +3090,9 @@ def list_checkout(
     if descadastrado:
         notify_admin_views("register")
         notify_web_check_data_changed("inactivity_descadastro")
-    return build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
+    rows, total_in_scope = build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
+    response.headers["X-Total-In-Scope"] = str(total_in_scope)
+    return rows
 
 
 @router.get("/forms", response_model=list[ProviderFormRow])
