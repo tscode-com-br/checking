@@ -220,6 +220,19 @@
         _showManualCheckinMessage();
         return;
       }
+      if (status === "success") {
+        // Auto check-in succeeded but _latestWebCheckState is still stale (says
+        // "checkout") because app.js hasn't delivered a fresh /check/state yet.
+        // Show the zone buttons now and keep scheduling refreshes until
+        // onCheckWebState receives the updated state (from there the normal
+        // scenario-1 path takes over and the stale branch is never reached again).
+        _showInquiryCard(card, true);
+        _hidePostReportState();
+        _hideManualCheckinMessage();
+        resetInquiryCard();
+        scheduleRefresh();
+        return;
+      }
       // Scenario (3c): no auto activities, no retries → keep the theme only.
       _showInquiryCard(card, false);
       _hidePostReportState();

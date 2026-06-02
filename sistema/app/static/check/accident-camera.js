@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const RecordingState = { stream: null, recorder: null, chunks: [], dialog: null };
+  const RecordingState = { stream: null, recorder: null, chunks: [], dialog: null, stopBtn: null };
 
   // i18n helper — uses window.CheckingWebI18n.t when available; otherwise
   // returns the pt-BR fallback text (which is the canonical wording required
@@ -66,7 +66,10 @@
   }
 
   async function uploadRecording(chave, mime) {
-    const blob = new Blob(RecordingState.chunks, { type: mime || "video/webm" });
+    // Strip codec suffix (e.g. "video/webm;codecs=vp9,opus" → "video/webm")
+    // so the server MIME-type check against ALLOWED_VIDEO_TYPES always passes.
+    const baseMime = (mime || "video/webm").split(";")[0].trim() || "video/webm";
+    const blob = new Blob(RecordingState.chunks, { type: baseMime });
     const fd = new FormData();
     fd.append("chave", chave);
     fd.append(
@@ -75,7 +78,7 @@
         ? crypto.randomUUID()
         : Date.now().toString(36) + Math.random().toString(36).slice(2)
     );
-    fd.append("video", blob, `recording.${mime.includes("mp4") ? "mp4" : "webm"}`);
+    fd.append("video", blob, `recording.${baseMime.includes("mp4") ? "mp4" : "webm"}`);
     // Item 5.2 spec: these three texts are the user-visible contract for the
     // video upload feedback. Do not change them without explicit authorization.
     const sendingText = tt("accident.video.sending", "Enviando o registro...");
@@ -83,13 +86,31 @@
     const errorText = tt("accident.video.error", "Erro: registro não enviado.");
     setStatus(sendingText);
     setExternalStatus(sendingText);
+    // Hide stop button and show progress bar while uploading.
+    if (RecordingState.stopBtn) RecordingState.stopBtn.hidden = true;
+    if (RecordingState.dialog && RecordingState.dialog.progressEl) {
+      RecordingState.dialog.progressEl.hidden = false;
+      RecordingState.dialog.progressEl.value = 0;
+    }
     try {
-      const resp = await fetch("/api/web/check/accident/video", {
-        method: "POST",
-        body: fd,
-        credentials: "include",
+      await new Promise(function (resolve, reject) {
+        const xhr = new XMLHttpRequest();
+        xhr.withCredentials = true;
+        xhr.open("POST", "/api/web/check/accident/video");
+        xhr.upload.onprogress = function (e) {
+          if (!e.lengthComputable) return;
+          const pct = Math.round((e.loaded / e.total) * 100);
+          if (RecordingState.dialog && RecordingState.dialog.progressEl) {
+            RecordingState.dialog.progressEl.value = pct;
+          }
+        };
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error("upload failed: " + xhr.status));
+        };
+        xhr.onerror = function () { reject(new Error("upload network error")); };
+        xhr.send(fd);
       });
-      if (!resp.ok) throw new Error("upload failed");
       setStatus(sentText);
       setExternalStatus(sentText);
     } catch (err) {
@@ -126,13 +147,21 @@
     stopBtn.textContent = "Encerrar";
     stopBtn.addEventListener("click", stopRecording);
 
+    const progressEl = document.createElement("progress");
+    progressEl.className = "accident-camera-progress";
+    progressEl.max = 100;
+    progressEl.value = 0;
+    progressEl.hidden = true;
+
     card.appendChild(video);
     card.appendChild(statusEl);
+    card.appendChild(progressEl);
     card.appendChild(stopBtn);
     backdrop.appendChild(card);
     document.body.appendChild(backdrop);
 
-    RecordingState.dialog = { backdrop, statusEl };
+    RecordingState.dialog = { backdrop, statusEl, progressEl };
+    RecordingState.stopBtn = stopBtn;
   }
 
   function setStatus(msg) {
@@ -153,6 +182,7 @@
     RecordingState.stream = null;
     RecordingState.recorder = null;
     RecordingState.chunks = [];
+    RecordingState.stopBtn = null;
     hideRecordingDialog();
   }
 
