@@ -7785,7 +7785,11 @@
 
       writePersistedChave(chave);
       if (payload && payload.state) {
+        latestHistoryState = payload.state;
         applyHistoryState(payload.state);
+        if (window.AccidentMode && window.AccidentMode.onCheckWebState) {
+          window.AccidentMode.onCheckWebState(payload.state);
+        }
       }
       setStatus(
         selectedAction === 'checkout'

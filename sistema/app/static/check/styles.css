@@ -454,6 +454,12 @@ header {
   box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.12);
 }
 
+.accident-mode .history-item.is-latest-activity {
+  border-color: rgba(200, 34, 42, 0.42);
+  background: rgba(254, 226, 226, 0.76);
+  box-shadow: 0 0 0 1px rgba(200, 34, 42, 0.12);
+}
+
 .history-label {
   margin: 0;
   font-size: clamp(0.62rem, 0.78vw, 0.72rem);
