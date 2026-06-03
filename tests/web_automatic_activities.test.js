@@ -371,7 +371,10 @@ test('automatic check-in runs for a known location after checkout when leaving c
   );
 });
 
-test('automatic check-in after checkout requires a location change when current location is known', () => {
+test('Situação 3: automatic check-in runs after checkout even when the registered location is unchanged', () => {
+  // Regressão: usuário em check-out cujo check-out foi registrado no mesmo local
+  // cadastrado em que ele se encontra agora (ex.: check-out manual no Escritório
+  // Principal). A Situação 3 exige o check-in independentemente de o local ter mudado.
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(
       { resolved_local: 'Escritório Principal' },
@@ -382,7 +385,7 @@ test('automatic check-in after checkout requires a location change when current 
         last_checkout_at: '2026-04-16T09:00:00',
       }
     ),
-    false
+    true
   );
 });
 

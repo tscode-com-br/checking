@@ -215,15 +215,22 @@
       return shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings);
     }
 
+    // Situação 3: após um check-out, qualquer local cadastrado (≠ Zona de CheckOut)
+    // deve disparar o check-in — inclusive quando o local atual coincide com o local
+    // em que o check-out foi registrado (ex.: check-out manual no Escritório Principal).
+    // Esta verificação precisa vir ANTES do guard de "mesma localização" abaixo, que se
+    // aplica apenas ao caso já-em-check-in (Situações 4/5).
+    if (lastRecordedAction !== 'checkin') {
+      return true;
+    }
+
+    // Situações 4/5: usuário já em check-in — só refaz o check-in para atualizar a
+    // localização quando ela realmente mudou em relação ao último registro.
     if (
       normalizeLocationName(resolvedLocal)
       && normalizeLocationName(resolvedLocal) === normalizeLocationName(currentRecordedLocation)
     ) {
       return false;
-    }
-
-    if (lastRecordedAction !== 'checkin') {
-      return true;
     }
 
     return normalizeLocationName(resolvedLocal) !== normalizeLocationName(lastCheckInLocation);
