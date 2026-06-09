@@ -167,6 +167,13 @@
     return Boolean(resolvedLocal) && candidateLocal === resolvedLocal;
   }
 
+  // ===========================================================================
+  // SITUAÇÃO 8 (docs/regras_e_situacoes/regras_checkin_checkout_webapp.txt):
+  // alternância automática check-in/check-out na 'Zona Mista', com o cooldown do
+  // campo 'Intervalo de Tempo para Zona Mista'. Decide se uma leitura em 'Zona
+  // Mista' deve gerar um novo evento automático, respeitando o cooldown apenas
+  // entre leituras consecutivas realizadas dentro da própria 'Zona Mista'.
+  // ===========================================================================
   function shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
     if (!isMixedZoneLocationName(resolvedLocal)) {
@@ -201,41 +208,58 @@
     return normalizeLocationName(resolvedLocal) !== normalizeLocationName(lastCheckInLocation);
   }
 
+  // ===========================================================================
+  // Roteador de decisão para uma posição que CORRESPONDE (matched) a uma área
+  // cadastrada na API. Concentra as Situações 1, 2, 3, 4, 6, 7 e 8 do descritivo
+  // (docs/regras_e_situacoes/regras_checkin_checkout_webapp.txt). Retornar true
+  // significa "disparar um evento automático" (a ação — check-in ou check-out —
+  // é resolvida depois em resolveAutomaticLocationAction, em app.js).
+  // ===========================================================================
   function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, settings) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
     const lastRecordedAction = resolveLastRecordedAction(remoteState);
-    const currentRecordedLocation = resolveCurrentRecordedLocation(remoteState);
-    const lastCheckInLocation = resolveRecordedCheckInLocation(remoteState);
 
+    // SITUAÇÃO 1 (variante 'Zona de CheckOut') + SITUAÇÃO 2 + 1ª etapa da SITUAÇÃO 7:
+    // estando na 'Zona de CheckOut', dispara check-out apenas se a última atividade foi
+    // um check-in (Situação 1). Se a última atividade já foi um check-out, retorna false
+    // e nenhuma ação é tomada (Situação 2; e a etapa inicial da Situação 7, em que o
+    // usuário permanece na 'Zona de CheckOut' logo após um check-out).
     if (isCheckoutZoneLocationName(resolvedLocal)) {
       return lastRecordedAction === 'checkin';
     }
 
+    // SITUAÇÃO 8: posição corresponde à 'Zona Mista' — alternância automática e cooldown
+    // ficam em shouldAttemptAutomaticMixedZoneLocationEvent (ver acima).
     if (isMixedZoneLocationName(resolvedLocal)) {
       return shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings);
     }
 
-    // Situação 3: após um check-out, qualquer local cadastrado (≠ Zona de CheckOut)
-    // deve disparar o check-in — inclusive quando o local atual coincide com o local
-    // em que o check-out foi registrado (ex.: check-out manual no Escritório Principal).
-    // Esta verificação precisa vir ANTES do guard de "mesma localização" abaixo, que se
-    // aplica apenas ao caso já-em-check-in (Situações 4/5).
+    // SITUAÇÃO 3 + SITUAÇÃO 7 (variantes 7A/7B): após um check-out, qualquer local
+    // cadastrado (≠ Zona de CheckOut) deve disparar o check-in — inclusive quando o local
+    // atual coincide com o local em que o check-out foi registrado (ex.: check-out manual
+    // no Escritório Principal). Esta verificação precisa vir ANTES do guard de "mesma
+    // localização" abaixo, que se aplica apenas ao caso já-em-check-in (Situações 4/6).
     if (lastRecordedAction !== 'checkin') {
       return true;
     }
 
-    // Situações 4/5: usuário já em check-in — só refaz o check-in para atualizar a
-    // localização quando ela realmente mudou em relação ao último registro.
-    if (
-      normalizeLocationName(resolvedLocal)
-      && normalizeLocationName(resolvedLocal) === normalizeLocationName(currentRecordedLocation)
-    ) {
-      return false;
-    }
-
-    return normalizeLocationName(resolvedLocal) !== normalizeLocationName(lastCheckInLocation);
+    // SITUAÇÕES 4 e 6: usuário já em check-in, em local cadastrado (≠ Zona de CheckOut e
+    // ≠ Zona Mista, já tratados acima). Conforme o descritivo atualizado, um NOVO check-in
+    // deve ser realizado SEMPRE — ao abrir/recarregar/trazer para primeiro plano
+    // (Situação 4) ou ao pressionar 'Atualizar' (Situação 6) — INCLUSIVE quando o usuário
+    // estiver no MESMO local do último check-in. Esse novo check-in registra/atualiza a
+    // localização e o horário do usuário na API, no mesmo local em que ele se encontra.
+    // (resolvedLocal sempre vem preenchido aqui, pois esta função só é chamada quando a
+    // posição corresponde — matched — a uma área cadastrada; o Boolean evita, por
+    // segurança, um disparo com local vazio.)
+    return Boolean(normalizeLocationName(resolvedLocal));
   }
 
+  // SITUAÇÃO 1 (variante "além da distância mínima de qualquer área cadastrada") +
+  // SITUAÇÃO 2: posição NÃO corresponde a área cadastrada e está fora do raio de trabalho
+  // (status 'outside_workplace'). Dispara check-out apenas se a última atividade foi um
+  // check-in (Situação 1); se já foi um check-out, retorna false e nada é feito
+  // (Situação 2 — o check-out não é repetido por mudança de localização).
   function shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState) {
     if (!locationPayload || locationPayload.status !== 'outside_workplace') {
       return false;
@@ -243,6 +267,10 @@
     return resolveLastRecordedAction(remoteState) === 'checkin';
   }
 
+  // SITUAÇÃO 5: última atividade = check-in, usuário NÃO está em nenhuma área cadastrada,
+  // porém ainda está próximo do trabalho (status 'not_in_known_location', dentro do raio).
+  // Nenhum check-in/check-out automático deve ocorrer — apenas a exibição de 'Localização
+  // não Cadastrada'. Por isso esta função sempre retorna false (não há alvo de check-in).
   function shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState) {
     if (!locationPayload || locationPayload.matched || locationPayload.status !== 'not_in_known_location') {
       return false;

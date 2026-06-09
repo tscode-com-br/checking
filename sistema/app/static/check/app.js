@@ -5900,6 +5900,10 @@
     return automaticActivities.isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal);
   }
 
+  // Resolve a ação concreta (check-in/check-out) do BRANCH 1 (posição matched):
+  // 'Zona Mista' alterna conforme a última atividade (SITUAÇÃO 8); 'Zona de CheckOut'
+  // gera check-out (SITUAÇÃO 1); demais locais cadastrados geram check-in
+  // (SITUAÇÕES 3, 4, 6 e 7).
   function resolveAutomaticLocationAction(locationPayload, remoteState) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
 
@@ -5968,6 +5972,12 @@
     return payload;
   }
 
+  // ===========================================================================
+  // Orquestrador das atividades automáticas. É chamado sempre que a localização é
+  // (re)capturada com 'Atividades Automáticas' habilitada — seja por abrir/recarregar/
+  // foreground (Situações 1–5 e 8), seja pelo botão 'Atualizar' (Situações 6 e 7), seja
+  // ao habilitar o toggle. Despacha para um dos 3 branches abaixo conforme a posição.
+  // ===========================================================================
   async function runAutomaticActivitiesIfNeeded(locationPayload, options) {
     const settings = options || {};
     const noActivityResult = {
@@ -5992,6 +6002,10 @@
       window.AccidentMode.onCheckWebState(remoteState);
     }
 
+    // BRANCH 1 — posição corresponde a área cadastrada (matched). Cobre SITUAÇÕES 1
+    // (variante 'Zona de CheckOut'), 3, 4, 6, 7 e 8. A decisão fica em
+    // shouldAttemptAutomaticLocationEvent (automatic-activities.js) e a ação concreta
+    // (check-in vs check-out) em resolveAutomaticLocationAction.
     if (
       locationPayload
       && locationPayload.matched
@@ -6016,6 +6030,11 @@
       };
     }
 
+    // BRANCH 2 — posição NÃO corresponde a área cadastrada e está fora do raio de
+    // trabalho. Cobre a SITUAÇÃO 1 (variante "além da distância mínima de qualquer área
+    // cadastrada"): check-out automático para 'Fora do Local de Trabalho'. Quando a última
+    // atividade já foi um check-out, shouldAttemptAutomaticOutOfRangeCheckout retorna false
+    // e nada é feito (SITUAÇÃO 2).
     if (
       locationPayload
       && !locationPayload.matched
@@ -6036,6 +6055,10 @@
       };
     }
 
+    // BRANCH 3 — SITUAÇÃO 5: usuário próximo do trabalho, porém sem corresponder a
+    // nenhuma área cadastrada (status 'not_in_known_location'). shouldAttemptAutomatic-
+    // NearbyWorkplaceCheckIn sempre retorna false: nenhuma atividade automática ocorre;
+    // a UI apenas exibe 'Localização não Cadastrada'.
     if (locationPayload && shouldAttemptAutomaticNearbyWorkplaceCheckIn(locationPayload, remoteState)) {
       const automaticLocal = resolveAutomaticCheckInLocation(locationPayload);
       if (!isOperationalAutomaticCheckInLocation(locationPayload, automaticLocal)) {
@@ -7659,6 +7682,11 @@
     }
   });
 
+  // GATILHO "abrir / recarregar / trazer para primeiro plano" das SITUAÇÕES 1–5 e 8:
+  // visibilitychange (voltar a aba/app), focus (janela ganha foco) e pageshow (load/
+  // refresh/bfcache) chamam requestLifecycleUpdateFromUi → runLifecycleUpdateSequence →
+  // runAutomaticActivitiesIfNeeded. (O botão 'Atualizar', das Situações 6 e 7, usa o
+  // gatilho separado em refreshLocationButton, mais abaixo.)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       if (isSettingsDialogOpen()) {
@@ -7699,10 +7727,18 @@
     window.visualViewport.addEventListener('scroll', scheduleViewportLayoutMetricsSync);
   }
 
+  // GATILHO do botão 'Atualizar' das SITUAÇÕES 6 e 7 (app já em primeiro plano): recaptura
+  // a localização e chama runAutomaticActivitiesIfNeeded. Situação 6 = última atividade
+  // foi check-in; Situação 7 = última atividade foi check-out e o usuário saiu da 'Zona
+  // de CheckOut'. A decisão por situação fica em shouldAttemptAutomaticLocationEvent.
   refreshLocationButton.addEventListener('click', () => {
     void runManualLocationRefreshSequence();
   });
 
+  // SITUAÇÃO 9: registro MANUAL (botão 'Registrar'). Só é permitido com 'Atividades
+  // Automáticas' DESABILITADA (ou no fallback de baixa precisão). O usuário escolhe
+  // check-in/check-out, normal/retroativo e o 'Local' na dropdown; o app envia o evento
+  // exatamente conforme a seleção, sem a lógica automática das Situações 1–8.
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
 

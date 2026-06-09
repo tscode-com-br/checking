@@ -29,13 +29,14 @@ Situação 3:
 - Ao realizar esse check-in, a aplicação web 'Checking Web' atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
 
 Situação 4:
-- O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
+- O usuário abre a aplicação web 'Checking Web', recarrega a aplicação web 'Checking Web' ou a traz para primeiro plano.
 - A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web'.
 - A última atividade do usuário foi um check-in;
 - a aplicação web 'Checking Web' atualiza a localização (isto sempre deve ocorrer);
 - a aplicação web 'Checking Web' percebe que o usuário está em alguma localização cadastrada na API diferente da localização 'Zona de CheckOut';
-- a aplicação web 'Checking Web' também percebe que a localização do usuário foi alterada em relação à localização anterior à atualização das coordenadas.
-- a aplicação web 'Checking Web', então, realiza o check-in do usuário, para que a localização do usuário seja atualizada na API.
+- a aplicação web 'Checking Web', então, realiza um novo check-in do usuário, INDEPENDENTEMENTE de a localização ter mudado ou não em relação ao check-in anterior;
+- ou seja, mesmo que o usuário esteja no MESMO local do último check-in, um novo check-in deve ser realizado nesse mesmo local;
+- esse novo check-in serve para registrar/atualizar a localização e o horário do usuário na API.
 
 Situação 5:
 - O usuário abre a aplicação web 'Checking Web' ou traz a aplicação web 'Checking Web' para primeiro plano.
@@ -48,10 +49,11 @@ Situação 5:
 Situação 6:
 - A aplicação web 'Checking Web' já está em primeiro plano;
 - A última atividade do usuário foi um check-in;
-- A checkbox 'Atividades Automáticas está habilitada;
+- A checkbox 'Atividades Automáticas' está habilitada;
 - O usuário pressiona o botão 'Atualizar' para atualizar a sua localização;
-- A aplicação web 'Checking Web' atualiza a localização do usuário para uma localização diferente da que foi registrada no check-in imediatamente anterior.
-- Nesta situação, a aplicação web 'Checking Web' deve realizar um novo check-in do usuário, apenas para atualizar sua localização.
+- A aplicação web 'Checking Web' atualiza a localização do usuário, que pode coincidir ou não com a localização registrada no check-in imediatamente anterior.
+- Nesta situação, a aplicação web 'Checking Web' deve realizar um novo check-in do usuário, INDEPENDENTEMENTE de a localização ter mudado ou não;
+- ou seja, mesmo que o usuário esteja no MESMO local do último check-in, um novo check-in deve ser realizado nesse mesmo local, para registrar/atualizar a localização e o horário do usuário na API.
 
 Situação 7:
 - A aplicação web 'Checking Web' já está em primeiro plano;

@@ -448,7 +448,10 @@ test('automatic nearby-workplace check-in does not run without location change',
   );
 });
 
-test('automatic check-in does not repeat for the same current location', () => {
+test('Situações 4 e 6: automatic check-in repeats for the same current location after a prior check-in', () => {
+  // Descritivo atualizado: ao abrir/recarregar/foreground (Situação 4) ou pressionar
+  // 'Atualizar' (Situação 6) com a última atividade = check-in, um NOVO check-in deve ser
+  // realizado mesmo quando o usuário continua no MESMO local do último check-in.
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(
       { resolved_local: 'Escritório Principal' },
@@ -459,7 +462,7 @@ test('automatic check-in does not repeat for the same current location', () => {
         last_checkout_at: '2026-04-16T08:00:00',
       }
     ),
-    false
+    true
   );
 });
 
