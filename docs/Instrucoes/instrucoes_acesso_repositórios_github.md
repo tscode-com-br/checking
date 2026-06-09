@@ -1,1153 +1,477 @@
-# Acesso aos repositorios GitHub do projeto
+# Guia Didatico de Commit, Push e Deploy por Repositorio
 
-Status deste documento: reconciliado com a conta GitHub, com os remotes locais e com o fluxo operacional de commit/push apos a separacao da API em repositorio proprio em 2026-05-24.
+Status: revisado e validado em 2026-06-09.
 
-Este arquivo substitui o antigo guia `instrucoes_commit_push.md` e consolida quatro coisas diferentes que nao devem mais ser misturadas:
+Objetivo deste guia:
 
-1. as pastas Git locais que ainda existem no workspace;
-2. os repositorios que ainda existem de fato na conta GitHub `tscode-com-br`;
-3. quais repositorios GitHub ja estao ligados a remotes ativos neste workspace;
-4. qual repositorio realmente aciona deploy de producao.
+1. explicar, sem ambiguidade, onde fazer commit e push para cada parte do projeto;
+2. explicar quais repositorios realmente fazem deploy automatico hoje;
+3. ensinar como monitorar cada deploy no GitHub Actions;
+4. ensinar como diagnosticar e corrigir falhas direto no servidor DigitalOcean.
 
-## 1. Realidade atual: workspace local versus conta GitHub
+---
 
-O workspace possui seis pastas que sao repositorios Git locais. A conta GitHub `tscode-com-br` expõe onze repositorios; seis deles ja estao conectados a remotes ativos neste workspace.
+## 0) Resumo executivo (leia primeiro)
 
-| Escopo | Pasta local | Branch local | Remotes ativos | Repo GitHub | Deploy automatico |
-| --- | --- | --- | --- | --- | --- |
-| Infraestrutura / monorepo espelho | `c:\dev\projetos\checkcheck` | `main` | `origin = checking` | `tscode-com-br/checking` | `deploy-oceandrive.yml` na branch `main` do `origin`; guarda `if: github.repository == 'tscode-com-br/checking'` |
-| API (Sistema Principal) | `c:\dev\projetos\checkcheck` | `main` | `api = checking-api` | `tscode-com-br/checking-api` | `deploy.yml` na branch `main` do `api`; builda `ghcr.io/tscode-com-br/checking-api` e `checking-api-forms`; usa `docker-compose.api.yml` |
-| Admin v2 | `sistema\app\static\admin2` | `main` | `origin = checking-admin2` | `tscode-com-br/checking-admin2` (privado) | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `admin2-web` |
-| Check Web | `sistema\app\static\check` | `main` | `origin = checking-webapp` | `tscode-com-br/checking-webapp` | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `user-web` |
-| Transport | `sistema\app\static\transport` | `main` | `origin = checking-transport` | `tscode-com-br/checking-transport` | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `transport-web` |
-| App Flutter | `checking_android_new` | `main` | `origin = checking_app_flutter` | `tscode-com-br/checking_app_flutter` | Build de APK/AAB via GitHub Actions do proprio repo |
-| App Kotlin legado | `checking_kotlin` | `main` | `archived-origin` (morto) | Nao existe mais | Local-only; sem deploy |
-| App Kotlin novo | `checking_kotlin_new` | `web-parity-spa-baseline` | `archived-origin` (morto) | Nao existe mais | Local-only; sem deploy |
+Hoje, producao publica em dois caminhos:
 
-Observacao sobre o workspace raiz: a pasta `c:\dev\projetos\checkcheck` e simultaneamente o repo de infraestrutura (`origin = checking`) **e** o repo da API (`api = checking-api`). Os dois remotes coexistem no mesmo diretorio Git local. O commit e unico; o destino do push depende de qual remote voce usa.
+1. Repo `tscode-com-br/checking` (root monolito): publica API + Check Web + Transport + infra no Droplet.
+2. Repo `tscode-com-br/checking-admin2`: publica somente o Admin v2.
 
-Repositorios que existem no GitHub, mas sem branch configurada (vazios/legado):
+Diagnostico real do estado atual dos workflows (auditado via CLI em 2026-06-09):
 
-| Repo GitHub | Situacao |
-| --- | --- |
-| `tscode-com-br/checking_api` | Vazio (criado antes da separacao; substituido por `checking-api` com hifem) |
-| `tscode-com-br/checking_transport` | Vazio (substituido por `checking-transport` com hifem) |
-| `tscode-com-br/checking_webapplication` | Vazio (substituido por `checking-webapp`) |
-| `tscode-com-br/checking_admin` | Vazio (substituido por `checking-admin2`) |
+| Repo | Workflow de deploy | Estado atual | Publica em producao hoje? |
+| --- | --- | --- | --- |
+| `checking` | `Deploy OceanDrive` | `active` | **SIM** |
+| `checking-admin2` | `Deploy to DigitalOcean` | `active` | **SIM** |
+| `checking-api` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
+| `checking-webapp` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
+| `checking-transport` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
+| `checking_app_flutter` | (sem workflow) | n/a | **NAO** (nao deploya Droplet) |
 
-Esses quatro repos legados (com underscore) nao recebem push e nao acionam deploy. Ignore-os.
+Ponto que mais confunde:
 
-### 1.1 Modificacoes mapeadas nesta revisao (2026-05-24)
+- No repo `checking`, existe tambem um workflow chamado `Deploy to DigitalOcean`.
+- Ele aparece como `active`, mas o job fica `skipped` por condicao de repositorio (`if: github.repository == 'tscode-com-br/checking-api'`).
+- O workflow correto para monitorar deploy de producao no root e **sempre** `Deploy OceanDrive`.
 
-1. **API separada em repositorio proprio**: `tscode-com-br/checking-api` criado e conectado como remote `api` do workspace raiz; workflow `deploy.yml` criado no root com guarda `if: github.repository == 'tscode-com-br/checking-api'`; primeiro deploy completo validado (7m16s, todos os steps ✓).
-2. **Check Web e Transport conectados como sub-repos**: `sistema/app/static/check` agora tem `origin = checking-webapp`; `sistema/app/static/transport` tem `origin = checking-transport`; ambos possuem `deploy.yml` proprio.
-3. **`.gitignore` do root atualizado**: excluidas as tres pastas de sub-repos estaticos (`admin2/`, `check/`, `transport/` dentro de `sistema/app/static/`) para que nao entrem em commits do root nem do `checking-api`.
-4. **`deploy-oceandrive.yml` protegido**: adicionado `if: github.repository == 'tscode-com-br/checking'` para nao executar no `checking-api`.
+---
 
-Consequencias praticas:
+## 1) Mapa de ownership: o que commitar em cada repositorio
 
-- mudancas no codigo Python (API, routers, services, models, alembic) devem ser commitadas no root e publicadas com `git push api main`; o push para `origin` e opcional (mantem espelho de infraestrutura sincronizado);
-- mudancas na infra (docker-compose, nginx, deploy scripts, Dockerfile) devem ser commitadas no root e publicadas com `git push origin main`;
-- mudancas no frontend Check Web devem ser commitadas em `sistema/app/static/check` e publicadas com `git push origin main` naquela pasta;
-- mudancas no frontend Transport devem ser commitadas em `sistema/app/static/transport` e publicadas com `git push origin main` naquela pasta;
-- mudancas no frontend Admin v2 devem ser commitadas em `sistema/app/static/admin2` e publicadas com `git push origin main` naquela pasta;
-- os sub-repos estaticos sao invisíveis ao root (`.gitignore`); nao misturar commits.
+### 1.1 Root monolito (`c:\dev\projetos\checkcheck`)
 
-## 2. Regra de ouro
+Use este repo para:
 
-Antes de qualquer commit ou push, responda primeiro:
+1. backend Python (API, routers, services, models, migrations);
+2. frontend Check Web em `sistema/app/static/check`;
+3. frontend Transport em `sistema/app/static/transport`;
+4. infra (docker-compose, nginx, deploy scripts, workflows, docs do root).
 
-1. A mudanca pertence ao codigo da API (Python, alembic, modelos, routers)?
-2. A mudanca pertence a um dos frontends estaticos (admin2, check, transport)?
-3. A mudanca pertence a infra/deploy (docker-compose, nginx, Dockerfiles, workflows)?
-4. A mudanca pertence ao app Flutter?
+Push correto para publicar producao:
 
-Cada mudanca deve ser commitada apenas no repositorio dono do escopo.
+- `git push origin main`
 
-Regra operacional por escopo:
+### 1.2 Admin v2 (`c:\dev\projetos\checkcheck\sistema\app\static\admin2`)
 
-- **API (codigo Python, modelos, services, routers, alembic)**: commit no root (`c:\dev\projetos\checkcheck`) + `git push api main`; opcionalmente `git push origin main` para manter espelho `checking` em sincronia;
-- **Infra/deploy (docker-compose, nginx, Dockerfiles, workflows, scripts de deploy)**: commit no root + `git push origin main`; nao aciona deploy automatico — dispare manualmente se necessario via `gh workflow run`;
-- **Admin v2**: commit em `sistema\app\static\admin2` + `git push origin main` naquela pasta; deploy automatico acionado;
-- **Check Web**: commit em `sistema\app\static\check` + `git push origin main` naquela pasta; deploy automatico acionado;
-- **Transport**: commit em `sistema\app\static\transport` + `git push origin main` naquela pasta; deploy automatico acionado;
-- **Flutter**: commit em `checking_android_new` + `git push origin main` naquela pasta;
-- **Kotlin legado**: commit local em `checking_kotlin`; criar novo `origin` antes de qualquer push;
-- **Kotlin novo**: commit local em `checking_kotlin_new`; criar novo `origin` antes de qualquer push;
-- nao usar `git subtree`;
-- nao tentar publicar apps moveis a partir do root;
-- nao misturar arquivos de sub-repos no stage do root.
+Use este sub-repo para:
 
-## 3. Qual repo aciona producao
+1. frontend Admin v2 (JS/CSS/HTML proprio do admin2).
 
-### 3.1 API — repositorio `checking-api`
+Push correto para publicar admin:
 
-Workflow:
+- `git push origin main`
 
-- `.github/workflows/deploy.yml` (no root workspace, guarda `if: github.repository == 'tscode-com-br/checking-api'`)
+### 1.3 Check Web sub-repo (`c:\dev\projetos\checkcheck\sistema\app\static\check`)
 
-Gatilho:
+Hoje este repo existe, mas o deploy automatico dele esta desativado (`disabled_manually`) e o dominio publico nao e servido por `user-web`.
 
-- `push` em `main` via remote `api`
+Conclusao pratica:
 
-Imagens geradas:
+1. push aqui pode servir como espelho historico;
+2. **nao** e o caminho para publicar usuarios finais;
+3. para publicar Check Web, commite no root e push em `origin/main` do root.
 
-- `ghcr.io/tscode-com-br/checking-api:<sha>` e `:main`
-- `ghcr.io/tscode-com-br/checking-api-forms:<sha>` e `:main`
+### 1.4 Transport sub-repo (`c:\dev\projetos\checkcheck\sistema\app\static\transport`)
 
-Compose file usado no servidor:
+Mesmo caso do Check Web:
 
-- `docker-compose.api.yml` (servicos: `db`, `api`, `forms-worker`)
+1. workflow do sub-repo esta desativado;
+2. dominio publico nao sai de `transport-web`;
+3. para publicar Transport, commite no root e push em `origin/main` do root.
 
-Fluxo de commit/push para alteracoes na API:
+### 1.5 API remote (`api`) dentro do root
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git add <arquivos-python-ou-alembic>
-git commit -m "feat: descricao da mudanca"
-git push api main
-# deploy automatico disparado em checking-api
+No root existe `remote api -> checking-api`, mas o deploy efetivo do repo `checking-api` esta desativado.
 
-# Opcional: manter espelho de infraestrutura sincronizado
-git push origin main
-```
+Conclusao pratica:
 
-Para verificar o ultimo deploy da API:
+1. `git push api main` hoje nao e caminho canonico de publicacao;
+2. API publica via root monolito (`git push origin main` no root).
 
-```powershell
-gh run list --repo tscode-com-br/checking-api --limit 5
-gh run view --repo tscode-com-br/checking-api <run-id>
-```
+### 1.6 Flutter (`c:\dev\projetos\checkcheck\checking_android_new`)
 
-### 3.2 Check Web — repositorio `checking-webapp`
+Este repo tem ownership proprio, mas nao possui workflow de deploy para o Droplet.
 
-Workflow:
+Conclusao pratica:
 
-- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\check`)
+1. push publica codigo mobile no GitHub;
+2. nao publica servicos no servidor DigitalOcean.
 
-Gatilho:
+---
 
-- `push` em `main` do repositorio `checking-webapp`
+## 2) Playbook de commit e push por parte do projeto
 
-Fluxo de commit/push:
+## 2.1 API, Check Web, Transport ou Infra (sempre no root)
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\check
-git add .
-git commit -m "web: descricao da mudanca"
-git push origin main
-# deploy automatico disparado em checking-webapp
-```
+Passo a passo completo:
 
-Para verificar:
+1. Abrir o repo root.
 
-```powershell
-gh run list --repo tscode-com-br/checking-webapp --limit 5
-```
+   Set-Location c:\dev\projetos\checkcheck
 
-### 3.3 Transport — repositorio `checking-transport`
+2. Auditar contexto antes de stage.
 
-Workflow:
+   git status -sb
+   git branch --show-current
+   git remote -v
 
-- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\transport`)
+3. Fazer stage explicito (nao use `git add .` no root).
 
-Gatilho:
+   git add sistema/app/routers/admin.py
+   git add sistema/app/static/check/app.js
+   git add docker-compose.yml
 
-- `push` em `main` do repositorio `checking-transport`
+4. Validar stage.
 
-Fluxo de commit/push:
+   git diff --cached --stat
+   git diff --cached
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\transport
-git add .
-git commit -m "transport: descricao da mudanca"
-git push origin main
-# deploy automatico disparado em checking-transport
-```
+5. Commitar.
 
-Para verificar:
+   git commit -m "fix: descricao objetiva da mudanca"
+   git rev-parse HEAD
 
-```powershell
-gh run list --repo tscode-com-br/checking-transport --limit 5
-```
+6. Push de producao.
 
-### 3.4 Admin v2 — repositorio `checking-admin2`
+   git push origin main
 
-Workflow:
+7. Monitorar o workflow correto (ver Secao 3).
 
-- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\admin2`)
+Observacoes importantes:
 
-Gatilho:
+1. Se alterou arquivos em `sistema/app/static/check/*.js` ou `*.css`, faca cache-busting no `sistema/app/static/check/index.html` (parametro `?v=`).
+2. Mesmo com `.gitignore`, arquivos ja rastreados em `sistema/app/static/check` e `sistema/app/static/transport` devem ser stageados explicitamente no root quando a publicacao for monolito.
 
-- `push` em `main` do repositorio `checking-admin2`
+## 2.2 Admin v2 (sub-repo admin2)
 
-Fluxo de commit/push:
+Passo a passo completo:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
-git add .
-git commit -m "admin2: descricao da mudanca"
-git push origin main
-# deploy automatico disparado em checking-admin2
-```
+1. Entrar na pasta do sub-repo.
 
-Para verificar:
+   Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
 
-```powershell
-gh run list --repo tscode-com-br/checking-admin2 --limit 5
-```
+2. Auditar contexto.
 
-### 3.5 Infraestrutura — repositorio `checking`
+   git status -sb
+   git branch --show-current
+   git remote -v
 
-O repositorio `checking` (remote `origin` do root) hospeda configuracoes de infraestrutura: docker-compose files, nginx, Dockerfiles, scripts de deploy e workflows secundarios para deploy individual de cada servico.
+3. Stage, commit e push.
 
-Workflows disponiveis (todos em `.github/workflows/`):
+   git add src/main.js
+   git commit -m "admin2: descricao objetiva"
+   git rev-parse HEAD
+   git push origin main
 
-| Workflow | Gatilho | Efeito |
-| --- | --- | --- |
-| `deploy-oceandrive.yml` | `push main` ou `workflow_dispatch` | Deploy completo do stack legado (monolito) |
-| `deploy-oceandrive-api-only.yml` | `workflow_dispatch` | Reinicia apenas o servico `api` |
-| `deploy-oceandrive-admin2-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `admin2-web` |
-| `deploy-oceandrive-user-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `user-web` |
-| `deploy-oceandrive-transport-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `transport-web` |
+4. Monitorar workflow do `checking-admin2` (Secao 3).
 
-Disparo manual via CLI:
+## 2.3 Check Web sub-repo (espelho, sem publicacao efetiva)
 
-```powershell
-gh workflow run deploy-oceandrive-api-only.yml --repo tscode-com-br/checking
-gh workflow run deploy-oceandrive-admin2-only.yml --repo tscode-com-br/checking
-```
+Use somente se voce quer manter historico no repo `checking-webapp`.
 
-Fluxo de commit/push para alteracoes de infraestrutura:
+1. Set-Location c:\dev\projetos\checkcheck\sistema\app\static\check
+2. git status -sb
+3. git add <arquivos>
+4. git commit -m "webapp-mirror: descricao"
+5. git push origin main
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git add docker-compose*.yml deploy\ nginx\ .github\workflows\
-git commit -m "infra: descricao da mudanca"
-git push origin main
-```
+Importante: isto **nao** publica para `https://tscode.com.br/checking/user` no modelo atual.
 
-## 4. Como confirmar pasta local, branch, remote e existencia no GitHub antes de publicar
+## 2.4 Transport sub-repo (espelho, sem publicacao efetiva)
 
-### 4.1 API / Infraestrutura (workspace raiz)
+Use somente para espelho no repo `checking-transport`.
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git branch --show-current      # deve ser: main
-git remote -v                  # deve mostrar origin (checking) E api (checking-api)
-git status --short
-gh repo view tscode-com-br/checking-api
-gh repo view tscode-com-br/checking
-```
+1. Set-Location c:\dev\projetos\checkcheck\sistema\app\static\transport
+2. git status -sb
+3. git add <arquivos>
+4. git commit -m "transport-mirror: descricao"
+5. git push origin main
 
-### 4.2 Check Web
+Importante: isto **nao** publica para `https://tscode.com.br/checking/transport` no modelo atual.
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\check
-git branch --show-current      # deve ser: main
-git remote -v                  # deve mostrar: origin = checking-webapp
-git status --short
-gh repo view tscode-com-br/checking-webapp
-```
+## 2.5 Flutter
 
-### 4.3 Transport
+1. Set-Location c:\dev\projetos\checkcheck\checking_android_new
+2. git status -sb
+3. git add <arquivos>
+4. git commit -m "flutter: descricao objetiva"
+5. git push origin main
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\transport
-git branch --show-current      # deve ser: main
-git remote -v                  # deve mostrar: origin = checking-transport
-git status --short
-gh repo view tscode-com-br/checking-transport
-```
+Importante: push de Flutter nao faz deploy no Droplet da aplicacao web/API.
 
-### 4.4 Admin v2
+---
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
-git branch --show-current      # deve ser: main
-git remote -v                  # deve mostrar: origin = checking-admin2
-git log --oneline -5
-gh repo view tscode-com-br/checking-admin2
-```
+## 3) Monitoramento de deploy no GitHub Actions (por repo)
 
-Obs.: a pasta `sistema/app/static/admin2` e um repositorio Git aninhado dentro do root. O `.gitignore` do root exclui essa pasta. Verifique:
+## 3.1 Root monolito (`checking`) - workflow correto
 
-```powershell
-git -C c:\dev\projetos\checkcheck check-ignore -v sistema/app/static/admin2
-```
+Sempre monitorar `Deploy OceanDrive`.
 
-### 4.5 Flutter
+Comandos:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_android_new
-git branch --show-current
-git remote -v
-git status --short
-gh repo view tscode-com-br/checking_app_flutter
-```
+1. Capturar ultimo run:
 
-### 4.6 Kotlin legado local
+   $run = gh run list --repo tscode-com-br/checking --workflow "Deploy OceanDrive" --limit 1 --json databaseId --jq ".[0].databaseId"
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin
-git branch -vv
-git remote -v
-git status --short
-```
+2. Acompanhar em tempo real:
 
-Resultado esperado:
+   gh run watch $run --repo tscode-com-br/checking --exit-status
 
-- aparece `archived-origin`, nao `origin`;
-- a branch `main` aparece sem `[remote/branch]` ao lado;
-- `gh repo view tscode-com-br/checking_app_kotlin` falha — repositorio nao existe mais.
+3. Validar conclusao:
 
-### 4.7 Kotlin novo local
+   gh run view $run --repo tscode-com-br/checking --json conclusion,status --jq '{status,conclusion}'
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
-git branch -vv
-git remote -v
-git status --short
-```
+4. Ver apenas falhas:
 
-Resultado esperado:
+   gh run view $run --repo tscode-com-br/checking --log-failed
 
-- aparece `archived-origin`, nao `origin`;
-- a branch local confirmada e `web-parity-spa-baseline`;
-- `gh repo view tscode-com-br/checking_kotlin_new` falha — repositorio nao existe mais.
+5. Validar jobs/steps:
 
-## 5. Repositorios GitHub confirmados hoje
+   gh run view $run --repo tscode-com-br/checking --json jobs
 
-Repositorios ativos (possuem branch `main` configurada):
+## 3.2 Admin2 (`checking-admin2`)
 
-| Repo | Visibilidade | Ligacao local |
-| --- | --- | --- |
-| `tscode-com-br/checking` | publico | remote `origin` do root |
-| `tscode-com-br/checking-api` | publico | remote `api` do root |
-| `tscode-com-br/checking-webapp` | publico | remote `origin` de `sistema/app/static/check` |
-| `tscode-com-br/checking-admin2` | privado | remote `origin` de `sistema/app/static/admin2` |
-| `tscode-com-br/checking-transport` | publico | remote `origin` de `sistema/app/static/transport` |
-| `tscode-com-br/checking_app_flutter` | publico | remote `origin` de `checking_android_new` |
+Workflow: `Deploy to DigitalOcean`.
 
-Repositorios vazios / legados (sem branch; nao usar):
+1. $run = gh run list --repo tscode-com-br/checking-admin2 --workflow "Deploy to DigitalOcean" --limit 1 --json databaseId --jq ".[0].databaseId"
+2. gh run watch $run --repo tscode-com-br/checking-admin2 --exit-status
+3. gh run view $run --repo tscode-com-br/checking-admin2 --json conclusion,status --jq '{status,conclusion}'
+4. gh run view $run --repo tscode-com-br/checking-admin2 --log-failed
 
-- `tscode-com-br/checking_api` (substituido por `checking-api`)
-- `tscode-com-br/checking_transport` (substituido por `checking-transport`)
-- `tscode-com-br/checking_webapplication` (substituido por `checking-webapp`)
-- `tscode-com-br/checking_admin` (substituido por `checking-admin2`)
+## 3.3 Repos que estao sem deploy automatico efetivo
 
-Remotes locais mortos (sem repo correspondente no GitHub):
+Para checagem de estado:
 
-- `checking_kotlin: archived-origin = https://github.com/tscode-com-br/checking_app_kotlin.git`
-- `checking_kotlin_new: archived-origin = https://github.com/tscode-com-br/checking_kotlin_new.git`
+1. gh workflow list --repo tscode-com-br/checking-api --all
+2. gh workflow list --repo tscode-com-br/checking-webapp --all
+3. gh workflow list --repo tscode-com-br/checking-transport --all
+4. gh workflow list --repo tscode-com-br/checking_app_flutter --all
 
-Comando de auditoria rapida:
+Interpretacao:
 
-```powershell
-gh repo list tscode-com-br --limit 20 --json name,defaultBranchRef,isPrivate |
-  ConvertFrom-Json |
-  Format-Table name, @{n='branch';e={$_.defaultBranchRef.name}}, isPrivate -AutoSize
-```
+1. `disabled_manually` = nao dispara automaticamente em push.
+2. `no workflows found` = repo sem pipeline definido.
+3. `active` + run `skipped` = workflow existe, mas condicao interna impediu execucao do job.
 
-Se um novo repositorio GitHub for criado para qualquer app Kotlin, a reativacao recomendada e:
+## 3.4 Validacao de publicacao real (nao confiar so no Actions verde)
 
-```powershell
-Set-Location <pasta-do-repo-kotlin>
-git remote remove archived-origin
-git remote add origin <novo-url-github>
-git push -u origin <branch-atual>
-```
+Depois de um deploy concluido, sempre validar:
 
-## 6. Pre-condicoes antes de qualquer push
+1. Health da API publica:
 
-Checklist minimo:
+   curl.exe --ssl-no-revoke -fsS https://tscode.com.br/api/health
 
-1. pasta correta;
-2. branch correta;
-3. remote correto e existente no GitHub;
-4. para o workspace raiz: identificar se o push vai para `origin` (infra) ou `api` (API) ou ambos;
-5. stage apenas do escopo desejado (nao misturar Python + frontend + infra num so commit);
-6. testes relevantes executados;
-7. ausencia de `.env`, chaves, bancos locais e artefatos de build no commit.
+2. Para Check Web, validar asset servido (bytes/etag):
 
-Comandos uteis:
+   curl.exe --ssl-no-revoke -s -D - -o NUL "https://tscode.com.br/checking/user/automatic-activities.js" | Select-String -Pattern "content-length|etag"
 
-```powershell
-git branch --show-current
-git branch -vv
-git remote -v
-git status --short
-git diff --cached --stat
-gh repo list tscode-com-br --limit 20
-```
+3. Para Admin2:
 
-Regra adicional importante:
+   curl.exe --ssl-no-revoke -sI https://tscode.com.br/checking/admin
 
-- se o `gh repo view` do remote falhar, nao tente `git push` antes de criar um novo repositorio ou apontar o remote para um destino valido;
-- se existir apenas `archived-origin`, trate o repositorio como local-only ate a criacao de um novo `origin`;
-- os repos com underscore (`checking_api`, `checking_transport`, `checking_webapplication`, `checking_admin`) sao legados vazios — nao confundir com os repos ativos de mesmo escopo com hifem.
+---
 
-## 7. Como fazer commit e push em cada repositorio
+## 4) Como ter certeza do deploy automatico de cada parte
 
-As sequencias abaixo assumem PowerShell no Windows e stage explicito por arquivo ou pasta.
+Esta secao responde objetivamente ao requisito de "certeza".
 
-Regra importante:
+## 4.1 Comando unico de auditoria de estado
 
-- no root, prefira `git add <arquivos>` em vez de `git add .` quando houver outras mudancas locais nao relacionadas;
-- nos repositorios Kotlin, o commit local funciona hoje, mas o push depende primeiro de recriar um `origin` valido.
+Execute:
 
-### 7.1 Sistema principal `checkcheck`
+1. gh workflow list --repo tscode-com-br/checking --all
+2. gh workflow list --repo tscode-com-br/checking-admin2 --all
+3. gh workflow list --repo tscode-com-br/checking-api --all
+4. gh workflow list --repo tscode-com-br/checking-webapp --all
+5. gh workflow list --repo tscode-com-br/checking-transport --all
+6. gh workflow list --repo tscode-com-br/checking_app_flutter --all
 
-Quando usar:
+Resultado esperado no modelo atual:
 
-- API
-- transport
-- admin
-- webapplication
-- websites do sistema
-- deploy
-- documentacao do repo principal
-- qualquer area que ainda nao tenha sido fisicamente extraida para `checking_api`, `checking_transport`, `checking_webapplication` ou `checking_admin`
+1. `checking`: deploy automatico ativo para producao (`Deploy OceanDrive`).
+2. `checking-admin2`: deploy automatico ativo para admin2.
+3. `checking-api`, `checking-webapp`, `checking-transport`: desativados manualmente.
+4. `checking_app_flutter`: sem deploy para Droplet.
 
-Fluxo recomendado:
+## 4.2 Se voce quiser reativar deploy dos repos desativados
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git status --short
-git branch --show-current
-git remote -v
-gh repo view tscode-com-br/checking
+Somente faca isso se houver decisao operacional formal para sair do modelo monolito.
 
-git add <arquivo-ou-pasta>
-git commit -m "<mensagem>"
-git push origin main
-```
+Comandos:
 
-Observacoes:
+1. gh workflow enable deploy.yml --repo tscode-com-br/checking-api
+2. gh workflow enable deploy.yml --repo tscode-com-br/checking-webapp
+3. gh workflow enable deploy.yml --repo tscode-com-br/checking-transport
 
-- `git push origin main` neste repo aciona o deploy de producao;
-- a existencia dos repositorios `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin` no GitHub nao transfere ownership automaticamente para fora do root;
-- se houver outros arquivos modificados no root e eles nao fizerem parte da entrega, nao use `git add .`.
+Depois, validar:
 
-### 7.2 App Flutter `checking_android_new`
+1. gh workflow list --repo tscode-com-br/<repo> --all
+2. push de teste em branch `main`
+3. gh run list --repo tscode-com-br/<repo> --limit 1
 
-Quando usar:
+Atencao:
 
-- app Flutter
-- testes Flutter
-- assets e configuracoes do projeto Flutter
+1. Reativar workflow sem mudar roteamento nginx pode gerar "deploy verde" sem efeito publico.
+2. O estado de serving publico precisa casar com a topologia de deploy.
 
-Fluxo recomendado:
+---
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_android_new
-git status --short
-git branch --show-current
-git remote -v
-gh repo view tscode-com-br/checking_app_flutter
+## 5) Troubleshooting de deploy no servidor DigitalOcean
 
-git add <arquivo-ou-pasta>
-git commit -m "<mensagem>"
-git push origin main
-```
+Esta secao e para quando o workflow falha ou conclui sem efeito esperado.
 
-Observacoes:
+## 5.1 Acesso SSH confiavel via WSL (Windows)
 
-- este push publica apenas o repositorio Flutter;
-- ele nao aciona o deploy da API nem do website principal.
+Abrir shell remoto:
 
-### 7.3 Repositorios GitHub criados para particionamento futuro
+1. wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21; rm -f /tmp/do_ck"
 
-Estado atual:
+Rodar comando remoto sem shell interativo:
 
-- `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin` existem no GitHub;
-- nenhum deles possui hoje pasta Git dedicada nem `origin` configurado neste workspace;
-- portanto, ainda nao existe fluxo direto de `git add`/`git commit`/`git push` para esses repositorios a partir da arvore atual.
+1. wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'cd /root/checkcheck && docker compose ps'; rm -f /tmp/do_ck"
 
-Regra pratica:
+## 5.2 Diagnostico inicial obrigatorio no host
 
-1. enquanto o codigo continuar dentro de `c:\dev\projetos\checkcheck`, o dono operacional continua sendo o root `checkcheck`;
-2. a independencia de commit/push so comeca quando o escopo for realmente extraido para uma pasta Git propria;
-3. criar o repo no GitHub foi apenas a primeira metade do isolamento; a segunda metade e mover o codigo e ligar o remote certo.
+1. cd /root/checkcheck
+2. docker compose ps
+3. docker compose logs --tail=200 app
+4. docker compose logs --tail=200 forms-worker
+5. docker compose -f docker-compose.websites.yml ps
+6. docker compose -f docker-compose.websites.yml logs --tail=200 admin2-web
+7. curl -fsS http://127.0.0.1:8000/api/health
+8. curl -I http://127.0.0.1:18084/
+9. df -h
+10. du -sh /root/checkcheck
 
-Fluxo recomendado para ativar qualquer um desses repositorios no futuro:
+## 5.3 Falhas comuns e correcao rapida
 
-1. criar ou clonar a pasta Git dedicada fora do root atual;
-2. mover apenas o escopo daquele repositorio para a nova pasta;
-3. configurar `origin` para o repo GitHub correspondente;
-4. fazer o primeiro commit/push nesse repo novo;
-5. remover do root a ownership operacional daquele escopo para evitar duplicidade.
+### Caso A: migration falhou
 
-### 7.4 App Kotlin legado `checking_kotlin`
+1. cd /root/checkcheck
+2. docker compose run --rm --no-deps migrate
+3. se sucesso, subir runtime:
 
-Estado atual:
+   docker compose up -d --no-build --force-recreate --remove-orphans app forms-worker
 
-- branch local confirmada: `main`
-- remote ativo de publicacao: inexistente
-- remote historico preservado: `archived-origin`
+### Caso B: app subiu, mas health falha
 
-Commit local hoje:
+1. docker compose logs --tail=300 app
+2. validar `.env` presente e coerente em `/root/checkcheck/.env`
+3. validar DB:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin
-git status --short
-git branch -vv
-git remote -v
+   docker compose ps db
+   docker compose logs --tail=150 db
 
-git add <arquivo-ou-pasta>
-git commit -m "<mensagem>"
-```
+### Caso C: forms-worker unhealthy
 
-Push so depois de recriar `origin`:
+1. docker compose logs --tail=300 forms-worker
+2. docker compose restart forms-worker
+3. testar health interno:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin
-git remote remove archived-origin
-git remote add origin <novo-url-github>
-gh repo view <owner>/<repo>
-git push -u origin main
-```
+   docker compose exec -T forms-worker python -m sistema.app.forms_worker_healthcheck
 
-Observacoes:
+### Caso D: Admin2 indisponivel apos deploy
 
-- nao tente `git push origin main` antes de recriar `origin`;
-- se quiser manter o remote historico apenas como referencia, renomeie em vez de apagar e adapte o comando acima.
+1. docker compose -f docker-compose.websites.yml logs --tail=300 admin2-web
+2. docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate admin2-web
+3. curl -I http://127.0.0.1:18084/
 
-### 7.5 App Kotlin novo `checking_kotlin_new`
+### Caso E: Check Web/Transport nao refletiram mudanca
 
-Estado atual:
+1. confirmar que o commit foi publicado pelo root `checking` (nao apenas pelo sub-repo);
+2. confirmar run `Deploy OceanDrive` com `conclusion=success`;
+3. comparar `etag/content-length` do asset publico;
+4. se necessario, novo deploy no root e validacao de cache-busting no `index.html`.
 
-- branch local confirmada: `web-parity-spa-baseline`
-- remote ativo de publicacao: inexistente
-- remote historico preservado: `archived-origin`
+### Caso F: disco cheio no host
 
-Commit local hoje:
+1. docker system df
+2. docker image prune -af
+3. docker container prune -f
+4. docker builder prune -af
+5. repetir `df -h`
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
-git status --short
-git branch -vv
-git remote -v
+## 5.4 Rollback manual (somente quando necessario)
 
-git add <arquivo-ou-pasta>
-git commit -m "<mensagem>"
-```
+### Rollback do monolito app
 
-Push so depois de recriar `origin`:
+1. identificar SHA anterior valido no GitHub Actions;
+2. no host:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
-git remote remove archived-origin
-git remote add origin <novo-url-github>
-gh repo view <owner>/<repo>
-git push -u origin web-parity-spa-baseline
-```
+   cd /root/checkcheck
+   export CHECKCHECK_APP_IMAGE=ghcr.io/tscode-com-br/checkcheck-app:<SHA_ANTERIOR>
+   docker compose pull app
+   bash deploy/maintenance/run_app_rollout.sh --phase full --deploy-dir /root/checkcheck --release-id <SHA_ANTERIOR> --public-health-url https://tscode.com.br/api/health
 
-Observacoes:
+3. validar health local e publico.
 
-- nao trocar a branch por `main` sem confirmar antes o fluxo desejado;
-- hoje o caminho seguro e tratar esse repo como local-only ate existir um novo repositorio GitHub.
+### Rollback do admin2
 
-## 8. O que nao deve entrar em commit
+1. escolher SHA anterior do repo `checking-admin2`;
+2. no host:
 
-Itens normalmente excluidos:
+   cd /root/checkcheck
+   CHECKCHECK_ADMIN2_WEB_IMAGE=ghcr.io/tscode-com-br/checking-admin2:<SHA_ANTERIOR> docker compose -f docker-compose.websites.yml pull admin2-web
+   CHECKCHECK_ADMIN2_WEB_IMAGE=ghcr.io/tscode-com-br/checking-admin2:<SHA_ANTERIOR> docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate admin2-web
 
-- `.env`
-- `.venv/`
-- `deploy/keys/`
-- arquivos `*.db`, `*.sqlite`, `*.sqlite3`
-- artefatos de build
-- caches locais
-- qualquer arquivo de repositorio aninhado quando voce estiver no root
+3. validar `curl -I http://127.0.0.1:18084/` e endpoint publico.
 
-## 9. Dono de GitHub Actions e Secrets
+---
 
-O dono operacional de GitHub Actions e Secrets do deploy e o repo principal `checkcheck`.
+## 6) Checklist operacional (pronto para copiar)
 
-Estado confirmado no ambiente atual:
+Checklist antes do push:
 
-- a conta autenticada `tscode-com-br` no GitHub CLI tem permissao `admin` no repo `tscode-com-br/checking`;
-- o endpoint `repos/tscode-com-br/checking/actions/secrets/public-key` responde corretamente;
-- a leitura da lista de secrets do deploy esta funcionando.
+1. repo/pasta correta;
+2. branch correta (`main`);
+3. remote correto;
+4. stage explicito apenas dos arquivos da entrega;
+5. `git diff --cached` revisado;
+6. testes relevantes executados.
 
-Isso nao muda a regra de escopo:
+Checklist depois do push:
 
-- Actions e Secrets de deploy pertencem ao repo principal;
-- o app Flutter continua fora do fluxo de deploy da DigitalOcean;
-- as pastas Kotlin locais nao controlam deploy, nao tem `origin` ativo e hoje tambem nao possuem repositorio GitHub correspondente confirmado.
+1. identificar run correto no repo correto;
+2. acompanhar com `gh run watch ... --exit-status`;
+3. se falha, coletar `gh run view ... --log-failed`;
+4. validar health publico;
+5. validar efeito funcional (asset/endpoint da feature).
 
-## 10. Playbook detalhado para quando um agente de IA for fazer commit, push e acompanhar deploy
+Checklist de fechamento:
 
-As secoes anteriores explicam quem e o dono de cada repositorio.
+1. SHA enviado;
+2. run-id monitorado;
+3. conclusao do workflow;
+4. evidencias de health e publicacao.
 
-Esta secao nova define o comportamento operacional esperado quando o pedido ao agente de IA incluir explicitamente:
+---
 
-- fazer commit;
-- fazer push;
-- acompanhar o deploy;
-- validar se a publicacao terminou bem.
+## 7) Comandos de referencia rapida
 
-Regra principal:
+Auditoria de contexto local:
 
-- no repo principal, push em `main` e operacao sensivel de producao;
-- no repo Flutter, push publica apenas o app Flutter;
-- nos repositorios GitHub-only `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin`, o playbook so passa a valer como repo independente depois que existir pasta Git local propria e o codigo daquele escopo sair do root;
-- nos repositorios Kotlin locais, commit local ainda e valido, mas push continua bloqueado ate existir um `origin` real.
+1. git status -sb
+2. git branch --show-current
+3. git remote -v
 
-### 10.1 Sequencia obrigatoria antes de qualquer stage
+Auditoria de workflows (estado):
 
-Quando um agente de IA receber pedido de commit/push, ele deve comecar sempre pela auditoria abaixo no repositorio correto.
+1. gh workflow list --repo tscode-com-br/checking --all
+2. gh workflow list --repo tscode-com-br/checking-admin2 --all
+3. gh workflow list --repo tscode-com-br/checking-api --all
+4. gh workflow list --repo tscode-com-br/checking-webapp --all
+5. gh workflow list --repo tscode-com-br/checking-transport --all
+6. gh workflow list --repo tscode-com-br/checking_app_flutter --all
 
-#### Sistema principal
+Monitoramento de runs:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git status -sb
-git branch --show-current
-git remote -v
-git diff --stat
-git diff --cached --stat
-gh repo view tscode-com-br/checking
-```
+1. gh run list --repo tscode-com-br/checking --workflow "Deploy OceanDrive" --limit 5
+2. gh run list --repo tscode-com-br/checking-admin2 --workflow "Deploy to DigitalOcean" --limit 5
+3. gh run view <run-id> --repo tscode-com-br/<repo> --log-failed
 
-#### Flutter
+Validacao publica:
 
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_android_new
-git status -sb
-git branch --show-current
-git remote -v
-git diff --stat
-git diff --cached --stat
-gh repo view tscode-com-br/checking_app_flutter
-```
-
-#### Kotlin legado local-only
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin
-git status -sb
-git branch -vv
-git remote -v
-git diff --stat
-git diff --cached --stat
-```
-
-#### Kotlin novo local-only
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
-git status -sb
-git branch -vv
-git remote -v
-git diff --stat
-git diff --cached --stat
-```
-
-Saida esperada antes de prosseguir:
-
-1. a pasta atual e o repo dono da mudanca;
-2. a branch atual foi confirmada e nao esta sendo assumida por memoria;
-3. o `origin` existe quando houver intencao de push;
-4. o `archived-origin` isolado continua sendo tratado como local-only;
-5. o agente ja sabe quais arquivos mudaram antes de adicionar qualquer coisa ao stage.
-
-### 10.2 Situacoes em que o agente deve parar antes do push
-
-O agente nao deve improvisar push se qualquer um dos pontos abaixo acontecer:
-
-1. a mudanca esta no repo errado;
-2. existe mistura de arquivos do root com arquivos de repositorios aninhados;
-3. o `gh repo view` falha para um destino que deveria receber push;
-4. o repositorio esta local-only e ainda nao existe `origin` valido;
-5. ha alteracoes locais nao relacionadas que o usuario nao pediu para publicar;
-6. testes relevantes ainda nao foram rodados;
-7. a entrega depende tambem de `.env`, secret do GitHub, dado manual de banco ou alteracao de host e isso ainda nao foi tratado.
-
-Em qualquer uma dessas situacoes, o comportamento certo e resolver a pendencia primeiro ou informar claramente que commit/push sozinho nao fecha a entrega.
-
-O mesmo bloqueio vale quando o repo ja existe no GitHub, mas o workspace ainda nao possui checkout Git dedicado para ele.
-
-### 10.3 Como o agente deve montar o stage
-
-Regra geral:
-
-- preferir `git add <arquivo>` ou `git add <pasta-especifica>`;
-- evitar `git add .` no root sempre que houver qualquer risco de capturar mudancas nao relacionadas;
-- conferir o stage antes do commit;
-- conferir tambem os untracked files para garantir que nenhum artefato local entrou por engano.
-
-Sequencia recomendada:
-
-```powershell
-git status --short
-git add <arquivo-ou-pasta>
-git status --short
-git diff --cached --stat
-git diff --cached
-```
-
-Conferencia minima esperada:
-
-1. so os arquivos da entrega aparecem staged;
-2. nada de `.env`, `deploy/keys/`, `*.db`, cache, build output ou repositorio aninhado entrou no commit;
-3. a diff staged bate com a explicacao funcional da entrega;
-4. se houver mudanca de deploy ou infraestrutura, ela foi revisada com mais cuidado do que uma mudanca comum de app.
-
-### 10.4 Como o agente deve escolher a mensagem de commit
-
-A mensagem de commit deve ser curta, especifica e alinhada ao efeito real do change set.
-
-Padrao recomendado:
-
-- usar verbo de acao;
-- mencionar o escopo principal;
-- evitar mensagens vagas como `update`, `fixes`, `changes` ou `ajustes` sem contexto.
-
-Exemplos bons:
-
-```text
-fix(transport-ai): corrige indices da matrix do Mapbox
-docs(github): detalha fluxo de commit push e deploy
-fix(admin): preserva scroll no refresh automatico
-```
-
-Fluxo de commit:
-
-```powershell
-git commit -m "<mensagem>"
-git rev-parse HEAD
-```
-
-O `git rev-parse HEAD` deve ser guardado no relatorio final do agente para facilitar rastreio do deploy.
-
-### 10.5 Como o push deve acontecer em cada repo
-
-#### Sistema principal `checkcheck`
-
-Use apenas quando a mudanca pertence ao repo root e o usuario quer publicar no repo principal.
-
-Fluxo detalhado:
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-git status -sb
-git branch --show-current
-git remote -v
-gh repo view tscode-com-br/checking
-git diff --cached --stat
-git commit -m "<mensagem>"
-git rev-parse HEAD
-git push origin main
-```
-
-Observacoes obrigatorias:
-
-1. `git push origin main` neste repo aciona o workflow de deploy de producao;
-2. se a branch atual nao for `main`, o agente nao deve afirmar que houve deploy automatico de producao so porque houve push;
-3. se o agente estiver em branch diferente e o pedido do usuario for acompanhar deploy de producao, ele precisa deixar claro que o deploy automatico depende do update em `main`;
-4. se existir sujeira nao relacionada no root, o stage deve continuar explicito por arquivo.
-
-#### Flutter `checking_android_new`
-
-Fluxo detalhado:
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_android_new
-git status -sb
-git branch --show-current
-git remote -v
-gh repo view tscode-com-br/checking_app_flutter
-git diff --cached --stat
-git commit -m "<mensagem>"
-git rev-parse HEAD
-git push origin main
-```
-
-Observacoes obrigatorias:
-
-1. esse push nao faz deploy da API;
-2. esse push nao publica websites do sistema principal;
-3. o agente nao deve prometer deploy na DigitalOcean ao publicar o repo Flutter.
-
-#### Kotlin legado `checking_kotlin`
-
-Fluxo detalhado hoje:
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin
-git status -sb
-git branch -vv
-git remote -v
-git diff --cached --stat
-git commit -m "<mensagem>"
-git rev-parse HEAD
-```
-
-Push so depois de recriar `origin`:
-
-```powershell
-git remote remove archived-origin
-git remote add origin <novo-url-github>
-gh repo view <owner>/<repo>
-git push -u origin main
-```
-
-#### Kotlin novo `checking_kotlin_new`
-
-Fluxo detalhado hoje:
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
-git status -sb
-git branch -vv
-git remote -v
-git diff --cached --stat
-git commit -m "<mensagem>"
-git rev-parse HEAD
-```
-
-Push so depois de recriar `origin`:
-
-```powershell
-git remote remove archived-origin
-git remote add origin <novo-url-github>
-gh repo view <owner>/<repo>
-git push -u origin web-parity-spa-baseline
-```
-
-### 10.6 O que o agente deve fazer imediatamente depois do push no repo principal
-
-No repo principal, o trabalho nao termina no `git push origin main`.
-
-O agente deve acompanhar o workflow de producao ate conclusao ou falha clara.
-
-Sequencia recomendada:
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck
-gh run list --workflow deploy-oceandrive.yml --limit 5
-gh run watch <run-id> --exit-status
-gh run view <run-id> --log-failed
-```
-
-Comportamento esperado:
-
-1. identificar o run disparado pelo commit enviado;
-2. acompanhar o workflow ate `success` ou `failure`;
-3. se falhar, capturar o passo exato que falhou e os logs relevantes;
-4. se passar, validar a saude publica antes de encerrar o trabalho.
-
-O agente nao deve parar logo apos o push dizendo apenas que o deploy foi "disparado".
-
-O encerramento correto para o repo principal exige pelo menos:
-
-1. SHA do commit enviado;
-2. id ou URL do run do GitHub Actions;
-3. conclusao do run;
-4. resultado da validacao de health.
-
-### 10.7 Como validar o deploy depois do Actions verde
-
-Validacao minima do sistema principal:
-
-```powershell
-curl.exe -fsS https://tscode.com.br/api/health
-```
-
-Se houver necessidade de confirmacao no host:
-
-```powershell
-ssh -i .\deploy\keys\do_checkcheck root@157.230.35.21 "curl -fsS http://127.0.0.1:8000/api/health"
-```
-
-Se a entrega afetar uma funcionalidade critica, o agente deve fazer tambem uma validacao funcional focada, nao apenas o health.
-
-Exemplos:
-
-- rota HTTP especifica da feature alterada;
-- smoke de autenticacao;
-- fluxo do Transport AI, quando a entrega mexer nele;
-- pagina publica impactada pela mudanca.
-
-Regra importante:
-
-- health verde prova que a aplicacao subiu;
-- health verde sozinho nao prova que a funcionalidade alterada ficou correta.
-
-## 11. O que o deploy principal realmente faz no repo root
-
-O fluxo de producao confirmado em `.github/workflows/deploy-oceandrive.yml` faz hoje, em linhas gerais:
-
-1. checkout do repo;
-2. build e push da imagem `ghcr.io/tscode-com-br/checkcheck-app:<sha>`;
-3. criacao do diretorio remoto;
-4. remocao no host de `checking_android_new`, `checking_kotlin` e `checking_kotlin_new` legados;
-5. `rsync --delete` do projeto para o host;
-6. materializacao do `.env` a partir do secret `OCEAN_APP_ENV_B64`, se esse secret estiver preenchido;
-7. pull da imagem no host;
-8. migracao do banco;
-9. restart do `app`;
-10. validacao de health local e publica;
-11. limpeza de residuos de deploy e guarda de SSD.
-
-Consequencias praticas para qualquer agente de IA:
-
-1. arquivo apagado do repo pode ser apagado no host por causa do `rsync --delete`;
-2. `.env` nao vai pelo `rsync`;
-3. se `OCEAN_APP_ENV_B64` estiver configurado, o `.env` do host pode ser sobrescrito no deploy;
-4. push de codigo nao garante, sozinho, que uma mudanca manual de ambiente sera preservada;
-5. o deploy principal e sensivel e deve ser tratado como publicacao de producao real.
-
-## 12. O que commit e push NAO levam sozinhos para producao
-
-Mesmo com commit correto e Actions verde, ha classes de mudanca que nao sao cobertas apenas pelo push do repo.
-
-### 12.1 Ajustes de `.env` e secrets
-
-Esses itens nao devem ser tratados como automaticamente resolvidos por commit/push:
-
-- `.env` local;
-- secret `OCEAN_APP_ENV_B64`;
-- quaisquer secrets do GitHub Actions;
-- qualquer valor configurado manualmente so no host.
-
-Exemplos reais sensiveis neste projeto:
-
-- `MAPBOX_ACCESS_TOKEN`;
-- `TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY`;
-- `TRANSPORT_AI_AGENT_MODE`;
-- `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE`.
-
-Se uma entrega depende de um desses valores, o agente deve dizer explicitamente no relatorio final se:
-
-1. o valor ja estava sincronizado no secret/fonte de verdade;
-2. o valor foi alterado somente no host;
-3. o deploy seguinte pode sobrescrever o ajuste.
-
-### 12.2 Ajustes de banco e dados operacionais
-
-O deploy normal preserva o banco porque o Postgres usa volume persistente, mas commit/push nao recria automaticamente uma correcao de dado feita manualmente em producao.
-
-Exemplos:
-
-- correcoes em linhas da tabela `projects`;
-- backfills manuais;
-- limpeza de dados inconsistentes;
-- mudancas em tabelas de configuracao operacional.
-
-Regra esperada do agente:
-
-1. se a entrega depender de dado ajustado manualmente, registrar isso;
-2. se possivel, codificar a correcao em migration, seed controlado ou script de saneamento;
-3. nao afirmar que "o deploy sozinho resolve" algo que na verdade ainda depende do estado atual do banco.
-
-### 12.3 Ajustes de host e infraestrutura
-
-Esses pontos tambem nao devem ser confundidos com commit/push simples:
-
-- nginx editado manualmente no droplet;
-- unit file do systemd;
-- arquivos fora do diretorio do app;
-- manutencao manual de volumes, caches ou backups.
-
-## 13. Checklists operacionais para agentes de IA
-
-### 13.1 Checklist minimo antes do commit
-
-1. confirmar repo correto;
-2. confirmar branch correta;
-3. confirmar remote correto;
-4. revisar `git status -sb`;
-5. revisar `git diff --stat`;
-6. rodar testes relevantes;
-7. stage explicito apenas dos arquivos desejados;
-8. revisar `git diff --cached --stat`;
-9. garantir que nenhum artefato local entrou no commit.
-
-### 13.2 Checklist minimo antes do push no root
-
-1. o usuario realmente pediu publicacao no repo principal;
-2. o commit staged e o commit final batem com a entrega esperada;
-3. `git push origin main` foi entendido como deploy de producao;
-4. nao ha dependencia oculta de `.env`, secret ou dado manual nao mencionada;
-5. o agente sabe qual validacao funcional devera executar depois do Actions verde.
-
-### 13.3 Checklist minimo depois do push no root
-
-1. obter o `run-id` do workflow;
-2. acompanhar o workflow ate terminar;
-3. se falhar, coletar o passo e o log;
-4. se passar, validar `https://tscode.com.br/api/health`;
-5. se a feature exigir, validar tambem o fluxo funcional alterado;
-6. relatar SHA, run, resultado e qualquer pendencia de ambiente ou dados.
-
-## 14. Prompt recomendado quando voce pedir a um agente de IA para fazer commit, push e acompanhar deploy
-
-Se quiser maximizar a chance de um agente executar corretamente, use um pedido proximo deste modelo:
-
-```text
-Trabalhe apenas no repositorio dono desta mudanca.
-Antes de commitar, audite pasta atual, branch, remote, arquivos modificados e arquivos staged.
-Faca stage explicito apenas dos arquivos desta entrega.
-Nao use git add . no repo root se houver qualquer outro arquivo modificado fora do escopo.
-Rode os testes relevantes antes do commit.
-Depois faca o commit com mensagem especifica.
-Se for o repo principal, faca push em main somente se a entrega estiver pronta para deploy de producao.
-Depois acompanhe o workflow deploy-oceandrive.yml ate o fim.
-Valide https://tscode.com.br/api/health e, se a feature exigir, rode tambem uma validacao funcional focada.
-No final, me informe: repo, branch, SHA, arquivos commitados, run-id ou URL do Actions, resultado do deploy e qualquer ajuste que ainda dependa de .env, secret ou banco.
-```
-
-Complemento importante para pedidos envolvendo Transport AI:
-
-```text
-Se a entrega depender de configuracao de ambiente, secret ou dado manual de producao, nao trate commit/push como suficiente. Diga explicitamente o que ficou fora do Git e o que precisa ser sincronizado para o proximo deploy nao reverter o comportamento.
-```
-
-## 15. Regras criticas aprendidas na pratica sobre GitHub Actions neste repositorio
-
-Esta secao documenta armadilhas reais que quebraram o pipeline de producao e que nao sao obvias lendo a documentacao oficial do GitHub Actions.
-
-### 15.1 NUNCA use `secrets.*` diretamente em condicoes `if:` de steps
-
-**Regra:**
-
-```yaml
-# ERRADO — o GitHub Actions nao avalia secrets em condicoes if:
-- name: Meu step
-  if: ${{ secrets.MINHA_VARIAVEL != '' }}
-
-# CERTO — exponha o secret como env var e verifique a env var
-- name: Meu step
-  env:
-    MINHA_VARIAVEL: ${{ secrets.MINHA_VARIAVEL }}
-  if: env.MINHA_VARIAVEL != ''
-```
-
-**Por que isso importa:**
-
-Quando um step usa `secrets.*` diretamente em `if:`, o GitHub Actions falha ao parsear o workflow
-inteiro. O resultado e um run com duracao de `0s` e a mensagem "This run likely failed because of a
-workflow file issue". Nenhum job e executado, nenhum log e gerado, e o erro e silencioso.
-
-Isso aconteceu com o step "Apply nginx edge routes" em `deploy-oceandrive.yml` em 2026-05-11.
-A consequencia foi que TODOS os deploys falharam silenciosamente por horas sem que nenhum passo
-chegasse a rodar.
-
-**Como identificar esse problema:**
-
-```powershell
-gh run list --workflow deploy-oceandrive.yml --limit 5
-```
-
-Se a coluna de duracao mostrar `0s` para varios runs consecutivos, e o `gh run view <id>` mostrar
-"This run likely failed because of a workflow file issue" com `total_count: 0` jobs, e um erro de
-parse YAML no workflow — nao um erro de execucao.
-
-**Regra para uso de secrets dentro de `script:` de steps:**
-
-Dentro do campo `script:` de um step que usa `uses: appleboy/ssh-action`, secrets podem ser
-referenciados normalmente via `${{ secrets.X }}`. O problema ocorre APENAS no campo `if:`.
-
-Se voce precisar usar o secret tanto no `if:` quanto no `script:`, declare-o como env var e use
-`${{ env.X }}` nos dois lugares:
-
-```yaml
-- name: Aplica nginx
-  env:
-    OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
-  if: env.OCEAN_NGINX_SERVER_CONFIG != ''
-  uses: appleboy/ssh-action@...
-  with:
-    script: |
-      bash manage.sh --server-config '${{ env.OCEAN_NGINX_SERVER_CONFIG }}'
-```
-
-### 15.2 O deploy agora aplica nginx automaticamente se o secret estiver configurado
-
-O step "Apply nginx edge routes" foi adicionado em `deploy-oceandrive.yml` (entre "Start application
-runtime" e "Snapshot disk usage after restart"). Ele roda apenas quando o secret
-`OCEAN_NGINX_SERVER_CONFIG` esta preenchido.
-
-**O que o step faz:**
-
-1. executa `manage_checking_edge_cutover.sh apply` no host remoto;
-2. aplica o conteudo de `deploy/nginx/checking-edge-routes.conf` dentro do bloco
-   `# BEGIN CHECKCHECK EDGE ROUTES` / `# END CHECKCHECK EDGE ROUTES` do arquivo nginx;
-3. roda `nginx -t` para validar;
-4. recarrega nginx com `systemctl reload nginx`.
-
-**Estado atual do secret:**
-
-| Secret | Valor atual | Funcao |
-|---|---|---|
-| `OCEAN_NGINX_SERVER_CONFIG` | `/etc/nginx/sites-enabled/checkcheck` | Caminho do arquivo de configuracao nginx do servidor que serve `tscode.com.br` |
-
-**Consequencia pratica:**
-
-Qualquer alteracao em `deploy/nginx/checking-edge-routes.conf` e automaticamente aplicada no
-proximo deploy, sem necessidade de workflow manual separado. O reload do nginx faz parte do
-fluxo de deploy normal.
-
-### 15.3 Backups do nginx nunca devem ficar em `sites-enabled/`
-
-O script `deploy/nginx/manage_checking_edge_cutover.sh` cria um backup do arquivo de configuracao
-antes de modificar. O backup padrao fica em `/tmp/`, NAO no mesmo diretorio do arquivo original.
-
-**Por que isso importa:**
-
-nginx carrega todos os arquivos dentro de `sites-enabled/` sem excecao, incluindo arquivos `.bak`.
-Se um backup como `checkcheck.bak.20260511082439` for criado dentro de `sites-enabled/`, nginx
-detectara um `default_server` duplicado e recusara recarregar, com erro:
-
-```
-[emerg] a duplicate default server for 0.0.0.0:80 in
-/etc/nginx/sites-enabled/checkcheck.bak.20260511082439:2
-nginx: configuration file /etc/nginx/nginx.conf test failed
-```
-
-O script ja foi corrigido para usar `/tmp/nginx-<nome>.bak.<timestamp>` como destino padrao.
-Nao reverter esse comportamento.
-
-### 15.4 Como diagnosticar um deploy que falhou em 0 segundos
-
-Sequencia de diagnostico quando o run aparece com `0s`:
-
-```powershell
-# 1. Verificar se jobs foram criados
-gh api repos/tscode-com-br/checking/actions/runs/<run-id>/jobs --jq '.total_count'
-# Se retornar 0, e erro de parse do workflow
-
-# 2. Tentar obter logs (vai falhar com "log not found" se for erro de parse)
-gh run view <run-id> --log-failed
-
-# 3. Validar o YAML do workflow localmente antes de commitar
-# (GitHub Actions nao tem validator CLI oficial, mas o erro mais comum
-#  e secrets.* em condicoes if: — revise todos os steps com if: no arquivo)
-```
-
-### 15.5 Fluxo do deploy atualizado (maio 2026)
-
-O fluxo atual do `deploy-oceandrive.yml`, na ordem de execucao, inclui agora o step de nginx:
-
-1. Checkout do repositorio
-2. Build e push da imagem Docker para `ghcr.io/tscode-com-br/checkcheck-app:<sha>`
-3. Verificacao de fingerprint SSH do host
-4. Criacao do diretorio remoto
-5. Remocao de diretorios legados (`checking_android_new`, `checking_kotlin`, `checking_kotlin_new`)
-6. `rsync --delete` do projeto para o host (inclui `deploy/nginx/checking-edge-routes.conf`)
-7. Preflight de disco (limpeza e verificacao de espaco livre)
-8. Snapshot de disco antes do restart
-9. Materializacao do `.env` a partir do secret `OCEAN_APP_ENV_B64`
-10. Pull da imagem no host
-11. Migracao do banco (`alembic upgrade head`)
-12. Start do runtime (`docker compose up`)
-13. **[NOVO] Apply nginx edge routes** (se `OCEAN_NGINX_SERVER_CONFIG` estiver configurado)
-14. Snapshot de disco depois do restart
-15. Validacao de health local
-16. Validacao de health publica (`https://tscode.com.br/api/health`)
-17. Marcacao do release
-18. Instalacao do SSD cleanup automation
-19. Execucao do SSD cleanup
-20. Verificacao de residuos de deploy
+1. curl.exe --ssl-no-revoke -fsS https://tscode.com.br/api/health
+2. curl.exe --ssl-no-revoke -sI https://tscode.com.br/checking/admin
+3. curl.exe --ssl-no-revoke -s -D - -o NUL "https://tscode.com.br/checking/user/automatic-activities.js" | Select-String -Pattern "content-length|etag"
