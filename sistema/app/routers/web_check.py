@@ -21,6 +21,8 @@ from ..schemas import (
     WebAccidentUserReport,
     AccidentVideoUploadResponse,
     WebCheckHistoryResponse,
+    WebGeofenceCircle,
+    WebGeofencesResponse,
     WebLocationOptionsResponse,
     WebPasswordActionResponse,
     WebPasswordChangeRequest,
@@ -771,6 +773,32 @@ def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> 
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
         mixed_zone_interval_minutes=get_mixed_zone_interval_minutes_for_projects(db, user_project_names),
     )
+
+
+@router.get("/check/geofences", response_model=WebGeofencesResponse)
+def get_web_check_geofences(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> WebGeofencesResponse:
+    # Coarse bounding circles for the user's project locations — native geofence wake-up
+    # geometry for the mobile app (§23.2). Precise matching stays in POST /check/location.
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    user_project_names = list_user_project_names(db, user)
+    rows = db.execute(
+        select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)
+    ).scalars().all()
+    circles = [
+        WebGeofenceCircle(
+            id=loc.id,
+            local=loc.local,
+            center_lat=loc.latitude,
+            center_lng=loc.longitude,
+            radius_meters=float(loc.tolerance_meters),
+        )
+        for loc in filter_locations_for_projects(rows, user_project_names)
+    ]
+    return WebGeofencesResponse(locations=circles)
 
 
 @router.post("/check/location", response_model=WebLocationMatchResponse)

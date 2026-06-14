@@ -4172,6 +4172,20 @@ class WebLocationOptionsResponse(BaseModel):
     mixed_zone_interval_minutes: int = Field(ge=1)
 
 
+class WebGeofenceCircle(BaseModel):
+    id: int
+    local: str
+    center_lat: float
+    center_lng: float
+    radius_meters: float
+
+
+class WebGeofencesResponse(BaseModel):
+    # Coarse bounding circles for the user's project locations — wake-up geometry for native
+    # geofencing on the mobile app (§23.2). Precise matching stays server-side (POST /check/location).
+    locations: list[WebGeofenceCircle] = []
+
+
 class WebUserProjectsResponse(BaseModel):
     projects: list[str] = Field(min_length=1)
     active_project: str = Field(min_length=2, max_length=120)
