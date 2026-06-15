@@ -144,7 +144,7 @@ async def test_web_sse_connected_event():
             disconnects_after=1,
             session_override={WEB_USER_SESSION_KEY: _WEB_CHAVE},
         )
-        response = await web_stream_handler(request=mock_req, chave=_WEB_CHAVE, db=db)
+        response = await web_stream_handler(request=mock_req, chave=_WEB_CHAVE)
         assert response.media_type == "text/event-stream"
 
         events = await _collect_events(response.body_iterator)
@@ -219,7 +219,7 @@ async def test_both_sse_streams_receive_accident_opened_simultaneously():
         )
 
         admin_response = await admin_stream_handler(request=admin_req)
-        web_response = await web_stream_handler(request=web_req, chave=_WEB_CHAVE, db=db)
+        web_response = await web_stream_handler(request=web_req, chave=_WEB_CHAVE)
 
         admin_events: list[dict] = []
         web_events: list[dict] = []

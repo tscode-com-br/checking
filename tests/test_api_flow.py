@@ -13098,7 +13098,6 @@ def test_web_transport_stream_emits_connected_and_transport_events():
             web_check_router.stream_web_transport_updates(
                 request,
                 chave="WT13",
-                db=db,
             )
         )
         assert response.media_type == "text/event-stream"

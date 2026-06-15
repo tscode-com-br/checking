@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User, UserProjectMembership
 from ..schemas import (
     AccidentLocationOption,
@@ -591,9 +591,12 @@ def get_web_transport_state(
 async def stream_web_transport_updates(
     request: Request,
     chave: str = Query(min_length=4, max_length=4),
-    db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    _require_matching_authenticated_web_user(request, db, chave)
+    # Authenticate with a short-lived session that is released BEFORE the streaming loop.
+    # Using Depends(get_db) here would keep a pooled DB connection checked out for the entire
+    # (indefinite) life of the SSE stream, exhausting the pool with only a handful of clients.
+    with SessionLocal() as db:
+        _require_matching_authenticated_web_user(request, db, chave)
     subscriber_id, queue = transport_updates_broker.subscribe()
 
     async def event_generator():
@@ -626,9 +629,12 @@ async def stream_web_transport_updates(
 async def stream_web_check_updates(
     request: Request,
     chave: str = Query(min_length=4, max_length=4),
-    db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    _require_matching_authenticated_web_user(request, db, chave)
+    # Authenticate with a short-lived session that is released BEFORE the streaming loop.
+    # Using Depends(get_db) here would keep a pooled DB connection checked out for the entire
+    # (indefinite) life of the SSE stream, exhausting the pool with only a handful of clients.
+    with SessionLocal() as db:
+        _require_matching_authenticated_web_user(request, db, chave)
     subscriber_id, queue = web_check_updates_broker.subscribe()
 
     async def event_generator():

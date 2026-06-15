@@ -134,7 +134,6 @@ async def test_stream_initial_connected_event():
         streaming_response = await stream_web_check_updates(
             request=mock_req,
             chave=TEST_CHAVE,
-            db=db,
         )
         assert streaming_response.media_type == "text/event-stream"
 
@@ -163,7 +162,6 @@ async def test_stream_receives_published_payload():
         streaming_response = await stream_web_check_updates(
             request=mock_req,
             chave=TEST_CHAVE,
-            db=db,
         )
 
         received: list[dict] = []
@@ -222,7 +220,6 @@ async def test_stream_keepalive_after_15s(monkeypatch):
         streaming_response = await stream_web_check_updates(
             request=mock_req,
             chave=TEST_CHAVE,
-            db=db,
         )
 
         raw_chunks: list[str] = []
