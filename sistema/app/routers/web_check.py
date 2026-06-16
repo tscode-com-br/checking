@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -130,6 +131,11 @@ WEB_CHECK_CHANNEL = FormsSubmitChannel(
     device_id="web-check",
     default_local="Web",
 )
+# P7 observability: requests carrying the header "X-Client: checking-android" (the Kotlin app) are
+# logged with device_id="checking-android" so app traffic is distinguishable from the browser web app
+# in check_events (both otherwise log as source=web with device_id="web-check"). Browser unaffected.
+CHECKING_ANDROID_CLIENT = "checking-android"
+WEB_CHECK_ANDROID_CHANNEL = dataclasses.replace(WEB_CHECK_CHANNEL, device_id=CHECKING_ANDROID_CLIENT)
 WEB_NON_OPERATIONAL_SUBMIT_LOCALS = frozenset({
     "Localização não Cadastrada",
 })
@@ -910,6 +916,11 @@ def submit_web_check(
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
     payload.projeto = _require_known_user_membership_project(db, user, payload.projeto)
     _reject_non_operational_web_submit_local(payload.local)
+    channel = (
+        WEB_CHECK_ANDROID_CHANNEL
+        if request.headers.get("X-Client") == CHECKING_ANDROID_CLIENT
+        else WEB_CHECK_CHANNEL
+    )
     response = submit_forms_event(
         db,
         chave=payload.chave,
@@ -920,7 +931,7 @@ def submit_web_check(
         event_time=payload.event_time,
         client_event_id=payload.client_event_id,
         ensure_user=ensure_web_user,
-        channel=WEB_CHECK_CHANNEL,
+        channel=channel,
     )
     return WebCheckSubmitResponse(**response.model_dump())
 
