@@ -139,9 +139,12 @@ test('check page loads the dedicated dictionary and i18n runtime before app.js',
     'utf8'
   );
 
+  // Scripts now carry ?v= cache-busting (plan002/plan003) and the bundle grew (automatic-activities,
+  // web-client-state, accident-camera, accident). The contract that matters: the dedicated dictionary +
+  // i18n runtime + transport-screen load (in order), and app.js loads last — all versioned.
   assert.match(
     checkHtml,
-    /<script src="i18n-dictionaries\.js"><\/script>\s*<script src="i18n\.js"><\/script>\s*<script src="transport-screen\.js"><\/script>\s*<script src="app\.js"><\/script>/
+    /<script src="i18n-dictionaries\.js\?v=\d+"><\/script>\s*<script src="i18n\.js\?v=\d+"><\/script>\s*<script src="transport-screen\.js\?v=\d+"><\/script>[\s\S]*<script src="app\.js\?v=\d+"><\/script>/
   );
 });
 

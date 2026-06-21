@@ -204,7 +204,7 @@ let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
-let allowedAdminTabs = ["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"];
+let allowedAdminTabs = ["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "acidente"];
 let adminCanViewActivityTime = true;
 let currentAdminChave = "";
 let currentAdminPerfil = 0;
@@ -980,10 +980,9 @@ const TAB_LABELS = {
   cadastro: "Cadastro",
   relatorios: "Relatórios",
   eventos: "Eventos",
-  "banco-dados": "Banco de Dados",
 };
 const ADMIN_MOBILE_VIEWPORT_QUERY = "(max-width: 800px)";
-const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"]);
+const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "acidente"]);
 const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
 const MOBILE_FILTER_PANEL_KEYS = Object.freeze(["checkin", "checkout", "inactive", "relatorios"]);
 let adminViewportMediaQueryList = null;
@@ -1211,7 +1210,7 @@ function syncAdminResponsiveState(options = {}) {
 
   adminResponsiveStateKey = nextStateKey;
   syncPresenceTimeLabels();
-  const canViewEventsTime = syncEventsPrimaryColumnLabel();
+  syncEventsPrimaryColumnLabel();
 
   Object.entries(presenceTableStates).forEach(([tableKey, state]) => {
     const body = document.getElementById(state.bodyId);
@@ -1222,9 +1221,6 @@ function syncAdminResponsiveState(options = {}) {
     applyPresenceTableState(tableKey);
   });
 
-  if (eventsRows !== null) {
-    renderEventsTable(eventsRows, { canViewTime: canViewEventsTime });
-  }
   if (reportsResultsPayload !== null) {
     renderReportsResults(reportsResultsPayload);
   }
@@ -1928,11 +1924,9 @@ function updateDashboardSummary() {
     inactive: presenceTableStates.inactive.rawRows.length,
     pending: pendingUsersTotal,
     users: registeredUsersTotal,
-    events: eventsTotal,
     missingCheckout: presenceTableStates.missingCheckout.rawRows.length,
     cadastro: registeredUsersTotal,
-    eventos: eventsTotal,
-    "banco-dados": databaseEventsState.total,
+    eventos: databaseEventsState.total,
   };
 
   Object.entries(counts).forEach(([key, value]) => {
@@ -2473,6 +2467,16 @@ function makeEventCell(value, extraClass = "") {
   return `<span class="${className}">${escapeHtml(value ?? "-")}</span>`;
 }
 
+function makeEventChaveCell(chave, nome) {
+  const display = escapeHtml(chave ?? "-");
+  if (!chave || chave === "-") {
+    return `<span class="event-cell">${display}</span>`;
+  }
+  const nomeLine = nome ? `<span class="event-chave-tip-line"><b>Nome do Usuário:</b> ${escapeHtml(nome)}</span>` : "";
+  const chaveLine = `<span class="event-chave-tip-line"><b>Chave:</b> ${display}</span>`;
+  return `<span class="event-cell event-chave-tip-anchor">${display}<span class="event-chave-tip-box">${nomeLine}${chaveLine}</span></span>`;
+}
+
 function makeEventDateTimeCell(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE, options = {}) {
   const { date, time } = formatDateTimeLines(value, timezoneName);
   return makeEventDateTimeCellFromParts(date, time, options);
@@ -2710,7 +2714,7 @@ function renderDatabaseEvents(rows) {
       message: row.message ?? "-",
       details: formatEventDetails(row.details),
     };
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time, row.timezone_name)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatLocal(row.local), "event-cell-left")}</td><td>${makeEventCell(row.source ?? "-")}</td><td>${makeEventCell(row.status ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.device_id ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.message ?? "-", "event-cell-left")}</td><td>${makeEventDetailsButton()}</td>`;
+    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCell(row.event_time, row.timezone_name)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventChaveCell(row.chave, row.nome)}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatLocal(row.local), "event-cell-left")}</td><td>${makeEventCell(row.source ?? "-")}</td><td>${makeEventCell(row.status ?? "-")}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.device_id ?? "-", "event-cell-left")}</td><td>${makeEventCell(row.message ?? "-", "event-cell-left")}</td><td>${makeEventDetailsButton()}</td>`;
     tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
     body.appendChild(tr);
   });
@@ -4702,6 +4706,24 @@ function makePendingRow(row) {
   return tr;
 }
 
+// plan003 — read-only row for the "Pendências de Usuários" table (Data/Chave/Nome/Projetos/E-Mail/Ações).
+function makeUserPendingRow(row) {
+  const tr = document.createElement("tr");
+  const projetos = Array.isArray(row.projetos) ? row.projetos.join(", ") : "";
+  tr.innerHTML = `
+    <td>${escapeHtml(formatDateTime(row.requested_at))}</td>
+    <td>${escapeHtml(row.chave)}</td>
+    <td>${escapeHtml(row.nome_completo)}</td>
+    <td>${escapeHtml(projetos)}</td>
+    <td>${escapeHtml(row.email ?? "")}</td>
+    <td class="pending-actions">
+      <button data-user-approve="${row.id}">Aprovar</button>
+      <button data-user-reject="${row.id}">Reprovar</button>
+    </td>
+  `;
+  return tr;
+}
+
 function makeRegisteredUserRow(user) {
   const selectedProjects = normalizeUserProjectMemberships(user.projetos, user.projeto);
   const tr = document.createElement("tr");
@@ -4958,7 +4980,7 @@ function makeAdministratorRow(row) {
 function hasPendingEditInProgress() {
   return locationRows.some((row) => row.isEditing)
     || locationSettingsDirty
-    || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
+    || Array.from(document.querySelectorAll("#pendingBody input, #pendingBody select, #userPendingBody input, #userPendingBody select, #usersBody input, #usersBody select")).some((field) => !field.disabled);
 }
 
 function setPendingEditingState(id, editing) {
@@ -5120,6 +5142,43 @@ async function loadPending({ silent = false } = {}) {
   rows.forEach((row) => body.appendChild(makePendingRow(row)));
   applyResponsiveLabels("pendingBody");
   updateDashboardSummary();
+}
+
+// plan003 — "Pendências de Usuários": project-scoped self-registrations awaiting approval (EP4 endpoints).
+async function loadUserPending({ silent = false } = {}) {
+  const body = document.getElementById("userPendingBody");
+  if (!body) {
+    return;
+  }
+  const fetcher = silent ? fetchJsonSilent : fetchJson;
+  const rows = await fetcher("/api/admin/user-pending");
+  if (!Array.isArray(rows) || rows.length === 0) {
+    renderEmptyStateRow("userPendingBody", 6, "Nenhuma pendência de usuário.");
+    return;
+  }
+  body.innerHTML = "";
+  rows.forEach((row) => body.appendChild(makeUserPendingRow(row)));
+  applyResponsiveLabels("userPendingBody");
+}
+
+async function approveUserPending(id) {
+  await postJson(`/api/admin/user-pending/${id}/approve`);
+  setStatus("Cadastro de usuário aprovado.", true);
+  await Promise.all([loadUserPending(), loadRegisteredUsers()]);
+}
+
+async function rejectUserPending(id) {
+  const confirmed = await confirmDestructive({
+    title: "Reprovar cadastro",
+    body: "Reprovar remove a solicitação de cadastro do banco de dados. Deseja continuar?",
+    confirmLabel: "Reprovar",
+  });
+  if (!confirmed) {
+    return;
+  }
+  await postJson(`/api/admin/user-pending/${id}/reject`);
+  setStatus("Cadastro de usuário reprovado.", true);
+  await loadUserPending();
 }
 
 async function loadAdministrators() {
@@ -5321,12 +5380,7 @@ async function removeProject(projectId) {
 }
 
 async function loadEvents() {
-  const canViewTime = syncEventsPrimaryColumnLabel();
-  const rows = await fetchJson("/api/admin/events");
-  eventsRows = Array.isArray(rows) ? rows : [];
-  eventsTotal = eventsRows.length;
-  renderEventsTable(eventsRows, { canViewTime });
-  updateDashboardSummary();
+  await loadDatabaseEvents();
 }
 
 function resetReportsView(options = {}) {
@@ -5735,12 +5789,12 @@ async function refreshActiveTab() {
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await loadProjects();
-      await Promise.all([loadAdministrators(), loadPending(), loadLocations(), loadEndpoints()]);
+      await Promise.all([loadAdministrators(), loadPending(), loadUserPending(), loadLocations(), loadEndpoints()]);
       markDashboardRefreshed();
     }
     return;
   }
-  if (activeTab === "banco-dados") {
+  if (activeTab === "eventos") {
     await loadDatabaseEvents();
     markDashboardRefreshed();
     return;
@@ -5759,18 +5813,16 @@ async function refreshAllTables() {
     jobs.push(loadInactive());
   }
   if (isAdminTabAllowed("eventos")) {
-    jobs.push(loadEvents());
+    jobs.push(loadDatabaseEvents());
   }
   if (isAdminTabAllowed("cadastro") && hasPendingEditInProgress()) {
     jobs.push(loadAdministrators());
-  }
-  if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
-    jobs.push(loadDatabaseEvents());
   }
   if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
     await loadProjects();
     jobs.push(loadAdministrators());
     jobs.push(loadPending());
+    jobs.push(loadUserPending());
     jobs.push(loadRegisteredUsers());
     jobs.push(loadLocations());
     jobs.push(loadEndpoints());
@@ -5788,7 +5840,7 @@ async function refreshAutomaticTables() {
   if (isAdminTabAllowed("checkout")) {
     jobs.push(loadCheckout({ silent: true }));
   }
-  if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
+  if (databaseEventsLoaded && isAdminTabAllowed("eventos")) {
     jobs.push(loadDatabaseEvents({ silent: true }));
   }
   if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
@@ -5796,6 +5848,7 @@ async function refreshAutomaticTables() {
     // the current project catalog and should only rerender in the explicit loaders.
     await loadProjects();
     jobs.push(loadPending({ silent: true }));
+    jobs.push(loadUserPending({ silent: true }));
     jobs.push(loadLocations({ silent: true }));
   }
   await Promise.all(jobs);
@@ -5844,7 +5897,9 @@ function startRealtimeUpdates() {
     try {
       const data = JSON.parse(event.data);
       if (data.reason === "emergency_call_status_update" || data.reason === "emergency_call_initiated") {
-        _handleEmergencyCallUpdate(data.metadata || {});
+        // The SSE broker merges metadata fields at the root level of the payload
+        // (not nested under a "metadata" key), so we pass the full data object.
+        _handleEmergencyCallUpdate(data.metadata || data);
       } else if (data.reason && data.reason.startsWith("accident_")) {
         scheduleAccidentRefresh();
       } else {
@@ -6016,10 +6071,7 @@ async function archiveAndClearEvents() {
   eventArchivesPage = 1;
   renderEventArchives(payload.archives || {});
   openEventArchivesModal();
-  await loadEvents();
-  if (databaseEventsLoaded) {
-    await loadDatabaseEvents();
-  }
+  await loadDatabaseEvents();
 
   if (payload.created && payload.archive) {
     setStatus(`Eventos salvos em ${payload.archive.period} e limpos (${payload.cleared_count} registros).`, true);
@@ -6084,7 +6136,7 @@ async function savePending(id, rfid) {
   } else {
     setStatus("Cadastro salvo com sucesso", true);
   }
-  await Promise.all([loadPending(), loadRegisteredUsers()]);
+  await Promise.all([loadPending(), loadUserPending(), loadRegisteredUsers()]);
 }
 
 async function removePending(id) {
@@ -6096,7 +6148,7 @@ async function removePending(id) {
   if (!confirmed) return;
   await deleteJson(`/api/admin/pending/${id}`);
   setStatus("Pendência removida com sucesso", true);
-  await loadPending();
+  await Promise.all([loadPending(), loadUserPending()]);
 }
 
 async function saveRegisteredUser(userId) {
@@ -6396,7 +6448,7 @@ function bindActions() {
     });
   });
 
-  const databaseTab = document.getElementById("tab-banco-dados");
+  const databaseTab = document.getElementById("tab-eventos");
   if (databaseTab) {
     const handleDatabaseFilterChange = (event) => {
       const target = event.target;
@@ -6522,7 +6574,7 @@ function bindActions() {
   bindManualRefreshButton(refreshAdministratorsButton, loadAdministratorsWithProjectCatalog);
   bindManualRefreshButton(refreshUsersButton, loadRegisteredUsers);
   bindManualRefreshButton(refreshEndpointsButton, loadEndpoints);
-  bindManualRefreshButton(refreshEventsButton, loadEvents);
+  bindManualRefreshButton(refreshEventsButton, loadDatabaseEvents);
   if (reportsSearchButton) {
     reportsSearchButton.dataset.idleLabel = String(reportsSearchButton.textContent || "Buscar").trim() || "Buscar";
     reportsSearchButton.addEventListener("click", () => {
@@ -6754,6 +6806,21 @@ function bindActions() {
     }
     if (button.dataset.save) {
       savePending(button.dataset.save, button.dataset.rfid).catch((error) => setStatus(error.message, false));
+    }
+  });
+
+  document.getElementById("userPendingBody").addEventListener("click", (event) => {
+    const target = event.target;
+    const button = target instanceof Element ? target.closest("button") : null;
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    if (button.dataset.userApprove) {
+      approveUserPending(button.dataset.userApprove).catch((error) => setStatus(error.message, false));
+      return;
+    }
+    if (button.dataset.userReject) {
+      rejectUserPending(button.dataset.userReject).catch((error) => setStatus(error.message, false));
     }
   });
 

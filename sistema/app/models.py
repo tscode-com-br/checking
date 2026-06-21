@@ -269,6 +269,32 @@ class PendingRegistration(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
+class PendingUserRegistration(Base):
+    """Self-registrations awaiting admin approval (plan003).
+
+    A self-registered user lives here — NOT in ``users`` — until an admin
+    (perfil 1/9) approves it; only on approval is the real ``User`` created
+    (so nothing in ``users`` is affected while pending). On rejection the row
+    is simply deleted. ``client`` records the origin ("checking-android"/"web")
+    for observability only; the approval gate itself is system-wide.
+    """
+
+    __tablename__ = "pending_user_registrations"
+    __table_args__ = (
+        UniqueConstraint("chave", name="uq_pending_user_registrations_chave"),
+        Index("ix_pending_user_registrations_requested_at", "requested_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chave: Mapped[str] = mapped_column(String(4), nullable=False)
+    nome_completo: Mapped[str] = mapped_column(String(180), nullable=False)
+    projetos_json: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    client: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class CheckEvent(Base):
     __tablename__ = "check_events"
     __table_args__ = (UniqueConstraint("idempotency_key", name="uq_check_events_idempotency_key"),)
@@ -709,6 +735,9 @@ class CheckingHistory(Base):
     projeto: Mapped[str] = mapped_column(String(120), nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     informe: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Activity location (change D). Nullable + NOT part of uq_checkinghistory_event, so the existing
+    # 5-field idempotent upsert is unchanged; old rows stay blank.
+    local: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class AdminUser(Base):

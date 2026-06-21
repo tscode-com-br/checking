@@ -30,6 +30,7 @@ def record_checking_history(
     projeto: str | None,
     event_time: datetime,
     ontime: bool | None = True,
+    local: str | None = None,
 ) -> CheckingHistory | None:
     atividade = normalize_history_activity(action)
     normalized_chave = str(chave or "").strip().upper()
@@ -58,6 +59,29 @@ def record_checking_history(
         projeto=normalized_projeto,
         time=event_time,
         informe=informe,
+        local=local,
     )
     db.add(row)
     return row
+
+
+def list_checking_history(
+    db: Session,
+    *,
+    chave: str,
+    limit: int = 500,
+) -> list[CheckingHistory]:
+    """Return a user's CheckingHistory rows, newest-first (change D — history with location)."""
+    normalized_chave = str(chave or "").strip().upper()
+    if len(normalized_chave) != 4:
+        return []
+    return list(
+        db.execute(
+            select(CheckingHistory)
+            .where(CheckingHistory.chave == normalized_chave)
+            .order_by(CheckingHistory.time.desc(), CheckingHistory.id.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )

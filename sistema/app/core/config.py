@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     forms_settle_post_submit_seconds: float = 1.0
     forms_worker_concurrency: int = 3
     forms_worker_idle_poll_seconds: float = 0.25
+    # plan003 — new-user approval gate (system-wide). When False, self-registration falls back to the
+    # legacy create-and-authenticate behavior — instant rollback without a code deploy. The cap bounds
+    # the pending queue (over the limit → "queue full").
+    check_user_approval_required: bool = True
+    pending_user_registration_limit: int = 300
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-2025-08-07"
     openai_temperature: float | None = 0

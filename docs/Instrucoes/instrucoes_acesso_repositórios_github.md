@@ -1,6 +1,6 @@
 # Guia Didatico de Commit, Push e Deploy por Repositorio
 
-Status: revisado e validado em 2026-06-09.
+Status: revisado e validado em 2026-06-09. Secoes 1.7 e 2.6 (app Kotlin, repo `checking-kotlin`) adicionadas em 2026-06-17.
 
 Objetivo deste guia:
 
@@ -28,6 +28,7 @@ Diagnostico real do estado atual dos workflows (auditado via CLI em 2026-06-09):
 | `checking-webapp` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
 | `checking-transport` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
 | `checking_app_flutter` | (sem workflow) | n/a | **NAO** (nao deploya Droplet) |
+| `checking-kotlin` | (sem workflow de deploy) | n/a | **NAO** (app mobile nativo; distribui via Play Store, nao deploya Droplet) |
 
 Ponto que mais confunde:
 
@@ -97,6 +98,27 @@ Conclusao pratica:
 
 1. push publica codigo mobile no GitHub;
 2. nao publica servicos no servidor DigitalOcean.
+
+### 1.7 App Kotlin (`c:\dev\projetos\checkcheck\checking_kotlin`)
+
+Aplicativo mobile nativo (Kotlin + Jetpack Compose). Repositorio proprio: `tscode-com-br/checking-kotlin`.
+
+Topologia (entenda ANTES de commitar):
+
+1. `checking_kotlin` e um repositorio git **independente** (tem o seu proprio `.git`), apenas aninhado dentro da pasta do root.
+2. O root monolito **ignora** `checking_kotlin` (ha uma entrada `checking_kotlin` no `.gitignore` do root). Logo, os arquivos do app NAO aparecem no `git status` do root e NUNCA sao publicados pelo root.
+3. Remotes deste repo:
+   - `origin` -> `https://github.com/tscode-com-br/checking-kotlin.git` (ativo e canonico).
+   - `archived-origin` -> `https://github.com/tscode-com-br/checking_app_kotlin.git` (historico antigo do codebase `com.br.checkingnative`; nao usar para publicar).
+4. Nao possui workflow de deploy: push apenas publica o codigo no GitHub. A distribuicao para usuarios e via Play Store (AAB), processo separado.
+
+Segredos que NUNCA podem ser commitados (ja cobertos pelo `.gitignore` do app):
+
+1. `keystore.properties` (credenciais de assinatura) — ha `keystore.properties.example` versionado como modelo.
+2. `local.properties` (caminho do SDK Android).
+3. `*.jks` / `*.keystore` (keystore de assinatura).
+
+Artefatos que tambem ficam de fora do commit: `app/build/` (saida de build, centenas de MB), `.gradle/`, `.kotlin/`, `/.idea/`.
 
 ---
 
@@ -199,6 +221,71 @@ Importante: isto **nao** publica para `https://tscode.com.br/checking/transport`
 5. git push origin main
 
 Importante: push de Flutter nao faz deploy no Droplet da aplicacao web/API.
+
+## 2.6 App Kotlin (sub-repo checking_kotlin)
+
+Este playbook publica SOMENTE o app Kotlin no repo `checking-kotlin`. Como e um repositorio git proprio, TODOS os comandos rodam DENTRO de `checking_kotlin` (nunca no root).
+
+Setup do remote (ja configurado; refazer so se necessario):
+
+   git remote add origin https://tscode-com-br@github.com/tscode-com-br/checking-kotlin.git
+
+Passo a passo completo:
+
+1. Entrar na pasta do app (que e o repositorio git).
+
+   Set-Location c:\dev\projetos\checkcheck\checking_kotlin
+
+2. Auditar contexto (confirmar que esta no repo certo).
+
+   git status -sb
+   git branch --show-current        # esperado: main
+   git remote -v                    # esperado: origin -> checking-kotlin.git
+
+3. Verificacao de seguranca: garantir que nenhum segredo esta rastreado.
+
+   git ls-files | Select-String -Pattern "keystore.properties$|local.properties$|\.jks$|\.keystore$"
+   # Esperado: VAZIO. Se aparecer algo, PARE e remova do rastreio antes de seguir:
+   #   git rm --cached <arquivo>   (e confirme que esta no .gitignore)
+
+4. Stage da entrega. Preferir caminhos explicitos; `git add -A` so para snapshot completo
+   (o `.gitignore` ja exclui segredos e `app/build/`).
+
+   git add app/src/main/java/br/com/tscode/checking/...
+   # ou, para snapshot completo do app:
+   git add -A
+
+5. Validar o stage (confirmar ausencia de segredos e de artefatos de build).
+
+   git diff --cached --stat
+   git diff --cached --name-only | Select-String -Pattern "keystore.properties$|local.properties$|^app/build/"
+   # Esperado do filtro: VAZIO.
+
+6. (Recomendado) Rodar os testes unitarios antes do push.
+
+   .\gradlew.bat testDebugUnitTest
+
+7. Commitar.
+
+   git commit -m "feat(android): descricao objetiva da mudanca"
+   git rev-parse HEAD
+
+8. Push para o repo do app.
+
+   git push origin main
+   # No primeiro push de um branch novo: git push -u origin main
+
+9. Validar que o remoto recebeu.
+
+   git ls-remote --heads origin     # o SHA deve bater com git rev-parse HEAD
+   git status -sb                    # esperado: main...origin/main, sem 'ahead'
+
+Observacoes importantes:
+
+1. Nunca commitar este app pelo root; o root o ignora de proposito. Sempre commitar de dentro de `checking_kotlin`.
+2. Nao confundir com o app Flutter (`checking_android_new` / repo `checking_app_flutter`): sao apps e repositorios diferentes.
+3. `archived-origin` aponta para o repo antigo (`checking_app_kotlin`); nao usar para publicacao.
+4. Se o repo remoto tiver sido criado com README/licenca pela UI do GitHub, o primeiro push pode ser rejeitado por divergencia. Resolva com `git pull --rebase origin main` e depois `git push origin main`. Evite `--force` salvo certeza absoluta de que nada util sera perdido.
 
 ---
 

@@ -25,6 +25,7 @@ from ..models import (
     FormsSubmission,
     ManagedLocation,
     PendingRegistration,
+    PendingUserRegistration,
     Project,
     TransportAssignment,
     TransportRequest,
@@ -47,6 +48,7 @@ from ..schemas import (
     EmergencyCallResponse,
     AdminAccessRequestCreate,
     AdminActionResponse,
+    AdminUserPendingRow,
     DatabaseDiagnosticsResponse,
     FormsQueueDiagnosticsResponse,
     AdminPasswordVerifyResponse,
@@ -3935,6 +3937,149 @@ def remove_pending(
     )
     db.commit()
     notify_admin_views("pending", "event")
+    return {"ok": True, "id": pending_id}
+
+
+# ── plan003 — new-user approval queue (Pendências de Usuários) ──────────────────────────────────
+
+def _decode_pending_projetos(raw: str | None) -> list[str]:
+    try:
+        items = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(items, list):
+        return []
+    return [str(p) for p in items if p]
+
+
+def _user_pending_in_admin_scope(db: Session, current_admin: User, projetos: list[str]) -> bool:
+    """plan003 decision 2 — scope by project. Super-admin (perfil 9) sees ALL pending rows; any other
+    admin sees a row only when its project(s) intersect the admin's effective (materialized) projects
+    (multi-project admin → union). Mirrors the RFID membership scoping, plus the perfil-9 bypass."""
+    if current_admin.perfil == 9:
+        return True
+    effective = set(resolve_effective_admin_project_names(db, current_admin) or [])
+    if not effective:
+        return False
+    return bool(effective.intersection(projetos))
+
+
+@router.get(
+    "/user-pending",
+    response_model=list[AdminUserPendingRow],
+    dependencies=[Depends(require_full_admin_session)],
+)
+def list_user_pending(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[AdminUserPendingRow]:
+    rows = db.execute(
+        select(PendingUserRegistration).order_by(desc(PendingUserRegistration.requested_at))
+    ).scalars().all()
+    result: list[AdminUserPendingRow] = []
+    for row in rows:
+        projetos = _decode_pending_projetos(row.projetos_json)
+        if not _user_pending_in_admin_scope(db, current_admin, projetos):
+            continue
+        result.append(
+            AdminUserPendingRow(
+                id=row.id,
+                requested_at=row.requested_at,
+                chave=row.chave,
+                nome_completo=row.nome_completo,
+                projetos=projetos,
+                email=row.email,
+            )
+        )
+    return result
+
+
+@router.post("/user-pending/{pending_id}/approve", dependencies=[Depends(require_full_admin_session)])
+def approve_user_pending(
+    pending_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> dict:
+    # Local import avoids router-to-router coupling at module load (web_check never imports admin).
+    from .web_check import create_user_from_registration
+
+    pending = db.get(PendingUserRegistration, pending_id)
+    projetos = _decode_pending_projetos(pending.projetos_json) if pending is not None else []
+    if pending is None or not _user_pending_in_admin_scope(db, current_admin, projetos):
+        raise HTTPException(status_code=404, detail="Pending user registration not found")
+
+    chave = pending.chave
+    nome = pending.nome_completo
+    # Idempotency / race: if the User already exists (e.g. double approve), just drop the pending row.
+    existing_user = db.execute(select(User).where(User.chave == chave)).scalar_one_or_none()
+    if existing_user is not None:
+        db.delete(pending)
+        db.commit()
+        notify_admin_views("register", "event")
+        notify_web_check_data_changed("user-approved")
+        return {"ok": True, "user_id": existing_user.id, "already_existed": True}
+
+    user = create_user_from_registration(
+        db,
+        chave=chave,
+        nome=nome,
+        projetos=projetos,
+        email=pending.email,
+        password_hash=pending.password_hash,
+    )
+    db.delete(pending)
+    log_event(
+        db,
+        idempotency_key=f"user-approve-{uuid4()}",
+        source="admin",
+        action="user_approve",
+        status="done",
+        message="User registration approved via admin",
+        project=user.projeto,
+        request_path=f"/api/admin/user-pending/{pending_id}/approve",
+        http_status=200,
+        submitted_at=now_sgt(),
+        details=(
+            f"updated_by={current_admin.chave}; chave={chave}; nome={nome}; "
+            f"projetos={json.dumps(projetos, ensure_ascii=True)}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("register", "event")
+    notify_web_check_data_changed("user-approved")
+    return {"ok": True, "user_id": user.id}
+
+
+@router.post("/user-pending/{pending_id}/reject", dependencies=[Depends(require_full_admin_session)])
+def reject_user_pending(
+    pending_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> dict:
+    pending = db.get(PendingUserRegistration, pending_id)
+    projetos = _decode_pending_projetos(pending.projetos_json) if pending is not None else []
+    if pending is None or not _user_pending_in_admin_scope(db, current_admin, projetos):
+        raise HTTPException(status_code=404, detail="Pending user registration not found")
+
+    chave = pending.chave
+    db.delete(pending)
+    log_event(
+        db,
+        idempotency_key=f"user-reject-{uuid4()}",
+        source="admin",
+        action="user_reject",
+        status="done",
+        message="User registration rejected via admin",
+        request_path=f"/api/admin/user-pending/{pending_id}/reject",
+        http_status=200,
+        submitted_at=now_sgt(),
+        details=(
+            f"updated_by={current_admin.chave}; chave={chave}; "
+            f"projetos={json.dumps(projetos, ensure_ascii=True)}"
+        ),
+    )
+    db.commit()
+    notify_admin_views("register", "event")
     return {"ok": True, "id": pending_id}
 
 

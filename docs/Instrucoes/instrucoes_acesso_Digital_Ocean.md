@@ -1,6 +1,8 @@
 # Acesso ao projeto na DigitalOcean
 
-Status deste documento: validado em 2026-05-05.
+Status deste documento: validado em 2026-06-09; topologia de deploy e estado de workflows
+reconciliados com o modelo MONOLITO (ver Secao 5.1 e, para o fluxo completo de commit/push/deploy, a **Secao 0** de
+`instrucoes_acesso_repositórios_github.md`).
 
 Este arquivo consolida o que ja esta confirmado para acessar e operar o projeto no provedor DigitalOcean sem expor segredos no repositório.
 
@@ -101,9 +103,41 @@ Consequencia pratica:
 
 O deploy de producao pertence ao repositório principal `checkcheck`.
 
+> **Topologia de serving em producao (verificado em 2026-06-09) — importante para nao deployar pelo caminho errado:**
+>
+> | Rota publica | Quem serve | Como deployar |
+> | --- | --- | --- |
+> | `/checking/user` (Check Web) | monolito `checkcheck-app` (:8000), estatico do repo root | este workflow (`deploy-oceandrive.yml`) |
+> | `/checking/transport` (Transport) | monolito `checkcheck-app` (:8000) | este workflow (`deploy-oceandrive.yml`) |
+> | `/api/...` | monolito `checkcheck-app` (:8000) | este workflow |
+> | `/checking/admin` (Admin v2) | container `admin2-web` (:18084) | sub-repo `checking-admin2` (`git push origin main` em `sistema\app\static\admin2`) — deploy automatico |
+>
+> Os containers `user-web` (:18082) e `transport-web` (:18083) NAO servem o dominio publico (o edge
+> cutover do nginx so foi aplicado ao admin).
+
+**Estado real dos workflows (auditado com `gh workflow list --all` em 2026-06-09):**
+
+| Repo | Workflow | Estado | Efeito operacional hoje |
+| --- | --- | --- | --- |
+| `checking` | `Deploy OceanDrive` | `active` | deploy efetivo de producao (API + Check Web + Transport + infra) |
+| `checking` | `Deploy to DigitalOcean` | `active` | job fica `skipped` por guarda de repositorio (`if: github.repository == 'tscode-com-br/checking-api'`) |
+| `checking-admin2` | `Deploy to DigitalOcean` | `active` | deploy efetivo do Admin v2 |
+| `checking-api` | `Deploy to DigitalOcean` | `disabled_manually` | sem deploy automatico efetivo |
+| `checking-api` | `Deploy OceanDrive*` | `active` | runs `skipped` (workflows nao sao o caminho canonico desse repo) |
+| `checking-webapp` | `Deploy to DigitalOcean` | `disabled_manually` | sem deploy automatico efetivo |
+| `checking-transport` | `Deploy to DigitalOcean` | `disabled_manually` | sem deploy automatico efetivo |
+| `checking_app_flutter` | (sem workflow) | n/a | nao deploya no Droplet |
+
+Consequencia pratica (coerente com `instrucoes_acesso_repositórios_github.md`):
+
+- Modelo vigente = **MONOLITO** para API/Check/Transport: publicar via repo root `checking` (`git push origin main`).
+- Admin publica via sub-repo `checking-admin2`.
+- Push em `checking-api`, `checking-webapp` e `checking-transport` nao e caminho de publicacao efetiva no dominio publico atual.
+
 Workflow relevante:
 
-- `.github/workflows/deploy-oceandrive.yml`
+- `.github/workflows/deploy-oceandrive.yml` (repo `checking`, caminho canonico de producao)
+- `.github/workflows/deploy.yml` em `checking-admin2` (somente Admin v2)
 
 Gatilhos atuais do workflow:
 
@@ -154,10 +188,60 @@ wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do
 Publicamente:
 
 ```powershell
-Invoke-WebRequest https://tscode.com.br/api/health -UseBasicParsing
-curl.exe -k -I https://tscode.com.br/checking/admin
-curl.exe -k -I https://tscode.com.br/checking/user
+curl.exe --ssl-no-revoke -fsS https://tscode.com.br/api/health
+curl.exe --ssl-no-revoke -sI https://tscode.com.br/checking/admin
+curl.exe --ssl-no-revoke -s -o NUL -w "%{http_code}" https://tscode.com.br/checking/user
+curl.exe --ssl-no-revoke -s -o NUL -w "%{http_code}" https://tscode.com.br/checking/transport
 ```
+
+Observacao importante:
+
+- `HEAD` em `/checking/user` e `/checking/transport` pode retornar `405` no edge atual; para essas duas rotas, validar com `GET` (status `200`) e/ou comparar `etag/content-length` dos assets.
+
+### 6.1 Verificacao funcional apos deploy de um frontend (Check Web / Transport)
+
+Health verde nao prova que o estatico mudou. Apos um deploy que alterou Check Web ou Transport,
+confirme que o arquivo SERVIDO ao publico realmente mudou — compare `content-length`/`etag` antes
+e depois, ou procure um marcador unico do seu codigo:
+
+```powershell
+# tamanho/etag do arquivo servido em producao
+curl.exe --ssl-no-revoke -s -D - -o NUL "https://tscode.com.br/checking/user/automatic-activities.js" | Select-String -Pattern "content-length|etag"
+
+# (opcional) confirmar que a imagem do app no host e o seu commit
+wsl bash -c "cp /mnt/c/dev/projetos/checkcheck/deploy/keys/do_checkcheck /tmp/do_ck && chmod 600 /tmp/do_ck && ssh -o StrictHostKeyChecking=no -i /tmp/do_ck root@157.230.35.21 'docker inspect checkcheck-app-1 --format {{.Config.Image}}'; rm -f /tmp/do_ck"
+```
+
+Se o tamanho/etag NAO mudou, a alteracao nao chegou ao publico (provavelmente deployada pelo
+caminho errado — sub-repo em vez de root/oceandrive). Ver `instrucoes_acesso_repositórios_github.md`, Secao 0.
+
+### 6.2 Anotacao "Process completed with exit code 1" no `deploy-oceandrive.yml`
+
+Essa anotacao pode ser **nao-fatal** (vem de um pos-passo, ex.: SSD cleanup) e NAO significa,
+sozinha, que o deploy falhou. Confirme a conclusao real antes de declarar falha:
+
+```powershell
+gh run view <run-id> --repo tscode-com-br/checking --json conclusion --jq .conclusion   # esperado: success
+gh run view <run-id> --repo tscode-com-br/checking --log-failed                          # vazio = nenhum step falhou
+```
+
+Se `conclusion=success` e `--log-failed` vier vazio, o deploy esta OK; trate a anotacao como ruido
+do pos-processamento.
+
+### 6.3 Qual run monitorar para evitar falso diagnostico
+
+No repo `checking`, para cada push em `main`, monitorar **sempre** `Deploy OceanDrive`:
+
+```powershell
+$run = gh run list --repo tscode-com-br/checking --workflow "Deploy OceanDrive" --limit 1 --json databaseId --jq ".[0].databaseId"
+gh run watch $run --repo tscode-com-br/checking --exit-status
+gh run view $run --repo tscode-com-br/checking --json status,conclusion --jq '{status,conclusion}'
+```
+
+Cheque esperado no mesmo commit:
+
+- `Deploy OceanDrive` => `conclusion=success` (deploy efetivo);
+- `Deploy to DigitalOcean` no repo `checking` pode aparecer como `skipped` e isso e comportamento esperado no modelo atual.
 
 ## 7. Regras de seguranca
 

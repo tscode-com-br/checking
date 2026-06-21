@@ -47,6 +47,10 @@
       transportRequestWeekdayOptions,
       transportRequestHistorySection,
       transportRequestHistoryList,
+      transportHistoryOpenButton,
+      transportHistoryPanel,
+      transportHistoryCloseButton,
+      transportHistoryList,
       transportRequestDetailWidget,
       transportRequestDetailBackdrop,
       transportRequestDetailTitle,
@@ -95,7 +99,6 @@
     let transportRealtimeStreamChave = '';
     let transportRealtimeRefreshTimeoutId = null;
     let transportRealtimeRefreshPending = false;
-    const transportRequestProjectionKinds = ['regular', 'weekend', 'extra'];
 
     function getTransportStateLoading() {
       return runtime.getTransportStateLoading();
@@ -239,6 +242,18 @@
 
     function getVisibleTransportRequests() {
       return getTransportRequests();
+    }
+
+    function isActiveTransportRequestItem(requestItem) {
+      return Boolean(
+        requestItem
+        && requestItem.isActive
+        && (requestItem.status === 'pending' || requestItem.status === 'confirmed')
+      );
+    }
+
+    function getActiveTransportRequests() {
+      return getTransportRequests().filter(isActiveTransportRequestItem);
     }
 
     function findTransportRequestById(requestId) {
@@ -715,6 +730,7 @@
       clearTransportInlineStatus();
       transportUiState.requestBuilderKind = requestKind;
       transportUiState.addressEditorOpen = false;
+      transportUiState.historyPanelOpen = false;
       transportUiState.detailRequestId = null;
 
       transportRequestWeekdayInputs.forEach((inputElement) => {
@@ -1245,17 +1261,6 @@
       return weekdaysLabel || '--';
     }
 
-    function getLatestTransportRequestByKind(requestKind) {
-      return getTransportRequests().find((requestItem) => requestItem.requestKind === requestKind) || null;
-    }
-
-    function getTransportRequestProjection() {
-      return transportRequestProjectionKinds.map((requestKind) => ({
-        requestKind,
-        requestItem: getLatestTransportRequestByKind(requestKind),
-      }));
-    }
-
     function formatTransportRequestSummaryStatusLabel(requestItem) {
       if (!requestItem) {
         return translateTransport('statusLabels.available');
@@ -1414,8 +1419,46 @@
       }
 
       transportRequestHistoryList.replaceChildren();
-      getTransportRequestProjection().forEach(({ requestKind, requestItem }) => {
-        transportRequestHistoryList.appendChild(createTransportRequestSummaryCard(requestKind, requestItem));
+      const activeRequests = getActiveTransportRequests();
+      if (activeRequests.length === 0) {
+        const emptyElement = document.createElement('p');
+        emptyElement.className = 'transport-history-empty';
+        emptyElement.textContent = translateTransport('summary.noActiveRequests');
+        transportRequestHistoryList.appendChild(emptyElement);
+        return;
+      }
+
+      activeRequests.forEach((requestItem) => {
+        transportRequestHistoryList.appendChild(createTransportRequestSummaryCard(requestItem.requestKind, requestItem));
+      });
+    }
+
+    function createTransportHistoryCard(requestItem) {
+      const cardElement = createTransportRequestSummaryCard(requestItem.requestKind, requestItem);
+      const actionArea = cardElement.querySelector('.transport-request-summary-actions');
+      if (actionArea) {
+        actionArea.remove();
+      }
+      return cardElement;
+    }
+
+    function renderTransportHistoryPanelList() {
+      if (!transportHistoryList) {
+        return;
+      }
+
+      transportHistoryList.replaceChildren();
+      const requests = getTransportRequests();
+      if (requests.length === 0) {
+        const emptyElement = document.createElement('p');
+        emptyElement.className = 'transport-history-empty';
+        emptyElement.textContent = translateTransport('summary.noRequestRecorded');
+        transportHistoryList.appendChild(emptyElement);
+        return;
+      }
+
+      requests.forEach((requestItem) => {
+        transportHistoryList.appendChild(createTransportHistoryCard(requestItem));
       });
     }
 
@@ -1619,6 +1662,9 @@
 
     function renderTransportScreen() {
       const activeBuilderConfig = getTransportRequestBuilderConfig(transportUiState.requestBuilderKind);
+      const showHistoryPanel = !transportUiState.addressEditorOpen
+        && !activeBuilderConfig
+        && transportUiState.historyPanelOpen;
 
       if (transportAddressSummaryValue) {
         transportAddressSummaryValue.textContent = formatTransportAddressSummary(transportState.endRua, transportState.zip);
@@ -1630,9 +1676,16 @@
       }
 
       if (transportOptionButtons) {
-        const showOptions = !transportUiState.addressEditorOpen;
+        const showOptions = !transportUiState.addressEditorOpen && !showHistoryPanel;
         transportOptionButtons.hidden = !showOptions;
         transportOptionButtons.classList.toggle('is-hidden', !showOptions);
+      }
+
+      if (transportHistoryOpenButton) {
+        const showHistoryButton = !transportUiState.addressEditorOpen && !showHistoryPanel;
+        transportHistoryOpenButton.hidden = !showHistoryButton;
+        transportHistoryOpenButton.classList.toggle('is-hidden', !showHistoryButton);
+        transportHistoryOpenButton.setAttribute('aria-expanded', String(showHistoryPanel));
       }
 
       syncTransportOptionAvailability(transportRegularButton, 'regular');
@@ -1686,8 +1739,21 @@
 
       transportUiState.detailRequestId = null;
 
+      if (transportHistoryPanel) {
+        transportHistoryPanel.hidden = !showHistoryPanel;
+        transportHistoryPanel.classList.toggle('is-hidden', !showHistoryPanel);
+        if (showHistoryPanel) {
+          renderTransportHistoryPanelList();
+        }
+      }
+
+      if (transportHistoryCloseButton) {
+        transportHistoryCloseButton.hidden = !showHistoryPanel;
+        transportHistoryCloseButton.classList.toggle('is-hidden', !showHistoryPanel);
+      }
+
       if (transportRequestHistorySection) {
-        const showHistory = !transportUiState.addressEditorOpen;
+        const showHistory = !transportUiState.addressEditorOpen && !showHistoryPanel;
         transportRequestHistorySection.hidden = !showHistory;
         transportRequestHistorySection.classList.toggle('is-hidden', !showHistory);
         if (showHistory) {
@@ -1733,9 +1799,32 @@
 
     function openTransportAddressEditor() {
       transportUiState.addressEditorOpen = true;
+      transportUiState.historyPanelOpen = false;
       transportUiState.detailRequestId = null;
       syncTransportAddressFormValues();
       renderTransportScreen();
+      realignViewport();
+    }
+
+    function openTransportHistoryPanel() {
+      transportUiState.addressEditorOpen = false;
+      transportUiState.requestBuilderKind = null;
+      transportUiState.historyPanelOpen = true;
+      transportUiState.detailRequestId = null;
+      clearTransportInlineStatus();
+      renderTransportScreen();
+      syncFormControlStates();
+      realignViewport();
+    }
+
+    function closeTransportHistoryPanel() {
+      if (!transportUiState.historyPanelOpen) {
+        return;
+      }
+
+      transportUiState.historyPanelOpen = false;
+      renderTransportScreen();
+      syncFormControlStates();
       realignViewport();
     }
 
@@ -1753,6 +1842,7 @@
       transportScreenBackdrop.classList.add('is-hidden');
       transportUiState.addressEditorOpen = false;
       transportUiState.requestBuilderKind = null;
+      transportUiState.historyPanelOpen = false;
       transportUiState.detailRequestId = null;
       resetTransportRequestSwipeState();
       clearTransportInlineStatus();
@@ -1772,6 +1862,7 @@
 
       transportUiState.addressEditorOpen = false;
       transportUiState.requestBuilderKind = null;
+      transportUiState.historyPanelOpen = false;
       transportUiState.detailRequestId = null;
       loadPersistedTransportRequestLocalState(getActiveChave());
       resetTransportRequestSwipeState();
@@ -2002,6 +2093,7 @@
       transportState.requests = [];
       transportUiState.addressEditorOpen = false;
       transportUiState.requestBuilderKind = null;
+      transportUiState.historyPanelOpen = false;
       transportUiState.selectedRequestId = null;
       transportUiState.detailRequestId = null;
       resetTransportRequestLocalState();
@@ -2032,6 +2124,7 @@
       markTransportRequestAsRealized,
       normalizeTransportRequestStatusValue,
       openTransportAddressEditor,
+      openTransportHistoryPanel,
       openTransportScreen,
       persistTransportRequestLocalState,
       postTransportPayload,
@@ -2042,6 +2135,7 @@
       resetTransportState,
       scheduleTransportAutoRefresh,
       selectTransportRequest,
+      closeTransportHistoryPanel,
       startTransportRealtimeUpdates,
       stopTransportRealtimeUpdates,
       submitTransportAddress,

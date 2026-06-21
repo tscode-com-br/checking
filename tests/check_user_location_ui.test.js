@@ -287,6 +287,14 @@ function createLocationHelperHarness(overrides = {}) {
 function createManualLocationFallbackHarness() {
   const context = {
     Boolean,
+    clientState: {
+      shouldOfferManualLocationSelection({ automaticActivitiesEnabled, gpsLocationPermissionGranted, accuracyTooLowFallbackActive }) {
+        if (!automaticActivitiesEnabled) {
+          return true;
+        }
+        return !gpsLocationPermissionGranted || Boolean(accuracyTooLowFallbackActive);
+      },
+    },
     syncProjectVisibility: () => {},
   };
 
@@ -294,8 +302,10 @@ function createManualLocationFallbackHarness() {
     'let gpsLocationPermissionGranted = false;',
     'let currentLocationMatch = null;',
     'let currentLocationResolutionStatus = null;',
+    'const automaticActivitiesToggle = { checked: true };',
     extractFunctionSource(checkScript, 'resolveMatchedOperationalLocation'),
     extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'isAutomaticActivitiesEnabled'),
     extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
     extractFunctionSource(checkScript, 'setResolvedLocation'),
     `globalThis.__manualLocationFallbackTestExports = {
@@ -362,6 +372,14 @@ function createManualOverrideUiHarness() {
     Array,
     Boolean,
     Object,
+    clientState: {
+      shouldOfferManualLocationSelection({ automaticActivitiesEnabled, gpsLocationPermissionGranted, accuracyTooLowFallbackActive }) {
+        if (!automaticActivitiesEnabled) {
+          return true;
+        }
+        return !gpsLocationPermissionGranted || Boolean(accuracyTooLowFallbackActive);
+      },
+    },
     __createElement: createElement,
     __selectedValues: [],
     isUserInteractionLocked: () => false,
@@ -492,6 +510,14 @@ function createManualLocationSelectHarness() {
     Array,
     Boolean,
     Object,
+    clientState: {
+      shouldOfferManualLocationSelection({ automaticActivitiesEnabled, gpsLocationPermissionGranted, accuracyTooLowFallbackActive }) {
+        if (!automaticActivitiesEnabled) {
+          return true;
+        }
+        return !gpsLocationPermissionGranted || Boolean(accuracyTooLowFallbackActive);
+      },
+    },
     __createSelectElement: createSelectElement,
     document: {
       createElement() {
@@ -507,12 +533,16 @@ function createManualLocationSelectHarness() {
   const moduleSource = [
     'let gpsLocationPermissionGranted = false;',
     'let currentLocationResolutionStatus = null;',
+    'let currentLocationMatch = null;',
     'let availableLocations = [];',
+    'const automaticActivitiesToggle = { checked: true };',
     'const manualLocationSelect = globalThis.__createSelectElement();',
     'const locationValue = { textContent: "" };',
     extractConstSource(checkScript, 'defaultManualLocationLabel'),
     extractConstSource(checkScript, 'accuracyFallbackManualLocationLabel'),
+    extractFunctionSource(checkScript, 'resolveMatchedOperationalLocation'),
     extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'isAutomaticActivitiesEnabled'),
     extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
     extractFunctionSource(checkScript, 'resolveManualLocationOptions'),
     extractFunctionSource(checkScript, 'resolveManualLocationDefaultForCurrentProject'),
@@ -528,6 +558,9 @@ function createManualLocationSelectHarness() {
       },
       setCurrentLocationResolutionStatus(value) {
         currentLocationResolutionStatus = value;
+      },
+      setCurrentLocationMatch(value) {
+        currentLocationMatch = value;
       },
       setAvailableLocations(values) {
         availableLocations = Array.from(values || []);
@@ -558,6 +591,14 @@ function createManualLocationSelectHarness() {
 function createSubmittedLocationHarness() {
   const context = {
     Boolean,
+    clientState: {
+      shouldOfferManualLocationSelection({ automaticActivitiesEnabled, gpsLocationPermissionGranted, accuracyTooLowFallbackActive }) {
+        if (!automaticActivitiesEnabled) {
+          return true;
+        }
+        return !gpsLocationPermissionGranted || Boolean(accuracyTooLowFallbackActive);
+      },
+    },
     automaticActivities: {
       AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION: 'Localização não Cadastrada',
     },
@@ -568,9 +609,11 @@ function createSubmittedLocationHarness() {
     'let gpsLocationPermissionGranted = false;',
     'let currentLocationResolutionStatus = null;',
     'let currentLocationMatch = null;',
+    'const automaticActivitiesToggle = { checked: true };',
     'const manualLocationSelect = { value: "" };',
     extractFunctionSource(checkScript, 'resolveMatchedOperationalLocation'),
     extractFunctionSource(checkScript, 'isAccuracyTooLowManualFallbackActive'),
+    extractFunctionSource(checkScript, 'isAutomaticActivitiesEnabled'),
     extractFunctionSource(checkScript, 'shouldAllowManualLocationSelection'),
     extractFunctionSource(checkScript, 'resolveSubmittedLocationValue'),
     extractFunctionSource(checkScript, 'isSyntheticFailureLocationValue'),
@@ -606,6 +649,7 @@ function createAutomaticSubmitHarness(overrides = {}) {
     Error,
     Promise,
     JSON,
+    window: overrides.window || { AccidentMode: null },
     __calls: {
       fetch: [],
       applyHistoryState: [],
@@ -855,7 +899,12 @@ function createRegistrationSubmissionHarness() {
       closeRegistrationDialog: 0,
       dismissActiveKeyboard: 0,
       loadAuthenticatedApplication: [],
+      runFirstRegistrationAutomaticActivitySequence: [],
       syncFormControlStates: 0,
+    },
+    __firstRegistrationAutomaticResult: {
+      performed: false,
+      requiresManualAction: false,
     },
     __createInput: (name, value = '') => ({
       value,
@@ -929,6 +978,10 @@ function createRegistrationSubmissionHarness() {
       context.__calls.loadAuthenticatedApplication.push({ chave, options });
       return true;
     },
+    runFirstRegistrationAutomaticActivitySequence: async () => {
+      context.__calls.runFirstRegistrationAutomaticActivitySequence.push({});
+      return context.__firstRegistrationAutomaticResult;
+    },
     syncFormControlStates: () => {
       context.__calls.syncFormControlStates += 1;
     },
@@ -966,6 +1019,9 @@ function createRegistrationSubmissionHarness() {
       setSelectedProjects(values) {
         globalThis.__selectedProjects = Array.from(values || []);
       },
+      setFirstRegistrationAutomaticResult(value) {
+        globalThis.__firstRegistrationAutomaticResult = value;
+      },
       getSnapshot() {
         return {
           preventDefault: globalThis.__calls.preventDefault,
@@ -980,6 +1036,8 @@ function createRegistrationSubmissionHarness() {
           closeRegistrationDialog: globalThis.__calls.closeRegistrationDialog,
           dismissActiveKeyboard: globalThis.__calls.dismissActiveKeyboard,
           loadAuthenticatedApplication: globalThis.__calls.loadAuthenticatedApplication.slice(),
+          runFirstRegistrationAutomaticActivitySequence:
+            globalThis.__calls.runFirstRegistrationAutomaticActivitySequence.slice(),
           syncFormControlStates: globalThis.__calls.syncFormControlStates,
           currentUserProjectValues,
           lastCommittedProjectValue,
@@ -997,6 +1055,70 @@ function createRegistrationSubmissionHarness() {
   vm.runInNewContext(moduleSource, context, { filename: 'check-registration-submission.vm.js' });
   return {
     helpers: context.__registrationSubmissionTestExports,
+    context,
+  };
+}
+
+function createFirstRegistrationAutomaticActivityHarness(overrides = {}) {
+  const context = {
+    Number,
+    Boolean,
+    Promise,
+    Error,
+    __locationPayload: overrides.locationPayload || null,
+    __calls: {
+      resolveCurrentLocation: [],
+      submitAutomaticActivity: [],
+      statuses: [],
+    },
+    chaveInput: {
+      value: overrides.chave || 'a123',
+    },
+    sanitizeChave: (value) => String(value || '').trim().toUpperCase(),
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    resolveCurrentLocation: overrides.resolveCurrentLocation || (async (options) => {
+      context.__calls.resolveCurrentLocation.push(options);
+      return context.__locationPayload;
+    }),
+    submitAutomaticActivity: overrides.submitAutomaticActivity || (async (payload) => {
+      context.__calls.submitAutomaticActivity.push(payload);
+      return {
+        ok: true,
+      };
+    }),
+    setStatus: (message, tone) => {
+      context.__calls.statuses.push({ message, tone });
+    },
+    localizeKnownApiMessage: (message) => message,
+    automaticActivities: {
+      AUTOMATIC_CHECKOUT_LOCATION: 'Fora do Local de Trabalho',
+    },
+    isCheckoutZoneLocationName: (value) => String(value || '').trim() === 'Zona de CheckOut',
+  };
+
+  const moduleSource = [
+    extractFunctionSource(checkScript, 'resolveFirstRegistrationAutomaticActivity'),
+    `async ${extractFunctionSource(checkScript, 'runFirstRegistrationAutomaticActivitySequence')}`,
+    `globalThis.__firstRegistrationAutomaticActivityTestExports = {
+      async run() {
+        return runFirstRegistrationAutomaticActivitySequence();
+      },
+      setLocationPayload(payload) {
+        globalThis.__locationPayload = payload;
+      },
+      getSnapshot() {
+        return {
+          resolveCurrentLocation: globalThis.__calls.resolveCurrentLocation.slice(),
+          submitAutomaticActivity: globalThis.__calls.submitAutomaticActivity.slice(),
+          statuses: globalThis.__calls.statuses.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-first-registration-automatic-activity.vm.js' });
+  return {
+    helpers: context.__firstRegistrationAutomaticActivityTestExports,
     context,
   };
 }
@@ -1083,6 +1205,9 @@ function createAuthenticatedApplicationHarness() {
     Promise,
     Boolean,
     String,
+    window: {
+      AccidentMode: null,
+    },
     __calls: [],
     chaveInput: { value: '' },
     sanitizeChave: (value) => String(value || '').trim().toUpperCase(),
@@ -1491,6 +1616,7 @@ function createManualRefreshAutomaticActivityHarness(overrides = {}) {
   const context = {
     Boolean,
     Promise,
+    window: overrides.window || { AccidentMode: null },
     automaticCheckoutLocation: checkAutomaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
     automaticActivities: checkAutomaticActivities,
     gpsLocationPermissionGranted: overrides.gpsLocationPermissionGranted !== undefined
@@ -1617,6 +1743,7 @@ function createLifecycleAutomaticActivityHarness(overrides = {}) {
   const context = {
     Boolean,
     Promise,
+    window: overrides.window || { AccidentMode: null },
     Date: overrides.Date || {
       now: () => 10_000,
     },
@@ -1758,6 +1885,7 @@ function createHistoryRefreshHarness(overrides = {}) {
     AbortController,
     Promise,
     Boolean,
+    window: overrides.window || { AccidentMode: null },
     Date: {
       now: () => currentNow,
     },
@@ -1859,6 +1987,7 @@ function createSubmitGuardLocationHarness(overrides = {}) {
       queryLocationPermissionState: 0,
       captureAndResolveLocation: [],
     },
+    isAutomaticActivitiesEnabled: overrides.isAutomaticActivitiesEnabled || (() => true),
     isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
     getActiveChave: overrides.getActiveChave || (() => 'A123'),
     sanitizeChave: overrides.sanitizeChave || ((value) => String(value || '').trim().toUpperCase()),
@@ -2399,8 +2528,8 @@ test('check controller opens and closes the Settings dialog with focus restorati
   assert.equal(snapshot.queryLocationPermissionState, 1);
   assert.equal(snapshot.syncFormControlStates, 1);
   assert.equal(snapshot.realignViewport, 1);
-  assert.equal(snapshot.settingsLanguageSelectFocus, 1);
-  assert.equal(snapshot.settingsDialogBackButtonFocus, 0);
+  assert.equal(snapshot.settingsLanguageSelectFocus, 0);
+  assert.equal(snapshot.settingsDialogBackButtonFocus, 1);
 
   helpers.closeSettingsDialog();
   snapshot = toPlainValue(helpers.getSnapshot());
@@ -2629,7 +2758,7 @@ test('check controller keeps automatic mode blocked outside the accuracy fallbac
   assert.match(checkScript, /local: submittedLocal/);
   assert.match(checkScript, /setGpsLocationPermissionGranted\(value\) \{[\s\S]*syncProjectVisibility\(\);/);
   assert.match(checkScript, /automaticActivitiesToggle\.addEventListener\('change', \(\) => \{[\s\S]*syncProjectVisibility\(\);[\s\S]*syncManualLocationControl\(\);/);
-  assert.match(checkScript, /if \(gpsLocationPermissionGranted && isApplicationUnlocked\(\)\) \{[\s\S]*runLifecycleUpdateSequence\(\{[\s\S]*ignoreCooldown: true,[\s\S]*triggerSource: 'automatic_activities_disable',[\s\S]*\}\);/);
+  assert.match(checkScript, /if \(automaticActivitiesToggle\.checked\) \{[\s\S]*runAutomaticActivitiesEnableSequence\(\);[\s\S]*return;[\s\S]*setStatus\(t\('status\.automaticActivitiesDisabled'\), 'success'\);/);
   assert.match(checkScript, /if \(isAutomaticActivitiesEnabled\(\) && !isAccuracyTooLowManualFallbackActive\(\)\) \{[\s\S]*Desative Atividades Automáticas para registrar manualmente\./);
 });
 
@@ -2988,6 +3117,7 @@ test('check controller submits plural projects in the registration dialog and sy
     chave: 'WU13',
     options: { showReadyMessage: false },
   }]);
+  assert.equal(snapshot.runFirstRegistrationAutomaticActivitySequence.length, 1);
   assert.equal(snapshot.chaveInputValue, 'WU13');
   assert.equal(snapshot.passwordInputValue, 'cad456');
   assert.equal(snapshot.authState.authenticated, true);
@@ -2998,6 +3128,112 @@ test('check controller submits plural projects in the registration dialog and sy
     message: 'Cadastro concluído com sucesso.',
     tone: 'success',
   });
+});
+
+test('check controller first-registration sequence requires manual action with the exact red message when location sharing is unavailable', async () => {
+  const { helpers } = createFirstRegistrationAutomaticActivityHarness({
+    locationPayload: null,
+  });
+
+  const result = toPlainValue(await helpers.run());
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.deepStrictEqual(result, {
+    performed: false,
+    action: null,
+    local: null,
+    requiresManualAction: true,
+  });
+  assert.deepStrictEqual(snapshot.resolveCurrentLocation, [{
+    interactive: true,
+    forceRefresh: true,
+    measurementTrigger: 'first_registration_auto',
+    showDetectingState: true,
+    showCompletionStatus: false,
+    suppressNotification: true,
+  }]);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+  assert.deepStrictEqual(snapshot.statuses.at(-1), {
+    message: 'Realize o seu check-in ou check-out manualmente.',
+    tone: 'error',
+  });
+});
+
+test('check controller first-registration sequence submits automatic checkout in checkout zone', async () => {
+  const { helpers } = createFirstRegistrationAutomaticActivityHarness({
+    locationPayload: {
+      status: 'matched',
+      resolved_local: 'Zona de CheckOut',
+    },
+  });
+
+  const result = toPlainValue(await helpers.run());
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.deepStrictEqual(result, {
+    performed: true,
+    action: 'checkout',
+    local: 'Zona de CheckOut',
+    requiresManualAction: false,
+  });
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkout',
+    local: 'Zona de CheckOut',
+    suppressStatus: false,
+    allowEmptyLocation: false,
+  }]);
+});
+
+test('check controller first-registration sequence submits automatic checkout when outside the minimum checkout distance', async () => {
+  const { helpers } = createFirstRegistrationAutomaticActivityHarness({
+    locationPayload: {
+      status: 'not_in_known_location',
+      nearest_workplace_distance_meters: 2600,
+      minimum_checkout_distance_meters: 2000,
+    },
+  });
+
+  const result = toPlainValue(await helpers.run());
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.deepStrictEqual(result, {
+    performed: true,
+    action: 'checkout',
+    local: 'Fora do Local de Trabalho',
+    requiresManualAction: false,
+  });
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkout',
+    local: 'Fora do Local de Trabalho',
+    suppressStatus: false,
+    allowEmptyLocation: false,
+  }]);
+});
+
+test('check controller first-registration sequence submits automatic check-in near a known workplace even if location is not registered', async () => {
+  const { helpers } = createFirstRegistrationAutomaticActivityHarness({
+    locationPayload: {
+      status: 'not_in_known_location',
+      nearest_workplace_distance_meters: 180,
+      minimum_checkout_distance_meters: 2000,
+    },
+  });
+
+  const result = toPlainValue(await helpers.run());
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.deepStrictEqual(result, {
+    performed: true,
+    action: 'checkin',
+    local: null,
+    requiresManualAction: false,
+  });
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: null,
+    suppressStatus: false,
+    allowEmptyLocation: true,
+  }]);
 });
 
 test('check controller stores mixed zone interval from the web locations catalog, falls back during partial rollout, and clears it on reset paths', async () => {
@@ -3841,7 +4077,7 @@ test('check watched GPS acquisition refreshes progress for each valid sample whi
 test('check controller keeps lifecycle GPS acquisition wired through the expected settings handoff', () => {
   assert.match(checkScript, /function requestCurrentPositionForPlan\(capturePlan, measurementSession, options\) \{[\s\S]*capturePlan\.strategy !== 'watch_window'[\s\S]*navigator\.geolocation\.watchPosition/);
   assert.match(checkScript, /async function updateLocationForLifecycleSequence\(options\) \{[\s\S]*showDetectingState: settings\.showDetectingState !== false,[\s\S]*\}/);
-  assert.match(checkScript, /const locationPayload = await updateLocationForLifecycleSequence\(\{[\s\S]*cacheWindowMs: settings\.locationCacheWindowMs \?\? lifecycleDataReuseWindowMs,[\s\S]*\}\);/);
+  assert.match(checkScript, /locationPayload = await updateLocationForLifecycleSequence\(\{[\s\S]*cacheWindowMs: settings\.locationCacheWindowMs \?\? lifecycleDataReuseWindowMs,[\s\S]*\}\);/);
   assert.match(checkScript, /const position = await requestCurrentPositionForPlan\(capturePlan, measurementSession, \{[\s\S]*showDetectingState: settings\.showDetectingState,[\s\S]*\}\);/);
 });
 

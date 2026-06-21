@@ -432,6 +432,7 @@ def create_user_sync_event(
         projeto=projeto or user.projeto,
         event_time=event_time,
         ontime=ontime,
+        local=local,
     )
     return sync_event
 

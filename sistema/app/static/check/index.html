@@ -492,7 +492,9 @@
                 <span aria-hidden="true">←</span>
               </button>
               <h2 id="transportScreenTitle">Agendamento de Transporte</h2>
-              <span class="transport-screen-header-spacer" aria-hidden="true"></span>
+              <div class="transport-screen-header-actions">
+                <button id="transportHistoryOpenButton" type="button" class="transport-screen-history-button">Histórico</button>
+              </div>
             </div>
 
             <div class="transport-address-summary-row">
@@ -613,8 +615,17 @@
                 </form>
               </section>
 
+              <section id="transportHistoryPanel" class="transport-history-panel is-hidden" hidden aria-labelledby="transportHistoryPanelTitle">
+                <div class="transport-history-panel-header">
+                  <p id="transportHistoryPanelTitle" class="transport-history-panel-title">Histórico de Solicitações</p>
+                  <button id="transportHistoryCloseButton" type="button" class="secondary-button transport-history-close-button">Fechar</button>
+                </div>
+
+                <div id="transportHistoryList" class="transport-history-list"></div>
+              </section>
+
               <section id="transportRequestHistorySection" class="transport-request-history-section is-hidden" hidden>
-                <p class="transport-request-history-label">Última solicitação por modalidade</p>
+                <p class="transport-request-history-label">Solicitações ativas</p>
 
                 <div id="transportRequestHistoryList" class="transport-request-history-list"></div>
               </section>
@@ -800,11 +811,11 @@
 
     <script src="automatic-activities.js?v=5"></script>
     <script src="web-client-state.js?v=5"></script>
-    <script src="i18n-dictionaries.js?v=5"></script>
+    <script src="i18n-dictionaries.js?v=6"></script>
     <script src="i18n.js?v=5"></script>
     <script src="transport-screen.js?v=5"></script>
     <script src="accident-camera.js?v=5"></script>
     <script src="accident.js?v=5"></script>
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=6"></script>
   </body>
 </html>

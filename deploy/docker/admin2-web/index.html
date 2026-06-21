@@ -68,7 +68,6 @@
         <button data-tab="cadastro">Cadastro</button>
         <button data-tab="relatorios">Relatórios</button>
         <button data-tab="eventos">Eventos</button>
-        <button data-tab="banco-dados">Banco de Dados</button>
       </nav>
       <div id="topNotificationBar" class="top-notification-bar is-empty" role="status" aria-live="polite" aria-atomic="true"></div>
     </header>
@@ -371,9 +370,22 @@
 
         <!-- ── Tab: Cadastro ─────────────────────────────────────────── -->
         <section id="tab-cadastro" class="tab cadastro-tab">
+          <article class="cadastro-section-panel cadastro-section-panel--pending" data-cadastro-section="pendencias-usuarios">
+            <div class="section-header">
+              <h2>Pendências de Usuários</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="responsive-table cadastro-table cadastro-pending-table">
+                <thead>
+                  <tr><th>Data</th><th>Chave</th><th>Nome Completo</th><th>Projetos</th><th>E-Mail</th><th>Ações</th></tr>
+                </thead>
+                <tbody id="userPendingBody"></tbody>
+              </table>
+            </div>
+          </article>
           <article class="cadastro-section-panel cadastro-section-panel--pending" data-cadastro-section="pendencias">
             <div class="section-header">
-              <h2>Cadastro de Pendências</h2>
+              <h2>Pendências de RFID</h2>
             </div>
             <div class="table-wrap">
               <table class="responsive-table cadastro-table cadastro-pending-table">
@@ -584,29 +596,14 @@
         <!-- ── Tab: Eventos ──────────────────────────────────────────── -->
         <section id="tab-eventos" class="tab">
           <div class="section-header">
-            <h2>Eventos</h2>
+            <div class="section-title-block">
+              <h2>Eventos</h2>
+              <p class="section-header-copy">Histórico persistido de todos os eventos. Filtre, ordene e pagine os registros.</p>
+            </div>
             <div class="section-header-actions">
               <button id="refreshEventsButton" type="button" class="secondary-button">Atualizar</button>
               <button id="openEventArchivesButton" type="button" class="secondary-button">Logs Salvos</button>
               <button id="clearEvents" type="button">Limpar</button>
-            </div>
-          </div>
-          <div class="table-wrap events-wrap">
-            <table class="responsive-table events-table">
-              <thead>
-                <tr><th>ID</th><th data-events-primary-header-label>Horário</th><th>Origem</th><th>Ação</th><th>Status</th><th>Device</th><th>Local</th><th>RFID</th><th>Chave</th><th>Projeto</th><th>Fuso horário</th><th>Ontime</th><th>HTTP</th><th>Tentativas</th><th>Detalhes</th></tr>
-              </thead>
-              <tbody id="eventsBody"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- ── Tab: Banco de Dados ───────────────────────────────────── -->
-        <section id="tab-banco-dados" class="tab">
-          <div class="section-header">
-            <div class="section-title-block">
-              <h2>Banco de Dados de Eventos</h2>
-              <p class="section-header-copy">Histórico persistido de todos os eventos. Filtre, ordene e pagine os registros.</p>
             </div>
           </div>
 

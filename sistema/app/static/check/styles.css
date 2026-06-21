@@ -1293,7 +1293,7 @@ header {
 
 .transport-screen-header {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
@@ -1308,9 +1308,25 @@ header {
   color: #0f172a;
 }
 
-.transport-screen-header-spacer {
-  width: 40px;
-  height: 40px;
+.transport-screen-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.transport-screen-history-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f766e;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 
 .transport-screen-back-button {
@@ -1580,6 +1596,57 @@ header {
   min-height: auto;
   max-width: 100%;
   overflow-x: hidden;
+}
+
+.transport-history-panel {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.transport-history-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.transport-history-panel-title {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0f766e;
+}
+
+.transport-history-close-button {
+  min-height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.transport-history-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  align-content: start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.transport-history-empty {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(241, 245, 249, 0.9);
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .transport-request-history-label {
@@ -2232,6 +2299,10 @@ header {
     gap: 8px;
   }
 
+  .transport-history-list {
+    gap: 8px;
+  }
+
   .transport-request-summary-card {
     padding: 12px 14px;
     min-height: 110px;
@@ -2297,16 +2368,22 @@ header {
   }
 
   .transport-screen-header {
-    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
     gap: 6px;
   }
 
-  .transport-screen-back-button,
-  .transport-screen-header-spacer {
+  .transport-screen-back-button {
     width: 34px;
     min-width: 34px;
     min-height: 34px;
     height: 34px;
+  }
+
+  .transport-screen-history-button,
+  .transport-history-close-button {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 0.68rem;
   }
 
   .transport-screen-header h2 {
@@ -2515,6 +2592,10 @@ header {
   .transport-request-history-list {
     padding-right: 0;
   }
+
+  .transport-history-list {
+    padding-right: 0;
+  }
 }
 
 @media (min-width: 640px) {
@@ -2708,6 +2789,12 @@ header {
     gap: 12px;
     align-content: start;
     padding-right: 0;
+  }
+
+  .transport-history-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-content: start;
   }
 
   .transport-request-summary-card {

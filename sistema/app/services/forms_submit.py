@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
@@ -91,8 +92,14 @@ def submit_forms_event(
         event_time=normalized_event_time,
         timezone_name=project_timezone_name,
     )
-    # GATE — verificar se Forms está habilitado para o projeto
-    if not is_forms_enabled_for_project(db, projeto=user.projeto):
+    # Change E (P7.1): the user's registered projects. Single-project keeps the exact legacy path
+    # (one submission, gated on user.projeto); multi-project enqueues one submission PER project,
+    # each gated by its own forms_enabled inside _enqueue_forms_per_project_and_record.
+    project_candidates = list_user_project_names(db, user)
+    single_project = len(project_candidates) <= 1
+    # GATE — verificar se Forms está habilitado para o projeto. Single-project only: for multi-project
+    # the gate is per project (so an enabled project still submits even if user.projeto is disabled).
+    if single_project and not is_forms_enabled_for_project(db, projeto=user.projeto):
         should_queue_forms = False
         skip_reason = "forms_disabled_for_project"
     apply_user_state(
@@ -164,45 +171,81 @@ def submit_forms_event(
             state=state,
         )
 
-    try:
-        project_candidates = list_user_project_names(db, user)
-        enqueue_forms_submission(
-            db,
-            request_id=client_event_id,
-            rfid=user.rfid,
-            action=action,
-            chave=user.chave,
-            projeto=user.projeto,
-            device_id=channel.device_id,
-            local=resolved_local,
-            event_time=normalized_event_time,
-            request_path=channel.request_path,
-            project_candidates=project_candidates,
-            ontime=ontime,
-        )
-    except IntegrityError:
-        db.rollback()
-        state = build_mobile_sync_state(db, chave=chave)
-        return MobileSubmitResponse(
-            ok=True,
-            duplicate=True,
-            queued_forms=False,
-            message=f"{channel.event_label} already submitted",
-            state=state,
-        )
+    if single_project:
+        try:
+            enqueue_forms_submission(
+                db,
+                request_id=client_event_id,
+                rfid=user.rfid,
+                action=action,
+                chave=user.chave,
+                projeto=user.projeto,
+                device_id=channel.device_id,
+                local=resolved_local,
+                event_time=normalized_event_time,
+                request_path=channel.request_path,
+                project_candidates=project_candidates,
+                ontime=ontime,
+            )
+        except IntegrityError:
+            db.rollback()
+            state = build_mobile_sync_state(db, chave=chave)
+            return MobileSubmitResponse(
+                ok=True,
+                duplicate=True,
+                queued_forms=False,
+                message=f"{channel.event_label} already submitted",
+                state=state,
+            )
 
-    create_user_sync_event(
-        db,
-        user=user,
-        source=channel.user_sync_source,
-        action=action,
-        event_time=normalized_event_time,
-        projeto=user.projeto,
-        local=resolved_local,
-        ontime=ontime,
-        source_request_id=client_event_id,
-        device_id=channel.device_id,
-    )
+        create_user_sync_event(
+            db,
+            user=user,
+            source=channel.user_sync_source,
+            action=action,
+            event_time=normalized_event_time,
+            projeto=user.projeto,
+            local=resolved_local,
+            ontime=ontime,
+            source_request_id=client_event_id,
+            device_id=channel.device_id,
+        )
+    else:
+        # Change E (P7.1): one FormsSubmission + sync/history row PER registered project.
+        try:
+            recorded_projects = _enqueue_forms_per_project_and_record(
+                db,
+                user=user,
+                action=action,
+                channel=channel,
+                client_event_id=client_event_id,
+                resolved_local=resolved_local,
+                normalized_event_time=normalized_event_time,
+                ontime=ontime,
+                project_candidates=project_candidates,
+            )
+        except IntegrityError:
+            db.rollback()
+            state = build_mobile_sync_state(db, chave=chave)
+            return MobileSubmitResponse(
+                ok=True,
+                duplicate=True,
+                queued_forms=False,
+                message=f"{channel.event_label} already submitted",
+                state=state,
+            )
+        if recorded_projects == 0:
+            # Full replay — every project was already recorded for this event. Mirror the
+            # single-project top-of-function short-circuit (no second log_event/commit).
+            db.rollback()
+            state = build_mobile_sync_state(db, chave=chave)
+            return MobileSubmitResponse(
+                ok=True,
+                duplicate=True,
+                queued_forms=False,
+                message=f"{channel.event_label} already submitted",
+                state=state,
+            )
     message = f"{channel.event_label} accepted and queued for Forms submission"
     log_event(
         db,
@@ -234,3 +277,91 @@ def submit_forms_event(
         message=message,
         state=state,
     )
+
+
+def _short_project_token(project: str) -> str:
+    """Stable, bounded per-project suffix for FormsSubmission.request_id (String(80), unique).
+
+    Project names are String(120), so the raw name cannot be embedded without risking overflow; a
+    12-char sha1 prefix keeps `{client_event_id}:{token}` well under 80 chars while staying
+    deterministic across retries (the readable project lives in the row's own `projeto` column).
+    """
+    return hashlib.sha1(project.strip().encode("utf-8")).hexdigest()[:12]
+
+
+def _enqueue_forms_per_project_and_record(
+    db: Session,
+    *,
+    user: User,
+    action: str,
+    channel: FormsSubmitChannel,
+    client_event_id: str,
+    resolved_local: str | None,
+    normalized_event_time: datetime,
+    ontime: bool,
+    project_candidates: list[str],
+) -> int:
+    """Change E (P7.1): enqueue one FormsSubmission + record one sync/history row PER registered
+    project, each keyed by a per-project request_id so retries stay idempotent and projects don't
+    collide on the unique request_id. A project with forms disabled is recorded as a per-project skip
+    (diagnostics stay accurate) but still gets its sync/history row. Per-project idempotency is
+    enforced by checking the UserSyncEvent before writing, so a replay records each project once.
+
+    Returns the number of projects newly recorded this call (0 → full replay, all already recorded).
+    """
+    recorded = 0
+    for project in project_candidates:
+        per_project_request_id = f"{client_event_id}:{_short_project_token(project)}"
+        already = db.execute(
+            select(UserSyncEvent).where(
+                UserSyncEvent.source == channel.user_sync_source,
+                UserSyncEvent.source_request_id == per_project_request_id,
+            )
+        ).scalar_one_or_none()
+        if already is not None:
+            continue  # retry-safe: this project was already recorded for this event
+        if is_forms_enabled_for_project(db, projeto=project):
+            enqueue_forms_submission(
+                db,
+                request_id=per_project_request_id,
+                rfid=user.rfid,
+                action=action,
+                chave=user.chave,
+                projeto=project,
+                device_id=channel.device_id,
+                local=resolved_local,
+                event_time=normalized_event_time,
+                request_path=channel.request_path,
+                project_candidates=[project],
+                ontime=ontime,
+            )
+        else:
+            record_forms_submission_skip(
+                db,
+                request_id=per_project_request_id,
+                rfid=user.rfid,
+                action=action,
+                chave=user.chave,
+                projeto=project,
+                device_id=channel.device_id,
+                local=resolved_local,
+                event_time=normalized_event_time,
+                request_path=channel.request_path,
+                project_candidates=[project],
+                ontime=ontime,
+                skip_reason="forms_disabled_for_project",
+            )
+        create_user_sync_event(
+            db,
+            user=user,
+            source=channel.user_sync_source,
+            action=action,
+            event_time=normalized_event_time,
+            projeto=project,
+            local=resolved_local,
+            ontime=ontime,
+            source_request_id=per_project_request_id,
+            device_id=channel.device_id,
+        )
+        recorded += 1
+    return recorded

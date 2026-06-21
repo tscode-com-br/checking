@@ -108,6 +108,11 @@
   const transportRequestWeekdayOptions = Array.from(document.querySelectorAll('[data-transport-weekday-option]'));
   const transportRequestHistorySection = document.getElementById('transportRequestHistorySection');
   const transportRequestHistoryList = document.getElementById('transportRequestHistoryList');
+  const transportHistoryOpenButton = document.getElementById('transportHistoryOpenButton');
+  const transportHistoryPanel = document.getElementById('transportHistoryPanel');
+  const transportHistoryPanelTitle = document.getElementById('transportHistoryPanelTitle');
+  const transportHistoryCloseButton = document.getElementById('transportHistoryCloseButton');
+  const transportHistoryList = document.getElementById('transportHistoryList');
   const transportRequestDetailWidget = document.getElementById('transportRequestDetailWidget');
   const transportRequestDetailBackdrop = document.getElementById('transportRequestDetailBackdrop');
   const transportRequestDetailTitle = document.getElementById('transportRequestDetailWidgetTitle');
@@ -164,6 +169,8 @@
     transportRequestTimeInput,
     transportRequestBuilderBackButton,
     transportRequestBuilderSubmitButton,
+    transportHistoryOpenButton,
+    transportHistoryCloseButton,
     ...transportRequestWeekdayInputs,
     transportScreenHeaderBackButton,
   ].filter(Boolean);
@@ -344,6 +351,8 @@
     statusResolved: false,
     statusLoading: false,
     statusErrored: false,
+    // plan003 — true when this chave has a self-registration awaiting admin approval (no User yet).
+    pendingApproval: false,
   };
 
   const pendingAuthFieldRestoreState = {
@@ -378,6 +387,7 @@
   const transportUiState = {
     addressEditorOpen: false,
     requestBuilderKind: null,
+    historyPanelOpen: false,
     selectedRequestId: null,
     detailRequestId: null,
     inlineMessage: '',
@@ -1071,9 +1081,17 @@
       : authState.statusErrored;
     const found = settings.found !== undefined ? Boolean(settings.found) : authState.found;
     const hasPassword = settings.hasPassword !== undefined ? Boolean(settings.hasPassword) : authState.hasPassword;
+    const pendingApproval = settings.pendingApproval !== undefined
+      ? Boolean(settings.pendingApproval)
+      : authState.pendingApproval;
 
     if (normalizedChave.length !== 4 || !statusResolved || statusErrored) {
       return '';
+    }
+
+    // plan003 — a pending registration is a distinct state: do NOT re-open the registration form.
+    if (pendingApproval) {
+      return `${normalizedChave}:pending-approval`;
     }
 
     if (!found) {
@@ -1139,6 +1157,38 @@
     }
 
     return false;
+  }
+
+  // plan003 — while a self-registration is awaiting admin approval, re-check /auth/status periodically.
+  // When it flips to found+has_password (approved), the normal persisted-password auto-verify logs the
+  // user in and runs the engine; when it clears (rejected) the loop stops (handled in apply...Payload).
+  const PENDING_APPROVAL_POLL_MS = 15000;
+  let pendingApprovalPollTimeoutId = null;
+
+  function clearPendingApprovalPolling() {
+    if (pendingApprovalPollTimeoutId) {
+      window.clearTimeout(pendingApprovalPollTimeoutId);
+      pendingApprovalPollTimeoutId = null;
+    }
+  }
+
+  function schedulePendingApprovalPolling() {
+    clearPendingApprovalPolling();
+    if (!authState.pendingApproval) {
+      return;
+    }
+    const chave = sanitizeChave(authState.chave);
+    if (chave.length !== 4) {
+      return;
+    }
+    pendingApprovalPollTimeoutId = window.setTimeout(() => {
+      pendingApprovalPollTimeoutId = null;
+      if (!authState.pendingApproval) {
+        return;
+      }
+      // applyAuthenticationStatusPayload re-arms this loop while still pending.
+      void refreshAuthenticationStatus(chave, { schedulePasswordVerification: true });
+    }, PENDING_APPROVAL_POLL_MS);
   }
 
   function canOpenPasswordChangeFromSettings() {
@@ -1249,7 +1299,8 @@
     const authenticated = isApplicationUnlocked();
     const assistanceModeActive = isPasswordActionAssistanceModeActive();
     highlightedAuthFields.forEach((fieldElement) => {
-      fieldElement.classList.toggle('auth-field-pending', !authenticated && assistanceModeActive);
+      // plan003 — awaiting approval also shows the orange (pending) highlight.
+      fieldElement.classList.toggle('auth-field-pending', !authenticated && (assistanceModeActive || authState.pendingApproval));
       fieldElement.classList.toggle('auth-field-authenticated', authenticated);
     });
   }
@@ -1359,6 +1410,9 @@
     const transportHistoryLabel = transportRequestHistorySection
       ? transportRequestHistorySection.querySelector('.transport-request-history-label')
       : null;
+    const transportHistoryOpenLabel = transportHistoryOpenButton;
+    const transportHistoryPanelHeading = transportHistoryPanelTitle;
+    const transportHistoryCloseLabel = transportHistoryCloseButton;
     const transportAddressLabel = transportAddressInput
       ? transportAddressInput.closest('label') && transportAddressInput.closest('label').querySelector('span')
       : null;
@@ -1424,6 +1478,9 @@
     applyTextContent(transportTitle, t('transport.title'));
     applyTextContent(transportOptionInstruction, t('transport.optionInstruction'));
     applyTextContent(transportHistoryLabel, t('transport.historyTitle'));
+    applyTextContent(transportHistoryOpenLabel, t('transport.historyButtonLabel'));
+    applyTextContent(transportHistoryPanelHeading, t('transport.historyPanelTitle'));
+    applyTextContent(transportHistoryCloseLabel, t('transport.historyCloseButton'));
     applyTextContent(transportAddressLabel, t('transport.addressLabel'));
     applyTextContent(transportZipLabel, t('transport.zipLabel'));
     applyTextContent(transportWeekdayGroupLabel, t('transport.requestBuilder.selectDaysLabel'));
@@ -1461,6 +1518,9 @@
     }
     if (transportScreenHeaderBackButton) {
       transportScreenHeaderBackButton.setAttribute('aria-label', t('transport.backToMainAria'));
+    }
+    if (transportHistoryOpenButton) {
+      transportHistoryOpenButton.setAttribute('aria-label', t('transport.historyButtonLabel'));
     }
     if (transportAddressToggleButton) {
       transportAddressToggleButton.textContent = t('transport.addressToggleLabel');
@@ -1843,6 +1903,18 @@
         const transportOptionBlocked = control.dataset.transportOptionDisabled === 'true';
         control.disabled = transportBusy || transportOptionBlocked;
         control.setAttribute('aria-disabled', String(transportBusy || transportOptionBlocked));
+        return;
+      }
+
+      if (control === transportHistoryOpenButton) {
+        control.disabled = transportBusy;
+        control.setAttribute('aria-disabled', String(transportBusy));
+        return;
+      }
+
+      if (control === transportHistoryCloseButton) {
+        control.disabled = false;
+        control.setAttribute('aria-disabled', 'false');
         return;
       }
 
@@ -4291,6 +4363,9 @@
       transportAddressInput,
       transportZipInput,
       transportOptionButtons,
+      transportRegularButton,
+      transportWeekendButton,
+      transportExtraButton,
       transportRequestBuilderPanel,
       transportRequestBuilderSubtitle,
       transportRequestWeekdayGroup,
@@ -4298,10 +4373,15 @@
       transportRequestTimeGroup,
       transportRequestDateInput,
       transportRequestTimeInput,
+      transportRequestBuilderSubmitButton,
       transportRequestWeekdayInputs,
       transportRequestWeekdayOptions,
       transportRequestHistorySection,
       transportRequestHistoryList,
+      transportHistoryOpenButton,
+      transportHistoryPanel,
+      transportHistoryCloseButton,
+      transportHistoryList,
       transportRequestDetailWidget,
       transportRequestDetailBackdrop,
       transportRequestDetailTitle,
@@ -4364,6 +4444,8 @@
   closeTransportRequestDetailWidget = transportScreenModule.closeTransportRequestDetailWidget;
   openTransportScreen = transportScreenModule.openTransportScreen;
   closeTransportScreen = transportScreenModule.closeTransportScreen;
+  const openTransportHistoryPanel = transportScreenModule.openTransportHistoryPanel;
+  const closeTransportHistoryPanel = transportScreenModule.closeTransportHistoryPanel;
   fetchTransportStatePayload = transportScreenModule.fetchTransportStatePayload;
   postTransportPayload = transportScreenModule.postTransportPayload;
   loadTransportState = transportScreenModule.loadTransportState;
@@ -4383,6 +4465,7 @@
     authState.chave = normalizedChave;
     authState.found = Boolean(payload && payload.found);
     authState.hasPassword = Boolean(payload && payload.has_password);
+    authState.pendingApproval = Boolean(payload && payload.pending_approval);
     authState.passwordVerified = sessionAuthenticated && typedPasswordStillVerified;
     authState.authenticated = sessionAuthenticated && authState.passwordVerified;
     authState.statusResolved = normalizedChave.length === 4;
@@ -4394,7 +4477,13 @@
 
     if (!authState.authenticated) {
       clearProtectedClientState();
-      setAuthenticationPrompt(payload && payload.message);
+      if (authState.pendingApproval) {
+        // plan003 — awaiting admin approval: red notification bar, no under-field prompt.
+        setAuthenticationPrompt();
+        setStatus(t('auth.awaitingApproval'), 'error');
+      } else {
+        setAuthenticationPrompt(payload && payload.message);
+      }
     }
 
     syncAuthenticationAssistanceAutoOpenState({
@@ -4403,9 +4492,17 @@
       hasPassword: authState.hasPassword,
       statusResolved: authState.statusResolved,
       statusErrored: authState.statusErrored,
+      pendingApproval: authState.pendingApproval,
     });
     syncFormControlStates();
     maybeAutoOpenAuthenticationAssistanceDialog();
+
+    // plan003 — keep polling /auth/status while pending; stop once approved/rejected.
+    if (authState.pendingApproval) {
+      schedulePendingApprovalPolling();
+    } else {
+      clearPendingApprovalPolling();
+    }
   }
 
   async function fetchAuthenticationStatus(chave, signal) {
@@ -4681,6 +4778,8 @@
       authState.chave = '';
       authState.found = false;
       authState.hasPassword = false;
+      authState.pendingApproval = false;
+      clearPendingApprovalPolling();
       clearTypedPasswordAuthentication();
       authState.statusResolved = false;
       authState.statusErrored = false;
@@ -4698,6 +4797,7 @@
     authState.statusLoading = true;
     authState.found = false;
     authState.hasPassword = false;
+    authState.pendingApproval = false;
     authState.statusErrored = false;
     clearTypedPasswordAuthentication();
     syncFormControlStates();
@@ -5070,6 +5170,49 @@
         throw createRequestError(response, payload);
       }
 
+      // plan003 — system-wide approval gate (decision 1). The server decides via `status`.
+      if (payload.status === 'pending' || payload.pending_approval) {
+        // Awaiting admin approval: NOT authenticated. Keep chave+password locally for the
+        // auto-login that fires once /auth/status flips to found (approved).
+        chaveInput.value = normalizedChave;
+        passwordInput.value = password;
+        writePersistedChave(normalizedChave);
+        persistPasswordForChave(normalizedChave, password);
+        authState.chave = normalizedChave;
+        authState.found = false;
+        authState.hasPassword = false;
+        authState.authenticated = false;
+        authState.passwordVerified = false;
+        authState.pendingApproval = true;
+        authState.statusResolved = true;
+        authState.statusErrored = false;
+        resetAuthenticationAssistanceAutoOpenState();
+        syncAuthenticationAssistanceAutoOpenState({
+          chave: normalizedChave,
+          found: false,
+          hasPassword: false,
+          statusResolved: true,
+          statusErrored: false,
+          pendingApproval: true,
+        });
+        closeRegistrationDialog();
+        dismissActiveKeyboard();
+        syncAuthenticationFieldHighlights();
+        syncFormControlStates();
+        setStatus(t('auth.awaitingApproval'), 'error');
+        schedulePendingApprovalPolling();
+        return;
+      }
+
+      if (payload.status === 'queue_full' || payload.queue_full) {
+        chaveInput.value = normalizedChave;
+        closeRegistrationDialog();
+        dismissActiveKeyboard();
+        syncFormControlStates();
+        setStatus(t('auth.registrationQueueFull'), 'error');
+        return;
+      }
+
       chaveInput.value = normalizedChave;
       passwordInput.value = password;
       if (Array.isArray(payload.projects) && payload.projects.length && payload.active_project) {
@@ -5093,10 +5236,13 @@
       dismissActiveKeyboard();
       syncFormControlStates();
       await loadAuthenticatedApplication(normalizedChave, { showReadyMessage: false });
-      setStatus(
-        typeof t === 'function' ? t('registrationDialog.successStatus') : 'Cadastro concluído com sucesso.',
-        'success'
-      );
+      const firstRegistrationAutomaticResult = await runFirstRegistrationAutomaticActivitySequence();
+      if (!firstRegistrationAutomaticResult.performed && !firstRegistrationAutomaticResult.requiresManualAction) {
+        setStatus(
+          typeof t === 'function' ? t('registrationDialog.successStatus') : 'Cadastro concluído com sucesso.',
+          'success'
+        );
+      }
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -5916,16 +6062,141 @@
     return isCheckoutZoneLocationName(resolvedLocal) ? 'checkout' : 'checkin';
   }
 
-  async function submitAutomaticActivity({ action, local, suppressStatus }) {
+  function resolveFirstRegistrationAutomaticActivity(locationPayload) {
+    if (!locationPayload || typeof locationPayload !== 'object') {
+      return null;
+    }
+
+    const status = typeof locationPayload.status === 'string'
+      ? locationPayload.status
+      : '';
+    const resolvedLocal = typeof locationPayload.resolved_local === 'string'
+      ? locationPayload.resolved_local.trim()
+      : '';
+
+    if (status === 'outside_workplace') {
+      return {
+        action: 'checkout',
+        local: automaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
+      };
+    }
+
+    if (status === 'matched') {
+      if (!resolvedLocal) {
+        return null;
+      }
+
+      return {
+        action: isCheckoutZoneLocationName(resolvedLocal) ? 'checkout' : 'checkin',
+        local: resolvedLocal,
+      };
+    }
+
+    if (status === 'not_in_known_location') {
+      const nearestWorkplaceDistanceMeters = Number(locationPayload.nearest_workplace_distance_meters);
+      const minimumCheckoutDistanceMeters = Number(locationPayload.minimum_checkout_distance_meters);
+      if (
+        Number.isFinite(nearestWorkplaceDistanceMeters)
+        && Number.isFinite(minimumCheckoutDistanceMeters)
+        && nearestWorkplaceDistanceMeters > minimumCheckoutDistanceMeters
+      ) {
+        return {
+          action: 'checkout',
+          local: automaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
+        };
+      }
+
+      return {
+        action: 'checkin',
+        local: null,
+      };
+    }
+
+    return null;
+  }
+
+  async function runFirstRegistrationAutomaticActivitySequence() {
+    const noActivityResult = {
+      performed: false,
+      action: null,
+      local: null,
+      requiresManualAction: false,
+    };
+    const requiresManualActionResult = {
+      ...noActivityResult,
+      requiresManualAction: true,
+    };
+    const manualActionStatusMessage = 'Realize o seu check-in ou check-out manualmente.';
+
+    if (!isApplicationUnlocked()) {
+      return noActivityResult;
+    }
+
+    try {
+      const locationPayload = await resolveCurrentLocation({
+        interactive: true,
+        forceRefresh: true,
+        measurementTrigger: 'first_registration_auto',
+        showDetectingState: true,
+        showCompletionStatus: false,
+        suppressNotification: true,
+      });
+
+      if (!locationPayload) {
+        setStatus(manualActionStatusMessage, 'error');
+        return requiresManualActionResult;
+      }
+
+      const automaticActivity = resolveFirstRegistrationAutomaticActivity(locationPayload);
+      if (!automaticActivity) {
+        setStatus(manualActionStatusMessage, 'error');
+        return requiresManualActionResult;
+      }
+
+      const automaticPayload = await submitAutomaticActivity({
+        action: automaticActivity.action,
+        local: automaticActivity.local,
+        suppressStatus: false,
+        allowEmptyLocation: automaticActivity.action === 'checkin' && !automaticActivity.local,
+      });
+      if (!automaticPayload) {
+        setStatus(manualActionStatusMessage, 'error');
+        return requiresManualActionResult;
+      }
+
+      return {
+        performed: true,
+        action: automaticActivity.action,
+        local: automaticActivity.local,
+        requiresManualAction: false,
+      };
+    } catch (error) {
+      if (error && error.isAuthExpired) {
+        return noActivityResult;
+      }
+
+      setStatus(
+        error instanceof Error
+          ? (typeof localizeKnownApiMessage === 'function' ? localizeKnownApiMessage(error.message) : error.message)
+          : manualActionStatusMessage,
+        'error'
+      );
+      return requiresManualActionResult;
+    }
+  }
+
+  async function submitAutomaticActivity({ action, local, suppressStatus, allowEmptyLocation }) {
     const chave = sanitizeChave(chaveInput.value);
     if (!isApplicationUnlocked(chave)) {
       throw new Error(t('auth.enterPasswordPrompt'));
     }
 
+    const allowNullLocation = Boolean(allowEmptyLocation);
     const submittedLocal = resolveFinalSubmittableLocationValue(local);
-    if (!submittedLocal) {
+    if (!submittedLocal && !allowNullLocation) {
       return null;
     }
+    const submittedPayloadLocal = submittedLocal || null;
 
     const response = await fetch(submitEndpoint, {
       method: 'POST',
@@ -5936,7 +6207,7 @@
         chave,
         projeto: resolveCommittedProjectValue(),
         action,
-        local: submittedLocal,
+        local: submittedPayloadLocal,
         informe: getSelectedInformeValue(),
         event_time: new Date().toISOString(),
         client_event_id: buildClientEventId(),
@@ -5961,7 +6232,7 @@
         action === 'checkin'
           ? t('status.automaticCheckinCompleted')
           : (
-              isCheckoutZoneLocationName(submittedLocal)
+              isCheckoutZoneLocationName(submittedPayloadLocal)
                 ? t('status.automaticCheckoutCompleted')
                 : t('status.automaticCheckoutCompleted')
             ),
@@ -7479,6 +7750,14 @@
     transportExtraButton.addEventListener('click', () => {
       initializeTransportRequestBuilder('extra');
     });
+  }
+
+  if (transportHistoryOpenButton) {
+    transportHistoryOpenButton.addEventListener('click', openTransportHistoryPanel);
+  }
+
+  if (transportHistoryCloseButton) {
+    transportHistoryCloseButton.addEventListener('click', closeTransportHistoryPanel);
   }
 
   if (transportRequestBuilderBackButton) {

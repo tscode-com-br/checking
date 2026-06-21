@@ -2,13 +2,14 @@ import asyncio
 import dataclasses
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..database import SessionLocal, get_db
-from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User, UserProjectMembership
+from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, PendingUserRegistration, Project, TransportRequest, User, UserProjectMembership
 from ..schemas import (
     AccidentLocationOption,
     AccidentProjectOption,
@@ -21,6 +22,8 @@ from ..schemas import (
     WebAccidentStateResponse,
     WebAccidentUserReport,
     AccidentVideoUploadResponse,
+    WebCheckHistoryItem,
+    WebCheckHistoryListResponse,
     WebCheckHistoryResponse,
     WebGeofenceCircle,
     WebGeofencesResponse,
@@ -103,6 +106,7 @@ from ..services.user_projects import (
     resolve_user_active_project,
     user_belongs_to_project,
 )
+from ..services.checking_history import list_checking_history
 from ..services.user_sync import (
     build_web_check_history_state,
     ensure_web_user,
@@ -167,13 +171,24 @@ def _validate_public_chave(value: str) -> str:
     return normalized
 
 
-def _reject_non_operational_web_submit_local(local: str | None) -> None:
+def _reject_non_operational_web_submit_local(
+    local: str | None,
+    *,
+    is_android_client: bool = False,
+    action: str | None = None,
+) -> None:
     normalized_local = " ".join(str(local or "").strip().split())
-    if normalized_local in WEB_NON_OPERATIONAL_SUBMIT_LOCALS:
-        raise HTTPException(
-            status_code=422,
-            detail="O estado 'Localização não Cadastrada' nao e um local operacional valido para submit pela Web.",
-        )
+    if normalized_local not in WEB_NON_OPERATIONAL_SUBMIT_LOCALS:
+        return
+    # Change A enabler (plan002 P5.1): the Kotlin app (X-Client: checking-android) may CHECK IN at
+    # "Localização não Cadastrada" — a real continuation state when the user is near but not inside any
+    # registered area. The browser web app, and ANY check-out, still 422 (the deliberate invariant).
+    if is_android_client and str(action or "").strip().lower() == "checkin":
+        return
+    raise HTTPException(
+        status_code=422,
+        detail="O estado 'Localização não Cadastrada' nao e um local operacional valido para submit pela Web.",
+    )
 
 
 def _get_web_session_chave(request: Request) -> str | None:
@@ -204,7 +219,9 @@ def _raise_unknown_web_user() -> None:
     raise HTTPException(status_code=404, detail=UNKNOWN_WEB_USER_DETAIL)
 
 
-def _build_web_password_status(*, request: Request, user: User | None, chave: str) -> WebPasswordStatusResponse:
+def _build_web_password_status(
+    *, request: Request, user: User | None, chave: str, pending_approval: bool = False,
+) -> WebPasswordStatusResponse:
     has_password = bool(user and user.senha)
     authenticated = has_password and _get_web_session_chave(request) == chave
 
@@ -215,6 +232,7 @@ def _build_web_password_status(*, request: Request, user: User | None, chave: st
             has_password=False,
             authenticated=False,
             message="Digite sua chave e crie uma senha.",
+            pending_approval=pending_approval,
         )
 
     if not authenticated:
@@ -382,7 +400,18 @@ def get_web_password_status(
 ) -> WebPasswordStatusResponse:
     normalized = _validate_public_chave(chave)
     user = find_user_by_chave(db, normalized)
-    status_payload = _build_web_password_status(request=request, user=user, chave=normalized)
+    # plan003 — when there is no User, this chave may have a self-registration awaiting approval.
+    pending_approval = False
+    if user is None:
+        pending_approval = (
+            db.execute(
+                select(PendingUserRegistration.id).where(PendingUserRegistration.chave == normalized)
+            ).first()
+            is not None
+        )
+    status_payload = _build_web_password_status(
+        request=request, user=user, chave=normalized, pending_approval=pending_approval,
+    )
     if not status_payload.authenticated and _get_web_session_chave(request) == normalized:
         _clear_web_session_chave(request)
     return status_payload
@@ -414,32 +443,33 @@ def register_web_password(
     )
 
 
-@router.post("/auth/register-user", response_model=WebUserSelfRegistrationResponse, status_code=201)
-def register_web_user(
-    payload: WebUserSelfRegistrationRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> WebUserSelfRegistrationResponse:
-    normalized = _validate_public_chave(payload.chave)
-    project_names = _normalize_known_web_user_projects(db, payload.projetos)
-    existing_user = find_user_by_chave(db, normalized)
-    if existing_user is not None:
-        raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
-    pending_request = db.execute(select(AdminAccessRequest).where(AdminAccessRequest.chave == normalized)).scalar_one_or_none()
-    if pending_request is not None:
-        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave")
+def create_user_from_registration(
+    db: Session,
+    *,
+    chave: str,
+    nome: str,
+    projetos: list[str],
+    email: str | None,
+    password_hash: str | None,
+) -> User:
+    """Create a ``User`` + project memberships from a (self-)registration.
 
+    Shared by the legacy self-registration path and (plan003) the admin
+    approval path. Adds + flushes the user and replaces its memberships;
+    the **caller** owns commit / session / notify. Byte-identical to the
+    original inline construction in ``register_web_user``.
+    """
     user = User(
         rfid=None,
-        chave=normalized,
-        senha=hash_password(payload.senha),
-        nome=payload.nome,
-        projeto=project_names[0],
+        chave=chave,
+        senha=password_hash,
+        nome=nome,
+        projeto=projetos[0],
         workplace=None,
         placa=None,
         end_rua=None,
         zip=None,
-        email=payload.email,
+        email=email,
         local=None,
         checkin=None,
         time=None,
@@ -448,18 +478,105 @@ def register_web_user(
     )
     db.add(user)
     db.flush()
-    replace_user_project_memberships(db, user, project_names)
+    replace_user_project_memberships(db, user, projetos)
+    return user
+
+
+def _registration_queue_full_response() -> WebUserSelfRegistrationResponse:
+    return WebUserSelfRegistrationResponse(
+        ok=False,
+        authenticated=False,
+        has_password=False,
+        message="Fila de cadastro cheia. Informe ao administrador do sistema.",
+        status="queue_full",
+        pending_approval=False,
+        queue_full=True,
+    )
+
+
+@router.post("/auth/register-user", response_model=WebUserSelfRegistrationResponse, status_code=201)
+def register_web_user(
+    payload: WebUserSelfRegistrationRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> WebUserSelfRegistrationResponse:
+    normalized = _validate_public_chave(payload.chave)
+    project_names = _normalize_known_web_user_projects(db, payload.projetos)
+    if find_user_by_chave(db, normalized) is not None:
+        raise HTTPException(status_code=409, detail="Esta chave ja esta cadastrada")
+    existing_pending = db.execute(
+        select(PendingUserRegistration.id).where(PendingUserRegistration.chave == normalized)
+    ).first()
+    if existing_pending is not None:
+        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave")
+    admin_access_request = db.execute(
+        select(AdminAccessRequest).where(AdminAccessRequest.chave == normalized)
+    ).scalar_one_or_none()
+    if admin_access_request is not None:
+        raise HTTPException(status_code=409, detail="Ja existe uma solicitacao pendente para essa chave")
+
+    # plan003 — system-wide approval gate (decision 1). Flag OFF restores the legacy
+    # create-and-authenticate behavior exactly (instant rollback without a deploy).
+    if not settings.check_user_approval_required:
+        user = create_user_from_registration(
+            db,
+            chave=normalized,
+            nome=payload.nome,
+            projetos=project_names,
+            email=payload.email,
+            password_hash=hash_password(payload.senha),
+        )
+        db.commit()
+        _set_web_session_chave(request, normalized)
+        notify_admin_data_changed("admin")
+        notify_admin_data_changed("register")
+        return WebUserSelfRegistrationResponse(
+            ok=True,
+            authenticated=True,
+            has_password=True,
+            message="Cadastro concluido com sucesso.",
+            status="registered",
+            projects=project_names,
+            active_project=user.projeto,
+        )
+
+    # Gate ON: queue the registration for admin approval — NO User, NO session.
+    limit = settings.pending_user_registration_limit
+    if db.execute(select(func.count()).select_from(PendingUserRegistration)).scalar_one() >= limit:
+        response.status_code = 200
+        return _registration_queue_full_response()
+
+    db.add(
+        PendingUserRegistration(
+            chave=normalized,
+            nome_completo=payload.nome,
+            projetos_json=json.dumps(project_names),
+            email=payload.email,
+            password_hash=hash_password(payload.senha),
+            client=(request.headers.get("X-Client") or "web")[:16],
+            requested_at=now_sgt(),
+        )
+    )
+    db.flush()
+    # Cap race guard: if a concurrent insert pushed us past the limit, undo and report queue-full.
+    if db.execute(select(func.count()).select_from(PendingUserRegistration)).scalar_one() > limit:
+        db.rollback()
+        response.status_code = 200
+        return _registration_queue_full_response()
     db.commit()
-    _set_web_session_chave(request, normalized)
     notify_admin_data_changed("admin")
     notify_admin_data_changed("register")
+    response.status_code = 202
     return WebUserSelfRegistrationResponse(
         ok=True,
-        authenticated=True,
-        has_password=True,
-        message="Cadastro concluido com sucesso.",
+        authenticated=False,
+        has_password=False,
+        message="Cadastro recebido. Aguardando aprovacao do administrador.",
+        status="pending",
+        pending_approval=True,
         projects=project_names,
-        active_project=user.projeto,
+        active_project="",
     )
 
 
@@ -772,6 +889,28 @@ def get_web_check_state(
     return build_web_check_history_state(db, chave=_validate_public_chave(chave))
 
 
+@router.get("/check/history", response_model=WebCheckHistoryListResponse)
+def get_web_check_history(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> WebCheckHistoryListResponse:
+    # Read-only, additive (change D). Same access model as /check/state: a matching authenticated
+    # web session. Returns the user's full check-in/out history (newest-first) including location.
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    items = [
+        WebCheckHistoryItem(
+            action="checkin" if row.atividade == "check-in" else "checkout",
+            projeto=row.projeto,
+            local=row.local,
+            time=row.time,
+            informe=row.informe,
+        )
+        for row in list_checking_history(db, chave=user.chave)
+    ]
+    return WebCheckHistoryListResponse(items=items)
+
+
 @router.get("/check/locations", response_model=WebLocationOptionsResponse)
 def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> WebLocationOptionsResponse:
     user = _require_authenticated_web_user(request, db)
@@ -915,12 +1054,13 @@ def submit_web_check(
 ) -> WebCheckSubmitResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
     payload.projeto = _require_known_user_membership_project(db, user, payload.projeto)
-    _reject_non_operational_web_submit_local(payload.local)
-    channel = (
-        WEB_CHECK_ANDROID_CHANNEL
-        if request.headers.get("X-Client") == CHECKING_ANDROID_CLIENT
-        else WEB_CHECK_CHANNEL
+    is_android_client = request.headers.get("X-Client") == CHECKING_ANDROID_CLIENT
+    _reject_non_operational_web_submit_local(
+        payload.local,
+        is_android_client=is_android_client,
+        action=payload.action,
     )
+    channel = WEB_CHECK_ANDROID_CHANNEL if is_android_client else WEB_CHECK_CHANNEL
     response = submit_forms_event(
         db,
         chave=payload.chave,

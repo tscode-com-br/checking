@@ -3831,6 +3831,9 @@ class WebPasswordStatusResponse(BaseModel):
     has_password: bool
     authenticated: bool
     message: str
+    # plan003 — true when this chave has a self-registration awaiting admin approval (no User yet).
+    # Additive; defaults False so existing clients are unaffected.
+    pending_approval: bool = False
 
 
 class WebPasswordRegisterRequest(BaseModel):
@@ -3973,8 +3976,22 @@ class WebPasswordActionResponse(BaseModel):
 
 
 class WebUserSelfRegistrationResponse(WebPasswordActionResponse):
-    projects: list[str] = Field(min_length=1)
-    active_project: str = Field(min_length=2, max_length=120)
+    # plan003 — `status` is the source of truth for the client; "registered" keeps the legacy shape
+    # (authenticated + projects/active_project filled). "pending"/"queue_full" carry no active project.
+    status: Literal["registered", "pending", "queue_full"] = "registered"
+    pending_approval: bool = False
+    queue_full: bool = False
+    projects: list[str] = Field(default_factory=list)
+    active_project: str = ""
+
+
+class AdminUserPendingRow(BaseModel):
+    id: int
+    requested_at: datetime
+    chave: str
+    nome_completo: str
+    projetos: list[str]
+    email: str | None = None
 
 
 class WebTransportRequestItemResponse(BaseModel):
@@ -4164,6 +4181,20 @@ class WebCheckHistoryResponse(BaseModel):
     last_checkin_at: datetime | None = None
     last_checkout_at: datetime | None = None
     transport_enabled: bool = True
+
+
+class WebCheckHistoryItem(BaseModel):
+    # One row of the per-user check-in/out history (change D). `action` is the normalized
+    # "checkin"/"checkout" mapped from CheckingHistory.atividade ("check-in"/"check-out").
+    action: Literal["checkin", "checkout"]
+    projeto: str
+    local: str | None = None
+    time: datetime
+    informe: str
+
+
+class WebCheckHistoryListResponse(BaseModel):
+    items: list[WebCheckHistoryItem] = []
 
 
 class WebLocationOptionsResponse(BaseModel):

@@ -1,0 +1,46 @@
+Como rodar o app Kotlin (checking_kotlin) no emulador
+======================================================
+
+Pré-requisito: emulador Android instalado e visível via ADB.
+
+1. Abrir terminal no VS Code e navegar até o projeto Kotlin:
+
+   cd C:\dev\projetos\checkcheck\checking_kotlin
+
+2. Confirmar que o emulador está conectado:
+
+   adb devices
+
+   Deve aparecer algo como: emulator-5554   device
+
+3. Compilar e instalar o app no emulador:
+
+   .\gradlew :app:installDebug
+
+4. Iniciar o app no emulador:
+
+   adb shell am start -n com.br.checking.debug/br.com.tscode.checking.MainActivity
+
+
+Como reiniciar o app Kotlin (checking_kotlin) no emulador
+==========================================================
+
+.\gradlew :app:installDebug
+adb shell am force-stop com.br.checking.debug
+adb shell am start -n com.br.checking.debug/br.com.tscode.checking.MainActivity
+
+
+
+Observações
+-----------
+- O build de debug aponta para a API de produção: https://tscode.com.br
+- O applicationId do debug é com.br.checking.debug (sufixo .debug)
+- Se o build falhar com erro de SSL/plugin não encontrado, verificar se o
+  daemon Gradle está usando o JDK correto. O arquivo
+  gradle/gradle-daemon-jvm.properties deve ter:
+
+    toolchainVendor=MICROSOFT
+    toolchainVersion=17
+
+  O JAVA_HOME deve apontar para C:\Program Files\Microsoft\jdk-17.0.18.8-hotspot
+  Rodar .\gradlew --stop antes de tentar novamente se trocar o JDK.

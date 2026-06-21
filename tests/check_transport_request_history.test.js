@@ -25,28 +25,36 @@ const checkCss = fs.readFileSync(
 
 test('transport request state still persists local realized ids by chave for the fixed projection', () => {
   assert.match(checkApp, /checking\.web\.transport\.local-state\.by-chave/);
-  assert.match(checkApp, /realized_request_ids/);
-  assert.match(checkApp, /function persistTransportRequestLocalState\(chave\)/);
+  assert.match(transportScreen, /realized_request_ids/);
+  assert.match(transportScreen, /function persistTransportRequestLocalState\(chave\)/);
 });
 
 test('transport request state still normalizes API realized status back to confirmed for local handling', () => {
-  assert.match(checkApp, /function normalizeTransportRequestStatusValue\(value\)/);
-  assert.match(checkApp, /return normalizedStatus === 'realized' \? 'confirmed' : normalizedStatus;/);
+  assert.match(transportScreen, /function normalizeTransportRequestStatusValue\(value\)/);
+  assert.match(transportScreen, /return normalizedStatus === 'realized' \? 'confirmed' : normalizedStatus;/);
 });
 
 test('transport request state still treats inactive requests as cancelled in the webapp UI', () => {
-  assert.match(checkApp, /if \(!isActive && normalizedStatus !== 'realized'\) \{[\s\S]*normalizedStatus = 'cancelled';[\s\S]*\}/);
+  assert.match(transportScreen, /if \(!isActive && normalizedStatus !== 'realized'\) \{[\s\S]*normalizedStatus = 'cancelled';[\s\S]*\}/);
 });
 
-test('transport screen projects the latest request per modality instead of rendering the old history list', () => {
-  assert.match(transportScreen, /const transportRequestProjectionKinds = \['regular', 'weekend', 'extra'\];/);
-  assert.match(transportScreen, /function getLatestTransportRequestByKind\(requestKind\)/);
+test('transport screen renders only active requests in the main section', () => {
+  assert.match(transportScreen, /function getActiveTransportRequests\(\)/);
+  assert.match(transportScreen, /activeRequests = getActiveTransportRequests\(\)/);
   assert.match(transportScreen, /function renderTransportRequestSummaries\(\)/);
-  assert.match(transportScreen, /createTransportRequestSummaryCard\(requestKind, requestItem\)/);
+  assert.match(transportScreen, /translateTransport\('summary\.noActiveRequests'\)/);
 });
 
-test('transport screen removes the old detail overlay markup and keeps actions inside fixed modality summaries', () => {
-  assert.match(checkHtml, /Última solicitação por modalidade/);
+test('transport screen includes a dedicated history panel with open\/close controls', () => {
+  assert.match(checkHtml, /id="transportHistoryOpenButton"/);
+  assert.match(checkHtml, /id="transportHistoryPanel"/);
+  assert.match(checkHtml, /id="transportHistoryCloseButton"/);
+  assert.match(checkHtml, /Solicitações ativas/);
+  assert.match(transportScreen, /function renderTransportHistoryPanelList\(\)/);
+  assert.match(transportScreen, /function createTransportHistoryCard\(requestItem\)/);
+});
+
+test('transport screen keeps action buttons in active request cards and keeps summary card styling', () => {
   assert.doesNotMatch(checkHtml, /id="transportRequestDetailWidget"/);
   assert.match(transportScreen, /realizedButton\.dataset\.transportRequestRealized = 'true'/);
   assert.match(transportScreen, /cancelButton\.dataset\.transportRequestCancel = 'true'/);
@@ -56,6 +64,6 @@ test('transport screen removes the old detail overlay markup and keeps actions i
 });
 
 test('transport webapp fetches transport state and actions with same-origin credentials', () => {
-  assert.match(checkApp, /fetch\(`\$\{transportStateEndpoint\}\?chave=\$\{encodeURIComponent\(chave\)\}`, \{[\s\S]*credentials: 'same-origin'/);
-  assert.match(checkApp, /async function postTransportPayload\(url, payload\) \{[\s\S]*credentials: 'same-origin'/);
+  assert.match(transportScreen, /fetch\(`\$\{transportStateEndpoint\}\?chave=\$\{encodeURIComponent\(chave\)\}`, \{[\s\S]*credentials: 'same-origin'/);
+  assert.match(transportScreen, /async function postTransportPayload\(url, payload\) \{[\s\S]*credentials: 'same-origin'/);
 });
