@@ -2407,10 +2407,10 @@ function formatFormsStatus(status) {
     return "Preenchido";
   }
   if (status === "sent") {
-    return "Agora";
+    return "Enviado";
   }
   if (status === "sent_previously") {
-    return "Anteriormente";
+    return "não enviado";
   }
   if (status === "aborted") {
     return "Abortado";
