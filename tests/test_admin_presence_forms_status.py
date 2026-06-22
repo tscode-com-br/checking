@@ -295,7 +295,7 @@ def test_presence_rows_prefer_sent_sibling_over_skipped_duplicate_checkin():
         rows, _ = build_presence_rows(db, action="checkin", current_admin=None, reference_time=later)
 
     assert len(rows) == 1
-    assert rows[0].forms_status == "sent"
+    assert rows[0].forms_status == "sent_previously"
 
 
 def test_presence_rows_prefer_sent_sibling_over_skipped_duplicate_checkout():
@@ -321,7 +321,7 @@ def test_presence_rows_prefer_sent_sibling_over_skipped_duplicate_checkout():
         rows, _ = build_presence_rows(db, action="checkout", current_admin=None, reference_time=later)
 
     assert len(rows) == 1
-    assert rows[0].forms_status == "sent"
+    assert rows[0].forms_status == "sent_previously"
 
 
 def test_presence_rows_surface_failed_sibling_status_for_skipped_duplicate():
@@ -374,3 +374,69 @@ def test_presence_rows_surface_in_progress_sibling_status_for_skipped_duplicate(
 
     assert len(rows) == 1
     assert rows[0].forms_status == "filling"
+
+
+def test_presence_rows_keep_sent_for_genuine_current_submission():
+    # Envio genuíno por ESTA atividade (submissão não-skip, status=success): forms_status permanece "sent"
+    # (front: "Agora"). Contrasta com o skip-resolvido-para-sent, que vira "sent_previously" ("Anteriormente").
+    event_time = datetime(2026, 5, 21, 8, 30, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    with SessionLocal() as db:
+        _reset_schema(db)
+        user = User(
+            rfid=None,
+            chave="WB92",
+            nome="Usuario Envio Genuino",
+            projeto="P80",
+            local="Web",
+            checkin=True,
+            time=event_time,
+            last_active_at=event_time,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="web_forms",
+                action="checkin",
+                projeto="P80",
+                local="Web",
+                ontime=True,
+                event_time=event_time,
+                created_at=event_time,
+                source_request_id="web-request-genuine-sent",
+                device_id=None,
+            )
+        )
+        db.add(
+            FormsSubmission(
+                request_id="web-request-genuine-sent",
+                rfid=None,
+                action="checkin",
+                chave=user.chave,
+                projeto="P80",
+                device_id=None,
+                local="Web",
+                event_time=event_time,
+                request_path="/api/web/check",
+                display_status="sent",
+                project_candidates_json='["P80"]',
+                ontime=True,
+                status="success",
+                retry_count=0,
+                last_error=None,
+                created_at=event_time,
+                updated_at=event_time,
+                processed_at=event_time,
+            )
+        )
+        db.commit()
+
+        rows, _ = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
+
+    assert len(rows) == 1
+    assert rows[0].forms_status == "sent"

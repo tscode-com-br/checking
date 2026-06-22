@@ -1140,7 +1140,12 @@ def build_presence_rows(
                         timezone_name=timezone_context.timezone_name,
                     )
                     if effective_status is not None:
-                        forms_status = effective_status
+                        # Distingue o envio do FORMS feito por ESTA atividade (submissão própria, não-skip →
+                        # 'sent' → "Agora") do envio HERDADO de uma atividade anterior via dedup/skip
+                        # ('sent_previously' → "Anteriormente"). Como aqui a submissão vinculada é um skip
+                        # (não preencheu agora), um 'sent' efetivo veio de uma submissão IRMÃ anterior.
+                        # Os demais estados efetivos (filling/aborted/not_realized/...) permanecem como estão.
+                        forms_status = "sent_previously" if effective_status == "sent" else effective_status
 
         payload.append(
             (

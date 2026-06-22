@@ -268,6 +268,16 @@ COMO RODAR
 
 ## 6. PROMPT 2 (NECESSÁRIO) — Verificação completa e (deploy humano-gated) confirmação em produção
 
+> **✅ EXECUTADO 2026-06-22 (deploy aprovado pelo humano).**
+> - Passo 1: alvo 14/14 verdes; suíte completa 619 passaram / 33 falhas pré-existentes (provadas via
+>   `git stash`) / 12 skipped.
+> - Passo 2: dado de prod do CY22 inalterado (5394 skipped/not_realized + 5393 success/sent).
+> - Passo 3: commit `71fa182` → push em `main` → **Deploy OceanDrive** run `27926082312`
+>   `conclusion=success`, `--log-failed` vazio (anotação "exit code 1" = ruído pós-passo, Seção 6.2).
+> - Passo 4: imagem em prod = `checkcheck-app:71fa1829…` (= commit), health `ok`/db ok/forms_worker ok.
+>   A linha do CY22 passa a renderizar **"Enviado"** (código corrigido servindo + dado inalterado +
+>   teste de integração que espelha o CY22). Confirmação visual final no admin fica a cargo do operador.
+
 > O deploy de produção é **humano-gated** (ver `docs/Instrucoes/instrucoes_acesso_Digital_Ocean.md`,
 > Seção 6.3: monitorar **Deploy OceanDrive** no repo `checking`). Não faça deploy sem aprovação explícita.
 

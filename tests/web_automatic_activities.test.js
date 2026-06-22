@@ -233,10 +233,15 @@ test('mixed zone repeated reads stay blocked when the interval is unavailable, p
   );
 });
 
-test('mixed zone initial entry triggers automatic alternation from prior non-mixed states', () => {
+test('mixed zone drift from prior non-mixed states is suppressed within the interval and reopens after it', () => {
+  // temp006 (Situação 8 revisada): ao detectar 'Zona Mista', a alternância automática só dispara quando a
+  // ÚLTIMA atividade registrada (qualquer local/ação) está FORA do intervalo. Antes, disparava imediatamente
+  // quando a última atividade não tinha sido na própria Zona Mista — o que gerava check-out/in espúrio por
+  // drift de GPS entre a Zona Mista e localizações adjacentes (ex.: U4T4: check-in no 'Escritório Principal'
+  // e, ~25 s depois, check-out espúrio na 'Zona Mista').
   const cases = [
     {
-      name: 'regular checked-in location',
+      name: 'regular checked-in location (drift → check-out espúrio)',
       remoteState: {
         current_action: 'checkin',
         current_local: 'Escritório Principal',
@@ -245,7 +250,7 @@ test('mixed zone initial entry triggers automatic alternation from prior non-mix
       },
     },
     {
-      name: 'regular checked-out location',
+      name: 'regular checked-out location (drift → check-in espúrio)',
       remoteState: {
         current_action: 'checkout',
         current_local: 'Escritório Principal',
@@ -274,14 +279,25 @@ test('mixed zone initial entry triggers automatic alternation from prior non-mix
   ];
 
   for (const { name, remoteState } of cases) {
+    // última atividade às 09:00; referência 09:10 (10 min < 20) → suprime a alternância
     assert.equal(
       automation.shouldAttemptAutomaticLocationEvent(
         { resolved_local: 'Zona Mista' },
         remoteState,
         { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
       ),
+      false,
+      `${name} — dentro do intervalo`
+    );
+    // referência 09:30 (30 min >= 20) → a alternância automática volta a ser permitida
+    assert.equal(
+      automation.shouldAttemptAutomaticLocationEvent(
+        { resolved_local: 'Zona Mista' },
+        remoteState,
+        { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:30:00' }
+      ),
       true,
-      name
+      `${name} — fora do intervalo`
     );
   }
 });
@@ -339,6 +355,59 @@ test('mixed zone exit exceptions keep automatic check-in immediate after a mixed
     ),
     false
   );
+});
+
+test('mixed zone drift cooldown does not block immediate exits/entries on OTHER locations (Situação 8 exceptions preserved)', () => {
+  // temp006: o gate de cooldown só afeta leituras que resolvem para 'Zona Mista'. Saídas/entradas genuínas
+  // resolvem para OUTRO resolved_local e seguem pelos ramos não-Zona-Mista (inalterados), mesmo dentro do
+  // intervalo. Isso preserva as exceções imediatas da Situação 8 (linhas 85–86).
+  const afterRecentCheckinElsewhere = {
+    current_action: 'checkin',
+    current_local: 'Escritório Principal',
+    last_checkin_at: '2026-04-16T09:00:00',
+    last_checkout_at: '2026-04-16T08:00:00',
+  };
+  // saída por 'Zona de CheckOut' dentro do intervalo → check-out imediato (ramo da zona de check-out)
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona de CheckOut' },
+      afterRecentCheckinElsewhere,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    true
+  );
+
+  const afterRecentCheckoutElsewhere = {
+    current_action: 'checkout',
+    current_local: 'Zona de CheckOut',
+    last_checkin_at: '2026-04-16T08:00:00',
+    last_checkout_at: '2026-04-16T09:00:00',
+  };
+  // re-entrada por outra área cadastrada dentro do intervalo → check-in imediato (ramo de área cadastrada)
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Escritório Principal' },
+      afterRecentCheckoutElsewhere,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    true
+  );
+});
+
+test('isMixedZoneCooldownActiveForLastActivity tracks the last recorded activity regardless of location', () => {
+  const stateCheckinElsewhere = {
+    current_action: 'checkin',
+    current_local: 'Escritório Principal',
+    last_checkin_at: '2026-04-16T09:00:00',
+    last_checkout_at: '2026-04-16T08:00:00',
+  };
+  // última atividade 09:00; 09:10 (10 < 20) ativo; 09:20 (20 não < 20) inativo
+  assert.equal(automation.isMixedZoneCooldownActiveForLastActivity(stateCheckinElsewhere, 20, '2026-04-16T09:10:00'), true);
+  assert.equal(automation.isMixedZoneCooldownActiveForLastActivity(stateCheckinElsewhere, 20, '2026-04-16T09:20:00'), false);
+  // intervalo inválido (< 1) → sem cooldown
+  assert.equal(automation.isMixedZoneCooldownActiveForLastActivity(stateCheckinElsewhere, 0, '2026-04-16T09:05:00'), false);
+  // sem atividade registrada → sem cooldown
+  assert.equal(automation.isMixedZoneCooldownActiveForLastActivity({}, 20, '2026-04-16T09:05:00'), false);
 });
 
 test('automatic check-in runs for a regular monitored location after checkout', () => {

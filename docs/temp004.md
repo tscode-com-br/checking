@@ -686,6 +686,20 @@ scrolling past the first 30 triggers `loadMoreActivities`; empty state renders; 
 ---
 
 ## 6. Rollout (all human-gated — do NOT do unprompted)
+
+> **✅ EXECUTED 2026-06-21 (human-approved, "V1.6.2 - Versão para Produção").**
+> - **checking-kotlin** pushed `4d6458b → 5d1a281` (no deploy). Version bumped to **1.6.2 / versionCode 21**
+>   (`gradle.properties`); splash screen now shows `BuildConfig.VERSION_NAME` below the animated logo.
+> - **Signed AAB** built: `checking_kotlin/app/build/outputs/bundle/release/app-release.aab` (1.6.2/21) — for
+>   manual Play Console upload (user step).
+> - **root `checking`** pushed `0818364 → 0c26829` → `Deploy OceanDrive` run **27907822450 = success**;
+>   migrations **0078 + 0079** ran; app/forms-worker/db containers **healthy** (image `0c26829`); no crash.
+>   **`GET /check/history` now 200** (was 404) → Problem 1 fixed in prod. `/api/health`, `/checking/user`,
+>   `/checking/admin` all 200. (Pre-deploy rows show `local=null`; new located check-ins carry location.)
+> - **checking-admin2** pushed `2284f87 → 9668871` → `Deploy to DigitalOcean` run **27908102730 = success**.
+> Excluded from the root commit (local artifacts): `.claude/`, `pytest_output.txt`.
+
+
 1. **Backend deploy** of the change-D bundle (migration `0078` + `local` write + `/check/history` +
    schemas) via the existing pending root `main` push — runs migration `0078` in prod. **This is what makes
    Problem 1's data + location appear.** The app already calls the endpoint.

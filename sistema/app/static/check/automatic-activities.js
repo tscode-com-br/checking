@@ -156,6 +156,36 @@
     return resolvedReferenceTimestamp.getTime() - lastMixedZoneActivity.timestamp.getTime() < cooldownMilliseconds;
   }
 
+  function resolveLastRecordedActivityTimestamp(state) {
+    const lastRecordedAction = resolveLastRecordedAction(state);
+    if (lastRecordedAction !== 'checkin' && lastRecordedAction !== 'checkout') {
+      return null;
+    }
+    return resolveRecordedActionTimestamp(state, lastRecordedAction);
+  }
+
+  // temp006: cooldown da 'Zona Mista' baseado na ÚLTIMA atividade registrada (check-in OU check-out, em
+  // QUALQUER localização) — diferente de isMixedZoneCooldownActive, que exige que o current_local já seja a
+  // própria 'Zona Mista'. Usado para suprimir o toggle espúrio por drift de GPS no Branch B.
+  function isMixedZoneCooldownActiveForLastActivity(state, mixedZoneIntervalMinutes, referenceTime) {
+    const lastTimestamp = resolveLastRecordedActivityTimestamp(state);
+    if (!lastTimestamp) {
+      return false;
+    }
+
+    const cooldownMilliseconds = resolveMixedZoneCooldownMilliseconds(mixedZoneIntervalMinutes);
+    if (!cooldownMilliseconds) {
+      return false;
+    }
+
+    const resolvedReferenceTimestamp = resolveReferenceTimestamp(referenceTime);
+    if (!resolvedReferenceTimestamp) {
+      return false;
+    }
+
+    return resolvedReferenceTimestamp.getTime() - lastTimestamp.getTime() < cooldownMilliseconds;
+  }
+
   function resolveAutomaticCheckInLocation(locationPayload) {
     const resolvedLocal = String(locationPayload && locationPayload.resolved_local || '').trim();
     return resolvedLocal || null;
@@ -171,8 +201,12 @@
   // SITUAÇÃO 8 (docs/regras_e_situacoes/regras_checkin_checkout_webapp.txt):
   // alternância automática check-in/check-out na 'Zona Mista', com o cooldown do
   // campo 'Intervalo de Tempo para Zona Mista'. Decide se uma leitura em 'Zona
-  // Mista' deve gerar um novo evento automático, respeitando o cooldown apenas
-  // entre leituras consecutivas realizadas dentro da própria 'Zona Mista'.
+  // Mista' deve gerar um novo evento automático. O cooldown (temp006) é respeitado
+  // com base na ÚLTIMA atividade registrada (check-in OU check-out, em QUALQUER
+  // localização): dentro do intervalo NÃO há alternância (evita toggle espúrio por
+  // drift de GPS); fora do intervalo a alternância 8A/8B é permitida. O Branch A
+  // trata as leituras consecutivas dentro da própria 'Zona Mista'; o Branch B trata
+  // a leitura de 'Zona Mista' logo após uma atividade em OUTRA localização.
   // ===========================================================================
   function shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
@@ -199,6 +233,20 @@
         decisionSettings.mixedZoneIntervalMinutes,
         decisionSettings.referenceTime
       );
+    }
+
+    // temp006 — gate de cooldown no Branch B (estado registrado em OUTRA localização ≠ 'Zona Mista'):
+    // suprime a alternância automática se a ÚLTIMA atividade registrada (check-in OU check-out, em QUALQUER
+    // localização) ocorreu há menos que o intervalo. Evita o toggle espúrio por drift de GPS entre a 'Zona
+    // Mista' e localizações adjacentes (ex.: 'Escritório Principal'). Saídas/entradas genuínas resolvem para
+    // OUTRO resolved_local (Zona de CheckOut / outside_workplace / outra área cadastrada) e seguem pelos
+    // ramos separados (exceções imediatas da Situação 8), que permanecem inalterados.
+    if (isMixedZoneCooldownActiveForLastActivity(
+      remoteState,
+      decisionSettings.mixedZoneIntervalMinutes,
+      decisionSettings.referenceTime
+    )) {
+      return false;
     }
 
     if (lastRecordedAction !== 'checkin') {
@@ -295,6 +343,8 @@
     resolveLastRelevantMixedZoneActivity,
     isLastRelevantActivityInMixedZone,
     isMixedZoneCooldownActive,
+    resolveLastRecordedActivityTimestamp,
+    isMixedZoneCooldownActiveForLastActivity,
     resolveAutomaticCheckInLocation,
     isOperationalAutomaticCheckInLocation,
     resolveMixedZoneDecisionSettings,
