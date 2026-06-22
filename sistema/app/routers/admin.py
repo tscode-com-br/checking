@@ -136,7 +136,11 @@ from ..services.event_archives import (
     list_event_archives_page,
 )
 from ..services.event_logger import log_event
-from ..services.forms_queue import get_forms_queue_diagnostics
+from ..services.forms_queue import (
+    FormsSiblingCandidate,
+    get_forms_queue_diagnostics,
+    resolve_effective_skipped_display_status,
+)
 from ..services.managed_locations import (
     dump_location_coordinates,
     dump_location_projects,
@@ -180,7 +184,13 @@ from ..services.user_projects import (
     replace_user_project_memberships,
     resolve_user_active_project,
 )
-from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
+from ..services.user_sync import (
+    find_user_by_chave,
+    find_user_by_rfid,
+    is_same_project_day,
+    resolve_latest_user_activities,
+    resolve_latest_user_activity,
+)
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
     InvalidAccidentLocationError,
@@ -977,6 +987,40 @@ def build_location_settings_log_message(
     return "As configurações de localização foram salvas sem alterações."
 
 
+def _resolve_skipped_presence_forms_status(
+    *,
+    sibling_submissions: list[tuple],
+    action: str,
+    reference_event_time: datetime,
+    timezone_name: str | None,
+) -> str | None:
+    """Quando a submissão vinculada à atividade mais recente é um skip deduplicado, resolve o
+    display_status EFETIVO a partir das submissões IRMÃS (mesma chave, mesma `action`, mesmo dia-projeto
+    no fuso do projeto). Delega a escolha pura a resolve_effective_skipped_display_status. Devolve None
+    quando não há irmã não-skip elegível — nesse caso o chamador mantém o 'not_realized' do skip."""
+    candidates = [
+        FormsSiblingCandidate(
+            status=sibling_status,
+            display_status=sibling_display_status,
+            processed_at=sibling_processed_at,
+            event_time=sibling_event_time,
+            submission_id=sibling_id,
+        )
+        for (
+            sibling_action,
+            sibling_event_time,
+            sibling_processed_at,
+            sibling_id,
+            sibling_status,
+            sibling_display_status,
+        ) in sibling_submissions
+        if sibling_action == action
+        and sibling_event_time is not None
+        and is_same_project_day(sibling_event_time, reference_event_time, timezone_name=timezone_name)
+    ]
+    return resolve_effective_skipped_display_status(candidates)
+
+
 def build_presence_rows(
     db: Session,
     *,
@@ -1003,15 +1047,62 @@ def build_presence_rows(
         for latest_activity in latest_activities.values()
         if latest_activity is not None and latest_activity.source_request_id
     }
-    forms_status_by_request_id = {
-        request_id: display_status
-        for request_id, display_status in db.execute(
-            select(FormsSubmission.request_id, FormsSubmission.display_status).where(
-                FormsSubmission.request_id.in_(sorted(presence_request_ids))
-            )
+    # Map request_id -> (display_status, status). Carregamos também o `status` para detectar quando a
+    # atividade mais recente está vinculada a uma submissão deduplicada (status='skipped'); nesse caso o
+    # 'not_realized' do duplicado não deve esconder a submissão IRMÃ real que de fato foi enviada
+    # (ver _resolve_skipped_presence_forms_status / temp005).
+    bound_forms_submission_by_request_id = {
+        request_id: (display_status, status)
+        for request_id, display_status, status in db.execute(
+            select(
+                FormsSubmission.request_id,
+                FormsSubmission.display_status,
+                FormsSubmission.status,
+            ).where(FormsSubmission.request_id.in_(sorted(presence_request_ids)))
         ).all()
-        if request_id and display_status
+        if request_id
     } if presence_request_ids else {}
+    # Para os usuários cuja submissão vinculada é um skip, buscamos em LOTE as submissões irmãs (mesma
+    # chave) para resolver o status efetivo sem N+1. Linhas com vínculo não-skip não pagam esse custo.
+    skipped_bound_chaves: set[str] = set()
+    for user in rows:
+        bound_activity = latest_activities.get(user.id)
+        if bound_activity is None or not bound_activity.source_request_id:
+            continue
+        bound_submission = bound_forms_submission_by_request_id.get(bound_activity.source_request_id)
+        if bound_submission is not None and bound_submission[1] == "skipped":
+            skipped_bound_chaves.add(user.chave)
+    sibling_submissions_by_chave: dict[str, list[tuple]] = {}
+    if skipped_bound_chaves:
+        for (
+            sibling_chave,
+            sibling_action,
+            sibling_event_time,
+            sibling_processed_at,
+            sibling_id,
+            sibling_status,
+            sibling_display_status,
+        ) in db.execute(
+            select(
+                FormsSubmission.chave,
+                FormsSubmission.action,
+                FormsSubmission.event_time,
+                FormsSubmission.processed_at,
+                FormsSubmission.id,
+                FormsSubmission.status,
+                FormsSubmission.display_status,
+            ).where(FormsSubmission.chave.in_(sorted(skipped_bound_chaves)))
+        ).all():
+            sibling_submissions_by_chave.setdefault(sibling_chave, []).append(
+                (
+                    sibling_action,
+                    sibling_event_time,
+                    sibling_processed_at,
+                    sibling_id,
+                    sibling_status,
+                    sibling_display_status,
+                )
+            )
     project_names_by_user_id = list_user_project_names_map(db, rows)
     projects_by_name = {project.name: project for project in all_projects}
     payload: list[tuple[datetime, UserRow]] = []
@@ -1035,6 +1126,22 @@ def build_presence_rows(
             can_view_activity_time=can_view_activity_time,
         )
 
+        forms_status = None
+        if latest_activity.source_request_id:
+            bound_submission = bound_forms_submission_by_request_id.get(latest_activity.source_request_id)
+            if bound_submission is not None:
+                bound_display_status, bound_status = bound_submission
+                forms_status = bound_display_status
+                if bound_status == "skipped":
+                    effective_status = _resolve_skipped_presence_forms_status(
+                        sibling_submissions=sibling_submissions_by_chave.get(user.chave, []),
+                        action=latest_activity.action,
+                        reference_event_time=latest_activity.event_time,
+                        timezone_name=timezone_context.timezone_name,
+                    )
+                    if effective_status is not None:
+                        forms_status = effective_status
+
         payload.append(
             (
                 latest_activity.event_time,
@@ -1054,7 +1161,7 @@ def build_presence_rows(
                 activity_time_label=activity_time_label,
                 activity_day_key=activity_day_key,
                 assiduidade=format_assiduidade_label(latest_activity.ontime),
-                forms_status=forms_status_by_request_id.get(latest_activity.source_request_id),
+                forms_status=forms_status,
                 ),
             )
         )

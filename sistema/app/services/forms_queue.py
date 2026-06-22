@@ -4,7 +4,8 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime
+from collections import namedtuple
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,57 @@ FORMS_TERMINAL_DISPLAY_STATUS_BY_RESULT = {
     True: "sent",
     False: "aborted",
 }
+
+# temp005 / Prompt 1 — resolução do display_status EFETIVO quando a submissão vinculada à atividade mais
+# recente é um skip deduplicado (repeated_same_action_same_day / repeated_checkout). Nesse caso o
+# 'not_realized' do duplicado NÃO deve esconder a submissão IRMÃ real (mesmo chave/action/dia-projeto)
+# que de fato foi processada. Prioridade de ciclo de vida (maior vence):
+FORMS_SUBMISSION_STATUS_PRIORITY = {
+    "success": 4,
+    "failed": 3,
+    "processing": 2,
+    "pending": 1,
+    "skipped": 0,
+}
+
+FormsSiblingCandidate = namedtuple(
+    "FormsSiblingCandidate",
+    ("status", "display_status", "processed_at", "event_time", "submission_id"),
+)
+
+
+def _forms_sibling_recency_value(value: datetime | None) -> float:
+    """Epoch (UTC) comparável e robusto a None/naive, usado só como desempate entre irmãs de mesmo
+    status (o resultado entre dois skipped é irrelevante; entre não-skip há no máximo uma na prática)."""
+    if value is None:
+        return float("-inf")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc).timestamp()
+    return value.timestamp()
+
+
+def resolve_effective_skipped_display_status(
+    candidates: list[FormsSiblingCandidate],
+) -> str | None:
+    """Devolve o display_status EFETIVO da submissão IRMÃ real, ou None se não houver irmã não-skip.
+
+    Considera APENAS candidatas com status != 'skipped'. Escolhe a de maior prioridade de ciclo de vida
+    (success>failed>processing>pending), desempatando por processed_at, depois event_time, depois
+    submission_id (mais recente vence), e devolve o display_status dela. Quando não existe nenhuma
+    candidata não-skip, devolve None e o chamador mantém o 'not_realized' do skip."""
+    real_candidates = [candidate for candidate in candidates if candidate.status != "skipped"]
+    if not real_candidates:
+        return None
+    best = max(
+        real_candidates,
+        key=lambda candidate: (
+            FORMS_SUBMISSION_STATUS_PRIORITY.get(candidate.status, -1),
+            _forms_sibling_recency_value(candidate.processed_at),
+            _forms_sibling_recency_value(candidate.event_time),
+            candidate.submission_id or 0,
+        ),
+    )
+    return best.display_status
 
 
 def _log_forms_queue_event(event: str, **fields: object) -> None:
