@@ -55,6 +55,7 @@ def submit_forms_event(
     client_event_id: str,
     ensure_user: EnsureUserCallback,
     channel: FormsSubmitChannel,
+    fill_forms: bool = True,
 ) -> MobileSubmitResponse:
     ontime = informe == "normal"
     resolved_local = local or channel.default_local
@@ -102,6 +103,15 @@ def submit_forms_event(
     if single_project and not is_forms_enabled_for_project(db, projeto=user.projeto):
         should_queue_forms = False
         skip_reason = "forms_disabled_for_project"
+    # 24h FORMS window (multi-day offline replay). The client owns this decision because only it can see
+    # the full offline backlog: it sets fill_forms=False for events older than 24h relative to the NEWEST
+    # queued activity (so a device offline for days fills FORMS with one recent check-in/out, not one per
+    # day). The activity is STILL recorded at its real time below (create_user_sync_event →
+    # record_checking_history); only the FORMS fill is suppressed. Live submissions send fill_forms=True
+    # (the default), so they are never affected.
+    if should_queue_forms and not fill_forms:
+        should_queue_forms = False
+        skip_reason = "offline_beyond_24h"
     apply_user_state(
         user,
         action=action,

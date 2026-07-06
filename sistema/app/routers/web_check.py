@@ -85,6 +85,12 @@ from ..services.location_settings import (
     get_mixed_zone_interval_minutes_for_projects,
     get_minimum_checkout_distance_meters_for_project,
 )
+from ..services import object_storage
+from ..services.account_deletion import (
+    AccountDeletionBlocked,
+    assert_user_can_self_delete,
+    delete_user_account,
+)
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
@@ -700,6 +706,63 @@ def change_web_password(
     )
 
 
+@router.post("/auth/delete-account", response_model=WebPasswordActionResponse)
+def delete_web_account(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebPasswordActionResponse:
+    """LGPD art. 18, VI — the authenticated user removes their own account and personal data.
+
+    Auth is the signed session cookie (same as /auth/logout); LGPD favours facilitated exercise of the
+    right (art. 18, §5), and the app already gates this behind a confirmation dialog. Guarded against
+    admins / accident openers / users in an open accident (routed to the privacy channel). The whole
+    delete runs in one transaction so a mid-way failure leaves the account intact.
+    """
+    user = _require_authenticated_web_user(request, db)
+    try:
+        assert_user_can_self_delete(db, user)
+    except AccountDeletionBlocked as exc:
+        raise HTTPException(status_code=409, detail=exc.message)
+
+    user_key = user.chave
+    user_rfid = user.rfid
+    try:
+        video_object_keys = delete_user_account(db, user)
+        log_event(
+            db,
+            source="web",
+            action="account_delete",
+            status="removed",
+            message="User self-deleted account",
+            rfid=user_rfid,
+            request_path="/api/web/auth/delete-account",
+            http_status=200,
+            details=f"chave={user_key}",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Nao foi possivel remover o cadastro.")
+
+    # Best-effort object-storage cleanup AFTER the DB commit — deleting the media mid-transaction would
+    # leave dangling object keys if the transaction rolled back.
+    for object_key in video_object_keys:
+        try:
+            object_storage.delete_object(object_key=object_key)
+        except Exception:  # noqa: BLE001 — media cleanup must never fail an already-committed deletion
+            pass
+
+    _clear_web_session_chave(request)
+    notify_admin_data_changed("register")
+    notify_admin_data_changed("event")
+    return WebPasswordActionResponse(
+        ok=True,
+        authenticated=False,
+        has_password=False,
+        message="Cadastro removido.",
+    )
+
+
 @router.get("/transport/state", response_model=WebTransportStateResponse)
 def get_web_transport_state(
     request: Request,
@@ -1072,6 +1135,7 @@ def submit_web_check(
         client_event_id=payload.client_event_id,
         ensure_user=ensure_web_user,
         channel=channel,
+        fill_forms=payload.fill_forms,
     )
     return WebCheckSubmitResponse(**response.model_dump())
 

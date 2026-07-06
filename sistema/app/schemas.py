@@ -3793,6 +3793,11 @@ class MobileFormsSubmitRequest(BaseModel):
     informe: Literal["normal", "retroativo"]
     event_time: datetime
     client_event_id: str = Field(min_length=8, max_length=80)
+    # 24h FORMS window (offline replay): the client sets this False for a replayed event older than 24h
+    # relative to the newest queued activity, so a multi-day offline backlog fills FORMS with only the
+    # most recent check-in/out (the activity is still recorded at its real time). Defaults True → live
+    # submissions and older clients that omit it behave exactly as before.
+    fill_forms: bool = True
 
     @field_validator("chave")
     @classmethod

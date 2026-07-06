@@ -303,5 +303,15 @@ if static_dir.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    # LGPD — public Privacy Policy page. Reachable at the bare /privacidade (the nginx edge adds a
+    # matching `location = /privacidade` in deploy/nginx/checking-edge-routes.conf) and, with no nginx
+    # change at all, at /assets/privacidade.html (the /assets mount above already proxies to the app).
+    privacy_policy_file = static_dir / "privacidade.html"
+    if privacy_policy_file.exists():
+        def _serve_privacy_policy() -> FileResponse:
+            return FileResponse(privacy_policy_file, media_type="text/html")
+
+        app.add_api_route("/privacidade", _serve_privacy_policy, methods=["GET"], include_in_schema=False)
+
     mount_static_site(app, site_name="user", route_path="/user", directory=check_dir)
     mount_static_site(app, site_name="transport", route_path="/transport", directory=transport_dir)
