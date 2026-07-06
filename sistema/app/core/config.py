@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     forms_settle_post_submit_seconds: float = 1.0
     forms_worker_concurrency: int = 3
     forms_worker_idle_poll_seconds: float = 0.25
+    # Worker recycling — the forms worker shells out to Playwright/Chromium once per submission and
+    # slowly leaks OS threads over days of uptime; once the process can no longer fork it wedges with
+    # BlockingIOError (EAGAIN) and silently stops filling the Forms, while docker's restart policy —
+    # which only fires on process EXIT — never triggers. The worker therefore recycles itself (clean
+    # exit → docker `restart: unless-stopped` relaunches a fresh process) after N submissions
+    # (proactive, prevents the leak from ever reaching the fork-failure point) or after N consecutive
+    # infra-level consumer errors (reactive self-heal for an already-wedged process). <=0 disables.
+    forms_worker_max_submissions_per_process: int = 200
+    forms_worker_max_consecutive_errors_before_recycle: int = 5
     # plan003 — new-user approval gate (system-wide). When False, self-registration falls back to the
     # legacy create-and-authenticate behavior — instant rollback without a code deploy. The cap bounds
     # the pending queue (over the limit → "queue full").

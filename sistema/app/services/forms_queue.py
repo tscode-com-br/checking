@@ -188,6 +188,16 @@ def _compute_exponential_backoff_seconds(*, base_seconds: float, max_seconds: fl
     return min(base_seconds * (2 ** (normalized_attempt - 1)), max_seconds)
 
 
+def _should_recycle_after_submissions(*, lifetime_processed: int, max_submissions: int) -> bool:
+    """True when the process has handled enough submissions to recycle proactively (<=0 disables)."""
+    return max_submissions > 0 and lifetime_processed >= max_submissions
+
+
+def _should_recycle_after_errors(*, consecutive_errors: int, max_errors: int) -> bool:
+    """True when a consumer has failed enough times in a row to recycle reactively (<=0 disables)."""
+    return max_errors > 0 and consecutive_errors >= max_errors
+
+
 def _forms_worker_health_path() -> Path:
     return ensure_event_archives_dir() / FORMS_WORKER_HEALTH_FILE_NAME
 
@@ -559,6 +569,28 @@ def record_forms_submission_skip(
     return submission
 
 
+def reclaim_orphaned_processing_submissions() -> int:
+    """Reset submissions stranded in 'processing' back to 'pending' at worker startup.
+
+    Only one forms-worker process runs at a time, so any row still in 'processing' when the worker
+    boots is an orphan left by a previous process that crashed or was recycled mid-flight. The
+    reserve query only ever claims 'pending' rows (never 're-claims' a 'processing' one), so without
+    this reclaim an orphan would sit forever and its check-in would show FORMS "-" in the admin.
+    Idempotent; safe to call on every boot. Returns the number of rows reclaimed.
+    """
+    with SessionLocal() as db:
+        result = db.execute(
+            update(FormsSubmission)
+            .where(FormsSubmission.status == "processing")
+            .values(status="pending", updated_at=now_sgt())
+        )
+        db.commit()
+        reclaimed = int(result.rowcount or 0)
+    if reclaimed:
+        _log_forms_queue_event("forms_queue_reclaimed_orphaned_processing", reclaimed=reclaimed)
+    return reclaimed
+
+
 def process_forms_submission_queue_once(*, max_items: int = 10) -> int:
     processed = 0
     while processed < max_items:
@@ -724,6 +756,26 @@ class FormsSubmissionWorker:
         self._start_count = 0
         self._per_thread: dict[int, dict] = {}
         self._supervisor_backoff_seconds = 0.0
+        self._lifetime_processed = 0
+        self._recycle_reason: str | None = None
+
+    def _request_recycle(self, reason: str) -> None:
+        """Signal a clean process shutdown so docker's restart policy relaunches a fresh worker.
+
+        Setting the stop event unwinds every consumer thread and the supervisor loop; ``main()``
+        then returns and the container (``restart: unless-stopped``) restarts with a fresh process,
+        clearing whatever slow leak or wedge triggered the recycle. First reason wins (subsequent
+        calls during wind-down don't overwrite it).
+        """
+        with self._lock:
+            if self._recycle_reason is None:
+                self._recycle_reason = reason
+        _log_forms_queue_event(
+            "forms_queue_worker_recycle_requested",
+            reason=reason,
+            lifetime_processed=self._lifetime_processed,
+        )
+        self._stop_event.set()
 
     def start(self) -> None:
         """Idempotente. Spawna threads consumidoras faltantes até atingir concurrency."""
@@ -832,10 +884,14 @@ class FormsSubmissionWorker:
                 "last_error": last_error,
                 "concurrency": int(settings.forms_worker_concurrency),
                 "consumer_threads_alive": alive_count,
+                "lifetime_processed": self._lifetime_processed,
+                "recycle_reason": self._recycle_reason,
             }
 
     def _run_consumer(self) -> None:
-        """Loop por thread consumidora — self-watchdog, nunca sai voluntariamente."""
+        """Loop por thread consumidora — self-watchdog. Sai só ao pedir recycle (após N submissões ou
+        N erros consecutivos, via _request_recycle) ou quando o stop event é acionado; nesses casos o
+        processo encerra e o docker (restart: unless-stopped) sobe um worker novo e limpo."""
         thread_id = threading.get_ident()
         thread_name = threading.current_thread().name
         with self._lock:
@@ -875,13 +931,26 @@ class FormsSubmissionWorker:
                     state["consecutive_errors"] += 1
                     state["current_backoff_seconds"] = backoff_seconds
                     state["last_error"] = str(exc)[:1000]
+                    consecutive_errors = state["consecutive_errors"]
                 _log_forms_queue_event(
                     "forms_queue_consumer_error",
                     backoff_seconds=backoff_seconds,
-                    consecutive_error_count=state["consecutive_errors"],
+                    consecutive_error_count=consecutive_errors,
                     error=str(exc)[:1000],
                     thread_name=thread_name,
                 )
+                # Reactive self-heal: a consumer failing repeatedly at the infra level (e.g. the
+                # process can no longer fork Chromium — BlockingIOError/EAGAIN) would otherwise back
+                # off and retry forever while the container stays alive (docker never restarts a
+                # merely-unhealthy container). Recycle the process so it comes back fresh.
+                if _should_recycle_after_errors(
+                    consecutive_errors=consecutive_errors,
+                    max_errors=int(settings.forms_worker_max_consecutive_errors_before_recycle),
+                ):
+                    self._request_recycle(
+                        f"consecutive_errors={consecutive_errors}; last_error={str(exc)[:200]}"
+                    )
+                    break
                 self._stop_event.wait(backoff_seconds)
                 continue
 
@@ -892,6 +961,18 @@ class FormsSubmissionWorker:
                 state["consecutive_errors"] = 0
                 state["current_backoff_seconds"] = 0.0
                 state["last_error"] = None
+                if processed:
+                    self._lifetime_processed += processed
+                lifetime_processed = self._lifetime_processed
+            # Proactive recycle: per-submission Playwright/Chromium work slowly leaks OS threads;
+            # exit cleanly after N submissions so docker relaunches a fresh process well before the
+            # leak can reach the fork-failure point.
+            if processed and _should_recycle_after_submissions(
+                lifetime_processed=lifetime_processed,
+                max_submissions=int(settings.forms_worker_max_submissions_per_process),
+            ):
+                self._request_recycle(f"max_submissions_per_process reached ({lifetime_processed})")
+                break
             if processed == 0:
                 self._stop_event.wait(settings.forms_worker_idle_poll_seconds)
 

@@ -110,7 +110,12 @@ Topologia (entenda ANTES de commitar):
 3. Remotes deste repo:
    - `origin` -> `https://github.com/tscode-com-br/checking-kotlin.git` (ativo e canonico).
    - `archived-origin` -> `https://github.com/tscode-com-br/checking_app_kotlin.git` (historico antigo do codebase `com.br.checkingnative`; nao usar para publicar).
-4. Nao possui workflow de deploy: push apenas publica o codigo no GitHub. A distribuicao para usuarios e via Play Store (AAB), processo separado.
+4. Nao possui workflow de **deploy**: push nao publica em servidor. A distribuicao para usuarios e via Play Store (AAB), processo separado.
+5. **Possui, porem, um workflow de CI** (`.github/workflows/android.yml`, nome "Android CI") que roda a CADA push/PR em `main` — NAO faz deploy, mas executa o job `build` (testes unitarios + Android lint + `assembleDebug`). Falha de CI gera e-mail do GitHub para os watchers. Pontos praticos:
+   - Os testes instrumentados em emulador (job `instrumented`) rodam **sob demanda**: incluir `[ci-instrumented]` na mensagem do commit.
+   - O job `release` (gera AAB) so dispara em tag `v*`.
+   - As actions sao pinadas por SHA; um SHA invalido faz TODOS os jobs morrerem em 2-3s na fase "Prepare all required actions" (resolver o SHA correto com `gh api repos/<owner>/<action>/commits/<tag> --jq .sha`).
+   - O gatilho noturno `schedule` (cron diario) foi **removido em 2026-06-24** por gerar e-mails de falha diarios; o gate de `ktlint` esta desabilitado no CI ate uma limpeza dedicada (`./gradlew ktlintFormat`), pois ha ~4,7k violacoes de estilo pre-existentes.
 
 Segredos que NUNCA podem ser commitados (ja cobertos pelo `.gitignore` do app):
 

@@ -2410,7 +2410,7 @@ function formatFormsStatus(status) {
     return "Enviado";
   }
   if (status === "sent_previously") {
-    return "não enviado";
+    return "Não Enviado";
   }
   if (status === "aborted") {
     return "Abortado";

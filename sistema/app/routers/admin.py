@@ -3756,12 +3756,14 @@ def list_users(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> list[AdminUserListRow]:
+    # A aba "Cadastro" (Usuarios Cadastrados) deve listar absolutamente TODOS os
+    # usuarios do banco, inclusive orfaos (sem nenhuma membership de projeto), que
+    # de outra forma somem de qualquer admin (intersecao de escopo vazia) e se
+    # acumulam invisiveis. Por isso, diferente das listas operacionais
+    # (checkin/checkout/eventos/relatorios), aqui NAO aplicamos o filtro de escopo
+    # de projeto do admin: qualquer admin ve o cadastro completo.
     rows = db.execute(select(User).order_by(User.nome, User.rfid)).scalars().all()
-    rows, project_names_by_user_id, _ = filter_users_for_admin_scope(
-        db,
-        rows,
-        current_admin=current_admin,
-    )
+    project_names_by_user_id = list_user_project_names_map(db, rows)
     payload_rows: list[AdminUserListRow] = []
     for row in rows:
         row_projects = project_names_by_user_id.get(row.id, []) if row.id is not None else []
@@ -4216,26 +4218,32 @@ def remove_user(
         )
         raise HTTPException(status_code=404, detail="User not found")
 
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    effective_admin_project_set = set(effective_admin_projects)
-    if not effective_admin_project_set:
-        raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode remover usuarios.")
+    # Super-admin (perfil 9) tem bypass de escopo, espelhando o padrao do scoping
+    # de pendencias (plan003). Isso e o que permite limpar os orfaos: um usuario
+    # sem projeto tem intersecao de escopo vazia e, sem o bypass, o DELETE
+    # responderia 404 ("User not found") para qualquer admin. Admins restritos
+    # (perfil != 9) permanecem limitados aos seus proprios projetos.
+    if current_admin.perfil != 9:
+        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+        effective_admin_project_set = set(effective_admin_projects)
+        if not effective_admin_project_set:
+            raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode remover usuarios.")
 
-    user_project_names = list_user_project_names(db, user)
-    if not user_matches_effective_admin_scope(
-        db,
-        current_admin,
-        user,
-        admin_project_names=effective_admin_projects,
-        user_project_names=user_project_names,
-    ):
-        raise HTTPException(status_code=404, detail="User not found")
+        user_project_names = list_user_project_names(db, user)
+        if not user_matches_effective_admin_scope(
+            db,
+            current_admin,
+            user,
+            admin_project_names=effective_admin_projects,
+            user_project_names=user_project_names,
+        ):
+            raise HTTPException(status_code=404, detail="User not found")
 
-    if any(project_name not in effective_admin_project_set for project_name in user_project_names):
-        raise HTTPException(
-            status_code=403,
-            detail="Nao e possivel remover um usuario com projetos fora do seu escopo.",
-        )
+        if any(project_name not in effective_admin_project_set for project_name in user_project_names):
+            raise HTTPException(
+                status_code=403,
+                detail="Nao e possivel remover um usuario com projetos fora do seu escopo.",
+            )
 
     if user_has_admin_access(user):
         total_admins = sum(

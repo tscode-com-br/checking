@@ -1153,7 +1153,10 @@ header {
   display: grid;
   gap: 12px;
   width: min(100%, 420px);
-  max-height: calc(var(--app-viewport-height) - (2 * var(--page-padding-block)));
+  /* Bound to the VISUAL viewport (keyboard-aware) so that, when the on-screen keyboard is up, the
+     card shrinks to the visible area and its overflow-y:auto lets the user scroll to every field
+     and the footer buttons. Falls back to the full viewport height before JS sets the variable. */
+  max-height: calc(var(--app-visual-viewport-height, var(--app-viewport-height)) - (2 * var(--page-padding-block)));
   padding: clamp(16px, 2.2vw, 22px);
   border: 1px solid rgba(15, 118, 110, 0.18);
   border-radius: calc(var(--card-radius) - 2px);
@@ -1188,6 +1191,37 @@ header {
   margin: 0;
   font-size: clamp(1rem, 1.4vw, 1.14rem);
   color: #0f172a;
+}
+
+/* Registration dialog: a top-left back arrow beside the title, in addition to the
+   bottom "Voltar" button — mirrors the Kotlin SelfRegistrationDialog affordance. */
+.registration-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dialog-header-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f766e;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.dialog-header-back-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .password-dialog-form {
@@ -2271,7 +2305,7 @@ header {
 
   .password-dialog-card {
     width: 100%;
-    max-height: calc(var(--app-viewport-height) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+    max-height: calc(var(--app-visual-viewport-height, var(--app-viewport-height)) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
   }
 
   .transport-screen {

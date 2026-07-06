@@ -70,6 +70,7 @@
   const registrationPasswordInput = document.getElementById('registrationPasswordInput');
   const registrationConfirmPasswordInput = document.getElementById('registrationConfirmPasswordInput');
   const registrationDialogBackButton = document.getElementById('registrationDialogBackButton');
+  const registrationDialogHeaderBackButton = document.getElementById('registrationDialogHeaderBackButton');
   const registrationDialogSubmitButton = document.getElementById('registrationDialogSubmitButton');
   const settingsDialog = document.getElementById('settingsDialog');
   const settingsDialogBackdrop = document.getElementById('settingsDialogBackdrop');
@@ -146,6 +147,7 @@
     registrationPasswordInput,
     registrationConfirmPasswordInput,
     registrationDialogBackButton,
+    registrationDialogHeaderBackButton,
     registrationDialogSubmitButton,
   ].filter(Boolean);
   const settingsDialogControls = [
@@ -653,11 +655,18 @@
         document.documentElement.clientHeight || 0
       )
     );
+    // Unlike viewportHeight (which takes the MAX so the main layout doesn't jump when the keyboard
+    // opens), this tracks the raw visual viewport height — it SHRINKS while the on-screen keyboard is
+    // shown. Modal dialogs bind their card max-height to this so the footer stays scrollable/visible.
+    const visualViewportHeight = Math.round(
+      visualViewport && Number.isFinite(visualViewport.height) ? visualViewport.height : 0
+    );
     const headerHeight = appHeader ? Math.round(appHeader.getBoundingClientRect().height) : 0;
 
     return {
       viewportWidth,
       viewportHeight,
+      visualViewportHeight,
       headerHeight,
     };
   }
@@ -671,6 +680,9 @@
     }
     if (metrics.viewportHeight > 0) {
       rootStyle.setProperty('--app-viewport-height', `${metrics.viewportHeight}px`);
+    }
+    if (metrics.visualViewportHeight > 0) {
+      rootStyle.setProperty('--app-visual-viewport-height', `${metrics.visualViewportHeight}px`);
     }
     if (metrics.headerHeight > 0) {
       rootStyle.setProperty('--app-header-height', `${metrics.headerHeight}px`);
@@ -1162,7 +1174,7 @@
   // plan003 — while a self-registration is awaiting admin approval, re-check /auth/status periodically.
   // When it flips to found+has_password (approved), the normal persisted-password auto-verify logs the
   // user in and runs the engine; when it clears (rejected) the loop stops (handled in apply...Payload).
-  const PENDING_APPROVAL_POLL_MS = 15000;
+  const PENDING_APPROVAL_POLL_MS = 10000;
   let pendingApprovalPollTimeoutId = null;
 
   function clearPendingApprovalPolling() {
@@ -1457,6 +1469,9 @@
     applyTextContent(passwordNewLabel, t('passwordDialog.newPasswordLabel'));
     applyTextContent(passwordConfirmLabel, t('passwordDialog.confirmPasswordLabel'));
     applyTextContent(document.getElementById('registrationDialogTitle'), t('registrationDialog.title'));
+    if (registrationDialogHeaderBackButton) {
+      registrationDialogHeaderBackButton.setAttribute('aria-label', t('registrationDialog.backButton'));
+    }
     applyTextContent(registrationNote, t('registrationDialog.note'));
     applyTextContent(registrationKeyLabel, t('registrationDialog.keyLabel'));
     applyTextContent(registrationNameLabel, t('registrationDialog.fullNameLabel'));
@@ -8130,9 +8145,9 @@
     passwordDialogBackButton.addEventListener('click', dismissPasswordDialogManually);
   }
 
-  if (passwordDialogBackdrop) {
-    passwordDialogBackdrop.addEventListener('click', dismissPasswordDialogManually);
-  }
+  // Intentionally NO backdrop click-to-dismiss: the set-password dialog must close only via its own
+  // "Voltar"/"Alterar" buttons, so an accidental tap outside doesn't discard the typed password.
+  // (The passwordDialogBackdrop element still renders the dim; it just no longer dismisses on click.)
 
   if (passwordChangeForm) {
     passwordChangeForm.addEventListener('submit', submitPasswordChange);
@@ -8148,9 +8163,13 @@
     registrationDialogBackButton.addEventListener('click', dismissRegistrationDialogManually);
   }
 
-  if (registrationDialogBackdrop) {
-    registrationDialogBackdrop.addEventListener('click', dismissRegistrationDialogManually);
+  if (registrationDialogHeaderBackButton) {
+    registrationDialogHeaderBackButton.addEventListener('click', dismissRegistrationDialogManually);
   }
+
+  // Intentionally NO backdrop click-to-dismiss: the registration dialog must close only via its own
+  // "Voltar"/"Enviar" buttons (and the header back arrow), so an accidental tap outside doesn't
+  // discard the filled-in form. (registrationDialogBackdrop still renders the dim, just isn't clickable.)
 
   if (registrationForm) {
     registrationForm.addEventListener('submit', submitUserSelfRegistration);

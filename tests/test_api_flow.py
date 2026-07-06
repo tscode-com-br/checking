@@ -18754,7 +18754,12 @@ def test_admin_runtime_scope_requires_materialized_memberships_and_ignores_legac
         )
 
     assert users_response.status_code == 200, users_response.text
-    assert users_response.json() == []
+    # O cadastro completo (todos os usuarios) independe do escopo/memberships do
+    # admin, entao os dois usuarios aparecem mesmo com o admin sem membership
+    # materializada. Ja o checkin permanece escopado e vazio nesse caso.
+    users_keys = {row["chave"] for row in users_response.json()}
+    assert "AM80" in users_keys
+    assert "AM83" in users_keys
 
     assert checkin_response.status_code == 200, checkin_response.text
     assert checkin_response.json() == []
@@ -18765,6 +18770,155 @@ def test_admin_runtime_scope_requires_materialized_memberships_and_ignores_legac
     with SessionLocal() as db:
         admin = get_user_by_chave(db, "AM00")
         assert get_materialized_user_project_names(db, admin.id) == []
+
+
+def test_admin_users_list_includes_orphan_without_project_membership():
+    """Orfaos (projeto=None, sem membership) devem aparecer no cadastro completo,
+    em vez de acumular invisiveis por ficarem fora do escopo de qualquer admin."""
+    with SessionLocal() as db:
+        orphan = User(
+            rfid="ORFAO01",
+            nome="Usuario Orfao Sem Projeto",
+            chave="OF01",
+            projeto=None,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add(orphan)
+        db.commit()
+        orphan_id = orphan.id
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        users_response = client.get("/api/admin/users")
+
+    assert users_response.status_code == 200, users_response.text
+    rows_by_chave = {row["chave"]: row for row in users_response.json()}
+    assert "OF01" in rows_by_chave, "orfao sem projeto deve constar no cadastro completo"
+    assert rows_by_chave["OF01"]["projetos"] == []
+    assert rows_by_chave["OF01"]["projeto"] == ""
+
+    with SessionLocal() as db:
+        db.delete(db.get(User, orphan_id))
+        db.commit()
+
+
+def test_profile_nine_can_delete_orphan_user_without_project():
+    """Perfil 9 (super-admin) tem bypass de escopo no DELETE e consegue remover um
+    orfao sem projeto, viabilizando a limpeza do cadastro."""
+    with SessionLocal() as db:
+        admin = User(
+            rfid=None,
+            nome="Super Admin Exclui Orfao",
+            chave="A9D0",
+            projeto="P80",
+            senha=hash_password("adm123"),
+            perfil=9,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        orphan = User(
+            rfid="ORFAO09",
+            nome="Orfao Para Excluir",
+            chave="OF09",
+            projeto=None,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([admin, orphan])
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])
+        db.commit()
+        orphan_id = orphan.id
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="A9D0", senha="adm123")
+        assert login_response.status_code == 200, login_response.text
+        remove_response = client.delete(f"/api/admin/users/{orphan_id}")
+
+    assert remove_response.status_code == 200, remove_response.text
+    with SessionLocal() as db:
+        assert db.get(User, orphan_id) is None
+
+
+def test_restricted_admin_cannot_delete_orphan_user_outside_scope():
+    """O bypass de exclusao e exclusivo do perfil 9: um admin restrito (perfil 1)
+    continua sem conseguir remover um orfao fora do seu escopo (404)."""
+    with SessionLocal() as db:
+        admin = User(
+            rfid=None,
+            nome="Admin Restrito Sem Bypass",
+            chave="A1D0",
+            projeto="P80",
+            senha=hash_password("adm123"),
+            perfil=1,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        orphan = User(
+            rfid="ORFAO10",
+            nome="Orfao Fora De Escopo",
+            chave="OF10",
+            projeto=None,
+            workplace=None,
+            placa=None,
+            end_rua=None,
+            zip=None,
+            email=None,
+            local=None,
+            checkin=None,
+            time=None,
+            last_active_at=now_sgt(),
+            inactivity_days=0,
+        )
+        db.add_all([admin, orphan])
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])
+        db.commit()
+        orphan_id = orphan.id
+
+    with TestClient(app) as client:
+        login_response = login_admin(client, chave="A1D0", senha="adm123")
+        assert login_response.status_code == 200, login_response.text
+        remove_response = client.delete(f"/api/admin/users/{orphan_id}")
+
+    assert remove_response.status_code == 404, remove_response.text
+    with SessionLocal() as db:
+        assert db.get(User, orphan_id) is not None
+        db.delete(db.get(User, orphan_id))
+        db.commit()
 
 
 def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_and_database_events():
@@ -18911,9 +19065,13 @@ def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_an
         export_all_response = client.get("/api/admin/reports/events/export-all")
 
     assert users_response.status_code == 200, users_response.text
+    # A aba Cadastro passou a listar TODOS os usuarios do banco (inclusive fora do
+    # escopo do admin e orfaos sem projeto); apenas events/reports/database-events
+    # continuam escopados por membership. Por isso P983 (fora do escopo P80) agora
+    # aparece no cadastro completo.
     visible_user_keys = {row["chave"] for row in users_response.json()}
     assert "P980" in visible_user_keys
-    assert "P983" not in visible_user_keys
+    assert "P983" in visible_user_keys
 
     assert events_response.status_code == 200, events_response.text
     visible_event_ids = {row["id"] for row in events_response.json()}
