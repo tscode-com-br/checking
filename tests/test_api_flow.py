@@ -969,10 +969,10 @@ def test_bootstrap_admin_seed_resets_monitored_scope_to_all_mode():
         assert ensured_admin.admin_monitored_projects_json is None
 
 
-def test_full_admin_presence_tables_ignore_memberships_and_show_all_projects():
-    """Requisito: full admins (perfil 1/9) veem TUDO. Mesmo com membership só em P80,
-    este admin perfil 1 enxerga também os usuários de P83 em check-in/check-out/inativos —
-    o escopo por membership não estreita mais um admin completo."""
+def test_perfil_one_admin_presence_tables_scoped_to_membership_projects():
+    """Requisito reconfirmado 2026-07-07: admin perfil 1 é ESCOPADO às suas memberships. Com
+    membership só em P80, este admin vê os usuários de P80 mas NÃO os de P83 em
+    check-in/check-out/inativos. Apenas perfil 9 (FULL) é irrestrito."""
     recent_time = now_sgt() - timedelta(hours=1)
     stale_time = now_sgt() - timedelta(hours=26)
 
@@ -1087,11 +1087,11 @@ def test_full_admin_presence_tables_ignore_memberships_and_show_all_projects():
     inactive_keys = {row["chave"] for row in inactive_response.json()}
 
     assert "S7CI" in checkin_keys
-    assert "S7CJ" in checkin_keys  # P83 agora visível ao full admin
+    assert "S7CJ" not in checkin_keys  # P83 fora do escopo do admin perfil 1
     assert "S7CO" in checkout_keys
-    assert "S7CP" in checkout_keys  # P83
+    assert "S7CP" not in checkout_keys  # P83
     assert "S7IA" in inactive_keys
-    assert "S7IB" in inactive_keys  # P83
+    assert "S7IB" not in inactive_keys  # P83
 
 
 def test_unrestricted_admin_scope_keeps_all_presence_rows_visible():
@@ -18619,10 +18619,10 @@ def test_admin_legacy_single_project_update_replaces_memberships_with_explicit_s
     assert materialized_names == ["P83"]
 
 
-def test_full_admin_user_update_applies_explicit_membership_selection():
-    """Full admin (perfil 1): a seleção explícita de projetos no update é autoritativa e
-    substitui as memberships do usuário — não há mais preservação de projetos "fora de escopo"
-    (que só fazia sentido para admins escopados, agora inexistentes entre full admins)."""
+def test_scoped_perfil_one_admin_update_preserves_out_of_scope_projects():
+    """Admin perfil 1 escopado a P80 atualiza um usuário com memberships [P80, P83] enviando
+    projetos=["P80"]. Como o admin não tem P83 no escopo, P83 é PRESERVADO (não pode remover
+    projetos fora do seu escopo) — memberships finais = [P80, P83]. Só perfil 9 substituiria tudo."""
     with SessionLocal() as db:
         scoped_admin = User(
             rfid=None,
@@ -18689,14 +18689,14 @@ def test_full_admin_user_update_applies_explicit_membership_selection():
 
     assert target_user.nome == "Usuario Multi Escopo Atualizado"
     assert target_user.projeto == "P80"
-    # Full admin: projetos=["P80"] substitui as memberships; P83 é removido (sem preservação).
-    assert materialized_names == ["P80"]
+    # Admin escopado a P80: projetos=["P80"] NÃO remove P83 (fora do escopo do admin) — preservado.
+    assert materialized_names == ["P80", "P83"]
 
 
-def test_full_admin_without_memberships_sees_all_checkin_and_can_create_users():
-    """Após o requisito "perfil 1 vê e altera tudo": um full admin (perfil 1) SEM memberships
-    materializadas enxerga TODOS os usuários em check-in e PODE criar usuários. O cadastro
-    completo (/users) já era global. (Antes: check-in vazio e create 403 — exatamente o bug do UTO9.)"""
+def test_perfil_one_admin_without_memberships_sees_empty_and_cannot_create():
+    """Requisito reconfirmado 2026-07-07: perfil 1 é escopado por membership. SEM memberships, o
+    admin fica escopado a nenhum projeto: NÃO enxerga usuários em /users nem em /checkin e NÃO pode
+    criar/alterar usuários (403). O conserto é conceder memberships — só perfil 9 é irrestrito."""
     recent_time = now_sgt() - timedelta(hours=1)
 
     with SessionLocal() as db:
@@ -18764,18 +18764,18 @@ def test_full_admin_without_memberships_sees_all_checkin_and_can_create_users():
         )
 
     assert users_response.status_code == 200, users_response.text
-    # O cadastro completo (todos os usuarios) sempre foi global. Após o requisito, um full
-    # admin SEM memberships também enxerga TODOS em check-in e PODE criar usuários.
+    # perfil 1 SEM memberships: escopo vazio -> não enxerga usuários em /users nem em /checkin.
     users_keys = {row["chave"] for row in users_response.json()}
-    assert "AM80" in users_keys
-    assert "AM83" in users_keys
+    assert "AM80" not in users_keys
+    assert "AM83" not in users_keys
 
     assert checkin_response.status_code == 200, checkin_response.text
     checkin_keys = {row["chave"] for row in checkin_response.json()}
-    assert "AM80" in checkin_keys
-    assert "AM83" in checkin_keys
+    assert "AM80" not in checkin_keys
+    assert "AM83" not in checkin_keys
 
-    assert blocked_create.status_code == 200, blocked_create.text
+    # Sem projetos vinculados, o admin perfil 1 não pode criar/alterar usuários.
+    assert blocked_create.status_code == 403, blocked_create.text
 
     with SessionLocal() as db:
         admin = get_user_by_chave(db, "AM00")
@@ -18875,9 +18875,10 @@ def test_profile_nine_can_delete_orphan_user_without_project():
         assert db.get(User, orphan_id) is None
 
 
-def test_full_admin_can_delete_orphan_user():
-    """Após o requisito "perfil 1 altera tudo": um full admin (perfil 1) tem bypass de escopo
-    e CONSEGUE remover um órfão (usuário sem projeto). Antes o bypass era exclusivo do perfil 9."""
+def test_perfil_one_admin_cannot_delete_orphan_user():
+    """Requisito reconfirmado 2026-07-07: perfil 1 é escopado e NÃO tem bypass de órfãos. Ao tentar
+    remover um órfão (sem projeto, fora do escopo), o endpoint responde 404 e o órfão permanece.
+    Só perfil 9 (FULL) remove órfãos (ver test_profile_nine_can_delete_orphan_user_without_project)."""
     with SessionLocal() as db:
         admin = User(
             rfid=None,
@@ -18924,17 +18925,16 @@ def test_full_admin_can_delete_orphan_user():
         assert login_response.status_code == 200, login_response.text
         remove_response = client.delete(f"/api/admin/users/{orphan_id}")
 
-    assert remove_response.status_code == 200, remove_response.text
+    assert remove_response.status_code == 404, remove_response.text
     with SessionLocal() as db:
-        assert db.get(User, orphan_id) is None  # o endpoint já removeu o órfão
+        assert db.get(User, orphan_id) is not None  # órfão fora do escopo do perfil 1: NÃO removido
 
 
 def test_full_admin_runtime_scope_is_unrestricted_across_users_events_reports_and_database_events():
-    """Full admins (perfil com dígito 1 ou 9) NÃO são escopados por projeto: enxergam e
-    administram TODOS os projetos em users/events/reports/database-events/export-all,
-    independentemente das suas memberships. Isto SUPERA o invariante anterior de
-    escopo-por-membership para full admins (requisito do produto: perfil 1 vê e altera
-    tudo, exceto o horário das atividades e revogar administradores perfil 9)."""
+    """Admins FULL (perfil com dígito 9, aqui P9S1=perfil 9) NÃO são escopados por projeto: enxergam
+    TODOS os projetos em users/events/reports/database-events/export-all, independentemente das suas
+    memberships. (Perfil 1 é escopado — coberto por outros testes; aqui validamos que o perfil 9
+    permanece irrestrito em todas as superfícies.)"""
     event_time = datetime(2026, 4, 25, 7, 30, 0, tzinfo=ZoneInfo(settings.tz_name))
 
     with SessionLocal() as db:
@@ -19078,16 +19078,13 @@ def test_full_admin_runtime_scope_is_unrestricted_across_users_events_reports_an
         export_all_response = client.get("/api/admin/reports/events/export-all")
 
     assert users_response.status_code == 200, users_response.text
-    # A aba Cadastro passou a listar TODOS os usuarios do banco (inclusive fora do
-    # escopo do admin e orfaos sem projeto); apenas events/reports/database-events
-    # continuam escopados por membership. Por isso P983 (fora do escopo P80) agora
-    # aparece no cadastro completo.
+    # Perfil 9 (FULL) é irrestrito em todas as superfícies: enxerga P983 (fora das memberships do
+    # admin) no cadastro, eventos, reports e database-events.
     visible_user_keys = {row["chave"] for row in users_response.json()}
     assert "P980" in visible_user_keys
     assert "P983" in visible_user_keys
 
-    # Full admins (perfil 1/9) agora NÃO são escopados por projeto: veem TODOS os projetos,
-    # inclusive P83 (fora das memberships do admin). Antes deste requisito, P83 era ocultado.
+    # Perfil 9 vê TODOS os projetos, inclusive P83 (fora das memberships do admin).
     assert events_response.status_code == 200, events_response.text
     visible_event_ids = {row["id"] for row in events_response.json()}
     assert visible_event_id in visible_event_ids
@@ -19120,9 +19117,10 @@ def test_full_admin_runtime_scope_is_unrestricted_across_users_events_reports_an
     assert "Usuario Escopo P83" in exported_names
 
 
-def test_perfil_one_admin_without_memberships_sees_all_checkin():
-    """Regressão do bug UTO9: um admin perfil 1 SEM memberships enxerga TODOS os usuários
-    em check-in (antes retornava lista vazia por escopo de membership vazio)."""
+def test_perfil_one_admin_without_memberships_sees_empty_checkin():
+    """Requisito reconfirmado 2026-07-07: perfil 1 é ESCOPADO por membership. Sem memberships, o
+    admin fica escopado a nenhum projeto e não enxerga ninguém em check-in (o conserto é conceder
+    memberships, não torná-lo irrestrito). Só perfil 9 é irrestrito."""
     now = now_sgt()
     with SessionLocal() as db:
         admin = User(rfid=None, nome="Admin Sem Membership", chave="UT1A", projeto=None,
@@ -19142,13 +19140,13 @@ def test_perfil_one_admin_without_memberships_sees_all_checkin():
         resp = client.get("/api/admin/checkin")
     assert resp.status_code == 200
     names = {row["nome"] for row in resp.json()}
-    assert "Trab UT1A P80" in names
-    assert "Trab UT1A P82" in names
+    assert "Trab UT1A P80" not in names
+    assert "Trab UT1A P82" not in names
 
 
-def test_perfil_one_admin_with_single_membership_still_sees_all_checkin():
-    """Um full admin com apenas UMA membership NÃO é estreitado a esse projeto — continua
-    vendo todos (o bypass é por perfil, não pela interseção de memberships)."""
+def test_perfil_one_admin_with_single_membership_scoped_to_that_project_on_checkin():
+    """Caso UTO9: um admin perfil 1 com uma única membership (P80) é ESCOPADO a esse projeto —
+    vê os usuários de P80 e NÃO os de P82. O escopo é a interseção de memberships, não bypass."""
     now = now_sgt()
     with SessionLocal() as db:
         admin = User(rfid=None, nome="Admin Uma Membership", chave="UT1B", projeto=None,
@@ -19170,7 +19168,7 @@ def test_perfil_one_admin_with_single_membership_still_sees_all_checkin():
     assert resp.status_code == 200
     names = {row["nome"] for row in resp.json()}
     assert "Trab UT1B P80" in names
-    assert "Trab UT1B P82" in names  # NÃO estreitado a P80
+    assert "Trab UT1B P82" not in names  # escopado a P80
 
 
 def test_perfil_zero_limited_admin_stays_project_scoped_on_checkin():

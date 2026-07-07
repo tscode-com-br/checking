@@ -4280,10 +4280,10 @@ def remove_user(
         )
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Full admins (perfil com dígito 1 ou 9) têm bypass de escopo: resolve_effective_admin_project_names
-    # retorna None para eles. Isso permite limpar os órfãos (um usuário sem projeto tem interseção de
-    # escopo vazia e, sem o bypass, o DELETE responderia 404 "User not found"). Só admins escopados
-    # (perfil limitado) permanecem restritos aos próprios projetos. O guard perfil==9 é mantido por clareza.
+    # Só admins FULL (perfil 9) têm bypass de escopo: resolve_effective_admin_project_names retorna
+    # None para eles, o que permite limpar órfãos (um usuário sem projeto tem interseção de escopo
+    # vazia e, sem o bypass, o DELETE responderia 404 "User not found"). Admins perfil 1 e limitados
+    # permanecem escopados às próprias memberships e não removem usuários fora do seu escopo/órfãos.
     if current_admin.perfil != 9:
         effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
         effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None

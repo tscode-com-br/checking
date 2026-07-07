@@ -106,6 +106,17 @@ def user_has_admin_access(user: User | None) -> bool:
     return user is not None and user_profile_has_access(user.perfil, ADMIN_ACCESS_DIGIT)
 
 
+def user_has_full_admin_access(user: User | None) -> bool:
+    """True somente para admins FULL (perfil com dígito 9 — ex.: HR70), que NÃO são escopados por
+    projeto e enxergam/administram todos os projetos + órfãos.
+
+    Distinto de:
+      - `user_has_admin_access` (True para perfil 1 E 9): apenas indica acesso ao painel admin;
+      - `get_admin_access_scope` (== "full"/"limited"): trata de quais ABAS, não de quais PROJETOS.
+    Um admin perfil 1 tem acesso ao painel mas é escopado às suas memberships de projeto."""
+    return user is not None and FULL_ACCESS_DIGIT in get_user_profile_digits(user.perfil)
+
+
 def user_can_access_admin_panel(user: User | None) -> bool:
     if user is None:
         return False
