@@ -1216,6 +1216,13 @@ def build_inactive_rows(
     } if project_names else {}
 
     for user in rows:
+        # Orphan users (projeto=None, produced by inactivity de-registration) are already off the
+        # active roster and are managed via the Cadastro tab; they don't belong in the "still
+        # registered but inactive" list. Skipping them here also avoids the ValidationError that a
+        # None projeto would raise against InactiveUserRow.projeto (str) — the root cause of the
+        # admin panel returning 500 on refresh. Skipping early also saves a per-user activity query.
+        if user.projeto is None:
+            continue
         latest_activity = resolve_latest_user_activity(db, user=user)
         if latest_activity is None:
             continue
