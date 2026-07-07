@@ -84,6 +84,7 @@ def apply_inactivity_descadastro(db: Session, *, reference_time=None) -> bool:
 
     Returns True se houve alguma remoção.
     """
+    from .admin_auth import user_has_admin_access  # local: evita import circular
     from .user_projects import replace_user_project_memberships  # evita import circular
 
     rows = db.execute(
@@ -101,6 +102,11 @@ def apply_inactivity_descadastro(db: Session, *, reference_time=None) -> bool:
     users_map: dict[int, User] = {}
 
     for membership, user, project in rows:
+        # Admins (perfil 1/9) NÃO são descadastrados por inatividade: a membership de um admin é o
+        # seu escopo de gestão de projeto, não um indicador de presença em campo. Sem essa isenção,
+        # um admin que não faz check-in perde o vínculo de projeto e passa a não enxergar ninguém.
+        if user_has_admin_access(user):
+            continue
         users_map[user.id] = user
         all_project_names[user.id].append(project.name)
         if user.inactivity_days >= project.inactivity_days_threshold:
