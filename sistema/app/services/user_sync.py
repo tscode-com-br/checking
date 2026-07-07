@@ -274,18 +274,20 @@ def list_user_sync_events_for_users(
     db: Session,
     *,
     user_ids: set[int],
+    min_event_time: datetime | None = None,
 ) -> dict[int, list[UserSyncEvent]]:
     normalized_user_ids = sorted({user_id for user_id in user_ids if user_id is not None})
     if not normalized_user_ids:
         return {}
 
+    query = select(UserSyncEvent).where(
+        UserSyncEvent.user_id.in_(normalized_user_ids),
+        UserSyncEvent.action.in_(("checkin", "checkout")),
+    )
+    if min_event_time is not None:
+        query = query.where(UserSyncEvent.event_time >= min_event_time)
     events = db.execute(
-        select(UserSyncEvent)
-        .where(
-            UserSyncEvent.user_id.in_(normalized_user_ids),
-            UserSyncEvent.action.in_(("checkin", "checkout")),
-        )
-        .order_by(UserSyncEvent.user_id, desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
+        query.order_by(UserSyncEvent.user_id, desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
     ).scalars().all()
     return _group_sync_events_by_user_id(events)
 
@@ -294,31 +296,40 @@ def list_check_activity_events_for_rfids(
     db: Session,
     *,
     rfids: set[str],
+    min_event_time: datetime | None = None,
 ) -> dict[str, list[CheckEvent]]:
     normalized_rfids = sorted({_normalize_rfid(rfid) for rfid in rfids if _normalize_rfid(rfid)})
     if not normalized_rfids:
         return {}
 
+    query = select(CheckEvent).where(
+        CheckEvent.rfid.in_(normalized_rfids),
+        CheckEvent.action.in_(("checkin", "checkout")),
+        CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
+    )
+    if min_event_time is not None:
+        query = query.where(CheckEvent.event_time >= min_event_time)
     events = db.execute(
-        select(CheckEvent)
-        .where(
-            CheckEvent.rfid.in_(normalized_rfids),
-            CheckEvent.action.in_(("checkin", "checkout")),
-            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
-        )
-        .order_by(CheckEvent.rfid, desc(CheckEvent.event_time), desc(CheckEvent.id))
+        query.order_by(CheckEvent.rfid, desc(CheckEvent.event_time), desc(CheckEvent.id))
     ).scalars().all()
     return _group_check_events_by_rfid(events)
 
 
-def load_user_activity_inputs(db: Session, *, users: list[User]) -> LoadedUserActivityInputs:
+def load_user_activity_inputs(
+    db: Session,
+    *,
+    users: list[User],
+    min_event_time: datetime | None = None,
+) -> LoadedUserActivityInputs:
     sync_events_by_user_id = list_user_sync_events_for_users(
         db,
         user_ids={user.id for user in users if user.id is not None},
+        min_event_time=min_event_time,
     )
     check_events_by_rfid = list_check_activity_events_for_rfids(
         db,
         rfids={_normalize_rfid(user.rfid) for user in users if _normalize_rfid(user.rfid)},
+        min_event_time=min_event_time,
     )
     project_names = {user.projeto for user in users if user.projeto}
     for events in sync_events_by_user_id.values():
@@ -708,8 +719,13 @@ def resolve_latest_user_activities(
     ignored_sync_sources: frozenset[str] = frozenset(),
     ignored_check_event_sources: frozenset[str] = frozenset(),
     include_current_state: bool = True,
+    min_event_time: datetime | None = None,
 ) -> dict[int, ResolvedUserActivity | None]:
-    inputs = load_user_activity_inputs(db, users=users)
+    # min_event_time limita o carregamento do historico de eventos (que cresce sem limite) a uma
+    # janela recente. So e seguro quando o CHAMADOR ja descarta atividades mais antigas que a janela
+    # (ex.: telas de presenca, que filtram por is_user_inactive): um usuario cuja ultima atividade
+    # ficou fora da janela resolve para None em vez da atividade antiga.
+    inputs = load_user_activity_inputs(db, users=users, min_event_time=min_event_time)
     payload: dict[int, ResolvedUserActivity | None] = {}
     for user in users:
         if user.id is None:

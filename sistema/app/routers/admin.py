@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 from io import BytesIO
 from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
@@ -11,7 +13,8 @@ from pydantic import ValidationError
 from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..core.config import settings as app_settings
+from ..database import SessionLocal, get_db
 from ..database import get_database_diagnostics
 from ..models import (
     Accident,
@@ -112,7 +115,6 @@ from ..services.admin_auth import (
     require_admin_identity,
     require_full_admin_session,
     require_admin_session,
-    require_admin_stream_session,
     user_has_admin_access,
     user_can_access_admin_panel,
     user_can_view_activity_time,
@@ -519,7 +521,7 @@ def build_all_report_events_export(
         if current_admin is not None
         else None
     )
-    if current_admin is not None:
+    if current_admin is not None and effective_admin_projects is not None:
         if not effective_admin_projects:
             rows = []
         else:
@@ -1021,6 +1023,14 @@ def _resolve_skipped_presence_forms_status(
     return resolve_effective_skipped_display_status(candidates)
 
 
+# Janela de carregamento de eventos para as telas de presenca. A tela so exibe usuarios com
+# atividade nas ultimas 24h (is_user_inactive); 72h cobre essa janela + o tie-break de eventos do
+# mesmo dia + folga para event_time armazenado em hora local do projeto (a normalizacao de timezone
+# acontece em Python, depois do SELECT). Sem esse corte, cada poll carregava o historico INTEIRO de
+# user_sync_events/check_events — a query de ~7k+ linhas que derrubava o worker em producao.
+PRESENCE_EVENT_LOOKBACK_HOURS = 72
+
+
 def build_presence_rows(
     db: Session,
     *,
@@ -1041,7 +1051,11 @@ def build_presence_rows(
         return [], 0
     total_in_scope = len(rows)
 
-    latest_activities = resolve_latest_user_activities(db, users=rows)
+    latest_activities = resolve_latest_user_activities(
+        db,
+        users=rows,
+        min_event_time=current_time - timedelta(hours=PRESENCE_EVENT_LOOKBACK_HOURS),
+    )
     presence_request_ids = {
         latest_activity.source_request_id
         for latest_activity in latest_activities.values()
@@ -1574,7 +1588,7 @@ def pending_matches_admin_scope(
         else None
     )
     if current_admin is not None and effective_admin_projects is None:
-        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
     if effective_admin_projects is None:
         return True
     if not effective_admin_projects:
@@ -2125,8 +2139,17 @@ def change_own_admin_password(
     return AdminActionResponse(ok=True, message="Senha alterada com sucesso.")
 
 
-@router.get("/stream", dependencies=[Depends(require_admin_stream_session)])
+@router.get("/stream")
 async def stream_updates(request: Request) -> StreamingResponse:
+    # Authenticate with a short-lived session that is released BEFORE the streaming loop.
+    # A route-level Depends(require_admin_stream_session) would keep the get_db session (and
+    # its pooled connection) checked out for the entire (indefinite) life of the SSE stream —
+    # FastAPI only tears down generator dependencies after the response finishes — exhausting
+    # the pool with only a handful of admin tabs.
+    with SessionLocal() as db:
+        admin = get_authenticated_admin_from_session(request, db)
+    if admin is None:
+        raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
     subscriber_id, queue = admin_updates_broker.subscribe()
 
     async def event_generator():
@@ -3112,6 +3135,22 @@ def revoke_administrator(
         )
         raise HTTPException(status_code=409, detail="Voce nao pode revogar seu proprio acesso.")
 
+    # Requisito: apenas um administrador perfil 9 pode revogar outro administrador perfil 9.
+    # Um admin completo perfil 1 vê e altera tudo, EXCETO revogar administradores perfil 9.
+    if admin.perfil == 9 and current_admin.perfil != 9:
+        log_event(
+            db,
+            source="admin",
+            action="admin_access",
+            status="failed",
+            message="Administrator revocation rejected because only a perfil 9 admin can revoke a perfil 9 admin",
+            request_path=f"/api/admin/administrators/{admin_id}/revoke",
+            http_status=403,
+            details=f"chave={admin.chave}; revoked_by={current_admin.chave}; target_perfil={admin.perfil}",
+            commit=True,
+        )
+        raise HTTPException(status_code=403, detail="Apenas administradores com perfil 9 podem revogar um administrador com perfil 9.")
+
     total_admins = sum(
         1
         for row in db.execute(select(User).where(User.perfil != 0)).scalars().all()
@@ -3198,13 +3237,35 @@ def set_administrator_password(
     return AdminActionResponse(ok=True, message="Nova senha cadastrada com sucesso.")
 
 
-@router.get("/checkin", response_model=list[UserRow])
-def list_checkin(
-    response: Response,
-    db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin_session),
-) -> list[UserRow]:
-    reference_time = now_sgt()
+# Throttle process-global do bookkeeping de inatividade. As telas de presença (checkin/checkout) são
+# repolladas por cada aba do admin a cada notify SSE + auto-refresh; rodar sync_user_inactivity (varre
+# TODOS os usuários) + apply_inactivity_descadastro em cada GET era desperdício puro. A granularidade
+# de inatividade é de DIAS e a visibilidade da tabela vem de is_user_inactive(event_time) em tempo
+# real (não desta coluna persistida), então rodar a cada 5 min basta e blinda o worker das rajadas.
+_INACTIVITY_BOOKKEEPING_MIN_INTERVAL_SECONDS = 300.0
+_inactivity_bookkeeping_lock = threading.Lock()
+_last_inactivity_bookkeeping_monotonic: float | None = None
+
+
+def _should_run_inactivity_bookkeeping_now() -> bool:
+    """Leading-edge throttle, ativo APENAS em produção. Retorna True no máximo uma vez a cada
+    _INACTIVITY_BOOKKEEPING_MIN_INTERVAL_SECONDS por processo. Fora de produção (dev/testes) sempre
+    retorna True para preservar o efeito imediato de que os testes dependem."""
+    if app_settings.app_env != "production":
+        return True
+    global _last_inactivity_bookkeeping_monotonic
+    now_monotonic = time.monotonic()
+    with _inactivity_bookkeeping_lock:
+        last = _last_inactivity_bookkeeping_monotonic
+        if last is not None and (now_monotonic - last) < _INACTIVITY_BOOKKEEPING_MIN_INTERVAL_SECONDS:
+            return False
+        _last_inactivity_bookkeeping_monotonic = now_monotonic
+        return True
+
+
+def _run_inactivity_bookkeeping(db: Session, *, reference_time) -> None:
+    if not _should_run_inactivity_bookkeeping_now():
+        return
     synced = sync_user_inactivity(db, reference_time=reference_time)
     descadastrado = apply_inactivity_descadastro(db)
     if synced or descadastrado:
@@ -3212,6 +3273,16 @@ def list_checkin(
     if descadastrado:
         notify_admin_views("register")
         notify_web_check_data_changed("inactivity_descadastro")
+
+
+@router.get("/checkin", response_model=list[UserRow])
+def list_checkin(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_admin_session),
+) -> list[UserRow]:
+    reference_time = now_sgt()
+    _run_inactivity_bookkeeping(db, reference_time=reference_time)
     rows, total_in_scope = build_presence_rows(db, action="checkin", current_admin=current_admin, reference_time=reference_time)
     response.headers["X-Total-In-Scope"] = str(total_in_scope)
     return rows
@@ -3224,13 +3295,7 @@ def list_checkout(
     current_admin: User = Depends(require_admin_session),
 ) -> list[UserRow]:
     reference_time = now_sgt()
-    synced = sync_user_inactivity(db, reference_time=reference_time)
-    descadastrado = apply_inactivity_descadastro(db)
-    if synced or descadastrado:
-        db.commit()
-    if descadastrado:
-        notify_admin_views("register")
-        notify_web_check_data_changed("inactivity_descadastro")
+    _run_inactivity_bookkeeping(db, reference_time=reference_time)
     rows, total_in_scope = build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
     response.headers["X-Total-In-Scope"] = str(total_in_scope)
     return rows
@@ -3327,13 +3392,7 @@ def clear_provider_forms(db: Session = Depends(get_db)) -> AdminActionResponse:
 @router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_full_admin_session)])
 def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     reference_time = now_sgt()
-    synced = sync_user_inactivity(db, reference_time=reference_time)
-    descadastrado = apply_inactivity_descadastro(db)
-    if synced or descadastrado:
-        db.commit()
-    if descadastrado:
-        notify_admin_views("register")
-        notify_web_check_data_changed("inactivity_descadastro")
+    _run_inactivity_bookkeeping(db, reference_time=reference_time)
     return build_missing_checkout_rows(db, reference_time=reference_time)
 
 
@@ -3343,13 +3402,7 @@ def list_inactive(
     current_admin: User = Depends(require_full_admin_session),
 ) -> list[InactiveUserRow]:
     reference_time = now_sgt()
-    synced = sync_user_inactivity(db, reference_time=reference_time)
-    descadastrado = apply_inactivity_descadastro(db)
-    if synced or descadastrado:
-        db.commit()
-    if descadastrado:
-        notify_admin_views("register")
-        notify_web_check_data_changed("inactivity_descadastro")
+    _run_inactivity_bookkeeping(db, reference_time=reference_time)
     return build_inactive_rows(db, current_admin=current_admin, reference_time=reference_time)
 
 
@@ -3359,8 +3412,8 @@ def list_pending(
     current_admin: User = Depends(require_full_admin_session),
 ) -> list[PendingRow]:
     rows = db.execute(select(PendingRegistration).order_by(desc(PendingRegistration.last_seen_at))).scalars().all()
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    if not effective_admin_projects:
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    if effective_admin_projects is not None and not effective_admin_projects:
         return []
 
     latest_scan_local_by_rfid, location_projects_by_local = build_pending_registration_scope_maps(db, rows)
@@ -3394,7 +3447,7 @@ def list_locations(
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminLocationsResponse:
     rows = db.execute(select(ManagedLocation).order_by(ManagedLocation.local, ManagedLocation.id)).scalars().all()
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
     known_project_names = set(list_project_names(db))
     rows = [
         row
@@ -3429,8 +3482,9 @@ def list_project_minimum_checkout_distances(
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminProjectMinimumCheckoutDistanceListResponse:
     rows = list_project_minimum_checkout_distance_rows(db)
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    rows = [row for row in rows if row.project_name in set(effective_admin_projects)]
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    if effective_admin_projects is not None:
+        rows = [row for row in rows if row.project_name in set(effective_admin_projects)]
     return AdminProjectMinimumCheckoutDistanceListResponse(
         items=[
             AdminProjectMinimumCheckoutDistanceRow(
@@ -3452,9 +3506,9 @@ def update_project_minimum_checkout_distances(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminProjectMinimumCheckoutDistanceSaveResponse:
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    effective_admin_project_set = set(effective_admin_projects)
-    if not effective_admin_project_set:
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
+    if effective_admin_project_set is not None and not effective_admin_project_set:
         raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar configuracoes por projeto.")
 
     current_rows = list_project_minimum_checkout_distance_rows(db)
@@ -3469,12 +3523,13 @@ def update_project_minimum_checkout_distances(
         )
         for item in payload.items
     ]
-    if any(project_name not in effective_admin_project_set for project_name, _ in normalized_items):
+    if effective_admin_project_set is not None and any(project_name not in effective_admin_project_set for project_name, _ in normalized_items):
         raise HTTPException(status_code=403, detail="Nao e possivel alterar projetos fora do seu escopo.")
 
     upsert_project_minimum_checkout_distance_rows(db, normalized_items)
     refreshed_rows = list_project_minimum_checkout_distance_rows(db)
-    refreshed_rows = [row for row in refreshed_rows if row.project_name in effective_admin_project_set]
+    if effective_admin_project_set is not None:
+        refreshed_rows = [row for row in refreshed_rows if row.project_name in effective_admin_project_set]
     changed_rows = [
         f"{row.project_name}:{previous_values.get(row.project_name)}->{row.minimum_checkout_distance_meters}"
         for row in refreshed_rows
@@ -3549,9 +3604,9 @@ def upsert_location(
     if validated_payload.location_id is not None and location is None:
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    effective_admin_project_set = set(effective_admin_projects)
-    if not effective_admin_project_set:
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
+    if effective_admin_project_set is not None and not effective_admin_project_set:
         raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar localizacoes.")
 
     timestamp = now_sgt()
@@ -3588,6 +3643,7 @@ def upsert_location(
     requested_location_project_set = set(location_projects)
     preserves_existing_detached_projects = (
         location is not None
+        and effective_admin_project_set is not None
         and requested_location_project_set == existing_location_project_set
         and bool(requested_location_project_set)
         and requested_location_project_set.isdisjoint(effective_admin_project_set)
@@ -3602,7 +3658,7 @@ def upsert_location(
     ):
         raise HTTPException(status_code=403, detail="Localizacao fora do escopo do administrador.")
 
-    if not preserves_existing_detached_projects and any(
+    if effective_admin_project_set is not None and not preserves_existing_detached_projects and any(
         project_name not in effective_admin_project_set for project_name in location_projects
     ):
         raise HTTPException(status_code=403, detail="Nao e possivel salvar localizacoes com projetos fora do seu escopo.")
@@ -3723,7 +3779,7 @@ def remove_location(
         )
         raise HTTPException(status_code=404, detail="Localizacao nao encontrada.")
 
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
     if not location_matches_effective_admin_scope(
         db,
         current_admin,
@@ -3804,9 +3860,9 @@ def upsert_user(
     placa_was_provided = "placa" in payload_fields
     vehicle_id_was_provided = "vehicle_id" in payload_fields
     vehicle_link_was_provided = placa_was_provided or vehicle_id_was_provided
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    effective_admin_project_set = set(effective_admin_projects)
-    if not effective_admin_project_set:
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
+    if effective_admin_project_set is not None and not effective_admin_project_set:
         raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode alterar usuarios.")
 
     requested_active_project = ensure_known_project(db, payload.projeto) if payload.projeto is not None else None
@@ -3874,36 +3930,39 @@ def upsert_user(
     previous_project_names = list_user_project_names(db, user) if user is not None else []
     previous_active_project = user.projeto if user is not None else None
 
-    if user is None:
-        unauthorized_projects = [
-            project_name
-            for project_name in requested_project_names
-            if project_name not in effective_admin_project_set
-        ]
-        if unauthorized_projects:
-            raise HTTPException(status_code=403, detail="Nao e possivel vincular o usuario a projetos fora do seu escopo.")
-    else:
-        preserved_projects_outside_scope = [
-            project_name
-            for project_name in previous_project_names
-            if project_name not in effective_admin_project_set
-        ]
-        unauthorized_projects = [
-            project_name
-            for project_name in requested_project_names
-            if project_name not in effective_admin_project_set and project_name not in preserved_projects_outside_scope
-        ]
-        if unauthorized_projects:
-            raise HTTPException(status_code=403, detail="Nao e possivel adicionar projetos fora do seu escopo ao usuario.")
+    # Full admins (effective_admin_project_set is None) não têm restrição de projeto:
+    # podem vincular o usuário a qualquer projeto. Só admins escopados validam aqui.
+    if effective_admin_project_set is not None:
+        if user is None:
+            unauthorized_projects = [
+                project_name
+                for project_name in requested_project_names
+                if project_name not in effective_admin_project_set
+            ]
+            if unauthorized_projects:
+                raise HTTPException(status_code=403, detail="Nao e possivel vincular o usuario a projetos fora do seu escopo.")
+        else:
+            preserved_projects_outside_scope = [
+                project_name
+                for project_name in previous_project_names
+                if project_name not in effective_admin_project_set
+            ]
+            unauthorized_projects = [
+                project_name
+                for project_name in requested_project_names
+                if project_name not in effective_admin_project_set and project_name not in preserved_projects_outside_scope
+            ]
+            if unauthorized_projects:
+                raise HTTPException(status_code=403, detail="Nao e possivel adicionar projetos fora do seu escopo ao usuario.")
 
-        scoped_requested_projects = [
-            project_name
-            for project_name in requested_project_names
-            if project_name in effective_admin_project_set
-        ]
-        requested_project_names = normalize_user_project_names(
-            [*scoped_requested_projects, *preserved_projects_outside_scope]
-        )
+            scoped_requested_projects = [
+                project_name
+                for project_name in requested_project_names
+                if project_name in effective_admin_project_set
+            ]
+            requested_project_names = normalize_user_project_names(
+                [*scoped_requested_projects, *preserved_projects_outside_scope]
+            )
 
     if user:
         previous_key = user.chave
@@ -3921,7 +3980,7 @@ def upsert_user(
         if (
             requested_active_project is not None
             and requested_active_project in requested_project_names
-            and requested_active_project in effective_admin_project_set
+            and (effective_admin_project_set is None or requested_active_project in effective_admin_project_set)
         ):
             user.projeto = requested_active_project
         if previous_key != user.chave:
@@ -4024,7 +4083,7 @@ def remove_pending(
         )
         raise HTTPException(status_code=404, detail="Pending registration not found")
 
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
     latest_scan_local_by_rfid, location_projects_by_local = build_pending_registration_scope_maps(db, [pending])
     if not pending_matches_admin_scope(
         db,
@@ -4072,7 +4131,10 @@ def _user_pending_in_admin_scope(db: Session, current_admin: User, projetos: lis
     (multi-project admin → union). Mirrors the RFID membership scoping, plus the perfil-9 bypass."""
     if current_admin.perfil == 9:
         return True
-    effective = set(resolve_effective_admin_project_names(db, current_admin) or [])
+    resolved = resolve_effective_admin_project_names(db, current_admin)
+    if resolved is None:
+        return True
+    effective = set(resolved)
     if not effective:
         return False
     return bool(effective.intersection(projetos))
@@ -4218,32 +4280,32 @@ def remove_user(
         )
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Super-admin (perfil 9) tem bypass de escopo, espelhando o padrao do scoping
-    # de pendencias (plan003). Isso e o que permite limpar os orfaos: um usuario
-    # sem projeto tem intersecao de escopo vazia e, sem o bypass, o DELETE
-    # responderia 404 ("User not found") para qualquer admin. Admins restritos
-    # (perfil != 9) permanecem limitados aos seus proprios projetos.
+    # Full admins (perfil com dígito 1 ou 9) têm bypass de escopo: resolve_effective_admin_project_names
+    # retorna None para eles. Isso permite limpar os órfãos (um usuário sem projeto tem interseção de
+    # escopo vazia e, sem o bypass, o DELETE responderia 404 "User not found"). Só admins escopados
+    # (perfil limitado) permanecem restritos aos próprios projetos. O guard perfil==9 é mantido por clareza.
     if current_admin.perfil != 9:
-        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-        effective_admin_project_set = set(effective_admin_projects)
-        if not effective_admin_project_set:
+        effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+        effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
+        if effective_admin_project_set is not None and not effective_admin_project_set:
             raise HTTPException(status_code=403, detail="Administrador sem projetos vinculados nao pode remover usuarios.")
 
-        user_project_names = list_user_project_names(db, user)
-        if not user_matches_effective_admin_scope(
-            db,
-            current_admin,
-            user,
-            admin_project_names=effective_admin_projects,
-            user_project_names=user_project_names,
-        ):
-            raise HTTPException(status_code=404, detail="User not found")
+        if effective_admin_project_set is not None:
+            user_project_names = list_user_project_names(db, user)
+            if not user_matches_effective_admin_scope(
+                db,
+                current_admin,
+                user,
+                admin_project_names=effective_admin_projects,
+                user_project_names=user_project_names,
+            ):
+                raise HTTPException(status_code=404, detail="User not found")
 
-        if any(project_name not in effective_admin_project_set for project_name in user_project_names):
-            raise HTTPException(
-                status_code=403,
-                detail="Nao e possivel remover um usuario com projetos fora do seu escopo.",
-            )
+            if any(project_name not in effective_admin_project_set for project_name in user_project_names):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Nao e possivel remover um usuario com projetos fora do seu escopo.",
+                )
 
     if user_has_admin_access(user):
         total_admins = sum(
@@ -4401,11 +4463,11 @@ def list_database_events(
     if normalized_sort_direction not in DATABASE_EVENT_SORT_DIRECTIONS:
         raise HTTPException(status_code=400, detail="Direcao invalida para ordenacao de eventos.")
 
-    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin) or []
-    effective_admin_project_set = set(effective_admin_projects)
+    effective_admin_projects = resolve_effective_admin_project_names(db, current_admin)
+    effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
     filter_options = build_database_event_filter_options(db, allowed_project_names=effective_admin_projects)
 
-    if not effective_admin_project_set:
+    if effective_admin_project_set is not None and not effective_admin_project_set:
         return DatabaseEventListResponse(
             items=[],
             total=0,
@@ -4415,7 +4477,7 @@ def list_database_events(
             filter_options=filter_options,
         )
 
-    if normalized_project and normalized_project not in effective_admin_project_set:
+    if normalized_project and effective_admin_project_set is not None and normalized_project not in effective_admin_project_set:
         return DatabaseEventListResponse(
             items=[],
             total=0,
@@ -4428,10 +4490,9 @@ def list_database_events(
     if from_date and to_date and from_date > to_date:
         raise HTTPException(status_code=400, detail="Intervalo de datas invalido para a consulta de eventos.")
 
-    query = select(CheckEvent).where(
-        CheckEvent.action.in_(DATABASE_EVENT_ACTIONS),
-        CheckEvent.project.in_(effective_admin_projects),
-    )
+    query = select(CheckEvent).where(CheckEvent.action.in_(DATABASE_EVENT_ACTIONS))
+    if effective_admin_projects is not None:
+        query = query.where(CheckEvent.project.in_(effective_admin_projects))
 
     if normalized_action:
         query = query.where(CheckEvent.action == normalized_action)

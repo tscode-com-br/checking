@@ -58,10 +58,34 @@ Base.metadata.create_all(bind=engine)
 
 _WEB_CHAVE = "L4WB"
 _WEB_SENHA = "L4webpass"
+_ADMIN_CHAVE = "L4AD"
+_ADMIN_SENHA = "L4adminpass"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _ensure_admin_user(db: Session) -> User:
+    user = find_user_by_chave(db, _ADMIN_CHAVE)
+    if user is not None:
+        return user
+    user = User(
+        rfid=None,
+        chave=_ADMIN_CHAVE,
+        senha=hash_password(_ADMIN_SENHA),
+        perfil=9,
+        nome="L4 SSE Admin User",
+        projeto="L4RealtimeProject",
+        checkin=None,
+        time=None,
+        last_active_at=datetime.now(tz=timezone.utc),
+        inactivity_days=0,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def _ensure_web_user(db: Session) -> User:
@@ -120,7 +144,13 @@ async def _collect_events(body_iterator, max_events: int = 5) -> list[dict]:
 @pytest.mark.anyio
 async def test_admin_sse_connected_event():
     """Admin SSE stream must yield {reason: 'connected'} as its first event."""
-    mock_req = _make_mock_request(disconnects_after=1)
+    with SessionLocal() as db:
+        admin = _ensure_admin_user(db)
+        admin_id = admin.id
+    mock_req = _make_mock_request(
+        disconnects_after=1,
+        session_override={"admin_user_id": str(admin_id)},
+    )
     response = await admin_stream_handler(request=mock_req)
     assert response.media_type == "text/event-stream"
 
@@ -211,8 +241,12 @@ async def test_both_sse_streams_receive_accident_opened_simultaneously():
     db = SessionLocal()
     try:
         _ensure_web_user(db)
+        admin = _ensure_admin_user(db)
 
-        admin_req = _make_mock_request(disconnects_after=2)
+        admin_req = _make_mock_request(
+            disconnects_after=2,
+            session_override={"admin_user_id": str(admin.id)},
+        )
         web_req = _make_mock_request(
             disconnects_after=2,
             session_override={WEB_USER_SESSION_KEY: _WEB_CHAVE},

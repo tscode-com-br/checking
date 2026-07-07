@@ -186,7 +186,13 @@ const addProjectButton = document.getElementById("addProjectButton");
 const presenceRowHtmlCache = new WeakMap();
 
 const AUTO_REFRESH_MS = 5000;
-const REALTIME_DEBOUNCE_MS = 600;
+// Debounce (janela de silêncio) + teto de coalescência dos refetch disparados por SSE. Cada notify
+// (um por check-in/out, multiplicado por aba aberta) chama requestRefreshAllTables; a 600ms as
+// rajadas ainda geravam refetch de ~6 tabelas com alta frequência. Ampliado para 1500ms, com um teto
+// (REALTIME_MAX_WAIT_MS) para que um fluxo contínuo ainda atualize a cada 4s em vez de ser adiado
+// indefinidamente pelo debounce.
+const REALTIME_DEBOUNCE_MS = 1500;
+const REALTIME_MAX_WAIT_MS = 4000;
 const ARCHIVE_PAGE_SIZE = 8;
 const DATABASE_EVENTS_PAGE_SIZE = 50;
 const DATABASE_EVENT_DEFAULT_SORT_KEY = "event_time";
@@ -201,6 +207,7 @@ let activeTab = "checkin";
 let autoRefreshHandle = null;
 let realtimeConnected = false;
 let refreshAllTimer = null;
+let refreshAllFirstPendingAt = null;
 let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
@@ -5877,13 +5884,23 @@ function stopAutoRefresh() {
 }
 
 function requestRefreshAllTables() {
+  const now = Date.now();
+  if (refreshAllFirstPendingAt === null) {
+    refreshAllFirstPendingAt = now;
+  }
   if (refreshAllTimer !== null) {
     window.clearTimeout(refreshAllTimer);
   }
+  // Debounce com teto: adia REALTIME_DEBOUNCE_MS após o último evento, mas nunca além de
+  // REALTIME_MAX_WAIT_MS contados do primeiro evento pendente — rajadas curtas colapsam num único
+  // refetch e um fluxo contínuo ainda atualiza em cadência limitada em vez de nunca.
+  const elapsed = now - refreshAllFirstPendingAt;
+  const delay = Math.max(0, Math.min(REALTIME_DEBOUNCE_MS, REALTIME_MAX_WAIT_MS - elapsed));
   refreshAllTimer = window.setTimeout(() => {
-    refreshAutomaticTables().catch((error) => setStatus(error.message, false));
     refreshAllTimer = null;
-  }, REALTIME_DEBOUNCE_MS);
+    refreshAllFirstPendingAt = null;
+    refreshAutomaticTables().catch((error) => setStatus(error.message, false));
+  }, delay);
 }
 
 function startRealtimeUpdates() {

@@ -107,6 +107,14 @@ def resolve_effective_admin_project_names(
 ) -> list[str] | None:
     if user is None:
         return None
+    # Full admins (perfil com dígito 1 ou 9) NÃO são escopados por projeto: enxergam e
+    # administram TODOS os projetos. Retornar None sinaliza "sem restrição" para todos os
+    # consumidores de escopo (presença, eventos, relatórios, cadastro e escritas). Apenas
+    # admins limitados (perfil 0) permanecem restritos às suas próprias memberships.
+    from .admin_auth import user_has_admin_access  # import local evita ciclo de import
+
+    if user_has_admin_access(user):
+        return None
     return list_materialized_user_project_names(db, user)
 
 
@@ -119,14 +127,19 @@ def _resolve_effective_admin_project_set(
     if current_admin is None:
         return None
 
-    resolved_names = (
-        normalize_user_project_names(
-            admin_project_names,
-            field_name="O projeto do administrador",
+    if admin_project_names is not None:
+        return set(
+            normalize_user_project_names(
+                admin_project_names,
+                field_name="O projeto do administrador",
+            )
         )
-        if admin_project_names is not None
-        else resolve_effective_admin_project_names(db, current_admin) or []
-    )
+
+    # Preserva None (sem restrição) para full admins — não colapsa para [] (que
+    # significaria "não vê ninguém"). Assim os helpers *_matches_* retornam True.
+    resolved_names = resolve_effective_admin_project_names(db, current_admin)
+    if resolved_names is None:
+        return None
     return set(resolved_names)
 
 

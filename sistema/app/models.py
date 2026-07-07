@@ -313,7 +313,7 @@ class CheckEvent(Base):
     request_path: Mapped[str | None] = mapped_column(String(120), nullable=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ontime: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -708,7 +708,7 @@ class UserSyncEvent(Base):
     projeto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     ontime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     device_id: Mapped[str | None] = mapped_column(String(80), nullable=True)

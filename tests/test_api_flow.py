@@ -969,7 +969,10 @@ def test_bootstrap_admin_seed_resets_monitored_scope_to_all_mode():
         assert ensured_admin.admin_monitored_projects_json is None
 
 
-def test_restricted_admin_scope_filters_presence_tables_by_monitored_projects():
+def test_full_admin_presence_tables_ignore_memberships_and_show_all_projects():
+    """Requisito: full admins (perfil 1/9) veem TUDO. Mesmo com membership só em P80,
+    este admin perfil 1 enxerga também os usuários de P83 em check-in/check-out/inativos —
+    o escopo por membership não estreita mais um admin completo."""
     recent_time = now_sgt() - timedelta(hours=1)
     stale_time = now_sgt() - timedelta(hours=26)
 
@@ -1084,11 +1087,11 @@ def test_restricted_admin_scope_filters_presence_tables_by_monitored_projects():
     inactive_keys = {row["chave"] for row in inactive_response.json()}
 
     assert "S7CI" in checkin_keys
-    assert "S7CJ" not in checkin_keys
+    assert "S7CJ" in checkin_keys  # P83 agora visível ao full admin
     assert "S7CO" in checkout_keys
-    assert "S7CP" not in checkout_keys
+    assert "S7CP" in checkout_keys  # P83
     assert "S7IA" in inactive_keys
-    assert "S7IB" not in inactive_keys
+    assert "S7IB" in inactive_keys  # P83
 
 
 def test_unrestricted_admin_scope_keeps_all_presence_rows_visible():
@@ -18616,7 +18619,10 @@ def test_admin_legacy_single_project_update_replaces_memberships_with_explicit_s
     assert materialized_names == ["P83"]
 
 
-def test_scoped_admin_user_update_preserves_memberships_outside_visible_scope():
+def test_full_admin_user_update_applies_explicit_membership_selection():
+    """Full admin (perfil 1): a seleção explícita de projetos no update é autoritativa e
+    substitui as memberships do usuário — não há mais preservação de projetos "fora de escopo"
+    (que só fazia sentido para admins escopados, agora inexistentes entre full admins)."""
     with SessionLocal() as db:
         scoped_admin = User(
             rfid=None,
@@ -18683,10 +18689,14 @@ def test_scoped_admin_user_update_preserves_memberships_outside_visible_scope():
 
     assert target_user.nome == "Usuario Multi Escopo Atualizado"
     assert target_user.projeto == "P80"
-    assert materialized_names == ["P80", "P83"]
+    # Full admin: projetos=["P80"] substitui as memberships; P83 é removido (sem preservação).
+    assert materialized_names == ["P80"]
 
 
-def test_admin_runtime_scope_requires_materialized_memberships_and_ignores_legacy_scope_fields():
+def test_full_admin_without_memberships_sees_all_checkin_and_can_create_users():
+    """Após o requisito "perfil 1 vê e altera tudo": um full admin (perfil 1) SEM memberships
+    materializadas enxerga TODOS os usuários em check-in e PODE criar usuários. O cadastro
+    completo (/users) já era global. (Antes: check-in vazio e create 403 — exatamente o bug do UTO9.)"""
     recent_time = now_sgt() - timedelta(hours=1)
 
     with SessionLocal() as db:
@@ -18754,18 +18764,18 @@ def test_admin_runtime_scope_requires_materialized_memberships_and_ignores_legac
         )
 
     assert users_response.status_code == 200, users_response.text
-    # O cadastro completo (todos os usuarios) independe do escopo/memberships do
-    # admin, entao os dois usuarios aparecem mesmo com o admin sem membership
-    # materializada. Ja o checkin permanece escopado e vazio nesse caso.
+    # O cadastro completo (todos os usuarios) sempre foi global. Após o requisito, um full
+    # admin SEM memberships também enxerga TODOS em check-in e PODE criar usuários.
     users_keys = {row["chave"] for row in users_response.json()}
     assert "AM80" in users_keys
     assert "AM83" in users_keys
 
     assert checkin_response.status_code == 200, checkin_response.text
-    assert checkin_response.json() == []
+    checkin_keys = {row["chave"] for row in checkin_response.json()}
+    assert "AM80" in checkin_keys
+    assert "AM83" in checkin_keys
 
-    assert blocked_create.status_code == 403, blocked_create.text
-    assert blocked_create.json()["detail"] == "Administrador sem projetos vinculados nao pode alterar usuarios."
+    assert blocked_create.status_code == 200, blocked_create.text
 
     with SessionLocal() as db:
         admin = get_user_by_chave(db, "AM00")
@@ -18865,9 +18875,9 @@ def test_profile_nine_can_delete_orphan_user_without_project():
         assert db.get(User, orphan_id) is None
 
 
-def test_restricted_admin_cannot_delete_orphan_user_outside_scope():
-    """O bypass de exclusao e exclusivo do perfil 9: um admin restrito (perfil 1)
-    continua sem conseguir remover um orfao fora do seu escopo (404)."""
+def test_full_admin_can_delete_orphan_user():
+    """Após o requisito "perfil 1 altera tudo": um full admin (perfil 1) tem bypass de escopo
+    e CONSEGUE remover um órfão (usuário sem projeto). Antes o bypass era exclusivo do perfil 9."""
     with SessionLocal() as db:
         admin = User(
             rfid=None,
@@ -18914,14 +18924,17 @@ def test_restricted_admin_cannot_delete_orphan_user_outside_scope():
         assert login_response.status_code == 200, login_response.text
         remove_response = client.delete(f"/api/admin/users/{orphan_id}")
 
-    assert remove_response.status_code == 404, remove_response.text
+    assert remove_response.status_code == 200, remove_response.text
     with SessionLocal() as db:
-        assert db.get(User, orphan_id) is not None
-        db.delete(db.get(User, orphan_id))
-        db.commit()
+        assert db.get(User, orphan_id) is None  # o endpoint já removeu o órfão
 
 
-def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_and_database_events():
+def test_full_admin_runtime_scope_is_unrestricted_across_users_events_reports_and_database_events():
+    """Full admins (perfil com dígito 1 ou 9) NÃO são escopados por projeto: enxergam e
+    administram TODOS os projetos em users/events/reports/database-events/export-all,
+    independentemente das suas memberships. Isto SUPERA o invariante anterior de
+    escopo-por-membership para full admins (requisito do produto: perfil 1 vê e altera
+    tudo, exceto o horário das atividades e revogar administradores perfil 9)."""
     event_time = datetime(2026, 4, 25, 7, 30, 0, tzinfo=ZoneInfo(settings.tz_name))
 
     with SessionLocal() as db:
@@ -19073,22 +19086,25 @@ def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_an
     assert "P980" in visible_user_keys
     assert "P983" in visible_user_keys
 
+    # Full admins (perfil 1/9) agora NÃO são escopados por projeto: veem TODOS os projetos,
+    # inclusive P83 (fora das memberships do admin). Antes deste requisito, P83 era ocultado.
     assert events_response.status_code == 200, events_response.text
     visible_event_ids = {row["id"] for row in events_response.json()}
     assert visible_event_id in visible_event_ids
-    assert hidden_event_id not in visible_event_ids
+    assert hidden_event_id in visible_event_ids
 
     assert database_events_response.status_code == 200, database_events_response.text
     database_payload = database_events_response.json()
     database_event_ids = {row["id"] for row in database_payload["items"]}
     assert visible_event_id in database_event_ids
-    assert hidden_event_id not in database_event_ids
-    assert database_payload["filter_options"]["project"] == ["P80"]
+    assert hidden_event_id in database_event_ids
+    assert {"P80", "P83"}.issubset(set(database_payload["filter_options"]["project"]))
 
     assert visible_report_response.status_code == 200, visible_report_response.text
     assert visible_report_response.json()["person"]["chave"] == "P980"
 
-    assert hidden_report_response.status_code == 404, hidden_report_response.text
+    assert hidden_report_response.status_code == 200, hidden_report_response.text
+    assert hidden_report_response.json()["person"]["chave"] == "P983"
 
     assert export_all_response.status_code == 200, export_all_response.text
     workbook = load_workbook(io.BytesIO(export_all_response.content))
@@ -19101,7 +19117,107 @@ def test_profile_nine_runtime_scope_uses_memberships_for_users_events_reports_an
     workbook.close()
 
     assert "Usuario Escopo P80" in exported_names
-    assert "Usuario Escopo P83" not in exported_names
+    assert "Usuario Escopo P83" in exported_names
+
+
+def test_perfil_one_admin_without_memberships_sees_all_checkin():
+    """Regressão do bug UTO9: um admin perfil 1 SEM memberships enxerga TODOS os usuários
+    em check-in (antes retornava lista vazia por escopo de membership vazio)."""
+    now = now_sgt()
+    with SessionLocal() as db:
+        admin = User(rfid=None, nome="Admin Sem Membership", chave="UT1A", projeto=None,
+                     senha=hash_password("adm123"), perfil=1, last_active_at=now, inactivity_days=0)
+        w80 = User(rfid="U1A80", nome="Trab UT1A P80", chave="W1A0", projeto="P80", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        w82 = User(rfid="U1A82", nome="Trab UT1A P82", chave="W1A2", projeto="P82", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        db.add_all([admin, w80, w82])
+        db.flush()
+        grant_user_project_memberships(db, w80, ["P80"])
+        grant_user_project_memberships(db, w82, ["P82"])
+        db.commit()
+
+    with TestClient(app) as client:
+        assert login_admin(client, chave="UT1A", senha="adm123").status_code == 200
+        resp = client.get("/api/admin/checkin")
+    assert resp.status_code == 200
+    names = {row["nome"] for row in resp.json()}
+    assert "Trab UT1A P80" in names
+    assert "Trab UT1A P82" in names
+
+
+def test_perfil_one_admin_with_single_membership_still_sees_all_checkin():
+    """Um full admin com apenas UMA membership NÃO é estreitado a esse projeto — continua
+    vendo todos (o bypass é por perfil, não pela interseção de memberships)."""
+    now = now_sgt()
+    with SessionLocal() as db:
+        admin = User(rfid=None, nome="Admin Uma Membership", chave="UT1B", projeto=None,
+                     senha=hash_password("adm123"), perfil=1, last_active_at=now, inactivity_days=0)
+        w80 = User(rfid="U1B80", nome="Trab UT1B P80", chave="W1B0", projeto="P80", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        w82 = User(rfid="U1B82", nome="Trab UT1B P82", chave="W1B2", projeto="P82", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        db.add_all([admin, w80, w82])
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])  # admin possui apenas P80
+        grant_user_project_memberships(db, w80, ["P80"])
+        grant_user_project_memberships(db, w82, ["P82"])
+        db.commit()
+
+    with TestClient(app) as client:
+        assert login_admin(client, chave="UT1B", senha="adm123").status_code == 200
+        resp = client.get("/api/admin/checkin")
+    assert resp.status_code == 200
+    names = {row["nome"] for row in resp.json()}
+    assert "Trab UT1B P80" in names
+    assert "Trab UT1B P82" in names  # NÃO estreitado a P80
+
+
+def test_perfil_zero_limited_admin_stays_project_scoped_on_checkin():
+    """Admin limitado (perfil 0) PERMANECE escopado às próprias memberships no check-in."""
+    now = now_sgt()
+    with SessionLocal() as db:
+        admin = User(rfid=None, nome="Admin Limitado", chave="LM0C", projeto="P80",
+                     senha=hash_password("adm123"), perfil=0, last_active_at=now, inactivity_days=0)
+        w80 = User(rfid="L0C80", nome="Trab LM0C P80", chave="W0C0", projeto="P80", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        w82 = User(rfid="L0C82", nome="Trab LM0C P82", chave="W0C2", projeto="P82", checkin=True,
+                   local="Web", time=now, last_active_at=now, inactivity_days=0)
+        db.add_all([admin, w80, w82])
+        db.flush()
+        grant_user_project_memberships(db, admin, ["P80"])  # limitado a P80
+        grant_user_project_memberships(db, w80, ["P80"])
+        grant_user_project_memberships(db, w82, ["P82"])
+        db.commit()
+
+    with TestClient(app) as client:
+        assert login_admin(client, chave="LM0C", senha="adm123").status_code == 200
+        resp = client.get("/api/admin/checkin")
+    assert resp.status_code == 200
+    names = {row["nome"] for row in resp.json()}
+    assert "Trab LM0C P80" in names
+    assert "Trab LM0C P82" not in names  # escopado: não vê P82
+
+
+def test_perfil_one_admin_cannot_revoke_perfil_nine_admin():
+    """Requisito #2: um admin perfil 1 NÃO pode revogar um administrador perfil 9."""
+    with SessionLocal() as db:
+        p1 = User(rfid=None, nome="Admin P1 Revoke", chave="RV1A", projeto=None,
+                  senha=hash_password("adm123"), perfil=1, last_active_at=now_sgt(), inactivity_days=0)
+        p9 = User(rfid=None, nome="Admin P9 Alvo", chave="RV9A", projeto=None,
+                  senha=hash_password("adm123"), perfil=9, last_active_at=now_sgt(), inactivity_days=0)
+        db.add_all([p1, p9])
+        db.commit()
+        p9_id = db.execute(select(User).where(User.chave == "RV9A")).scalar_one().id
+
+    with TestClient(app) as client:
+        assert login_admin(client, chave="RV1A", senha="adm123").status_code == 200
+        resp = client.post(f"/api/admin/administrators/{p9_id}/revoke")
+    assert resp.status_code == 403, resp.text
+
+    with SessionLocal() as db:
+        p9 = db.execute(select(User).where(User.chave == "RV9A")).scalar_one()
+        assert p9.perfil == 9  # acesso preservado
 
 
 def test_admin_perfil_one_session_keeps_full_scope_without_activity_time_visibility():

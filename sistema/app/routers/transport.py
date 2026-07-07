@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models import Project, TransportRequest, User, Vehicle, Workplace
 from ..schemas import (
     AdminActionResponse,
@@ -345,8 +345,17 @@ def transport_logout(request: Request) -> AdminActionResponse:
     )
 
 
-@router.get("/stream", dependencies=[Depends(require_transport_session)])
+@router.get("/stream")
 async def stream_transport_updates(request: Request) -> StreamingResponse:
+    # Authenticate with a short-lived session that is released BEFORE the streaming loop.
+    # A route-level Depends(require_transport_session) would keep the get_db session (and
+    # its pooled connection) checked out for the entire (indefinite) life of the SSE stream —
+    # FastAPI only tears down generator dependencies after the response finishes — exhausting
+    # the pool with only a handful of transport tabs.
+    with SessionLocal() as db:
+        transport_user = get_authenticated_transport_user_from_session(request, db)
+    if transport_user is None:
+        raise HTTPException(status_code=401, detail="Sessao de transporte invalida ou expirada")
     subscriber_id, queue = admin_updates_broker.subscribe()
 
     async def event_generator():
