@@ -21,17 +21,29 @@ depends_on = None
 _OLD_INDEXES = ("ix_accidents_single_active", "ix_accidents_single_active_guard")
 _NEW_INDEX = "ix_accidents_single_active_per_project"
 _NEW_INDEX_DDL = (
-    f"CREATE UNIQUE INDEX {_NEW_INDEX} "
+    f"CREATE UNIQUE INDEX IF NOT EXISTS {_NEW_INDEX} "
     "ON accidents (project_id) WHERE closed_at IS NULL"
 )
 _OLD_GUARD_DDL = (
-    "CREATE UNIQUE INDEX ix_accidents_single_active_guard "
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_accidents_single_active_guard "
     "ON accidents ((1)) WHERE closed_at IS NULL"
 )
 _OLD_ACTIVE_DDL = (
-    "CREATE UNIQUE INDEX ix_accidents_single_active "
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_accidents_single_active "
     "ON accidents (closed_at) WHERE closed_at IS NULL"
 )
+
+# Both SQLite and PostgreSQL accept IF EXISTS / IF NOT EXISTS on index DDL, and
+# using it is what makes this migration correct on SQLite. Reflection cannot be
+# trusted here: ix_accidents_single_active_guard is an EXPRESSION index
+# (ON accidents ((1))), and the SQLite dialect silently skips expression-based
+# indexes — "Skipped unsupported reflection of expression-based index". So the
+# guard never appeared in inspector.get_indexes(), never got dropped, and survived
+# the upgrade: a second accident in a DIFFERENT project then failed with
+# "UNIQUE constraint failed: index 'ix_accidents_single_active_guard'", defeating
+# the whole point of this revision. Downgrade had the mirror bug — it re-created an
+# index that was still there. PostgreSQL reflects expression indexes, so production
+# was never affected.
 
 
 def upgrade() -> None:
@@ -41,14 +53,10 @@ def upgrade() -> None:
     if not inspector.has_table("accidents"):
         return
 
-    existing_idx = {idx["name"] for idx in inspector.get_indexes("accidents")}
-
     for idx_name in _OLD_INDEXES:
-        if idx_name in existing_idx:
-            op.drop_index(idx_name, table_name="accidents")
+        op.execute(sa.text(f"DROP INDEX IF EXISTS {idx_name}"))
 
-    if _NEW_INDEX not in existing_idx:
-        op.execute(_NEW_INDEX_DDL)
+    op.execute(sa.text(_NEW_INDEX_DDL))
 
 
 def downgrade() -> None:
@@ -58,13 +66,6 @@ def downgrade() -> None:
     if not inspector.has_table("accidents"):
         return
 
-    existing_idx = {idx["name"] for idx in inspector.get_indexes("accidents")}
-
-    if _NEW_INDEX in existing_idx:
-        op.drop_index(_NEW_INDEX, table_name="accidents")
-
-    if "ix_accidents_single_active" not in existing_idx:
-        op.execute(_OLD_ACTIVE_DDL)
-
-    if "ix_accidents_single_active_guard" not in existing_idx:
-        op.execute(_OLD_GUARD_DDL)
+    op.execute(sa.text(f"DROP INDEX IF EXISTS {_NEW_INDEX}"))
+    op.execute(sa.text(_OLD_ACTIVE_DDL))
+    op.execute(sa.text(_OLD_GUARD_DDL))

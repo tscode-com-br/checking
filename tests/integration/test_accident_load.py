@@ -52,6 +52,7 @@ from sistema.app.models import (  # noqa: E402
     AccidentUserReport,
     Project,
     User,
+    UserProjectMembership,
 )
 from sistema.app.services.accident_lifecycle import (  # noqa: E402
     list_active_accident,
@@ -182,6 +183,34 @@ def _setup_test_data() -> tuple[int, int]:
         else:
             admin.perfil = 1
             admin.senha = hash_password(_ADMIN_SENHA)
+        db.flush()
+
+        # Everyone in this scenario must be a *member* of the project. Accident
+        # scoping reads UserProjectMembership everywhere — the admin resolves its
+        # scope through list_materialized_user_project_names, and the Check Web
+        # endpoints resolve the user's accident the same way. The legacy
+        # users.projeto column set above is not consulted by any of them, so
+        # without these rows the admin sees no accident and the 50 users get 409.
+        membership_now = datetime.now(timezone.utc)
+        chaves = [_OPENER_CHAVE, _ADMIN_CHAVE] + [_chave(i) for i in range(NUM_USERS)]
+        member_ids = db.execute(
+            sa.select(User.id).where(User.chave.in_(chaves))
+        ).scalars().all()
+        existing_member_ids = set(db.execute(
+            sa.select(UserProjectMembership.user_id).where(
+                UserProjectMembership.project_id == project_id,
+                UserProjectMembership.user_id.in_(member_ids),
+            )
+        ).scalars().all())
+        for member_id in member_ids:
+            if member_id in existing_member_ids:
+                continue
+            db.add(UserProjectMembership(
+                user_id=member_id,
+                project_id=project_id,
+                created_at=membership_now,
+                updated_at=membership_now,
+            ))
 
         db.commit()
 

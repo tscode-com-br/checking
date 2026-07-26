@@ -100,6 +100,26 @@ def _ensure_web_user(db) -> User:
         user.senha = hash_password(_WEB_SENHA)
         user.checkin = True
     db.commit()
+
+    # Accident scoping reads UserProjectMembership, not the legacy users.projeto
+    # column: with no membership the user belongs to no project and every accident
+    # endpoint correctly refuses to act.
+    proj = _ensure_project(db)
+    membership = db.execute(
+        sa.select(UserProjectMembership).where(
+            UserProjectMembership.user_id == user.id,
+            UserProjectMembership.project_id == proj.id,
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        db.add(UserProjectMembership(
+            user_id=user.id,
+            project_id=proj.id,
+            created_at=_NOW,
+            updated_at=_NOW,
+        ))
+        db.commit()
+
     db.refresh(user)
     return user
 

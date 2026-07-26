@@ -329,14 +329,18 @@ def make_emergency_call(
             "Verifique Account SID, Auth Token, número Twilio e Telefone de Emergência Local."
         )
 
-    # Each user can only trigger one call per accident
+    # One user-triggered call per accident, whoever fires it first. Nothing in the
+    # schema enforces that, so the predicate below can legitimately match several
+    # rows (two users racing both pass the check and each insert a log); with
+    # scalar_one_or_none that turned into MultipleResultsFound → HTTP 500 on every
+    # later attempt, permanently breaking the guard for that accident.
     if triggered_by_user is not None:
         existing_call = db.execute(
             select(AccidentCallLog).where(
                 AccidentCallLog.accident_id == accident.id,
                 AccidentCallLog.triggered_by_user_id.is_not(None),
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
         if existing_call is not None:
             raise EmergencyCallAlreadyFiredError(
                 "Uma chamada de emergência já foi realizada por outro usuário neste acidente."
@@ -430,13 +434,25 @@ def make_emergency_call(
         log.call_sid = call.sid
         log.call_status = "initiated"
     except ImportError:
-        # SDK absent (typical dev environment): keep the log queued and DO NOT
-        # raise. The "requested" SSE already informed the front; status
-        # callbacks would never arrive anyway. The caller still gets a valid
-        # AccidentCallLog row back.
+        # SDK absent. In development that is expected: keep the log queued, do NOT
+        # raise, and let the caller show the confirmation — the "requested" SSE
+        # already went out and status callbacks would never arrive anyway.
+        #
+        # Anywhere else it is a misconfiguration, and staying silent is dangerous:
+        # the caller reports "Chamada de emergência iniciada" to someone in an
+        # emergency when no call was ever placed. twilio>=9.0.0 is in
+        # requirements.txt, so reaching this branch outside dev means the runtime
+        # is broken and the operator has to hear about it.
         _logger.warning("Twilio SDK not installed — call queued but not sent")
         log.error_message = "Twilio SDK not installed (twilio>=9.0.0 required)"
         log.updated_at = now_sgt()
+        if settings.app_env != "development":
+            log.call_status = "failed"
+            db.commit()
+            raise TwilioNotConfiguredError(
+                "O componente de telefonia não está instalado no servidor. "
+                "A chamada NÃO foi realizada — acione a emergência por outro meio."
+            )
         db.commit()
         return log
     except Exception as exc:

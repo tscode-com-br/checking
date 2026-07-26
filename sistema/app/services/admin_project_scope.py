@@ -140,7 +140,17 @@ def _resolve_effective_admin_project_set(
     resolved_names = resolve_effective_admin_project_names(db, current_admin)
     if resolved_names is None:
         return None
-    return set(resolved_names)
+    # Normaliza igual ao ramo acima: os helpers *_matches_* comparam contra
+    # normalize_project_name(candidato), que passa o nome para MAIÚSCULAS. Devolver
+    # o nome cru do banco fazia "P-Test" nunca casar com "P-TEST" — invisível em
+    # produção, onde todos os projetos já são maiúsculos (P80/P82/P83), mas
+    # silenciosamente nega escopo a qualquer projeto com minúsculas.
+    return set(
+        normalize_user_project_names(
+            resolved_names,
+            field_name="O projeto do administrador",
+        )
+    )
 
 
 def user_matches_effective_admin_scope(

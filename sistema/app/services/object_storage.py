@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import IO
 
 from fastapi import HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from ..core.config import settings
 
@@ -156,7 +157,13 @@ async def stream_upload_to_storage(
         buffer.write(chunk)
 
     buffer.seek(0)
-    public_url = upload_stream(
+    # upload_stream is fully synchronous — boto3's upload_fileobj on the remote
+    # path, plain file writes on the local one. Calling it directly from this
+    # coroutine blocked the worker's event loop for the whole upload (videos run to
+    # MAX_VIDEO_BYTES), stalling every other request on that worker, and during an
+    # accident is exactly when several people upload at once.
+    public_url = await run_in_threadpool(
+        upload_stream,
         object_key=object_key,
         stream=buffer,
         content_type=content_type,

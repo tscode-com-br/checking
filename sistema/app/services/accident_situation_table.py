@@ -29,19 +29,32 @@ def _resolve_video_public_url(video: AccidentVideoUpload) -> str:
         return video.public_url or ""
 
 
+def _align_awareness(left: datetime, right: datetime) -> tuple[datetime, datetime]:
+    """Make two datetimes safe to compare.
+
+    DateTime(timezone=True) round-trips as tz-aware in Postgres and as naive in
+    SQLite, so a value read from the DB and a value produced elsewhere may not
+    agree. Comparing across the two raises TypeError. Only strip tzinfo when the
+    awareness actually differs — dropping it unconditionally is what broke
+    production. Mirrors services.forms_queue._normalize_datetime_pair.
+    """
+    if (left.tzinfo is None) == (right.tzinfo is None):
+        return left, right
+    return left.replace(tzinfo=None), right.replace(tzinfo=None)
+
+
 def _derive_display(
     report: AccidentUserReport,
     opened_at: datetime,
 ) -> tuple[str, str, str, int, int]:
     """Return (zone_display, status_display, row_color, priority, section)."""
-    opened_at_cmp = opened_at.replace(tzinfo=None) if opened_at.tzinfo else opened_at
-
     # Priority 5 / Section 4: checked-out during this accident
-    if (
-        report.last_checkin_action == "check-out"
-        and report.last_action_at is not None
-        and report.last_action_at >= opened_at_cmp
-    ):
+    checked_out_during_accident = False
+    if report.last_checkin_action == "check-out" and report.last_action_at is not None:
+        last_action_at, opened_at_cmp = _align_awareness(report.last_action_at, opened_at)
+        checked_out_during_accident = last_action_at >= opened_at_cmp
+
+    if checked_out_during_accident:
         zone_display = (
             "Segurança"
             if report.zone == "safety"
@@ -54,8 +67,19 @@ def _derive_display(
         )
         return zone_display, status_display, "light-gray", 5, 4
 
-    if report.zone == "accident" and report.status == "help":
-        return "Acidente", "AJUDA", "blinking-red", 1, 1   # Seção 1: Emergência
+    # Any explicit call for help is an emergency, whatever zone it came from.
+    # WebAccidentReportRequest accepts zone="safety" + status="help" (schemas.py:4537),
+    # a normal thing to report — "I reached the safety zone but I need help". That
+    # combination had no branch and fell through to the fallback below, rendering as
+    # "Aguardando" in light-blue section 3: a call for help displayed as someone who
+    # never answered.
+    if report.status == "help":
+        zone_display = (
+            "Acidente"
+            if report.zone == "accident"
+            else ("Segurança" if report.zone == "safety" else "Aguardando")
+        )
+        return zone_display, "AJUDA", "blinking-red", 1, 1  # Seção 1: Emergência
     if report.zone == "accident" and report.status == "ok":
         return "Acidente", "OK", "yellow", 2, 2             # Seção 2: Local do Acidente
     if report.zone == "waiting":

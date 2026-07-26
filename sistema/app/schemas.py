@@ -17,8 +17,32 @@ from .services.project_catalog import (
     normalize_project_name,
     normalize_project_timezone_name,
 )
+from .services.admin_auth import CANONICAL_USER_PROFILES
 from .services.user_projects import normalize_user_project_names
 from .services.user_profiles import normalize_person_name
+
+
+_PROFILE_ERROR_MESSAGE = (
+    "Perfil invalido. Valores aceitos: 0 (usuario comum), 1 (administrador dos seus "
+    "projetos), 2 (administrador do Transport), 3 (administrador dos seus projetos + "
+    "Transport) e 9 (administrador irrestrito)."
+)
+
+
+def _validate_canonical_profile(value: int | str | None) -> int:
+    """Reject any profile outside the canonical set.
+
+    Applied to REQUEST schemas only. Response schemas keep a plain `int` on
+    purpose: a stored legacy value must still be readable — validating on the way
+    out would turn one bad row into a 500 for the whole endpoint.
+    """
+    try:
+        normalized = int(value or 0)
+    except (TypeError, ValueError):
+        raise ValueError(_PROFILE_ERROR_MESSAGE)
+    if normalized not in CANONICAL_USER_PROFILES:
+        raise ValueError(_PROFILE_ERROR_MESSAGE)
+    return normalized
 
 
 PLATE_MAX_LENGTH = 15
@@ -523,7 +547,7 @@ class AdminUserUpsert(BaseModel):
     rfid: str | None = Field(default=None, min_length=4, max_length=64)
     nome: str = Field(min_length=3, max_length=180)
     chave: str = Field(min_length=4, max_length=4)
-    perfil: int = Field(default=0, ge=0, le=999)
+    perfil: int = 0
     projeto: str | None = Field(default=None, min_length=2, max_length=120)
     projetos: list[str] | None = None
     workplace: str | None = Field(default=None, max_length=120)
@@ -532,6 +556,11 @@ class AdminUserUpsert(BaseModel):
     end_rua: str | None = Field(default=None, max_length=255)
     zip: str | None = Field(default=None, max_length=10)
     email: str | None = Field(default=None, max_length=255)
+
+    @field_validator("perfil", mode="before")
+    @classmethod
+    def validate_perfil_is_canonical(cls, value: int | str | None) -> int:
+        return _validate_canonical_profile(value)
 
     @model_validator(mode="after")
     def validate_identity(self):
@@ -870,13 +899,13 @@ class AdminSelfAccessRequest(BaseModel):
 
 
 class AdminProfileUpdateRequest(BaseModel):
-    perfil: int = Field(ge=0, le=999)
+    perfil: int
     projects: list[str] | None = None
 
     @field_validator("perfil", mode="before")
     @classmethod
     def validate_admin_profile_value(cls, value: int | str | None) -> int:
-        return max(0, int(value or 0))
+        return _validate_canonical_profile(value)
 
     @field_validator("projects", mode="before")
     @classmethod
@@ -4223,20 +4252,19 @@ class WebGeofencesResponse(BaseModel):
 
 
 class WebUserProjectsResponse(BaseModel):
-    projects: list[str] = Field(min_length=1)
-    active_project: str = Field(min_length=2, max_length=120)
+    projects: list[str]
+    active_project: str = Field(max_length=120)
 
 
 class WebUserProjectsUpdateRequest(BaseModel):
-    projects: list[str] = Field(min_length=1)
+    projects: list[str]
 
     @field_validator("projects", mode="before")
     @classmethod
     def validate_web_user_projects_update_projects(cls, value: object) -> list[str]:
-        normalized = _normalize_user_projects_value(value)
-        if normalized is None:
-            raise ValueError("Selecione ao menos um projeto para o usuário.")
-        return normalized
+        if value is None or isinstance(value, str) or not isinstance(value, (list, tuple, set)):
+            raise ValueError("Os projetos do usuário devem ser enviados como lista")
+        return normalize_user_project_names(value)
 
 
 class WebUserProjectsUpdateResponse(WebUserProjectsResponse):

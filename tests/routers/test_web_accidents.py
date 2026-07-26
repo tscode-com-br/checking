@@ -37,6 +37,7 @@ from sistema.app.models import (  # noqa: E402
     ManagedLocation,
     Project,
     User,
+    UserProjectMembership,
 )
 from sistema.app.services.passwords import hash_password  # noqa: E402
 
@@ -92,6 +93,28 @@ def _ensure_web_user(db: Session) -> User:
         user.senha = hash_password(_WEB_SENHA)
         user.checkin = True
     db.commit()
+
+    # Accident scoping is driven by UserProjectMembership, not by the legacy
+    # users.projeto column: open_accident pre-populates reports from memberships,
+    # and every accident endpoint now resolves the user's projects the same way.
+    # Without this row the user belongs to no project and sees no accident.
+    proj = _ensure_project(db)
+    membership = db.execute(
+        sa.select(UserProjectMembership).where(
+            UserProjectMembership.user_id == user.id,
+            UserProjectMembership.project_id == proj.id,
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        now = datetime.now(tz=timezone.utc)
+        db.add(UserProjectMembership(
+            user_id=user.id,
+            project_id=proj.id,
+            created_at=now,
+            updated_at=now,
+        ))
+        db.commit()
+
     db.refresh(user)
     return user
 
@@ -702,25 +725,47 @@ def test_web_wizard_projects_requires_session():
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
 
 
-def test_web_wizard_projects_returns_all():
-    """Authenticated user → all projects returned including newly created one."""
+def test_web_wizard_projects_returns_only_the_users_projects():
+    """The wizard offers ONLY projects the user belongs to.
+
+    It used to list every project in the system, which let a user allocated to one
+    project open an accident on another — paging that other project's whole team.
+    """
     with SessionLocal() as db:
-        proj = _ensure_e4_project(db)
-        proj_id = proj.id
+        foreign = _ensure_e4_project(db)
+        foreign_id = foreign.id
+        own_id = _ensure_project(db).id
 
     client = _logged_in_web_client()
     resp = client.get(WEB_WIZARD_PROJECTS_URL, params={"chave": _WEB_CHAVE})
     assert resp.status_code == 200, resp.text
     ids = [p["id"] for p in resp.json()]
-    assert proj_id in ids, f"E4 project {proj_id} not in response: {resp.json()}"
+    assert own_id in ids, f"the user's own project must be offered: {resp.json()}"
+    assert foreign_id not in ids, (
+        f"a project the user does not belong to must not be offered: {resp.json()}"
+    )
+
+
+def test_web_wizard_locations_rejects_a_project_the_user_is_not_in():
+    """project_id comes from the query string, so the endpoint must check it."""
+    with SessionLocal() as db:
+        foreign = _ensure_e4_project(db)
+        foreign_id = foreign.id
+        _ensure_e4_managed_location(db, _E4_LOC_LINKED, linked_project=_E4_PROJ)
+
+    client = _logged_in_web_client()
+    resp = client.get(
+        WEB_WIZARD_LOCATIONS_URL, params={"chave": _WEB_CHAVE, "project_id": foreign_id}
+    )
+    assert resp.status_code == 404, resp.text
 
 
 def test_web_wizard_locations_filtered_by_project():
-    """Locations filtered by project: linked returned, unlinked excluded."""
+    """Within the user's own project, locations are filtered by linkage."""
     with SessionLocal() as db:
-        proj = _ensure_e4_project(db)
+        proj = _ensure_project(db)
         proj_id = proj.id
-        loc_linked = _ensure_e4_managed_location(db, _E4_LOC_LINKED, linked_project=_E4_PROJ)
+        loc_linked = _ensure_e4_managed_location(db, _E4_LOC_LINKED, linked_project=_WEB_PROJ)
         loc_other = _ensure_e4_managed_location(db, _E4_LOC_OTHER, linked_project=None)
         linked_id = loc_linked.id
         other_id = loc_other.id

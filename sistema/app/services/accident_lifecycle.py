@@ -5,6 +5,7 @@ import logging
 from typing import Literal
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from datetime import datetime
@@ -38,6 +39,31 @@ class InvalidAccidentLocationError(ValueError):
     pass
 
 
+class AccidentProjectNotFoundError(ValueError):
+    """The project referenced when opening an accident does not exist.
+
+    Split out of the bare ValueError it used to raise: neither router caught
+    plain ValueError, so a wrong project_id answered 500 instead of 404.
+    """
+
+
+class AccidentNumberingConflictError(RuntimeError):
+    """Could not obtain a free accident_number after several attempts."""
+
+
+class VideoIdempotencyConflictError(RuntimeError):
+    """The idempotency_key already belongs to a different user or accident."""
+
+
+def _active_accident_for_project(db: Session, project_id: int) -> Accident | None:
+    return db.execute(
+        select(Accident).where(
+            Accident.project_id == project_id,
+            Accident.closed_at.is_(None),
+        )
+    ).scalars().first()
+
+
 def open_accident(
     db: Session,
     *,
@@ -52,18 +78,14 @@ def open_accident(
     description: str = "",
 ) -> Accident:
     # Per-project uniqueness: only one active accident per project at a time.
-    existing = db.execute(
-        select(Accident).where(
-            Accident.project_id == project_id,
-            Accident.closed_at.is_(None),
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
+    # This check is advisory — it races with a concurrent open, so the INSERT
+    # below is what actually decides, guarded by ix_accidents_single_active_per_project.
+    if _active_accident_for_project(db, project_id) is not None:
         raise AccidentAlreadyActiveError("Já existe um acidente ativo para este projeto")
 
     project = db.get(Project, project_id)
     if project is None:
-        raise ValueError("Projeto não encontrado")
+        raise AccidentProjectNotFoundError("Projeto não encontrado")
 
     if location_id is not None:
         location = db.get(ManagedLocation, location_id)
@@ -79,10 +101,81 @@ def open_accident(
                 )
     else:
         if not custom_location_name or not custom_location_name.strip():
-            raise ValueError("custom_location_name é obrigatório quando location_id não é fornecido")
+            raise InvalidAccidentLocationError(
+                "custom_location_name é obrigatório quando location_id não é fornecido"
+            )
         location_name = custom_location_name.strip()
         location_is_registered = False
 
+    # Two distinct unique constraints can fire on commit, and they mean opposite
+    # things: ix_accidents_single_active_per_project means somebody else already
+    # opened this project's accident (terminal, 409), while
+    # uq_accidents_accident_number means two projects picked the same MAX+1 at the
+    # same instant (transient, retry). Both used to surface as a raw IntegrityError
+    # → HTTP 500.
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            accident = _create_accident_with_reports(
+                db,
+                project=project,
+                location_name=location_name,
+                location_is_registered=location_is_registered,
+                origin=origin,
+                opened_by_admin_id=opened_by_admin_id,
+                opened_by_user_id=opened_by_user_id,
+                reporter_zone=reporter_zone,
+                reporter_status=reporter_status,
+                description=description,
+            )
+            break
+        except IntegrityError as exc:
+            db.rollback()
+            last_error = exc
+            if _active_accident_for_project(db, project.id) is not None:
+                raise AccidentAlreadyActiveError(
+                    "Já existe um acidente ativo para este projeto"
+                ) from exc
+            _logger.warning(
+                "accident_number collision opening accident for project %s; retrying",
+                project.id,
+            )
+    else:
+        raise AccidentNumberingConflictError(
+            "Não foi possível gerar um número de acidente livre"
+        ) from last_error
+
+    metadata: dict[str, object] = {
+        "accident_id": accident.id,
+        "accident_number_label": format_accident_number(accident.accident_number),
+        "project_name": accident.project_name_snapshot,
+    }
+    notify_admin_data_changed("accident_opened", metadata=metadata)
+    notify_web_check_data_changed("accident_opened", metadata=metadata)
+
+    return accident
+
+
+def _create_accident_with_reports(
+    db: Session,
+    *,
+    project: Project,
+    location_name: str,
+    location_is_registered: bool,
+    origin: Literal["admin", "web"],
+    opened_by_admin_id: int | None,
+    opened_by_user_id: int | None,
+    reporter_zone: str | None,
+    reporter_status: str | None,
+    description: str,
+) -> Accident:
+    """Insert the Accident plus one AccidentUserReport per project member.
+
+    Extracted so open_accident can retry the whole unit after rolling back an
+    accident_number collision — the reports are built before the commit, so a
+    retry has to rebuild them too.
+    """
+    project_id = project.id
     now = now_sgt()
     number = next_accident_number(db)
     accident = Accident(
@@ -186,15 +279,6 @@ def open_accident(
                 ))
 
     db.commit()
-
-    metadata: dict[str, object] = {
-        "accident_id": accident.id,
-        "accident_number_label": format_accident_number(accident.accident_number),
-        "project_name": accident.project_name_snapshot,
-    }
-    notify_admin_data_changed("accident_opened", metadata=metadata)
-    notify_web_check_data_changed("accident_opened", metadata=metadata)
-
     return accident
 
 
@@ -243,10 +327,46 @@ def upsert_user_safety_report(
 
     fired_help_now = (status == "help" and previous_status != "help")
 
-    notify_admin_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
-    notify_web_check_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+    # project_name travels with every accident event so the admin SSE stream can
+    # drop events for projects an admin does not administer.
+    metadata = {
+        "accident_id": accident.id,
+        "user_id": user.id,
+        "project_name": accident.project_name_snapshot,
+    }
+    notify_admin_data_changed("accident_user_report", metadata=metadata)
+    notify_web_check_data_changed("accident_user_report", metadata=metadata)
 
     return report, fired_help_now
+
+
+def find_video_upload(
+    db: Session,
+    *,
+    idempotency_key: str,
+    accident: Accident,
+    user: User,
+) -> AccidentVideoUpload | None:
+    """Return this user's earlier upload for *idempotency_key*, if there is one.
+
+    idempotency_key is UNIQUE across the whole table (models.py:880), not per user,
+    and the lookup used to match on it alone. A colliding key therefore returned
+    somebody else's row, and the uploader got another user's video URL back in the
+    response for a video they never took. Keys come from the client — the browser
+    fallback is weak — so collisions are reachable.
+    """
+    existing = db.execute(
+        select(AccidentVideoUpload).where(
+            AccidentVideoUpload.idempotency_key == idempotency_key
+        )
+    ).scalars().first()
+    if existing is None:
+        return None
+    if existing.accident_id != accident.id or existing.user_id != user.id:
+        raise VideoIdempotencyConflictError(
+            "idempotency_key já utilizado em outro registro"
+        )
+    return existing
 
 
 def attach_video_upload(
@@ -262,9 +382,9 @@ def attach_video_upload(
     idempotency_key: str,
     captured_at: datetime | None = None,
 ) -> AccidentVideoUpload:
-    existing = db.execute(
-        select(AccidentVideoUpload).where(AccidentVideoUpload.idempotency_key == idempotency_key)
-    ).scalar_one_or_none()
+    existing = find_video_upload(
+        db, idempotency_key=idempotency_key, accident=accident, user=user
+    )
     if existing is not None:
         return existing
 
@@ -284,8 +404,13 @@ def attach_video_upload(
     db.add(upload)
     db.commit()
 
-    notify_admin_data_changed("accident_video_uploaded", metadata={"accident_id": accident.id, "user_id": user.id})
-    notify_web_check_data_changed("accident_video_uploaded", metadata={"accident_id": accident.id, "user_id": user.id})
+    metadata = {
+        "accident_id": accident.id,
+        "user_id": user.id,
+        "project_name": accident.project_name_snapshot,
+    }
+    notify_admin_data_changed("accident_video_uploaded", metadata=metadata)
+    notify_web_check_data_changed("accident_video_uploaded", metadata=metadata)
 
     return upload
 
@@ -333,8 +458,13 @@ def update_accident_membership_for_check_event(
     report.updated_at = now
     db.commit()
 
-    notify_admin_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
-    notify_web_check_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+    metadata = {
+        "accident_id": accident.id,
+        "user_id": user.id,
+        "project_name": accident.project_name_snapshot,
+    }
+    notify_admin_data_changed("accident_user_report", metadata=metadata)
+    notify_web_check_data_changed("accident_user_report", metadata=metadata)
 
     return report
 
@@ -350,9 +480,14 @@ def acknowledge_accident(db: Session, accident_id: int, user: User) -> None:
         report.awareness_status = "acknowledged"
         report.updated_at = now_sgt()
         db.commit()
+        accident = db.get(Accident, accident_id)
         notify_admin_data_changed(
             "accident_acknowledged",
-            metadata={"accident_id": accident_id, "user_id": user.id},
+            metadata={
+                "accident_id": accident_id,
+                "user_id": user.id,
+                "project_name": accident.project_name_snapshot if accident else None,
+            },
         )
 
 

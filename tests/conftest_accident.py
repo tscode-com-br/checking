@@ -37,6 +37,7 @@ from sistema.app.models import (
     ManagedLocation,
     Project,
     User,
+    UserProjectMembership,
 )
 from sistema.app.services.accident_lifecycle import (
     close_accident,
@@ -166,8 +167,16 @@ _ADMIN1_SENHA = "L1Admin1!"
 
 
 @pytest.fixture
-def admin_perfil_1() -> Generator[AdminSession, None, None]:
-    """User with perfil=1 (full admin, digit '1').  Returns AdminSession(user, client)."""
+def admin_perfil_1(accident_project: Project) -> Generator[AdminSession, None, None]:
+    """User with perfil=1 (full admin, digit '1').  Returns AdminSession(user, client).
+
+    Depends on accident_project because a perfil-1 admin is scoped by project
+    *membership*: resolve_effective_admin_project_names reads
+    list_materialized_user_project_names, which — unlike list_user_project_names —
+    does not fall back to the legacy users.projeto column. Setting only projeto
+    leaves the admin with an empty effective scope, i.e. able to see nothing,
+    which is not what this fixture is meant to represent.
+    """
     with SessionLocal() as db:
         user = db.execute(
             sa.select(User).where(User.chave == _ADMIN1_CHAVE)
@@ -189,6 +198,27 @@ def admin_perfil_1() -> Generator[AdminSession, None, None]:
             user.perfil = 1
             user.senha = hash_password(_ADMIN1_SENHA)
         db.commit()
+
+        membership = db.execute(
+            sa.select(UserProjectMembership).where(
+                UserProjectMembership.user_id == user.id,
+                UserProjectMembership.project_id == accident_project.id,
+            )
+        ).scalar_one_or_none()
+        if membership is None:
+            membership_now = datetime.now(timezone.utc)
+            db.add(UserProjectMembership(
+                user_id=user.id,
+                project_id=accident_project.id,
+                created_at=membership_now,
+                updated_at=membership_now,
+            ))
+            db.commit()
+
+        # refresh LAST: commit() expires every instance in the session, so a
+        # commit after the refresh leaves `user` expired, and the caller — which
+        # gets it after the session closes — hits DetachedInstanceError on the
+        # first attribute access.
         db.refresh(user)
 
     client = TestClient(app, raise_server_exceptions=False)

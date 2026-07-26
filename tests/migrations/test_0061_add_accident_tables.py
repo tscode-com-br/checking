@@ -72,13 +72,33 @@ def test_revision_0061_creates_and_drops_accident_tables(temp_alembic_db: str):
     for table in _ACCIDENT_TABLES:
         assert table in table_names, f"missing table after upgrade: {table}"
 
+    # This upgrades to HEAD, not to 0061, so the uniqueness rule in place here is
+    # the one revision 0075 left behind: one active accident PER PROJECT, indexed
+    # on project_id. 0061's global ix_accidents_single_active is gone by then, and
+    # asserting the old name left this test failing on main after 0075 shipped.
     indexes = {idx["name"]: idx for idx in inspector.get_indexes("accidents")}
     assert (
-        "ix_accidents_single_active" in indexes
-    ), "missing partial unique index ix_accidents_single_active on accidents.closed_at"
+        "ix_accidents_single_active_per_project" in indexes
+    ), "missing partial unique index ix_accidents_single_active_per_project on accidents.project_id"
     # SQLAlchemy returns the unique flag as int (1) for some dialects and
     # bool for others; coerce before comparing.
-    assert bool(indexes["ix_accidents_single_active"]["unique"]) is True
+    assert bool(indexes["ix_accidents_single_active_per_project"]["unique"]) is True
+    assert "ix_accidents_single_active" not in indexes, (
+        "0075 must drop the old global unique index"
+    )
+
+    # Regression: the expression-based guard index from 0061 must be gone too.
+    # SQLite does not reflect expression indexes, so get_indexes() cannot see it —
+    # query sqlite_master directly.
+    with engine.connect() as conn:
+        leftover_guard = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='index' AND name='ix_accidents_single_active_guard'"
+        ).fetchall()
+    assert not leftover_guard, (
+        "ix_accidents_single_active_guard survived the upgrade — a second accident "
+        "in a different project would fail its unique constraint"
+    )
 
     # Downgrade one revision must drop the same tables.
     command.downgrade(cfg, "0060_add_endpoint_api_keys")

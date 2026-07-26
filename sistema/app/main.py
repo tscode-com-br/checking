@@ -237,9 +237,31 @@ def _apply_startup_inactivity_descadastro() -> None:
         _STARTUP_LOGGER.warning("Failed to apply inactivity descadastro at startup.", exc_info=True)
 
 
+def _warn_if_object_storage_unconfigured() -> None:
+    """Make "production is silently on local disk" visible at boot.
+
+    Accident videos and archives fall back to `{event_archives_dir}/accidents_local_storage`
+    whenever DO Spaces credentials are absent. That fallback is meant for development,
+    but nothing stops a production deployment from running on it, and when it happens
+    it is invisible: uploads succeed, downloads work, and the assets quietly live on the
+    droplet instead of in object storage.
+    """
+    from .services.object_storage import _use_remote
+
+    if settings.app_env == "production" and not _use_remote():
+        _STARTUP_LOGGER.warning(
+            "APP_ENV=production but object storage is NOT configured "
+            "(DO_SPACES_BUCKET/ACCESS_KEY/SECRET_KEY missing). Accident videos and "
+            "archives will be written to local disk at %s. They persist only as long "
+            "as that volume does, and are not backed up off-host.",
+            settings.event_archives_dir,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
+    _warn_if_object_storage_unconfigured()
     if settings.app_env == "development":
         Base.metadata.create_all(bind=engine)
     seed_default_projects()

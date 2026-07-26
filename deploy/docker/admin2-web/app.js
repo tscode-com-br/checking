@@ -3418,19 +3418,24 @@ function buildPresenceMobileMetadata(row, options = {}) {
   return "";
 }
 
-function buildLimitedPresenceMobileCard(row, timeCell) {
-  const localLabel = escapeHtml(formatLocal(row.local));
-  return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">${escapeHtml(row.nome)}</span><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
-}
-
 function buildPresenceMobileCard(row, timeCell, options = {}) {
-  if (options.responsiveVariant === "mobile-limited") {
-    return buildLimitedPresenceMobileCard(row, timeCell);
-  }
-
-  const localLabel = escapeHtml(formatLocal(row.local));
-  buildPresenceMobileMetadata(row, options);
-  return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><span class="presence-mobile-card-name">${escapeHtml(row.nome)}</span><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
+  // No celular, Check-In/Check-Out mostram exatamente três campos: nome, chave e
+  // localização. A chave não aparecia antes; o horário saiu porque a lista já vem
+  // ordenada da mais recente para a mais antiga (PRESENCE_TABLE_CONFIGS usa
+  // defaultSortKey "time" com direção "desc") e porque só o perfil 9 tem permissão
+  // de ver horários de atividade.
+  //
+  // Esta função só é chamada quando responsiveVariant !== "desktop"
+  // (buildPresenceRow). A tabela de 8 colunas do desktop não passa por aqui.
+  const variantClass = options.responsiveVariant === "mobile-limited"
+    ? "presence-mobile-card--limited"
+    : "presence-mobile-card--compact";
+  return `<article class="presence-mobile-card ${variantClass}">`
+    + `<p class="presence-mobile-card-title">${escapeHtml(row.nome)}</p>`
+    + `<p class="presence-mobile-card-meta">`
+    + `<span class="presence-mobile-card-chave">${escapeHtml(row.chave)}</span>`
+    + `<span class="presence-mobile-card-local">${escapeHtml(formatLocal(row.local))}</span>`
+    + `</p></article>`;
 }
 
 function buildPresenceRow(row, options = {}) {
@@ -4743,7 +4748,7 @@ function makeRegisteredUserRow(user) {
     <td><input class="inline user-rfid" size="10" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" title="${escapeHtml(user.rfid ?? "")}" disabled /></td>
     <td><input class="inline user-nome" maxlength="180" value="${escapeHtml(user.nome)}" title="${escapeHtml(user.nome)}" disabled /></td>
     <td><input class="inline user-chave" size="4" maxlength="4" value="${escapeHtml(user.chave)}" title="${escapeHtml(user.chave)}" disabled /></td>
-    <td><input class="inline user-perfil" size="4" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" title="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
+    <td><input class="inline user-perfil" size="4" type="number" min="0" max="9" list="canonicalProfiles" value="${escapeHtml(user.perfil ?? 0)}" title="0=usuário, 1=admin do projeto, 2=Transport, 3=admin+Transport, 9=irrestrito" disabled /></td>
     <td>
       ${makeProjectMembershipCell({ kind: "user", rowId: user.id, selectedProjects })}
     </td>
@@ -5073,6 +5078,21 @@ function toggleAdminPasswordEditor(id, active) {
   }
 }
 
+// Mirrors CANONICAL_USER_PROFILES on the server (services/admin_auth.py). The
+// profile is a SET OF ACCESS DIGITS, not a free number: 19 would read as {1,9},
+// i.e. "admin + tudo", which is redundant (9 already grants everything) and
+// inconsistent (the digit 9 lifts the project scope, but the exact perfil == 9
+// checks still refuse it). The API rejects anything else with 422 — validate here
+// too so the operator gets a readable message instead of a raw validation error.
+const CANONICAL_USER_PROFILES = [0, 1, 2, 3, 9];
+const PROFILE_HELP_TEXT =
+  "Perfil inválido. Use 0 (usuário), 1 (admin dos seus projetos), 2 (admin do Transport), " +
+  "3 (admin dos seus projetos + Transport) ou 9 (admin irrestrito).";
+
+function isCanonicalProfile(value) {
+  return CANONICAL_USER_PROFILES.includes(Number(value));
+}
+
 function readAdministratorProfileValue(id) {
   const input = document.querySelector(`[data-admin-profile-input="${CSS.escape(String(id))}"]`);
   if (!(input instanceof HTMLInputElement)) {
@@ -5080,8 +5100,8 @@ function readAdministratorProfileValue(id) {
   }
 
   const normalized = String(input.value || "").trim();
-  if (!/^\d{1,3}$/.test(normalized)) {
-    throw new Error("Informe um perfil numerico entre 0 e 999.");
+  if (!/^\d{1,3}$/.test(normalized) || !isCanonicalProfile(normalized)) {
+    throw new Error(PROFILE_HELP_TEXT);
   }
   return Number.parseInt(normalized, 10);
 }
@@ -6189,8 +6209,8 @@ async function saveRegisteredUser(userId) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
     return;
   }
-  if (!/^\d{1,3}$/.test(perfilValue)) {
-    setStatus("Informe um perfil numérico entre 0 e 999.", false);
+  if (!/^\d{1,3}$/.test(perfilValue) || !isCanonicalProfile(perfilValue)) {
+    setStatus(PROFILE_HELP_TEXT, false);
     return;
   }
   if (!projetos.length) {
@@ -7363,13 +7383,29 @@ function tdVideos(videos) {
 async function fetchAccidentState() {
   try {
     const response = await fetch("/api/admin/accidents/active", { credentials: "include" });
-    if (!response.ok) return;
+    if (!response.ok) {
+      // Never fail silently here. A bare `return` on !response.ok is what turned a
+      // 500 on this endpoint into an Accident tab with no number, no situation
+      // tables and no working "Encerrar" button, with nothing on screen to say
+      // why — the operator could not tell a broken panel from "no accident".
+      // 401/403 is just an expired session; the generic handler deals with it.
+      if (response.status !== 401 && response.status !== 403) {
+        console.error("fetchAccidentState failed", response.status);
+        setStatus(
+          `Falha ao carregar o estado do acidente (HTTP ${response.status}). ` +
+          `Os dados abaixo podem estar desatualizados.`,
+          false,
+        );
+      }
+      return;
+    }
     accidentState = await response.json();
     applyAccidentTheme(accidentState.is_active);
     renderAccidentTab(accidentState);
     updateAccidentButton(accidentState);
   } catch (err) {
     console.warn("fetchAccidentState failed", err);
+    setStatus("Falha de conexão ao carregar o estado do acidente.", false);
   }
 }
 
@@ -7692,6 +7728,11 @@ function openEmergencyConfigModal(projectId) {
   document.getElementById("ecMobileAdmin").value = project.mobile_admin || "";
   document.getElementById("ecEmergencyPhone").value = project.emergency_phone || "";
   document.getElementById("ecEmailEmergency").value = project.email_local_emergency || "";
+  // Hydrate the spoken message too. saveEmergencyConfig always sends
+  // ecMessageText, so leaving it unhydrated meant saving any other field wiped
+  // the project's saved message — or, worse, wrote the message left in the
+  // textarea from the previously opened project onto this one.
+  document.getElementById("ecMessageText").value = project.emergency_call_message || "";
   document.getElementById("emergencyConfigError").textContent = "";
   _showAccidentModal("emergencyConfigModal");
 }

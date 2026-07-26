@@ -1,6 +1,6 @@
 # Guia Didatico de Commit, Push e Deploy por Repositorio
 
-Status: revisado e validado em 2026-06-09. Secoes 1.7 e 2.6 (app Kotlin, repo `checking-kotlin`) adicionadas em 2026-06-17.
+Status: revisado e validado em 2026-06-09. Secoes 1.7 e 2.6 (app Kotlin, repo `checking-kotlin`) adicionadas em 2026-06-17. Secoes 1.8 e 2.7 (app Swift, repo `checking-swift`) adicionadas em 2026-07-24.
 
 Objetivo deste guia:
 
@@ -29,6 +29,7 @@ Diagnostico real do estado atual dos workflows (auditado via CLI em 2026-06-09):
 | `checking-transport` | `Deploy to DigitalOcean` | `disabled_manually` | **NAO** |
 | `checking_app_flutter` | (sem workflow) | n/a | **NAO** (nao deploya Droplet) |
 | `checking-kotlin` | (sem workflow de deploy) | n/a | **NAO** (app mobile nativo; distribui via Play Store, nao deploya Droplet) |
+| `checking-swift` | (sem workflow) | n/a | **NAO** (app iOS nativo; distribui via TestFlight/App Store, nao deploya Droplet) |
 
 Ponto que mais confunde:
 
@@ -124,6 +125,22 @@ Segredos que NUNCA podem ser commitados (ja cobertos pelo `.gitignore` do app):
 3. `*.jks` / `*.keystore` (keystore de assinatura).
 
 Artefatos que tambem ficam de fora do commit: `app/build/` (saida de build, centenas de MB), `.gradle/`, `.kotlin/`, `/.idea/`.
+
+### 1.8 App Swift (`c:\dev\projetos\checkcheck\checking-swift`)
+
+Aplicativo mobile nativo para iOS (Swift + SwiftUI). Repositorio proprio: `tscode-com-br/checking-swift`.
+
+Topologia (entenda ANTES de atualizar ou commitar):
+
+1. `checking-swift` e um repositorio git **independente** (tem o seu proprio `.git`), apenas aninhado dentro da pasta do root.
+2. O root monolito **ignora** `checking-swift` (ha uma entrada `checking-swift/` no `.gitignore` do root). Logo, atualizar, commitar ou fazer push no root NAO atualiza nem publica o app Swift.
+3. Remote canonico: `origin` -> `https://github.com/tscode-com-br/checking-swift.git`.
+4. Branch canonica: `main`.
+5. Nao possui workflow de CI ou deploy. Push atualiza somente o codigo no GitHub; distribuicao por TestFlight/App Store e um processo separado, feito com macOS, Xcode e credenciais Apple.
+6. Requisitos de build: macOS, Xcode 16+, Swift 6, iOS 17+ e XcodeGen.
+7. O projeto Xcode e gerado localmente por XcodeGen a partir de `project.yml`; arquivos `*.xcodeproj` gerados nao devem ser commitados.
+
+Importante: para buscar atualizacoes, alterar ou publicar **somente** o app Swift, execute todos os comandos git dentro de `c:\dev\projetos\checkcheck\checking-swift`, nunca no root.
 
 ---
 
@@ -292,6 +309,91 @@ Observacoes importantes:
 3. `archived-origin` aponta para o repo antigo (`checking_app_kotlin`); nao usar para publicacao.
 4. Se o repo remoto tiver sido criado com README/licenca pela UI do GitHub, o primeiro push pode ser rejeitado por divergencia. Resolva com `git pull --rebase origin main` e depois `git push origin main`. Evite `--force` salvo certeza absoluta de que nada util sera perdido.
 
+## 2.7 App Swift (sub-repo checking-swift)
+
+Este playbook atualiza ou publica SOMENTE o app Swift no repo `checking-swift`. Todos os comandos git devem rodar DENTRO de `checking-swift`.
+
+Clone inicial (somente se a pasta ainda nao existir):
+
+1. Set-Location c:\dev\projetos\checkcheck
+2. git clone --recurse-submodules https://github.com/tscode-com-br/checking-swift.git checking-swift
+3. Set-Location .\checking-swift
+4. git status -sb
+5. git branch --show-current        # esperado: main
+6. git remote -v                    # esperado: origin -> checking-swift.git
+
+Atualizar apenas este repositorio com o conteudo mais recente do GitHub:
+
+1. Entrar no repo Swift.
+
+   Set-Location c:\dev\projetos\checkcheck\checking-swift
+
+2. Confirmar contexto e verificar se ha trabalho local.
+
+   git status -sb
+   git branch --show-current
+   git remote -v
+
+3. Se houver alteracoes locais, revise e faça commit ou stash antes do pull. Nao descarte alteracoes para forcar a atualizacao.
+
+4. Buscar e aplicar somente avancos lineares da branch canonica.
+
+   git fetch origin --prune
+   git pull --ff-only origin main
+
+5. Confirmar a atualizacao.
+
+   git status -sb                    # esperado: main...origin/main, sem ahead/behind
+   git rev-parse HEAD
+   git ls-remote origin refs/heads/main
+
+Fazer commit e push somente do app Swift:
+
+1. Entrar no repo e auditar o contexto.
+
+   Set-Location c:\dev\projetos\checkcheck\checking-swift
+   git status -sb
+
+2. Confirmar que nenhum arquivo sensivel ja esta rastreado.
+
+   git ls-files | Select-String -Pattern '\.(p8|p12|mobileprovision|key|pem)$|(^|/)\.env($|\.)'
+   # Esperado: VAZIO.
+
+3. Fazer stage explicito e revisar.
+
+   git add <arquivos>
+   git diff --cached --stat
+   git diff --cached
+
+4. Confirmar que o stage nao contem segredos nem artefatos gerados.
+
+   git diff --cached --name-only | Select-String -Pattern '\.(p8|p12|mobileprovision|key|pem)$|(^|/)\.env($|\.)|(^|/)(build|DerivedData|xcuserdata|\.tools)/|\.xcodeproj/'
+   # Esperado: VAZIO.
+
+5. Commitar e publicar apenas no repo Swift.
+
+   git commit -m "feat(ios): descricao objetiva da mudanca"
+   git rev-parse HEAD
+   git push origin main
+
+6. Confirmar o SHA remoto e a sincronizacao.
+
+   git ls-remote --heads origin refs/heads/main
+   git status -sb
+
+Validacao recomendada em um Mac com Xcode 16+ e XcodeGen:
+
+1. xcodegen generate
+2. xcodebuild -project Checking.xcodeproj -scheme Checking -destination 'platform=iOS Simulator,name=iPhone 15' test
+
+Observacoes importantes:
+
+1. Nunca use `git add checking-swift` no root. O app possui historico, branch e remote proprios.
+2. `git pull` no root nao atualiza o app Swift; use o bloco "Atualizar apenas este repositorio" acima.
+3. Nao use `git pull --rebase`, merge manual ou `git push --force` como procedimento normal de atualizacao. O `--ff-only` deve interromper o processo se houver divergencia a ser analisada.
+4. Nao commite certificados, provisioning profiles, chaves privadas ou credenciais Apple (`*.p12`, `*.mobileprovision`, arquivos de chave).
+5. Push no `checking-swift` nao publica API, Check Web, Transport, Admin nem qualquer servico no Droplet.
+
 ---
 
 ## 3) Monitoramento de deploy no GitHub Actions (por repo)
@@ -339,6 +441,7 @@ Para checagem de estado:
 2. gh workflow list --repo tscode-com-br/checking-webapp --all
 3. gh workflow list --repo tscode-com-br/checking-transport --all
 4. gh workflow list --repo tscode-com-br/checking_app_flutter --all
+5. gh workflow list --repo tscode-com-br/checking-swift --all
 
 Interpretacao:
 
@@ -378,6 +481,7 @@ Execute:
 4. gh workflow list --repo tscode-com-br/checking-webapp --all
 5. gh workflow list --repo tscode-com-br/checking-transport --all
 6. gh workflow list --repo tscode-com-br/checking_app_flutter --all
+7. gh workflow list --repo tscode-com-br/checking-swift --all
 
 Resultado esperado no modelo atual:
 
@@ -385,6 +489,7 @@ Resultado esperado no modelo atual:
 2. `checking-admin2`: deploy automatico ativo para admin2.
 3. `checking-api`, `checking-webapp`, `checking-transport`: desativados manualmente.
 4. `checking_app_flutter`: sem deploy para Droplet.
+5. `checking-swift`: sem deploy para Droplet; distribuicao iOS e separada.
 
 ## 4.2 Se voce quiser reativar deploy dos repos desativados
 
@@ -555,6 +660,7 @@ Auditoria de workflows (estado):
 4. gh workflow list --repo tscode-com-br/checking-webapp --all
 5. gh workflow list --repo tscode-com-br/checking-transport --all
 6. gh workflow list --repo tscode-com-br/checking_app_flutter --all
+7. gh workflow list --repo tscode-com-br/checking-swift --all
 
 Monitoramento de runs:
 

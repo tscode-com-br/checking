@@ -28,10 +28,11 @@ sistema/app/static/admin2/
 sistema/app/static/check/
 sistema/app/static/transport/
 
-# Separate Flutter repository and local artifacts
+# Separate mobile repositories and local artifacts
 checking_android_new/
 checking_kotlin/
 checking_kotlin_new/
+checking-swift/
 package-lock.json
 tmp_*.png
 assets/img/app_icon.png

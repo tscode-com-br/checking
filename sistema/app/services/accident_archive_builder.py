@@ -8,8 +8,11 @@ created with metadata.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import zipfile
+from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -21,8 +24,10 @@ from ..models import Accident, AccidentArchive, AccidentVideoUpload
 from .accident_numbering import format_accident_number
 from .accident_situation_table import build_situation_rows
 from .admin_updates import notify_admin_data_changed
-from .object_storage import _local_root, _use_remote, upload_stream
+from .object_storage import _local_root, _make_boto3_client, _use_remote, upload_stream
 from .time_utils import now_sgt
+
+_logger = logging.getLogger(__name__)
 
 # Column order in the XLSX (A=1, B=2, …)
 # A  Horário
@@ -59,8 +64,24 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", value)[:60]
 
 
+@dataclass(frozen=True)
+class _AccidentFacts:
+    """The Accident columns the archive needs, detached from the ORM session.
+
+    Holding an ORM instance would force the DB session to stay open across the
+    network I/O below just to keep it loadable.
+    """
+
+    id: int
+    accident_number: int
+    project_name_snapshot: str
+    location_name_snapshot: str
+    opened_at: datetime | None
+    description: str
+
+
 def _build_xlsx(
-    accident: Accident,
+    accident: _AccidentFacts,
     snapshot_rows,
     video_files_by_user_chave: dict[str, list[str]],
 ) -> BytesIO:
@@ -119,105 +140,161 @@ def _build_xlsx(
     return buffer
 
 
-def _read_video_bytes(object_key: str) -> bytes:
-    """Fetch raw video bytes from storage (local or remote)."""
+def _read_video_bytes(object_key: str, client=None) -> bytes:
+    """Fetch raw video bytes from storage (local or remote).
+
+    Accepts a pre-built boto3 client so the caller reuses one across every video
+    instead of constructing (and re-resolving credentials for) one per file.
+    Returns b"" when the object is missing so one lost video cannot sink the whole
+    archive — the spreadsheet still lists it.
+    """
     if _use_remote():
         from ..core.config import settings
         from .object_storage import _make_boto3_client
 
-        client = _make_boto3_client()
-        result = client.get_object(Bucket=settings.do_spaces_bucket, Key=object_key)
-        return result["Body"].read()
+        client = client or _make_boto3_client()
+        try:
+            result = client.get_object(Bucket=settings.do_spaces_bucket, Key=object_key)
+            return result["Body"].read()
+        except Exception:
+            _logger.warning("Accident archive: could not read video %s", object_key, exc_info=True)
+            return b""
 
     target = _local_root() / object_key
     return target.read_bytes() if target.exists() else b""
 
 
 def build_and_attach_archive_for_accident(accident_id: int) -> None:
-    """Build XLSX + ZIP archive for *accident_id*, upload to storage, persist metadata."""
+    """Build XLSX + ZIP archive for *accident_id*, upload to storage, persist metadata.
+
+    Runs as a background task after an accident is closed, so nothing is waiting on
+    it and an escaping exception would be swallowed by the task runner with the
+    accident silently left without an archive. Log it here instead.
+    """
+    try:
+        _build_and_attach_archive(accident_id)
+    except Exception:
+        _logger.exception(
+            "Failed to build accident archive for accident_id=%s — the accident is "
+            "closed but has no downloadable archive",
+            accident_id,
+        )
+
+
+def _build_and_attach_archive(accident_id: int) -> None:
+    # Phase 1 — read everything the build needs, then let the DB session go.
+    # The build downloads every video and uploads two objects; holding the session
+    # open across that kept a pooled connection idle-in-transaction for as long as
+    # the network took, which is how this project has already exhausted its pool.
     with SessionLocal() as db:
-        accident = db.get(Accident, accident_id)
-        if accident is None:
+        accident_row = db.get(Accident, accident_id)
+        if accident_row is None:
             return
-
-        snapshot_rows = build_situation_rows(db, accident=accident)
-
-        # Build chave lookup from snapshot_rows
+        facts = _AccidentFacts(
+            id=accident_row.id,
+            accident_number=accident_row.accident_number,
+            project_name_snapshot=accident_row.project_name_snapshot,
+            location_name_snapshot=accident_row.location_name_snapshot,
+            opened_at=accident_row.opened_at,
+            description=accident_row.description or "",
+        )
+        snapshot_rows = build_situation_rows(db, accident=accident_row)
         chave_by_user_id: dict[int, str] = {row.user_id: row.chave for row in snapshot_rows}
 
         videos = (
             db.execute(
                 select(AccidentVideoUpload).where(
-                    AccidentVideoUpload.accident_id == accident.id
+                    AccidentVideoUpload.accident_id == facts.id
                 )
             )
             .scalars()
             .all()
         )
+        # Detach to plain tuples so nothing below re-reads the ORM.
+        video_facts = [
+            (v.user_id, v.object_key, v.content_type, v.idempotency_key)
+            for v in videos
+        ]
 
-        # Build user_chave -> [filename, ...] and ZIP payloads
-        # Filenames use zero-padded index within each user's videos
-        video_files_by_user_chave: dict[str, list[str]] = {}
-        video_payloads: dict[str, bytes] = {}  # key = full zip path
+    # Phase 2 — no DB session held from here until the very end.
+    videos_by_user: dict[int, list[tuple[int, str, str, str]]] = {}
+    for video in video_facts:
+        videos_by_user.setdefault(video[0], []).append(video)
 
-        # Group videos by user to generate per-user sequential index
-        videos_by_user: dict[int, list[AccidentVideoUpload]] = {}
-        for video in videos:
-            videos_by_user.setdefault(video.user_id, []).append(video)
+    video_files_by_user_chave: dict[str, list[str]] = {}
+    video_payloads: dict[str, bytes] = {}  # key = full zip path
+    storage_client = _make_boto3_client() if _use_remote() else None
 
-        for user_id, user_videos in videos_by_user.items():
-            user_chave = chave_by_user_id.get(user_id) or str(user_id)
-            for idx, video in enumerate(user_videos, start=1):
-                ext = video.content_type.split("/")[-1]
-                if ext == "quicktime":
-                    ext = "mov"
-                filename = f"{idx:02d}_{_slugify(video.idempotency_key)}.{ext}"
-                zip_path = f"Registros/{user_chave}/{filename}"
-                video_files_by_user_chave.setdefault(user_chave, []).append(filename)
-                video_payloads[zip_path] = _read_video_bytes(video.object_key)
+    for user_id, user_videos in videos_by_user.items():
+        user_chave = chave_by_user_id.get(user_id) or str(user_id)
+        for idx, (_, object_key, content_type, idempotency_key) in enumerate(user_videos, start=1):
+            ext = content_type.split("/")[-1]
+            if ext == "quicktime":
+                ext = "mov"
+            filename = f"{idx:02d}_{_slugify(idempotency_key)}.{ext}"
+            zip_path = f"Registros/{user_chave}/{filename}"
+            video_files_by_user_chave.setdefault(user_chave, []).append(filename)
+            video_payloads[zip_path] = _read_video_bytes(object_key, storage_client)
 
-        xlsx_buffer = _build_xlsx(accident, snapshot_rows, video_files_by_user_chave)
+    xlsx_buffer = _build_xlsx(facts, snapshot_rows, video_files_by_user_chave)
 
-        # Build ZIP
-        zip_buffer = BytesIO()
-        xlsx_name = f"{format_accident_number(accident.accident_number)}.xlsx"
-        with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(xlsx_name, xlsx_buffer.getvalue())
-            for zip_path, payload in video_payloads.items():
-                zf.writestr(zip_path, payload)
-        zip_buffer.seek(0)
+    # Build ZIP
+    zip_buffer = BytesIO()
+    acc_label = format_accident_number(facts.accident_number)
+    xlsx_name = f"{acc_label}.xlsx"
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(xlsx_name, xlsx_buffer.getvalue())
+        for zip_path, payload in video_payloads.items():
+            zf.writestr(zip_path, payload)
+    zip_buffer.seek(0)
 
-        # Upload XLSX and ZIP to storage
-        acc_label = format_accident_number(accident.accident_number)
-        xlsx_key = f"accidents/{acc_label}/archive/{xlsx_name}"
-        zip_key = f"accidents/{acc_label}/archive/{acc_label}.zip"
+    xlsx_key = f"accidents/{acc_label}/archive/{xlsx_name}"
+    zip_key = f"accidents/{acc_label}/archive/{acc_label}.zip"
 
-        upload_stream(
-            object_key=xlsx_key,
-            stream=BytesIO(xlsx_buffer.getvalue()),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        upload_stream(
-            object_key=zip_key,
-            stream=zip_buffer,
-            content_type="application/zip",
-        )
+    upload_stream(
+        object_key=xlsx_key,
+        stream=BytesIO(xlsx_buffer.getvalue()),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    upload_stream(
+        object_key=zip_key,
+        stream=zip_buffer,
+        content_type="application/zip",
+    )
 
-        size_bytes = zip_buffer.seek(0, 2) or 0
-        zip_buffer.seek(0)
+    size_bytes = zip_buffer.seek(0, 2) or 0
+    zip_buffer.seek(0)
 
-        archive = AccidentArchive(
-            accident_id=accident.id,
-            snapshot_json=json.dumps(
+    # Phase 3 — short write session.
+    with SessionLocal() as db:
+        accident_row = db.get(Accident, accident_id)
+        if accident_row is None:
+            return
+        existing = db.execute(
+            select(AccidentArchive).where(AccidentArchive.accident_id == accident_id)
+        ).scalars().first()
+        if existing is None:
+            db.add(AccidentArchive(
+                accident_id=accident_id,
+                snapshot_json=json.dumps(
+                    [row.model_dump() for row in snapshot_rows], default=str
+                ),
+                xlsx_object_key=xlsx_key,
+                zip_object_key=zip_key,
+                size_bytes=size_bytes,
+                generated_at=now_sgt(),
+            ))
+        else:
+            # Re-running the builder (e.g. after fixing a failure) must not trip
+            # uq_accident_archives_accident_id.
+            existing.snapshot_json = json.dumps(
                 [row.model_dump() for row in snapshot_rows], default=str
-            ),
-            xlsx_object_key=xlsx_key,
-            zip_object_key=zip_key,
-            size_bytes=size_bytes,
-            generated_at=now_sgt(),
-        )
-        accident.archive_object_key = zip_key
-        db.add(archive)
+            )
+            existing.xlsx_object_key = xlsx_key
+            existing.zip_object_key = zip_key
+            existing.size_bytes = size_bytes
+            existing.generated_at = now_sgt()
+        accident_row.archive_object_key = zip_key
         db.commit()
 
     notify_admin_data_changed(

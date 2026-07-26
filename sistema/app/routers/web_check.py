@@ -59,10 +59,14 @@ from ..services.admin_updates import (
 )
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
+    AccidentNumberingConflictError,
+    AccidentProjectNotFoundError,
+    InvalidAccidentLocationError,
+    VideoIdempotencyConflictError,
     acknowledge_accident,
     attach_video_upload,
+    find_video_upload,
     list_active_accidents,
-    list_active_accident,
     open_accident,
     upsert_user_safety_report,
 )
@@ -612,7 +616,7 @@ def update_web_user_projects(
         ok=True,
         message="Projetos atualizados com sucesso.",
         projects=project_names,
-        active_project=user.projeto,
+        active_project=resolve_user_active_project(user, project_names),
     )
 
 
@@ -1145,6 +1149,37 @@ def submit_web_check(
 # ---------------------------------------------------------------------------
 
 
+def _user_project_ids(db: Session, user: User) -> set[int]:
+    return {
+        m.project_id
+        for m in db.execute(
+            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+        ).scalars().all()
+    }
+
+
+def _resolve_active_accident_for_user(db: Session, user: User) -> Accident | None:
+    """Pick which active accident a write from *user* belongs to.
+
+    /state, /acknowledge and /emergency-call already resolve by the user's project
+    memberships. /report and /video instead called list_active_accident(), which
+    returns the lowest-numbered active accident in the entire system, with no
+    project filter at all. That was harmless while only one accident could be open
+    system-wide, but migration 0075 made the uniqueness per-project — so a user's
+    safety report and videos could land on another project's accident and insert
+    them into its situation table as a non-member.
+
+    Project isolation is strict: only an accident in one of the user's own
+    projects is ever a valid target. If none matches, the caller rejects rather
+    than writing this user into another project's accident.
+    """
+    actives = list_active_accidents(db)
+    if not actives:
+        return None
+    project_ids = _user_project_ids(db, user)
+    return next((a for a in actives if a.project_id in project_ids), None)
+
+
 @router.get("/check/accident/state", response_model=WebAccidentStateResponse)
 def get_web_accident_state(
     request: Request,
@@ -1156,17 +1191,15 @@ def get_web_accident_state(
     if not actives:
         return WebAccidentStateResponse(is_active=False)
 
-    # Prefer accidents the user belongs to. Fall back to the full list when
-    # the user has no membership match (legacy behaviour kept so the banner
-    # still shows for everyone during a global accident).
-    user_project_ids = {
-        m.project_id
-        for m in db.execute(
-            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
-        ).scalars().all()
-    }
-    matching = [a for a in actives if a.project_id in user_project_ids]
-    relevant = matching if matching else actives
+    # Strict project isolation: a user only ever sees accidents in their own
+    # projects. The previous fallback ("if nothing matches, show everything")
+    # dated from when a single accident could be open system-wide; once
+    # uniqueness became per-project it meant an accident in P80 raised the
+    # accident banner for every P82 and P83 user too.
+    user_project_ids = _user_project_ids(db, user)
+    relevant = [a for a in actives if a.project_id in user_project_ids]
+    if not relevant:
+        return WebAccidentStateResponse(is_active=False)
 
     items: list[WebAccidentActiveItem] = []
     for accident in relevant:
@@ -1225,6 +1258,13 @@ def open_web_accident(
     db: Session = Depends(get_db),
 ) -> WebAccidentStateResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    # The wizard only offers the user's own projects, but the endpoint must enforce
+    # it too — project_id comes from the request body. Opening an accident pages an
+    # entire project's team, so it must never be possible to do that to a project
+    # you do not belong to.
+    if payload.project_id not in _user_project_ids(db, user):
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+
     try:
         accident = open_accident(
             db,
@@ -1240,6 +1280,15 @@ def open_web_accident(
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
+    except AccidentProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    except InvalidAccidentLocationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except AccidentNumberingConflictError:
+        raise HTTPException(
+            status_code=503,
+            detail="Nao foi possivel abrir o acidente agora. Tente novamente.",
+        )
     log_event(
         db,
         source="web",
@@ -1263,7 +1312,7 @@ def report_web_accident_status(
     db: Session = Depends(get_db),
 ) -> WebAccidentStateResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
-    active = list_active_accident(db)
+    active = _resolve_active_accident_for_user(db, user)
     if active is None:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
     _, fired_help = upsert_user_safety_report(db, accident=active, user=user, zone=payload.zone, status=payload.status)
@@ -1299,23 +1348,23 @@ def acknowledge_web_accident(
     if not actives:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
 
+    # Both branches are restricted to the user's own projects. The targeted branch
+    # used to accept any active accident id, and the fallback branch used to land
+    # on actives[0] when nothing matched — either way a P82 user could acknowledge
+    # (and therefore be listed in) a P80 accident.
+    user_project_ids = _user_project_ids(db, user)
+    in_scope = [a for a in actives if a.project_id in user_project_ids]
+
     if payload.accident_id is not None:
-        # Targeted ack: caller must explicitly identify which active accident
-        # to acknowledge. Reject if the id is not currently active.
-        target = next((a for a in actives if a.id == payload.accident_id), None)
+        target = next((a for a in in_scope if a.id == payload.accident_id), None)
         if target is None:
             raise HTTPException(status_code=404, detail="Acidente não está ativo.")
     else:
-        # Legacy fallback: pick the first active accident matching the user's
-        # projects, or the first global active accident if none match.
-        user_project_ids = {
-            m.project_id
-            for m in db.execute(
-                select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
-            ).scalars().all()
-        }
-        matching = [a for a in actives if a.project_id in user_project_ids]
-        target = matching[0] if matching else actives[0]
+        target = in_scope[0] if in_scope else None
+        if target is None:
+            raise HTTPException(
+                status_code=409, detail="Nenhum acidente em curso para seu projeto."
+            )
 
     acknowledge_accident(db, target.id, user)
     log_event(
@@ -1433,11 +1482,28 @@ async def upload_accident_video(
     db: Session = Depends(get_db),
 ) -> AccidentVideoUploadResponse:
     user = _require_matching_authenticated_web_user(request, db, chave)
-    active = list_active_accident(db)
+    active = _resolve_active_accident_for_user(db, user)
     if active is None:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
     if video.content_type not in ALLOWED_VIDEO_TYPES:
         raise HTTPException(status_code=415, detail="Tipo de video nao suportado.")
+
+    # Resolve idempotency BEFORE streaming the body: a retry of an upload this user
+    # already completed should not push the bytes again (videos run to 50 MB), and a
+    # key that belongs to somebody else must be rejected without writing an object
+    # that nothing will ever reference.
+    try:
+        already = find_video_upload(
+            db, idempotency_key=idempotency_key, accident=active, user=user
+        )
+    except VideoIdempotencyConflictError:
+        raise HTTPException(status_code=409, detail="idempotency_key ja utilizado.")
+    if already is not None:
+        return AccidentVideoUploadResponse(
+            video_id=already.id,
+            public_url=already.public_url,
+            captured_at=already.captured_at,
+        )
 
     accident_label = format_accident_number(active.accident_number)
     ext_map = {"video/webm": "webm", "video/mp4": "mp4", "video/quicktime": "mov"}
@@ -1488,8 +1554,15 @@ def list_web_accident_projects(
     chave: str = Query(...),
     db: Session = Depends(get_db),
 ) -> list[AccidentProjectOption]:
-    _require_matching_authenticated_web_user(request, db, chave)
-    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    # Only the user's own projects. Listing every project let someone allocated to
+    # P82 open an accident on P80, which then paged P80's whole team.
+    project_ids = _user_project_ids(db, user)
+    return [
+        AccidentProjectOption(id=p.id, name=p.name)
+        for p in list_projects(db)
+        if p.id in project_ids
+    ]
 
 
 @router.get("/check/accident/wizard/locations", response_model=list[AccidentLocationOption])
@@ -1499,9 +1572,11 @@ def list_web_accident_locations(
     project_id: int = Query(...),
     db: Session = Depends(get_db),
 ) -> list[AccidentLocationOption]:
-    _require_matching_authenticated_web_user(request, db, chave)
+    user = _require_matching_authenticated_web_user(request, db, chave)
     project = db.get(Project, project_id)
     if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    if project.id not in _user_project_ids(db, user):
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
     options = []
     for loc in db.execute(select(ManagedLocation)).scalars().all():

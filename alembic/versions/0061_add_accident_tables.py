@@ -291,6 +291,11 @@ def downgrade() -> None:
         op.drop_table("email_delivery_logs")
 
     if inspector.has_table("accidents"):
-        op.drop_index("ix_accidents_single_active_guard", table_name="accidents")
-        op.drop_index("ix_accidents_single_active", table_name="accidents")
+        # IF EXISTS because these two indexes may already be gone: revision 0075
+        # replaces them with ix_accidents_single_active_per_project, so a downgrade
+        # that passes through 0075 first reaches here with nothing left to drop.
+        # (Dropping the table would remove them anyway; the explicit drops are kept
+        # for dialects that do not cascade index removal.)
+        op.execute(sa.text("DROP INDEX IF EXISTS ix_accidents_single_active_guard"))
+        op.execute(sa.text("DROP INDEX IF EXISTS ix_accidents_single_active"))
         op.drop_table("accidents")

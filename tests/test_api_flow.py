@@ -111,6 +111,7 @@ from sistema.app.services.user_projects import (
     add_user_project_membership,
     ensure_user_active_project_is_member,
     list_user_project_names,
+    replace_user_project_memberships,
 )
 from sistema.app.services.user_sync import find_user_by_chave, find_user_by_rfid, normalize_event_time
 from sistema.app.routers import web_check as web_check_router
@@ -2996,6 +2997,72 @@ def test_web_projects_endpoint_lists_catalog_and_authenticated_user_projects_upd
         user = get_user_by_chave(db, "WP95")
 
     assert user.projeto == "P95"
+
+
+def test_web_user_projects_update_accepts_empty_list_and_clears_all_memberships():
+    ensure_web_user_exists(chave="WP97", projeto="P80", nome="Usuario Sem Projeto Web")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP97")
+        grant_user_project_memberships(db, user, ["P80", "P83"])
+        db.commit()
+
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave="WP97",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+        updated = client.put("/api/web/user-projects", json={"projects": []})
+        assert updated.status_code == 200, updated.text
+        assert updated.json() == {
+            "ok": True,
+            "message": "Projetos atualizados com sucesso.",
+            "projects": [],
+            "active_project": "",
+        }
+
+        fetched = client.get("/api/web/user-projects")
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json() == {
+            "projects": [],
+            "active_project": "",
+        }
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP97")
+        assert user.projeto is None
+        assert get_materialized_user_project_names(db, user.id) == []
+
+
+def test_web_user_projects_get_returns_empty_contract_for_user_without_memberships():
+    ensure_web_user_exists(chave="WP98", projeto="P80", nome="Usuario Orfao Web")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WP98")
+        replace_user_project_memberships(db, user, [])
+        db.commit()
+
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave="WP98",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+        fetched = client.get("/api/web/user-projects")
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json() == {
+            "projects": [],
+            "active_project": "",
+        }
 
 
 def test_web_legacy_project_update_route_switches_only_the_active_project_within_memberships():

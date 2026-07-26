@@ -16,14 +16,54 @@ TRANSPORT_ACCESS_DIGIT = "2"
 FULL_ACCESS_DIGIT = "9"
 COMBINED_ADMIN_TRANSPORT_PROFILE = 3  # replaces legacy profile 12
 
+# The only profile values the system is allowed to store.
+#
+#   0 → usuário comum.
+#   1 → administrador dos projetos em que está cadastrado. Vê tudo daqueles
+#       projetos e aprova novos administradores neles, mas NÃO vê os horários das
+#       atividades de check-in/check-out.
+#   2 → administrador apenas do dashboard Transport.
+#   3 → 1 + 2 (o valor canônico do combo; a migração 0071 renomeou o antigo "12").
+#   9 → acesso irrestrito a absolutamente tudo, em todos os projetos, esteja ou
+#       não cadastrado em algum. É o único perfil que vê os horários das
+#       atividades. Para ele, cadastro em projeto vale só para o próprio
+#       check-in/check-out.
+#
+# Anything else is nonsense in this encoding. The profile is a SET OF DIGITS, so a
+# value like 19 parses as {1,9} — "admin + tudo" — which is redundant, since 9
+# alone already grants everything. Worse, it lands in an inconsistent middle state:
+# digit 9 makes it unrestricted by project scope, while the exact `perfil == 9`
+# checks (deleting an accident, revoking another super-admin) still refuse it. The
+# same ambiguity already bit this project once with the legacy "12", which is why
+# 3 exists. Nothing in add_profile_access/remove_profile_access can produce a
+# non-canonical value — they collapse to 9 or 0 — but the cadastro API used to
+# accept any integer 0–999 straight from the request body, so 19 (or 777) was one
+# PUT away. Validation lives in schemas.AdminUserUpsert / AdminProfileUpdateRequest.
+CANONICAL_USER_PROFILES: frozenset[int] = frozenset({
+    0,
+    int(ADMIN_ACCESS_DIGIT),
+    int(TRANSPORT_ACCESS_DIGIT),
+    COMBINED_ADMIN_TRANSPORT_PROFILE,
+    int(FULL_ACCESS_DIGIT),
+})
+
 
 def digits_to_profile(digits: set[str]) -> int:
     """Map a set of access digits to the canonical profile integer.
 
-    {"1","2"} → 3 (not 12), to avoid the ambiguous multi-digit encoding.
+    {"9", ...} → 9: the full-access digit subsumes every other one, so there is
+    nothing to combine. Without this, {"1","9"} produced the literal 19 — an
+    "admin + tudo" value that is redundant by definition and lands in an
+    inconsistent middle state (unrestricted by project scope because it carries
+    the digit 9, yet refused by the exact `perfil == 9` checks). This function was
+    the only thing that could mint such a value.
+
+    {"1","2"} → 3 (not 12), same reasoning applied to the legacy combo.
     """
     if not digits:
         return 0
+    if FULL_ACCESS_DIGIT in digits:
+        return int(FULL_ACCESS_DIGIT)
     if digits == {ADMIN_ACCESS_DIGIT, TRANSPORT_ACCESS_DIGIT}:
         return COMBINED_ADMIN_TRANSPORT_PROFILE
     return int("".join(sorted(digits)))

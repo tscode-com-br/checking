@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     Accident,
     AccidentCallLog,
+    AccidentCallNotification,
     AccidentUserReport,
     AccidentVideoUpload,
     AdminAccessRequest,
@@ -165,6 +166,21 @@ def delete_user_account(db: Session, user: User) -> list[str]:
         .where(EmailDeliveryLog.recipient_chave == chave)
         .values(recipient_chave=None, recipient_email="", body_snapshot="")
     )
+    # AccidentCallNotification holds a rendered pt-BR sentence that embeds the
+    # triggering user's name and chave (twilio_caller._format_notification_message_pt).
+    # Nulling triggered_by_user_id below does not reach it, so the name kept showing
+    # in the admin's notification feed after the account was erased. Scrub the text,
+    # keep the row: same rule already applied to EmailDeliveryLog.body_snapshot.
+    # Must run BEFORE the update that clears triggered_by_user_id.
+    user_call_log_ids = db.execute(
+        select(AccidentCallLog.id).where(AccidentCallLog.triggered_by_user_id == uid)
+    ).scalars().all()
+    if user_call_log_ids:
+        db.execute(
+            update(AccidentCallNotification)
+            .where(AccidentCallNotification.call_log_id.in_(user_call_log_ids))
+            .values(message_pt="(dados do solicitante removidos a pedido do titular)")
+        )
     db.execute(
         update(AccidentCallLog)
         .where(AccidentCallLog.triggered_by_user_id == uid)
@@ -175,8 +191,14 @@ def delete_user_account(db: Session, user: User) -> list[str]:
     db.execute(delete(UserSyncEvent).where(UserSyncEvent.user_id == uid))
 
     # --- No-FK PII tables (won't block, but no cascade reaches them; keyed by rfid/chave, captured above) ---
+    # CheckEvent.rfid holds the card id for device flows but the user's *chave* for
+    # every web flow — including all accident endpoints (web_check.py logs
+    # rfid=user.chave). Deleting by rfid alone left the entire web trail behind, and
+    # web-created users have rfid = NULL, so for them nothing was deleted at all.
+    check_event_keys = {key for key in (rfid, chave) if key}
+    if check_event_keys:
+        db.execute(delete(CheckEvent).where(CheckEvent.rfid.in_(check_event_keys)))
     if rfid:
-        db.execute(delete(CheckEvent).where(CheckEvent.rfid == rfid))
         db.execute(delete(PendingRegistration).where(PendingRegistration.rfid == rfid))
         db.execute(delete(FormsSubmission).where(or_(FormsSubmission.chave == chave, FormsSubmission.rfid == rfid)))
     else:

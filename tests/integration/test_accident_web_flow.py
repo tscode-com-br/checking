@@ -198,6 +198,26 @@ def _get_or_create_admin(db: sa.orm.Session, proj: Project) -> tuple[User, Admin
     else:
         user.senha = hash_password(_ADMIN_PASS)
         user.perfil = 1
+
+    # A perfil-1 admin is scoped by project *membership*: the admin accident
+    # endpoints resolve scope via list_materialized_user_project_names, which does
+    # not fall back to the legacy users.projeto column. Without this row the admin
+    # administers no project at all and sees no accidents.
+    membership = db.execute(
+        sa.select(UserProjectMembership).where(
+            UserProjectMembership.user_id == user.id,
+            UserProjectMembership.project_id == proj.id,
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        db.add(UserProjectMembership(
+            user_id=user.id,
+            project_id=proj.id,
+            created_at=now,
+            updated_at=now,
+        ))
+        db.flush()
+
     admin = db.execute(
         sa.select(AdminUser).where(AdminUser.chave == _ADMIN_CHAVE)
     ).scalar_one_or_none()

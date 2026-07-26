@@ -195,10 +195,11 @@ from ..services.user_sync import (
 )
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
+    AccidentNumberingConflictError,
+    AccidentProjectNotFoundError,
     InvalidAccidentLocationError,
     NoActiveAccidentError,
     close_accident,
-    list_active_accident,
     list_active_accidents,
     open_accident,
 )
@@ -2146,6 +2147,43 @@ def change_own_admin_password(
     return AdminActionResponse(ok=True, message="Senha alterada com sucesso.")
 
 
+# SSE reasons that carry data belonging to one specific project. Everything else
+# on this stream is system-wide admin data every admin already sees.
+_PROJECT_SCOPED_SSE_PREFIXES = ("accident_", "emergency_call_")
+
+
+def _sse_payload_in_admin_scope(payload: str, allowed_projects: list[str] | None) -> bool:
+    """Whether an admin scoped to *allowed_projects* should receive this payload.
+
+    `allowed_projects is None` means unrestricted (perfil 9).
+
+    This matters because the admin front renders the emergency-call notification
+    bar straight from the SSE payload, without re-fetching anything — so without
+    this filter an admin allocated only to P82 saw "Chamada de emergência ...
+    projeto P80" appear on their screen. The accident_* reasons only trigger a
+    refetch of /accidents/active (already scoped server-side), but filtering them
+    too keeps other projects' admins from being woken up at all.
+
+    Payloads with no project_name are let through: they cannot leak project data
+    on their own, and the endpoints they cause to be re-fetched apply scope.
+    """
+    if allowed_projects is None:
+        return True
+    try:
+        parsed = json.loads(payload)
+    except (TypeError, ValueError):
+        return True
+    if not isinstance(parsed, dict):
+        return True
+    if not str(parsed.get("reason") or "").startswith(_PROJECT_SCOPED_SSE_PREFIXES):
+        return True
+    project_name = str(parsed.get("project_name") or "").strip()
+    if not project_name:
+        return True
+    # Both sides come verbatim from projects.name, so an exact match is correct.
+    return project_name in {str(name).strip() for name in allowed_projects}
+
+
 @router.get("/stream")
 async def stream_updates(request: Request) -> StreamingResponse:
     # Authenticate with a short-lived session that is released BEFORE the streaming loop.
@@ -2155,8 +2193,14 @@ async def stream_updates(request: Request) -> StreamingResponse:
     # the pool with only a handful of admin tabs.
     with SessionLocal() as db:
         admin = get_authenticated_admin_from_session(request, db)
-    if admin is None:
-        raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
+        if admin is None:
+            raise HTTPException(status_code=401, detail="Sessao administrativa invalida ou expirada")
+        # Resolve the project scope ONCE, here, while a session is legitimately
+        # open. Re-resolving per event would mean a DB round-trip per SSE message
+        # on a long-lived connection — the shape that already exhausted the pool.
+        # Trade-off: a membership change only takes effect on reconnect.
+        allowed_projects = resolve_effective_admin_project_names(db, admin)
+
     subscriber_id, queue = admin_updates_broker.subscribe()
 
     async def event_generator():
@@ -2168,6 +2212,8 @@ async def stream_updates(request: Request) -> StreamingResponse:
 
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    if not _sse_payload_in_admin_scope(payload, allowed_projects):
+                        continue
                     yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
@@ -2211,9 +2257,39 @@ def _accident_summary(db: Session, accident: Accident) -> AccidentSummary:
     )
 
 
-@router.get("/accidents/active", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_admin_session)])
-def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentStateResponse:
-    actives = list_active_accidents(db)
+def _accident_in_admin_scope(db: Session, current_admin: User, accident: Accident) -> bool:
+    """Whether *accident* belongs to a project this admin administers.
+
+    Perfil 9 is unrestricted (resolve_effective_admin_project_names returns None),
+    perfil 1 is scoped to its own project memberships — the same rule the rest of
+    the admin already applies to presence, events, reports and cadastro.
+    """
+    return project_matches_effective_admin_scope(
+        db, current_admin, accident.project_name_snapshot, allow_blank=False
+    )
+
+
+def _require_accident_in_scope(db: Session, current_admin: User, accident: Accident) -> None:
+    """Reject access to an accident outside the admin's project scope.
+
+    The accident endpoints were the one admin area with no scope filter at all, so
+    a perfil-1 admin could read another project's situation table, call logs and
+    archive, and close its accident. 404 rather than 403: the response must not
+    confirm that an accident exists in a project the caller cannot see.
+    """
+    if not _accident_in_admin_scope(db, current_admin, accident):
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+
+
+@router.get("/accidents/active", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+def get_active_accident_state(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+    actives = [
+        a for a in list_active_accidents(db)
+        if _accident_in_admin_scope(db, current_admin, a)
+    ]
     if not actives:
         return AdminAccidentStateResponse(is_active=False)
     items = [
@@ -2237,6 +2313,14 @@ def open_admin_accident(
     db: Session = Depends(get_db),
     identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
+    target_project = db.get(Project, payload.project_id)
+    if target_project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    if not project_matches_effective_admin_scope(
+        db, identity.user, target_project.name, allow_blank=False
+    ):
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+
     try:
         accident = open_accident(
             db,
@@ -2250,8 +2334,15 @@ def open_admin_accident(
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Ja existe um acidente em curso.")
-    except InvalidAccidentLocationError:
-        raise HTTPException(status_code=422, detail="O local selecionado nao pertence ao projeto.")
+    except AccidentProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    except InvalidAccidentLocationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except AccidentNumberingConflictError:
+        raise HTTPException(
+            status_code=503,
+            detail="Nao foi possivel abrir o acidente agora. Tente novamente.",
+        )
 
     log_event(
         db,
@@ -2287,6 +2378,7 @@ def close_admin_accident_by_id(
     accident = db.get(Accident, accident_id)
     if accident is None or accident.closed_at is not None:
         raise HTTPException(status_code=409, detail="Acidente não encontrado ou já encerrado.")
+    _require_accident_in_scope(db, identity.user, accident)
 
     closed = close_accident(db, accident=accident, closed_by_admin_id=identity.admin_user.id)
     background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)
@@ -2311,8 +2403,14 @@ def close_admin_accident(
     db: Session = Depends(get_db),
     identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
-    """Backward-compat: close the first active accident found."""
-    active = list_active_accident(db)
+    """Backward-compat: close the first active accident this admin administers."""
+    active = next(
+        (
+            a for a in list_active_accidents(db)
+            if _accident_in_admin_scope(db, identity.user, a)
+        ),
+        None,
+    )
     if active is None:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
 
@@ -2342,6 +2440,7 @@ def trigger_admin_emergency_call(
     accident = db.get(Accident, accident_id)
     if accident is None or accident.closed_at is not None:
         raise HTTPException(status_code=404, detail="Acidente não encontrado ou já encerrado.")
+    _require_accident_in_scope(db, identity.user, accident)
 
     project = db.get(Project, accident.project_id)
     if project is None:
@@ -2384,11 +2483,17 @@ def trigger_admin_emergency_call(
     )
 
 
-@router.get("/accidents/{accident_id}/call-logs", response_model=list[AccidentCallLogRow], dependencies=[Depends(require_admin_session)])
+@router.get("/accidents/{accident_id}/call-logs", response_model=list[AccidentCallLogRow], dependencies=[Depends(require_full_admin_session)])
 def list_accident_call_logs(
     accident_id: int,
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> list[AccidentCallLogRow]:
+    accident = db.get(Accident, accident_id)
+    if accident is None:
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+    _require_accident_in_scope(db, current_admin, accident)
+
     logs = db.execute(
         select(AccidentCallLog)
         .where(AccidentCallLog.accident_id == accident_id)
@@ -2399,7 +2504,10 @@ def list_accident_call_logs(
         if log.triggered_by_user_id:
             u = db.get(User, log.triggered_by_user_id)
             if u:
-                return f"{u.nome_completo} ({u.chave})"
+                # User carries `nome`; only AdminUser has `nome_completo`. Reading
+                # the wrong attribute here made this endpoint a guaranteed 500 for
+                # every call triggered from the Check Web.
+                return f"{u.nome} ({u.chave})"
         elif log.triggered_by_admin_id:
             a = db.get(AdminUser, log.triggered_by_admin_id)
             if a:
@@ -2433,17 +2541,23 @@ def list_accident_call_logs(
 @router.get(
     "/accidents/{accident_id}/notifications",
     response_model=list[AccidentCallNotificationRow],
-    dependencies=[Depends(require_admin_session)],
+    dependencies=[Depends(require_full_admin_session)],
 )
 def list_accident_call_notifications(
     accident_id: int,
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> list[AccidentCallNotificationRow]:
     """Return the persisted emergency-call notification feed for an accident.
 
     Ordered by occurred_at ascending so the front can simply append on top
     of any items it already holds from prior SSE pushes.
     """
+    accident = db.get(Accident, accident_id)
+    if accident is None:
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+    _require_accident_in_scope(db, current_admin, accident)
+
     rows = db.execute(
         select(AccidentCallNotification)
         .where(AccidentCallNotification.accident_id == accident_id)
@@ -2463,9 +2577,12 @@ def list_closed_accidents_endpoint(
     current_admin: User = Depends(require_full_admin_session),
 ) -> AccidentClosedListResponse:
     rows = []
-    accidents = db.execute(
-        select(Accident).where(Accident.closed_at.is_not(None)).order_by(Accident.accident_number.desc())
-    ).scalars().all()
+    accidents = [
+        a for a in db.execute(
+            select(Accident).where(Accident.closed_at.is_not(None)).order_by(Accident.accident_number.desc())
+        ).scalars().all()
+        if _accident_in_admin_scope(db, current_admin, a)
+    ]
     for accident in accidents:
         archive = db.execute(
             select(AccidentArchive).where(AccidentArchive.accident_id == accident.id)
@@ -2498,7 +2615,13 @@ def list_closed_accidents_endpoint(
 def download_accident_archive(
     accident_id: int,
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> Response:
+    accident = db.get(Accident, accident_id)
+    if accident is None:
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+    _require_accident_in_scope(db, current_admin, accident)
+
     archive = db.execute(
         select(AccidentArchive).where(AccidentArchive.accident_id == accident_id)
     ).scalar_one_or_none()
@@ -2509,17 +2632,29 @@ def download_accident_archive(
 
 
 @router.get("/accidents/wizard/projects", response_model=list[AccidentProjectOption], dependencies=[Depends(require_full_admin_session)])
-def list_accident_wizard_projects(db: Session = Depends(get_db)) -> list[AccidentProjectOption]:
-    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+def list_accident_wizard_projects(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> list[AccidentProjectOption]:
+    # Only offer projects this admin can actually open an accident for — otherwise
+    # the wizard lists a project and POST /accidents/open then answers 404.
+    return [
+        AccidentProjectOption(id=p.id, name=p.name)
+        for p in list_projects(db)
+        if project_matches_effective_admin_scope(db, current_admin, p.name, allow_blank=False)
+    ]
 
 
 @router.get("/accidents/wizard/locations", response_model=list[AccidentLocationOption], dependencies=[Depends(require_full_admin_session)])
 def list_accident_wizard_locations(
     project_id: int = Query(...),
     db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
 ) -> list[AccidentLocationOption]:
     project = db.get(Project, project_id)
     if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    if not project_matches_effective_admin_scope(db, current_admin, project.name, allow_blank=False):
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
     options = []
     for loc in db.execute(select(ManagedLocation)).scalars().all():
@@ -2537,14 +2672,31 @@ def delete_prefix(prefix: str) -> None:
     _del_prefix(prefix=prefix)
 
 
-@router.get("/accidents/local-asset/{path:path}")
+@router.get(
+    "/accidents/local-asset/{path:path}",
+    dependencies=[Depends(require_full_admin_session)],
+)
 def serve_local_asset(path: str) -> Response:
-    """Serve locally-stored accident assets (dev only). Returns 404 in production."""
-    from ..services.object_storage import _use_remote, _local_root
+    """Serve accident assets held on local disk (no object storage configured).
+
+    Two guards, both learned the hard way. The session dependency exists because
+    the old docstring promised "dev only — 404 in production", but that 404 is
+    gated on _use_remote(), i.e. on DO Spaces being configured. A deployment
+    without those credentials served accident videos to anyone who knew the URL.
+
+    The root confinement exists because `path` arrives raw from the client and
+    was concatenated straight onto the storage root, so `../` escaped it.
+    """
+    from ..services.object_storage import _local_root, _use_remote
+
     if _use_remote():
         raise HTTPException(status_code=404, detail="Not available in production.")
-    target = _local_root() / path
-    if not target.exists() or not target.is_file():
+
+    root = _local_root().resolve()
+    target = (root / path).resolve()
+    # Same 404 for "escaped the root" and "does not exist" — never confirm to the
+    # caller that a path outside the root was reachable.
+    if not target.is_relative_to(root) or not target.is_file():
         raise HTTPException(status_code=404, detail="Asset nao encontrado.")
     return FileResponse(str(target))
 
@@ -2555,6 +2707,10 @@ def delete_accident_endpoint(
     db: Session = Depends(get_db),
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminActionResponse:
+    # Deliberately an exact perfil == 9 check, not user_has_full_admin_access:
+    # removing an accident record is reserved for the pure super-admin profile.
+    # test_delete_forbidden_for_non_perfil_9 pins this — perfil 19 carries the
+    # digit 9 (so it is unrestricted by project scope) yet must NOT delete.
     if current_admin.perfil != 9:
         raise HTTPException(status_code=403, detail="Apenas perfil 9 pode remover acidentes.")
     accident = db.get(Accident, accident_id)

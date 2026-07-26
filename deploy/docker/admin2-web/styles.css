@@ -1684,3 +1684,125 @@ button.cadastro-section-toggle:hover { background: transparent; color: var(--tex
   font-size: 13px;
   background: transparent;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAINEL ADMIN — VERSÃO MOBILE SIMPLIFICADA
+   --------------------------------------------------------------------------
+   TODAS as regras deste arquivo daqui para baixo vivem dentro de
+   @media (max-width: 800px) — o mesmo breakpoint de ADMIN_MOBILE_VIEWPORT_QUERY
+   em app.js. Acima de 800px o navegador não aplica nada disto, então a versão
+   desktop permanece exatamente como era.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 800px) {
+
+  /* ── Abas indisponíveis no celular ──────────────────────────────────── */
+  /* 'Inativos' e 'Relatórios' não cabem numa tela de telefone e foram
+     deliberadamente removidas do acesso móvel. Continuam no desktop. */
+  .tabs button[data-tab="inactive"],
+  .tabs button[data-tab="relatorios"] { display: none; }
+
+  /* ── Check-In / Check-Out: lista limpa, sem filtros ─────────────────── */
+  /* A ordenação já é a desejada por padrão (defaultSortKey "time",
+     defaultSortDirection "desc" em PRESENCE_TABLE_CONFIGS): mais recente
+     primeiro. Some o painel de filtros e também o botão que o abre. */
+  #checkinFilters,
+  #checkoutFilters,
+  [data-filter-toggle="checkin"],
+  [data-filter-toggle="checkout"] { display: none; }
+
+  /* ── Seções do Cadastro ocultas no celular ──────────────────────────── */
+  [data-cadastro-section="pendencias"],    /* Pendências de RFID */
+  [data-cadastro-section="acidentes"],
+  [data-cadastro-section="localizacoes"],
+  [data-cadastro-section="endpoints"] { display: none; }
+
+  /* ── Tabelas do Cadastro viram cartões empilhados ───────────────────── */
+  .cadastro-table thead { display: none; }
+  .cadastro-table,
+  .cadastro-table tbody,
+  .cadastro-table tr { display: block; width: 100%; }
+
+  .cadastro-table tr {
+    margin: 0 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+  }
+  .cadastro-table tr:last-child { margin-bottom: 0; }
+
+  .cadastro-table td {
+    border: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .cadastro-table tr td:last-child { border-bottom: 0; }
+
+  /* Linha de "nenhum registro" não deve virar cartão. */
+  .cadastro-table tr.empty-state-row {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    margin: 0;
+  }
+  .cadastro-table tr.empty-state-row td { border: 0; }
+  .cadastro-table tr.empty-state-row td::before { content: none; }
+
+  /* 4.1 — Pendências de Usuários: só Nome, Chave e as ações.
+     Colunas: 1 Data · 2 Chave · 3 Nome Completo · 4 Projetos · 5 E-Mail · 6 Ações */
+  [data-cadastro-section="pendencias-usuarios"] .cadastro-table td:nth-child(1),
+  [data-cadastro-section="pendencias-usuarios"] .cadastro-table td:nth-child(4),
+  [data-cadastro-section="pendencias-usuarios"] .cadastro-table td:nth-child(5) { display: none; }
+
+  /* 4.7 — Usuários Cadastrados: só Nome, Chave, Projetos e as ações.
+     Colunas: 1 RFID · 2 Nome · 3 Chave · 4 Perfil · 5 Projetos ·
+              6 Endereço · 7 ZIP · 8 Email · 9 Ações
+     Os campos ocultos continuam no DOM, então editar pelo celular preserva
+     os valores atuais em vez de apagá-los. */
+  .cadastro-users-table td:nth-child(1),
+  .cadastro-users-table td:nth-child(4),
+  .cadastro-users-table td:nth-child(6),
+  .cadastro-users-table td:nth-child(7),
+  .cadastro-users-table td:nth-child(8) { display: none; }
+
+  /* Nome em destaque no topo de cada cartão de usuário/pendência. */
+  .cadastro-users-table td:nth-child(2) .cadastro-table-value,
+  .cadastro-users-table td:nth-child(2) { font-weight: 600; }
+  [data-cadastro-section="pendencias-usuarios"] .cadastro-table td:nth-child(3) { font-weight: 600; }
+
+  /* ── Cartão de presença: nome, chave e localização ──────────────────── */
+  /* A moldura do cartão já vem de .presence-mobile-card (fora do media query);
+     aqui só entram os campos novos. O cabeçalho de 8 colunas não faz sentido
+     numa lista de cartões. */
+  .presence-users-table thead { display: none; }
+  .presence-mobile-card { padding: 12px 14px; gap: 6px; }
+
+  .presence-mobile-card-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .presence-mobile-card-meta {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--text-muted);
+  }
+  .presence-mobile-card-chave {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(15, 118, 110, 0.10);
+    color: var(--primary, #0f766e);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+}

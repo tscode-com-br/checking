@@ -958,5 +958,14 @@
         }
       });
     </script>
+    <!-- Valores canônicos de perfil (espelham CANONICAL_USER_PROFILES no servidor).
+         O perfil é um conjunto de dígitos de acesso, não um número livre. -->
+    <datalist id="canonicalProfiles">
+      <option value="0" label="0 — Usuário comum"></option>
+      <option value="1" label="1 — Administrador dos seus projetos"></option>
+      <option value="2" label="2 — Administrador do Transport"></option>
+      <option value="3" label="3 — Administrador dos seus projetos + Transport"></option>
+      <option value="9" label="9 — Administrador irrestrito"></option>
+    </datalist>
   </body>
 </html>
