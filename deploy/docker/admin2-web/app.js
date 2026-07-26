@@ -1204,6 +1204,23 @@ function syncAdminResponsiveDatasets(snapshot = buildAdminResponsiveStateSnapsho
   }
 }
 
+function syncAdminStickyOffset() {
+  // Os títulos de grupo (Hoje/Ontem) grudam no topo, mas o .app-header já é
+  // position:sticky top:0 e contém tanto a barra da marca quanto as abas. Sem
+  // deslocamento eles ficariam ESCONDIDOS atrás do cabeçalho. A altura varia com
+  // a largura da tela (as abas quebram linha) e com a aba 'Acidente' aparecendo,
+  // então é medida em vez de chutada.
+  const header = document.querySelector(".app-header");
+  const root = document.documentElement;
+  if (!header || !root?.style) {
+    return;
+  }
+  const height = Math.round(header.getBoundingClientRect().height);
+  if (height > 0) {
+    root.style.setProperty("--admin-sticky-offset", `${height}px`);
+  }
+}
+
 function syncAdminResponsiveState(options = {}) {
   const { force = false } = options;
   const snapshot = buildAdminResponsiveStateSnapshot();
@@ -1211,6 +1228,7 @@ function syncAdminResponsiveState(options = {}) {
 
   syncAdminResponsiveDatasets(snapshot);
   syncAdminShellResponsiveState(snapshot);
+  syncAdminStickyOffset();
   if (!force && nextStateKey === adminResponsiveStateKey) {
     return false;
   }

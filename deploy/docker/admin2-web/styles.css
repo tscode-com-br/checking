@@ -1809,18 +1809,33 @@ button.cadastro-section-toggle:hover { background: transparent; color: var(--tex
   /* ── Agrupamento por dia: Hoje primeiro, Ontem abaixo ───────────────── */
   /* A janela do servidor é de 72h, então pode haver um terceiro grupo com a
      data real (ex.: "24/07/2026") para registros de anteontem. */
+
+  /* position:sticky só funciona se NENHUM ancestral for contexto de rolagem.
+     .table-wrap declara overflow-x:auto e, quando um eixo é auto, o navegador
+     promove o outro de visible para auto — o que tornaria o wrap um contêiner de
+     rolagem e mataria o sticky. No celular a tabela de presença é uma coluna só
+     (td colspan=8), então não há nada para rolar na horizontal e liberar o
+     overflow é seguro. Restrito aos wraps de presença para não afetar a tabela
+     de Eventos, que realmente precisa rolar lateralmente. */
+  .table-wrap--presence { overflow: visible; }
+
   .presence-users-table td.presence-group-header-cell {
-    padding: 16px 2px 6px;
+    position: sticky;
+    /* Abaixo do .app-header, cuja altura é medida por syncAdminStickyOffset. */
+    top: var(--admin-sticky-offset, 92px);
+    z-index: 3;
+    padding: 10px 2px 8px;
     border: 0;
-    background: transparent;
+    /* Fundo opaco: os cartões passam POR BAIXO do título ao rolar. */
+    background: var(--bg, #f1f5f9);
+    text-align: center;
     font-size: 12px;
     font-weight: 800;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-muted);
   }
   .presence-users-table td.presence-group-header-cell::before { content: none; }
-  .presence-group-header-row:first-child td.presence-group-header-cell { padding-top: 2px; }
 
   /* 'Hoje' é o grupo que importa — ganha a cor de destaque. */
   .presence-group-header-row[data-group-kind="today"] td.presence-group-header-cell {
