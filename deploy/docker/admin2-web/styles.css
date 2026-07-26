@@ -1770,75 +1770,92 @@ button.cadastro-section-toggle:hover { background: transparent; color: var(--tex
   .cadastro-users-table td:nth-child(2) { font-weight: 600; }
   [data-cadastro-section="pendencias-usuarios"] .cadastro-table td:nth-child(3) { font-weight: 600; }
 
-  /* ── Cartão de presença: nome, chave e localização ──────────────────── */
+  /* ── Cartão de presença: Chave/Nome na 1ª linha, Data/Local na 2ª ───── */
   /* A moldura do cartão já vem de .presence-mobile-card (fora do media query);
-     aqui só entram os campos novos. O cabeçalho de 8 colunas não faz sentido
+     aqui entram a grade e os campos. O cabeçalho de 8 colunas não faz sentido
      numa lista de cartões. */
   .presence-users-table thead { display: none; }
-  .presence-mobile-card { padding: 12px 14px; gap: 6px; }
 
-  .presence-mobile-card-title {
-    margin: 0;
-    font-size: 15px;
+  /* Grade 2x2. A coluna 1 (Chave/Data) tem largura automática = a do conteúdo
+     mais largo entre as duas; por ser a MESMA grade, a coluna 2 começa no mesmo
+     x nas duas linhas, então o primeiro caractere do Nome fica alinhado com o
+     primeiro caractere do Local. */
+  .presence-mobile-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 2px 10px;
+    padding: 8px 10px;
+  }
+  .presence-mobile-card--compact,
+  .presence-mobile-card--limited { gap: 2px 10px; }
+
+  .presence-mobile-card-chave,
+  .presence-mobile-card-date {
+    justify-self: start;      /* Chave e Data alinhadas à esquerda */
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .presence-mobile-card-name,
+  .presence-mobile-card-local {
+    justify-self: stretch;    /* ocupam o container, texto à esquerda */
+    text-align: left;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .presence-mobile-card-chave {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--primary, #0f766e);
+  }
+  .presence-mobile-card-name {
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.3;
     color: var(--text);
-    overflow-wrap: anywhere;
   }
-  .presence-mobile-card-meta {
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    line-height: 1.35;
+  .presence-mobile-card-date {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--text-muted);
   }
-  .presence-mobile-card-chave {
-    flex: none;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(15, 118, 110, 0.10);
-    color: var(--primary, #0f766e);
+  .presence-mobile-card-local {
     font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
-
-  /* ── Agrupamento por dia: Hoje primeiro, Ontem abaixo ───────────────── */
-  /* A janela do servidor é de 72h, então pode haver um terceiro grupo com a
-     data real (ex.: "24/07/2026") para registros de anteontem. */
-
-  /* position:sticky só funciona se NENHUM ancestral for contexto de rolagem.
-     .table-wrap declara overflow-x:auto e, quando um eixo é auto, o navegador
-     promove o outro de visible para auto — o que tornaria o wrap um contêiner de
-     rolagem e mataria o sticky. No celular a tabela de presença é uma coluna só
-     (td colspan=8), então não há nada para rolar na horizontal e liberar o
-     overflow é seguro. Restrito aos wraps de presença para não afetar a tabela
-     de Eventos, que realmente precisa rolar lateralmente. */
-  .table-wrap--presence { overflow: visible; }
-
-  .presence-users-table td.presence-group-header-cell {
-    position: sticky;
-    /* Abaixo do .app-header, cuja altura é medida por syncAdminStickyOffset. */
-    top: var(--admin-sticky-offset, 92px);
-    z-index: 3;
-    padding: 10px 2px 8px;
-    border: 0;
-    /* Fundo opaco: os cartões passam POR BAIXO do título ao rolar. */
-    background: var(--bg, #f1f5f9);
-    text-align: center;
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-weight: 400;
+    line-height: 1.3;
     color: var(--text-muted);
   }
-  .presence-users-table td.presence-group-header-cell::before { content: none; }
 
-  /* 'Hoje' é o grupo que importa — ganha a cor de destaque. */
-  .presence-group-header-row[data-group-kind="today"] td.presence-group-header-cell {
-    color: var(--primary, #0f766e);
+  /* Registro que não é de hoje: o cartão INTEIRO em vermelho. */
+  .presence-mobile-card--stale,
+  .presence-mobile-card--stale .presence-mobile-card-chave,
+  .presence-mobile-card--stale .presence-mobile-card-name,
+  .presence-mobile-card--stale .presence-mobile-card-date,
+  .presence-mobile-card--stale .presence-mobile-card-local {
+    color: #b91c1c;
   }
+  .presence-mobile-card--stale {
+    border-color: rgba(185, 28, 28, 0.35);
+    background: #fff7f7;
+  }
+
+  /* ── Nada pode extrapolar a largura da tela ─────────────────────────── */
+  /* .table-wrap declara overflow-x:auto, o que permite rolagem lateral. Em
+     Check-In/Check-Out e no Cadastro isso não é desejado: o conteúdo deve
+     quebrar e caber. A aba Eventos mantém a rolagem, porque a tabela dela
+     realmente é larga. */
+  .table-wrap--presence,
+  [data-cadastro-section] .table-wrap { overflow: visible; }
+
+  .presence-users-table,
+  .cadastro-table { width: 100%; max-width: 100%; }
+  .presence-users-table td,
+  .cadastro-table td { max-width: 100%; overflow-wrap: anywhere; }
+
+  /* ── Aproveitar melhor a largura da tela ────────────────────────────── */
+  main { padding: 10px 8px 24px; }
+  .cadastro-section-panel { padding: 10px; }
+  .presence-users-table td.presence-mobile-card-cell { padding: 0 0 8px; }
 }

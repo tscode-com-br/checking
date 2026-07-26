@@ -1204,23 +1204,6 @@ function syncAdminResponsiveDatasets(snapshot = buildAdminResponsiveStateSnapsho
   }
 }
 
-function syncAdminStickyOffset() {
-  // Os títulos de grupo (Hoje/Ontem) grudam no topo, mas o .app-header já é
-  // position:sticky top:0 e contém tanto a barra da marca quanto as abas. Sem
-  // deslocamento eles ficariam ESCONDIDOS atrás do cabeçalho. A altura varia com
-  // a largura da tela (as abas quebram linha) e com a aba 'Acidente' aparecendo,
-  // então é medida em vez de chutada.
-  const header = document.querySelector(".app-header");
-  const root = document.documentElement;
-  if (!header || !root?.style) {
-    return;
-  }
-  const height = Math.round(header.getBoundingClientRect().height);
-  if (height > 0) {
-    root.style.setProperty("--admin-sticky-offset", `${height}px`);
-  }
-}
-
 function syncAdminResponsiveState(options = {}) {
   const { force = false } = options;
   const snapshot = buildAdminResponsiveStateSnapshot();
@@ -1228,7 +1211,6 @@ function syncAdminResponsiveState(options = {}) {
 
   syncAdminResponsiveDatasets(snapshot);
   syncAdminShellResponsiveState(snapshot);
-  syncAdminStickyOffset();
   if (!force && nextStateKey === adminResponsiveStateKey) {
     return false;
   }
@@ -3437,49 +3419,43 @@ function buildPresenceMobileMetadata(row, options = {}) {
 }
 
 function buildPresenceMobileCard(row, timeCell, options = {}) {
-  // No celular, Check-In/Check-Out mostram exatamente três campos: nome, chave e
-  // localização. A chave não aparecia antes; o horário saiu porque a lista já vem
-  // ordenada da mais recente para a mais antiga (PRESENCE_TABLE_CONFIGS usa
-  // defaultSortKey "time" com direção "desc") e porque só o perfil 9 tem permissão
-  // de ver horários de atividade.
+  // No celular, Check-In/Check-Out mostram quatro campos em duas linhas:
+  //
+  //     <Chave>  <Nome Completo>
+  //     <Data>   <Local>
+  //
+  // O horário não entra: só o perfil 9 tem permissão de vê-lo, e a data já basta
+  // para situar o registro (a lista chega ordenada da mais recente para a mais
+  // antiga, via defaultSortKey "time"/"desc" em PRESENCE_TABLE_CONFIGS).
   //
   // Esta função só é chamada quando responsiveVariant !== "desktop"
   // (buildPresenceRow). A tabela de 8 colunas do desktop não passa por aqui.
   const variantClass = options.responsiveVariant === "mobile-limited"
     ? "presence-mobile-card--limited"
     : "presence-mobile-card--compact";
-  return `<article class="presence-mobile-card ${variantClass}">`
-    + `<p class="presence-mobile-card-title">${escapeHtml(row.nome)}</p>`
-    + `<p class="presence-mobile-card-meta">`
+  // Registro de outro dia sai inteiro em vermelho — é o sinal de que aquela
+  // atividade não é de hoje.
+  const staleClass = isPresenceRowFromAnotherDay(row) ? " presence-mobile-card--stale" : "";
+
+  // Grade 2x2: coluna 1 = Chave/Data, coluna 2 = Nome/Local. Por serem a MESMA
+  // grade, a coluna 2 começa no mesmo x nas duas linhas, então o primeiro
+  // caractere do nome fica alinhado com o do local.
+  return `<article class="presence-mobile-card ${variantClass}${staleClass}">`
     + `<span class="presence-mobile-card-chave">${escapeHtml(row.chave)}</span>`
+    + `<span class="presence-mobile-card-name">${escapeHtml(row.nome)}</span>`
+    + `<span class="presence-mobile-card-date">${escapeHtml(getPresenceActivityDateLabel(row) || "-")}</span>`
     + `<span class="presence-mobile-card-local">${escapeHtml(formatLocal(row.local))}</span>`
-    + `</p></article>`;
+    + `</article>`;
 }
 
-function getPresenceGroupLabel(row) {
-  // "Hoje"/"Ontem" cobrem o caso comum, mas a janela da tabela de presença é de
-  // 72 horas (PRESENCE_EVENT_LOOKBACK_HOURS no servidor), não 24 — ainda cabem
-  // registros de anteontem. Para esses cai na data real, em vez de rotular
-  // errado como "Ontem".
-  //
+function isPresenceRowFromAnotherDay(row) {
   // O dia vem de activity_day_key, que o servidor calcula no fuso do projeto e
-  // envia SEMPRE, mesmo para admins sem permissão de ver horários (só o
-  // HH:MM:SS é omitido). Por isso o agrupamento funciona para todo perfil.
-  const dayDiff = getCalendarDayDiffFromDayKey(
+  // envia SEMPRE — mesmo para admins sem permissão de ver horários, que só
+  // perdem o HH:MM:SS. Por isso funciona para todo perfil.
+  return getCalendarDayDiffFromDayKey(
     getPresenceActivityDayKey(row),
     row?.timezone_name,
-  );
-  if (dayDiff === 0) return { label: "Hoje", kind: "today" };
-  if (dayDiff === 1) return { label: "Ontem", kind: "yesterday" };
-  return { label: getPresenceActivityDateLabel(row) || "Anteriores", kind: "older" };
-}
-
-function buildPresenceGroupHeaderRow(group) {
-  const tr = document.createElement("tr");
-  tr.className = "presence-group-header-row";
-  tr.dataset.groupKind = group.kind;
-  tr.innerHTML = `<td colspan="8" class="presence-group-header-cell">${escapeHtml(group.label)}</td>`;
-  return tr;
+  ) > 0;
 }
 
 function buildPresenceRow(row, options = {}) {
@@ -3822,10 +3798,7 @@ function renderPresenceTable(bodyId, rows, options = {}) {
     if (key) existingByKey.set(key, tr);
   });
 
-  // Um nó por chave, reaproveitado quando o HTML não mudou. Os cabeçalhos de
-  // grupo passam pelo MESMO diff (com chave própria "__group__:<rótulo>"): se
-  // ficassem fora dele, não seriam contados na reconciliação de ordem nem no
-  // corte final por body.children.length, e a lista embaralharia.
+  // Um nó por chave, reaproveitado quando o HTML não mudou.
   const takeNode = (key, build) => {
     const node = build();
     node.dataset.rowKey = key;
@@ -3843,25 +3816,9 @@ function renderPresenceTable(bodyId, rows, options = {}) {
     return node;
   };
 
-  // Agrupa por dia apenas no celular. As linhas já chegam ordenadas da mais
-  // recente para a mais antiga (defaultSortKey "time"/"desc"), então "Hoje"
-  // aparece naturalmente antes de "Ontem".
-  const groupByDay = responsiveVariant !== "desktop";
-  const newTrList = [];
-  let lastGroupLabel = null;
-
-  rows.forEach((row) => {
-    if (groupByDay) {
-      const group = getPresenceGroupLabel(row);
-      if (group.label !== lastGroupLabel) {
-        lastGroupLabel = group.label;
-        newTrList.push(
-          takeNode(`__group__:${group.label}`, () => buildPresenceGroupHeaderRow(group)),
-        );
-      }
-    }
+  const newTrList = rows.map((row) => {
     const key = String(row.chave || "").trim().toUpperCase();
-    newTrList.push(takeNode(key, () => buildPresenceRow(row, options)));
+    return takeNode(key, () => buildPresenceRow(row, options));
   });
 
   // Remove rows no longer in data
