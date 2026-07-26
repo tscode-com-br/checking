@@ -1805,4 +1805,25 @@ button.cadastro-section-toggle:hover { background: transparent; color: var(--tex
     font-weight: 700;
     letter-spacing: 0.04em;
   }
+
+  /* ── Agrupamento por dia: Hoje primeiro, Ontem abaixo ───────────────── */
+  /* A janela do servidor é de 72h, então pode haver um terceiro grupo com a
+     data real (ex.: "24/07/2026") para registros de anteontem. */
+  .presence-users-table td.presence-group-header-cell {
+    padding: 16px 2px 6px;
+    border: 0;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .presence-users-table td.presence-group-header-cell::before { content: none; }
+  .presence-group-header-row:first-child td.presence-group-header-cell { padding-top: 2px; }
+
+  /* 'Hoje' é o grupo que importa — ganha a cor de destaque. */
+  .presence-group-header-row[data-group-kind="today"] td.presence-group-header-cell {
+    color: var(--primary, #0f766e);
+  }
 }

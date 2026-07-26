@@ -3438,6 +3438,32 @@ function buildPresenceMobileCard(row, timeCell, options = {}) {
     + `</p></article>`;
 }
 
+function getPresenceGroupLabel(row) {
+  // "Hoje"/"Ontem" cobrem o caso comum, mas a janela da tabela de presença é de
+  // 72 horas (PRESENCE_EVENT_LOOKBACK_HOURS no servidor), não 24 — ainda cabem
+  // registros de anteontem. Para esses cai na data real, em vez de rotular
+  // errado como "Ontem".
+  //
+  // O dia vem de activity_day_key, que o servidor calcula no fuso do projeto e
+  // envia SEMPRE, mesmo para admins sem permissão de ver horários (só o
+  // HH:MM:SS é omitido). Por isso o agrupamento funciona para todo perfil.
+  const dayDiff = getCalendarDayDiffFromDayKey(
+    getPresenceActivityDayKey(row),
+    row?.timezone_name,
+  );
+  if (dayDiff === 0) return { label: "Hoje", kind: "today" };
+  if (dayDiff === 1) return { label: "Ontem", kind: "yesterday" };
+  return { label: getPresenceActivityDateLabel(row) || "Anteriores", kind: "older" };
+}
+
+function buildPresenceGroupHeaderRow(group) {
+  const tr = document.createElement("tr");
+  tr.className = "presence-group-header-row";
+  tr.dataset.groupKind = group.kind;
+  tr.innerHTML = `<td colspan="8" class="presence-group-header-cell">${escapeHtml(group.label)}</td>`;
+  return tr;
+}
+
 function buildPresenceRow(row, options = {}) {
   const { highlightMissingCheckout = false, includeElapsedDays = false, responsiveVariant = "desktop" } = options;
   const tr = document.createElement("tr");
@@ -3778,30 +3804,46 @@ function renderPresenceTable(bodyId, rows, options = {}) {
     if (key) existingByKey.set(key, tr);
   });
 
-  const newTrList = rows.map((row) => {
-    const key = String(row.chave || "").trim().toUpperCase();
-    const newHtml = (() => {
-      const tmp = buildPresenceRow(row, options);
-      tmp.dataset.rowKey = key;
-      tmp.dataset.responsiveVariant = responsiveVariant;
-      return tmp;
-    })();
-    const newOuterHtml = newHtml.outerHTML;
+  // Um nó por chave, reaproveitado quando o HTML não mudou. Os cabeçalhos de
+  // grupo passam pelo MESMO diff (com chave própria "__group__:<rótulo>"): se
+  // ficassem fora dele, não seriam contados na reconciliação de ordem nem no
+  // corte final por body.children.length, e a lista embaralharia.
+  const takeNode = (key, build) => {
+    const node = build();
+    node.dataset.rowKey = key;
+    node.dataset.responsiveVariant = responsiveVariant;
+    const outerHtml = node.outerHTML;
 
     const existing = existingByKey.get(key);
     if (existing) {
       existingByKey.delete(key);
-      const cachedHtml = presenceRowHtmlCache.get(existing);
-      if (cachedHtml === newOuterHtml) {
-        // Identical — reuse as-is
-        return existing;
+      if (presenceRowHtmlCache.get(existing) === outerHtml) {
+        return existing; // idêntico — reaproveita
       }
-      // Content changed — replace with new node
-      presenceRowHtmlCache.set(newHtml, newOuterHtml);
-      return newHtml;
     }
-    presenceRowHtmlCache.set(newHtml, newOuterHtml);
-    return newHtml;
+    presenceRowHtmlCache.set(node, outerHtml);
+    return node;
+  };
+
+  // Agrupa por dia apenas no celular. As linhas já chegam ordenadas da mais
+  // recente para a mais antiga (defaultSortKey "time"/"desc"), então "Hoje"
+  // aparece naturalmente antes de "Ontem".
+  const groupByDay = responsiveVariant !== "desktop";
+  const newTrList = [];
+  let lastGroupLabel = null;
+
+  rows.forEach((row) => {
+    if (groupByDay) {
+      const group = getPresenceGroupLabel(row);
+      if (group.label !== lastGroupLabel) {
+        lastGroupLabel = group.label;
+        newTrList.push(
+          takeNode(`__group__:${group.label}`, () => buildPresenceGroupHeaderRow(group)),
+        );
+      }
+    }
+    const key = String(row.chave || "").trim().toUpperCase();
+    newTrList.push(takeNode(key, () => buildPresenceRow(row, options)));
   });
 
   // Remove rows no longer in data
