@@ -18483,6 +18483,115 @@ def test_mobile_sync_creates_materialized_membership_for_new_placeholder_user():
     assert materialized_names == ["P82"]
 
 
+def test_existing_user_without_project_membership_cannot_submit_activities_from_any_channel():
+    """Only the registration flow may establish a user's project membership."""
+    chave = "NP81"
+    rfid = "NO-PROJECT-81"
+    senha = "abc123"
+    ensure_web_user_exists(chave=chave, projeto="P80", nome="Usuario Sem Projeto")
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, chave)
+        user.rfid = rfid
+        user.senha = hash_password(senha)
+        replace_user_project_memberships(db, user, [])
+        db.commit()
+
+    event_time = now_sgt().isoformat()
+    with TestClient(app) as client:
+        web_login = login_web_password(client, chave=chave, senha=senha)
+        assert web_login.status_code == 200, web_login.text
+        web_response = client.post(
+            "/api/web/check",
+            json={
+                "chave": chave,
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": event_time,
+                "client_event_id": f"web-no-project-{uuid.uuid4().hex}",
+            },
+        )
+        mobile_submit_response = client.post(
+            "/api/mobile/events/submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": chave,
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": event_time,
+                "client_event_id": f"mobile-submit-no-project-{uuid.uuid4().hex}",
+            },
+        )
+        mobile_sync_response = client.post(
+            "/api/mobile/events/sync",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": chave,
+                "projeto": "P80",
+                "action": "checkin",
+                "event_time": event_time,
+                "client_event_id": f"mobile-sync-no-project-{uuid.uuid4().hex}",
+            },
+        )
+        mobile_forms_response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": chave,
+                "projeto": "P80",
+                "action": "checkin",
+                "informe": "normal",
+                "event_time": event_time,
+                "client_event_id": f"mobile-forms-no-project-{uuid.uuid4().hex}",
+            },
+        )
+        provider_response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": chave,
+                "nome": "Usuario Sem Projeto",
+                "projeto": "P80",
+                "atividade": "check-in",
+                "informe": "normal",
+                "data": "05/08/2026",
+                "hora": "08:00:00",
+            },
+        )
+        device_response = client.post(
+            "/api/scan",
+            json={
+                "rfid": rfid,
+                "local": "Leitor",
+                "action": "checkin",
+                "device_id": "DEVICE-NO-PROJECT",
+                "request_id": f"device-no-project-{uuid.uuid4().hex}",
+                "shared_key": "device-test-key",
+            },
+        )
+
+    for response in (
+        web_response,
+        mobile_submit_response,
+        mobile_sync_response,
+        mobile_forms_response,
+        provider_response,
+    ):
+        assert response.status_code == 409, response.text
+    assert device_response.status_code == 200, device_response.text
+    assert device_response.json()["outcome"] == "failed"
+    assert device_response.json()["led"] == "red_2s"
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, chave)
+        events = db.execute(select(UserSyncEvent).where(UserSyncEvent.user_id == user.id)).scalars().all()
+        assert user.projeto is None
+        assert get_materialized_user_project_names(db, user.id) == []
+
+    assert events == []
+
+
 def test_provider_submit_creates_materialized_membership_for_new_user():
     with TestClient(app) as client:
         response = client.post(

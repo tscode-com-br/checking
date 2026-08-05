@@ -1128,9 +1128,16 @@ def build_presence_rows(
             continue
         if is_user_inactive(latest_activity.event_time, reference_time=current_time):
             continue
-        project = projects_by_name.get(user.projeto)
+        user_project_names = project_names_by_user_id.get(user.id, [])
+        # Users intentionally left without a project cannot perform new
+        # activities. Old/legacy events may still exist, but must never make
+        # the presence endpoint fail or appear as current presence.
+        if not user_project_names:
+            continue
+        display_project_name = user.projeto or user_project_names[0]
+        project = projects_by_name.get(display_project_name)
         timezone_context = build_timezone_context(
-            project_name=project.name if project is not None else user.projeto,
+            project_name=project.name if project is not None else display_project_name,
             country_name=project.country_name if project is not None else None,
             timezone_name=project.timezone_name if project is not None else None,
             reference_time=latest_activity.event_time,
@@ -1170,8 +1177,8 @@ def build_presence_rows(
                 rfid=user.rfid,
                 nome=user.nome,
                 chave=user.chave,
-                projeto=user.projeto,
-                projetos=normalize_user_project_names(project_names_by_user_id.get(user.id, [user.projeto])),
+                projeto=display_project_name,
+                projetos=normalize_user_project_names(user_project_names),
                 timezone_name=timezone_context.timezone_name,
                 timezone_label=timezone_context.timezone_label,
                 local=latest_activity.local if latest_activity.local is not None else user.local,

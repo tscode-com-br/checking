@@ -175,6 +175,60 @@ def test_presence_rows_include_not_realized_forms_status_for_skipped_forms():
     assert rows[0].forms_status == "not_realized"
 
 
+def test_presence_rows_ignore_legacy_activity_for_user_without_project_membership():
+    """A deallocated user with an old event must not break the whole table."""
+    event_time = datetime(2026, 5, 21, 9, 30, tzinfo=ZoneInfo("Asia/Singapore"))
+
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    with SessionLocal() as db:
+        db.add(
+            Project(
+                name="P80",
+                country_code="SG",
+                country_name="Singapore",
+                timezone_name="Asia/Singapore",
+                address="",
+                zip_code="",
+            )
+        )
+        user = User(
+            rfid=None,
+            chave="NP80",
+            nome="Usuario Sem Projeto",
+            projeto=None,
+            local="Web",
+            checkin=True,
+            time=event_time,
+            last_active_at=event_time,
+            inactivity_days=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserSyncEvent(
+                user_id=user.id,
+                chave=user.chave,
+                rfid=user.rfid,
+                source="web_forms",
+                action="checkin",
+                projeto="P80",
+                local="Web",
+                ontime=True,
+                event_time=event_time,
+                created_at=event_time,
+                source_request_id="legacy-no-project",
+                device_id=None,
+            )
+        )
+        db.commit()
+
+        rows, _ = build_presence_rows(db, action="checkin", current_admin=None, reference_time=event_time)
+
+    assert rows == []
+
+
 def _reset_schema(db):
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)

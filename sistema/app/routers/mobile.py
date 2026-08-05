@@ -28,13 +28,14 @@ from ..services.location_settings import (
 )
 from ..services.project_catalog import ensure_known_project
 from ..services.time_utils import now_sgt, resolve_project_timezone_name
-from ..services.user_projects import list_user_project_names
+from ..services.user_projects import list_user_project_names, user_belongs_to_project
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
     create_user_sync_event,
     ensure_mobile_user,
     ensure_current_user_state_event,
+    find_user_by_chave,
     get_forms_skip_reason,
     normalize_event_time,
     normalize_user_key,
@@ -52,6 +53,27 @@ MOBILE_FORMS_SUBMIT_CHANNEL = FormsSubmitChannel(
     device_id="android-app",
     default_local=DEFAULT_MOBILE_LOCAL,
 )
+
+
+def _require_existing_mobile_user_project_membership(
+    db: Session,
+    *,
+    user,
+    projeto: str,
+    created: bool,
+) -> None:
+    """Existing users cannot use an activity request to regain a project link.
+
+    A first mobile submission may create its placeholder user already linked to
+    the submitted project. Once the user exists, only an administrator's
+    registration/membership action can establish or change that linkage.
+    """
+    if created or user_belongs_to_project(db, user, projeto):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail="Usuario sem vinculo com o projeto informado nao pode realizar atividades.",
+    )
 
 
 def require_mobile_shared_key(
@@ -127,6 +149,12 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         )
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
+    _require_existing_mobile_user_project_membership(
+        db,
+        user=user,
+        projeto=payload.projeto,
+        created=created,
+    )
     project_timezone_name = resolve_project_timezone_name(db, payload.projeto)
     event_time = normalize_event_time(payload.event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
@@ -275,6 +303,14 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
 @router.post("/events/forms-submit",response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
     payload.projeto = ensure_known_project(db, payload.projeto)
+    existing_user = find_user_by_chave(db, payload.chave)
+    if existing_user is not None:
+        _require_existing_mobile_user_project_membership(
+            db,
+            user=existing_user,
+            projeto=payload.projeto,
+            created=False,
+        )
     return submit_forms_event(
         db,
         chave=payload.chave,
@@ -304,6 +340,12 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
         return MobileSyncResponse(ok=True, duplicate=True, message="Mobile event already synchronized", state=state)
 
     user, created = ensure_mobile_user(db, chave=payload.chave, projeto=payload.projeto)
+    _require_existing_mobile_user_project_membership(
+        db,
+        user=user,
+        projeto=payload.projeto,
+        created=created,
+    )
     project_timezone_name = resolve_project_timezone_name(db, payload.projeto)
     event_time = normalize_event_time(payload.event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user)

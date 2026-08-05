@@ -14,7 +14,11 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.project_catalog import ensure_known_project
 from ..services.time_utils import resolve_project_timezone_name
 from ..services.user_profiles import merge_provider_date_and_time, normalize_person_name
-from ..services.user_projects import assign_user_active_project, ensure_user_active_project_is_member
+from ..services.user_projects import (
+    assign_user_active_project,
+    ensure_user_active_project_is_member,
+    user_belongs_to_project,
+)
 from ..services.user_sync import (
     apply_user_state,
     create_user_sync_event,
@@ -97,6 +101,11 @@ def submit_provider_checking(
         ensure_user_active_project_is_member(db, user)
         created_user = True
     else:
+        if not user_belongs_to_project(db, user, payload.projeto):
+            raise HTTPException(
+                status_code=409,
+                detail="Usuario sem vinculo com o projeto informado nao pode realizar atividades.",
+            )
         updated_project = user.projeto != payload.projeto
         if updated_project:
             assign_user_active_project(db, user, payload.projeto)

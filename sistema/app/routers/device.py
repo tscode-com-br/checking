@@ -153,6 +153,30 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             message="RFID added to pending registration",
         )
 
+    if not list_user_project_names(db, user):
+        log_event(
+            db,
+            idempotency_key=f"{payload.request_id}:blocked-no-project",
+            source="device",
+            action=payload.action,
+            status="blocked",
+            message="Scan blocked because user has no project membership",
+            rfid=user.rfid,
+            project=None,
+            device_id=payload.device_id,
+            local=payload.local,
+            request_path="/api/scan",
+            http_status=409,
+            details=f"chave={user.chave}; reason=no_project_membership",
+        )
+        db.commit()
+        notify_admin_data_changed(payload.action)
+        return ScanResponse(
+            outcome="failed",
+            led="red_2s",
+            message="User has no project membership",
+        )
+
     action = payload.action
     activity_time = now_sgt()
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)

@@ -29,6 +29,38 @@ INTERNAL_DECISION_IGNORED_SYNC_SOURCES = frozenset(("provider", "state_import"))
 INTERNAL_DECISION_IGNORED_CHECK_EVENT_SOURCES = frozenset(("provider", "forms"))
 
 
+class UserActivityProjectRequiredError(ValueError):
+    """Raised before an activity is persisted without a valid project membership."""
+
+
+def require_user_activity_project(
+    db: Session,
+    *,
+    user: User,
+    projeto: str | None,
+) -> str:
+    """Return the activity project only when it is one of the user's memberships.
+
+    ``users.projeto`` is allowed to be NULL when an administrator intentionally
+    removes every membership. Such a user must not create check-in/check-out
+    state or history rows. Keeping this invariant next to the common event
+    writer protects every channel, including future callers that bypass a
+    route-specific validation.
+    """
+    project_names = list_user_project_names(db, user)
+    if not project_names:
+        raise UserActivityProjectRequiredError(
+            "Usuario sem projeto vinculado nao pode realizar atividades."
+        )
+
+    activity_project = str(projeto or user.projeto or project_names[0]).strip().upper()
+    if activity_project not in set(project_names):
+        raise UserActivityProjectRequiredError(
+            "O projeto da atividade nao pertence aos projetos vinculados ao usuario."
+        )
+    return activity_project
+
+
 @dataclass(frozen=True)
 class ResolvedUserActivity:
     action: str
@@ -210,13 +242,14 @@ def apply_user_state(
     projeto: str | None = None,
     local: str | None = None,
 ) -> None:
+    session = object_session(user)
+    if session is None:
+        raise ValueError("O usuário precisa estar associado a uma sessao antes de atualizar sua atividade")
+    activity_project = require_user_activity_project(session, user=user, projeto=projeto)
     user.checkin = action == "checkin"
     user.time = event_time
     if projeto:
-        session = object_session(user)
-        if session is None:
-            raise ValueError("O usuário precisa estar associado a uma sessao antes de atualizar o projeto ativo")
-        assign_user_active_project(session, user, projeto)
+        assign_user_active_project(session, user, activity_project)
     if local is not None:
         user.local = local
     mark_user_active(user, activity_time=event_time)
@@ -421,13 +454,14 @@ def create_user_sync_event(
     source_request_id: str | None,
     device_id: str | None,
 ) -> UserSyncEvent:
+    activity_project = require_user_activity_project(db, user=user, projeto=projeto)
     sync_event = UserSyncEvent(
         user_id=user.id,
         chave=user.chave,
         rfid=user.rfid,
         source=source,
         action=action,
-        projeto=projeto,
+        projeto=activity_project,
         local=local,
         ontime=ontime,
         event_time=event_time,
@@ -440,7 +474,7 @@ def create_user_sync_event(
         db,
         chave=user.chave,
         action=action,
-        projeto=projeto or user.projeto,
+        projeto=activity_project,
         event_time=event_time,
         ontime=ontime,
         local=local,
@@ -755,6 +789,11 @@ def resolve_latest_internal_user_activity(db: Session, *, user: User) -> Resolve
 
 
 def ensure_current_user_state_event(db: Session, *, user: User, skip_if_provider_backed: bool = False) -> None:
+    # A user deliberately left without memberships has no valid project for a
+    # synthesized legacy state event. Do not turn that stale state into a new
+    # check-in/check-out record.
+    if not list_user_project_names(db, user):
+        return
     if user.time is None or user.checkin is None:
         return
 
